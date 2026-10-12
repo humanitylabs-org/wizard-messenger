@@ -179,6 +179,8 @@
       let code = 'unauthorized';
       try { code = (await response.json()).error?.code || code; } catch { /* A gateway 401 may not be JSON. */ }
       signal?.throwIfAborted();
+      // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
+      if (['vault_unlock_failed', 'invalid_vault_password'].includes(code)) throw new APIError(code, 401);
       const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
@@ -191,6 +193,7 @@
     const messages = {
       unauthorized: 'Open Messenger from Wizard to reconnect.',
       vault_unlock_failed: "That passphrase isn't right.", invalid_public_key: "That address doesn't look right.",
+      login_rate_limited: 'Too many tries. Wait a minute and try again.',
       invalid_vault_password: state.mode === 'locked' ? "That passphrase isn't right." : 'Needs at least 16 characters.',
       invalid_address: "That address doesn't look right.", cannot_invite_self: 'Choose someone else’s Messenger address.',
       invalid_nip05: "That address doesn't look right.", nip05_unverified: 'This address could not be verified. Ask for their Messenger address.', nip05_not_found: 'This address could not be found. Ask for their Messenger address.',

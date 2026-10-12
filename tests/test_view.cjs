@@ -204,6 +204,11 @@ test('DOM fixture: wrong unlock passphrase stays locked, clears field and keeps 
   f.e('passphrase').value='fixture-wrong-passphrase';f.e('passphrase').fire('input');f.e('setup-form').fire('submit');await f.flush();
   assert.equal(f.e('setup-error').textContent,"That passphrase isn't right.");assert.equal(f.e('passphrase').value,'');assert.equal(f.document.activeElement,f.e('passphrase'));assert.equal(f.e('workspace').hidden,true);
 });
+test('DOM fixture: HTTP401 wrong passphrase on a live cookie session keeps the unlock form (no reconnect)',async()=>{
+  const f=await fixture({respond:(url,opts,base)=>url==='api/status'?{state:'locked'}:url==='api/setup'?{httpError:401,code:'vault_unlock_failed'}:base(url,opts)});
+  f.e('passphrase').value='fixture-wrong-passphrase';f.e('passphrase').fire('input');f.e('setup-form').fire('submit');await f.flush();
+  assert.equal(f.e('setup-error').textContent,"That passphrase isn't right.");assert.equal(f.e('setup-form').hidden,false);assert.equal(f.e('reconnect').hidden,true);
+});
 test('DOM fixture: incoming pending composer is disabled; accept is explicit',async()=>{
   let accepted=false;const incoming={...dm,pending_confirmation:true};
   const f=await fixture({respond:(url,opts,base)=>{
