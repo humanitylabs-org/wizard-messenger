@@ -21,7 +21,7 @@ Dedicated Messenger account and public npub/nprofile contact code; contact resol
 
 Sustained Rust/image builds and integration campaigns run on the remote build machine. The default Dockerfile builds the exact MDK source/lock. Audited matching binary carriers can be supplied using `MDK_BUILD_IMAGE`; distinguish this route from a clean default build.
 
-This local candidate uses `wizard-messenger:0.1.0-candidate` with `pull_policy: never`; load the architecture-matching image before installation. The Runtipi definition maps only its own `/data`, limits resources and exposes internal port 8765. The installer supplies a generated 32+ character application capability, exact private HTTPS origin and public app path through normal app-secret/configuration mechanisms. Keep secrets out of output and URL queries.
+This local candidate uses `wizard-messenger:0.1.1-candidate` with `pull_policy: never`; load the architecture-matching image before installation. The Runtipi definition maps only its own `/data`, limits resources and exposes internal port 8765. The installer supplies a generated 32+ character application capability, exact private HTTPS origin and public app path through normal app-secret/configuration mechanisms. Keep secrets out of output and URL queries.
 
 Repository/image destinations are reserved release metadata. This candidate is not publicly indexed or published. Publication and another person's installation require their corresponding authorization.
 

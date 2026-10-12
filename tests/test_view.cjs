@@ -170,6 +170,40 @@ async function fixture({respond, saved=new Map(), hash='', standalone=false, hid
   return {context,document,elements,calls,timers,saved,history,windowEvents,flush,get pushes(){return pushes;},e:id=>elements.get(id),async poll(){const timer=[...timers.values()].find(t=>t.ms===3000);assert.ok(timer,'poll scheduled');timer.fn();await flush();}};
 }
 
+test('DOM fixture: opening and initial list fetch show honest activity; polling stays quiet',async()=>{
+  let releaseSession,releaseList;const session=new Promise(r=>releaseSession=r),list=new Promise(r=>releaseList=r);
+  const f=await fixture({respond:(url,opts,base)=>url==='api/view/session'?session:url==='api/dms'?list:base(url,opts)});
+  assert.equal(f.e('gate-progress').hidden,false);assert.match(f.e('activity-announcement').textContent,/Opening/);
+  releaseSession({authenticated:true,csrf_token:'fixture-csrf'});await f.flush();
+  assert.equal(f.e('list-loading').hidden,false);assert.equal(f.e('conversation-list').getAttribute('aria-busy'),'true');assert.doesNotMatch(f.e('conversation-list').textContent,/No conversations/);
+  releaseList({dms:[]});await f.flush();assert.equal(f.e('list-loading').hidden,true);assert.match(f.e('conversation-list').textContent,/No conversations/);
+  await f.poll();assert.equal(f.e('list-loading').hidden,true);
+});
+test('DOM fixture: accepting an invite is immediate, single-flight, and clears both affordances',async()=>{
+  let accepted=false,release;const hold=new Promise(r=>release=r);
+  const f=await fixture({respond:(url,opts,base)=>{
+    if(url==='api/invites')return {invites:accepted?[]:[{...dm,pending_confirmation:true}]};
+    if(url==='api/dms')return {dms:accepted?[dm]:[]};
+    if(url.endsWith('/accept'))return hold.then(()=>{accepted=true;return {completed:true};});return base(url,opts);
+  }});
+  f.e('conversation-list').children.find(x=>x.className==='invite-row').children[0].fire('click');await f.flush();
+  f.e('accept-invite').fire('click');f.e('accept-invite').fire('click');await f.flush();
+  assert.equal(f.e('accept-invite').textContent,'Accepting…');assert.equal(f.e('accept-invite').disabled,true);assert.equal(f.e('decline-invite').disabled,true);assert.match(f.e('activity-announcement').textContent,/Accepting/);
+  assert.equal(f.calls.filter(c=>c.url.endsWith('/accept')).length,1);assert.match(f.e('conversation-list').textContent,/Accepting/);
+  release();await f.flush();assert.equal(f.e('invite-actions').hidden,true);assert.equal(f.e('accept-invite').textContent,'Accept');assert.equal(f.e('accept-invite').disabled,false);
+});
+test('DOM fixture: failed invitation clears spinner, restores controls and preserves its error',async()=>{
+  let release;const hold=new Promise(r=>release=r);
+  const f=await fixture({respond:(url,opts,base)=>url==='api/invites'?{invites:[{...dm,pending_confirmation:true}]}:url.endsWith('/accept')?hold:base(url,opts)});
+  f.e('conversation-list').children.find(x=>x.className==='invite-row').children[0].fire('click');await f.flush();f.e('accept-invite').fire('click');await f.flush();
+  release({httpError:502,code:'request_failed'});await f.flush();assert.equal(f.e('accept-invite').textContent,'Accept');assert.equal(f.e('accept-invite').disabled,false);assert.ok(f.e('chat-error').textContent);assert.doesNotMatch(f.e('activity-announcement').textContent,/Accepting/);
+});
+test('DOM fixture: loading a first chat shows history activity, then disappears on settlement',async()=>{
+  let release;const hold=new Promise(r=>release=r);
+  const f=await fixture({respond:(url,opts,base)=>url.includes('/messages?limit=100')?hold:base(url,opts)});
+  f.e('conversation-list').children[0].fire('click');await f.flush();assert.equal(f.e('history-loading').hidden,false);assert.match(f.e('history-loading-text').textContent,/Loading messages/);assert.equal(f.e('messages').getAttribute('aria-busy'),'true');
+  release({messages:[],next_cursor:null});await f.flush();assert.equal(f.e('history-loading').hidden,true);assert.equal(f.e('messages').getAttribute('aria-busy'),'false');
+});
 test('DOM fixture: silent cookie session uses only relative API and same-origin credentials',async()=>{
   const f=await fixture(); assert.equal(f.e('workspace').hidden,false);
   for(const call of f.calls) {assert.match(call.url,/^api\//);assert.equal(call.opts.credentials,'same-origin');assert.equal(call.opts.headers.Authorization,undefined);}

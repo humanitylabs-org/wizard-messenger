@@ -113,7 +113,7 @@
     csrf: null, authenticated: false, sessionLocked: false, mode: 'opening', identity: null, contacts: [], dms: [], invites: [],
     group: null, sheet: null, cache: new Map(), records: new Map(), scroll: new Map(), nodes: new Map(),
     operation: null, timer: null, reconnecting: false, setupFailed: false, listSignature: '', focusBefore: null,
-    initialChat: false, storageError: false
+    initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null
   };
   const storagePrefix = () => 'wizard-messenger:v1:' + state.identity?.account_id + ':';
   function readRecord(group) {
@@ -147,7 +147,7 @@
   const act = work => run(work, true);
   async function run(work, action = false, bootstrap = false) {
     cancel();
-    const op = {controller: new AbortController(), action, bootstrap}; state.operation = op;
+    const op = {controller: new AbortController(), action, bootstrap}; state.operation = op; updateSetup(); renderActivity();
     try { return await work(op.controller.signal); }
     catch (error) {
       if (error.name !== 'AbortError' && state.operation === op) {
@@ -158,7 +158,7 @@
       return null;
     } finally {
       if (state.operation === op) {
-        state.operation = null; schedule(); updateComposer();
+        state.operation = null; schedule(); updateSetup(); updateComposer(); renderActivity();
         if (bootstrap && launchTicket) boot(); // a link arrived during the earlier bootstrap
       }
     }
@@ -210,7 +210,7 @@
   function eraseView() {
     state.identity = null; state.contacts = []; state.dms = []; state.invites = [];
     state.group = null; state.sheet = null; state.cache.clear(); state.records.clear(); state.nodes.clear(); state.scroll.clear();
-    state.listSignature = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
+    state.lastActivity = ''; state.listLoaded = false; state.listSignature = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
     $('public-address').textContent = ''; $('chat-name').textContent = ''; $('chat-subline').textContent = '';
     $('draft').value = ''; $('contact-address').value = ''; $('contact-name').value = '';
     $('passphrase').value = ''; $('confirm-passphrase').value = ''; $('display-name').value = '';
@@ -236,16 +236,32 @@
       $('passphrase').type = 'password'; $('show-password').textContent = 'Show';
       $('show-password').setAttribute('aria-label', 'Show passphrase'); $('show-password').setAttribute('aria-pressed', 'false');
     }
-    updateSetup();
+    updateSetup(); renderActivity();
+  }
+  function renderActivity() {
+    const active = !!state.operation, gateBusy = active && (state.mode === 'opening' || (isBusy() && ['locked', 'setup_required'].includes(state.mode)));
+    const listBusy = active && state.mode === 'ready' && !state.listLoaded && !state.reconnecting;
+    const group = state.group, older = group && state.olderPending?.group === group;
+    const historyBusy = active && state.mode === 'ready' && group && !isIncoming(dmById(group)) && !state.reconnecting && (older || !cacheFor(group).loaded);
+    $('gate-progress').hidden = !gateBusy; $('gate').setAttribute('aria-busy', String(gateBusy));
+    $('list-loading').hidden = !listBusy; $('conversation-list').setAttribute('aria-busy', String(listBusy));
+    $('history-loading').hidden = !historyBusy; $('messages').setAttribute('aria-busy', String(!!historyBusy));
+    $('history-loading-text').textContent = older ? 'Loading earlier messages…' : 'Loading messages…';
+    $('load-older').disabled = !!older;
+    let message = state.pendingInvite ? (state.pendingInvite.action === 'accept' ? 'Accepting invite…' : 'Ignoring invite…') : gateBusy ? (state.mode === 'opening' ? 'Opening your messages…' : state.mode === 'locked' ? 'Unlocking Messenger…' : 'Creating your address…') : listBusy ? 'Loading conversations…' : historyBusy ? $('history-loading-text').textContent : state.lastActivity || '';
+    if ($('activity-announcement').textContent !== message) $('activity-announcement').textContent = message;
   }
   function updateSetup() {
     const create = state.mode === 'setup_required', password = $('passphrase').value;
+    const pending = isBusy() && ['locked', 'setup_required'].includes(state.mode);
+    $('setup-submit').classList.toggle('pending', pending);
+    if (pending) { $('setup-submit').disabled = true; $('setup-submit').textContent = create ? 'Creating address…' : 'Unlocking…'; return; }
     $('setup-submit').textContent = create ? (state.setupFailed ? 'Try again' : 'Create address') : 'Unlock';
     $('setup-submit').disabled = create ? passphraseLength(password) < 16 || password !== $('confirm-passphrase').value : !password.length;
   }
   function ready(identity) {
     state.identity = identity; state.mode = 'ready'; $('gate').hidden = true; $('workspace').hidden = false;
-    $('own-initial').textContent = (identity.display_name || 'M').slice(0, 1).toUpperCase();
+    $('own-initial').textContent = (identity.display_name || 'M').slice(0, 1).toUpperCase(); renderActivity();
   }
   function dmById(group) { return state.invites.find(dm => dm.group_id === group) || state.dms.find(dm => dm.group_id === group); }
   function isIncoming(dm) { return !!dm && (dm.pending_confirmation === true || state.invites.some(i => i.group_id === dm.group_id)); }
@@ -285,13 +301,16 @@
       if (!dm) leaveChat();
       else if (!isIncoming(dm)) await refreshMessages(state.group, signal);
     }
-    state.reconnecting = false; $('list-error').textContent = ''; renderList(); renderHeader(); updateComposer();
+    state.listLoaded = true; state.reconnecting = false; $('list-error').textContent = ''; renderList(); renderHeader(); updateComposer(); renderActivity();
   }
   async function refreshMessages(group, signal, older = false) {
     const cache = cacheFor(group), cursor = cache.cursor;
     let path = 'api/dms/' + encodeURIComponent(group) + '/messages?limit=100';
     if (older && cursor) path += '&before=' + encodeURIComponent(cursor.before) + '&before_message_id=' + encodeURIComponent(cursor.before_message_id);
-    const data = await api(path, {signal});
+    const marker = older ? {group} : null; if (marker) state.olderPending = marker; renderActivity();
+    let data;
+    try { data = await api(path, {signal}); }
+    finally { if (state.olderPending === marker) state.olderPending = null; renderActivity(); }
     cache.messages = mergeMessages(cache.messages, data.messages || []);
     if (older || !cache.loaded) cache.cursor = data.next_cursor || null;
     cache.loaded = true; reconcile(group);
@@ -332,20 +351,25 @@
   }
   function renderList() {
     if (state.mode !== 'ready') return;
-    const signature = JSON.stringify([state.group, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent])]);
+    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();
     if (state.invites.length) {
       fragment.append(element('h2', 'section-label', 'Invites'));
       for (const dm of state.invites) {
         const wrap = element('div', 'invite-row'), actions = element('div', 'invite-row-actions');
-        actions.append(button('Accept', 'primary', () => inviteAction(dm.group_id, 'accept')), button('Ignore', 'secondary', () => inviteAction(dm.group_id, 'decline')));
+        const pending = state.pendingInvite?.group === dm.group_id ? state.pendingInvite : null;
+        const accept = button(pending?.action === 'accept' ? 'Accepting…' : 'Accept', 'primary', () => inviteAction(dm.group_id, 'accept'));
+        const ignore = button(pending?.action === 'decline' ? 'Ignoring…' : 'Ignore', 'secondary', () => inviteAction(dm.group_id, 'decline'));
+        accept.disabled = ignore.disabled = !!state.pendingInvite;
+        accept.classList.toggle('pending', pending?.action === 'accept'); ignore.classList.toggle('pending', pending?.action === 'decline');
+        actions.append(accept, ignore);
         wrap.append(row(dm, true), actions); fragment.append(wrap);
       }
     }
     const dms = [...state.dms].sort((a,b) => stamp(cacheFor(b.group_id).messages.at(-1)?.created_at) - stamp(cacheFor(a.group_id).messages.at(-1)?.created_at) || a.group_id.localeCompare(b.group_id));
     for (const dm of dms) fragment.append(row(dm));
-    if (!state.dms.length && !state.invites.length) {
+    if (state.listLoaded && !state.dms.length && !state.invites.length) {
       const empty = element('div', 'empty-state list-empty'); empty.append(element('p', '', 'No conversations yet. Add a contact to start.'), button('Add contact', 'primary', () => openSheet('contact'))); fragment.append(empty);
     }
     list.replaceChildren(fragment); list.scrollTop = top;
@@ -357,7 +381,13 @@
     const pending = isIncoming(dm), sent = readRecord(state.group).invite_sent;
     $('chat-subline').textContent = state.reconnecting ? 'Reconnecting…' : pending ? 'Invite pending' : sent ? 'Invite sent' : '';
     $('chat-subline').classList.toggle('reconnecting', state.reconnecting);
-    $('invite-actions').hidden = !pending; $('copy-peer').disabled = !publicAddress(peerOf(dm, state.identity));
+    $('invite-actions').hidden = !pending;
+    const operation = state.pendingInvite?.group === state.group ? state.pendingInvite : null;
+    $('accept-invite').disabled = $('decline-invite').disabled = !!state.pendingInvite;
+    $('accept-invite').textContent = operation?.action === 'accept' ? 'Accepting…' : 'Accept';
+    $('decline-invite').textContent = operation?.action === 'decline' ? 'Ignoring…' : 'Ignore';
+    $('accept-invite').classList.toggle('pending', operation?.action === 'accept'); $('decline-invite').classList.toggle('pending', operation?.action === 'decline');
+    $('copy-peer').disabled = !publicAddress(peerOf(dm, state.identity));
     $('load-older').hidden = pending || !cacheFor(state.group).cursor;
   }
   function updateComposer() {
@@ -412,7 +442,7 @@
     }
     for (const [key,node] of state.nodes) if (!live.has(key)) { node.remove(); state.nodes.delete(key); }
     $('history-empty').hidden = items.length > 0 || !cache.loaded || isIncoming(dmById(group));
-    $('load-older').hidden = !cache.cursor || isIncoming(dmById(group));
+    $('load-older').hidden = !cache.cursor || isIncoming(dmById(group)); renderActivity();
     if (state.initialChat && cache.loaded) {
       state.initialChat = false; scroll.scrollTop = state.scroll.get(group) ?? scroll.scrollHeight;
     } else if (bottom) {
@@ -475,15 +505,18 @@
     catch { /* Validate explicitly on submit; no invented resolver. */ }
   }
   function inviteAction(group, action) {
-    if (isBusy()) return;
+    if (isBusy() || state.pendingInvite) return;
+    const pending = {group, action}; state.pendingInvite = pending; renderList(); renderHeader(); renderActivity();
     act(async signal => {
       try {
         const result = await api('api/invites/' + encodeURIComponent(group) + '/' + action, {method: 'POST', body: {}, signal});
         if (result.completed !== true) throw new APIError('request_failed', 409);
+        state.lastActivity = action === 'accept' ? 'Invite accepted.' : 'Invite ignored.';
         await snapshot(signal);
         if (action === 'accept') openChat(group);
         else if (state.group === group) leaveChat();
       } catch (error) { if (error.name !== 'AbortError') (state.group === group ? $('chat-error') : $('list-error')).textContent = friendly(error); }
+      finally { if (state.pendingInvite === pending) { state.pendingInvite = null; renderList(); renderHeader(); renderActivity(); } }
     });
   }
   function submitAttempt(group, attempt) {
@@ -662,7 +695,7 @@
     if (!nip05) { try { decodeAddress(input); } catch { $('contact-error').textContent = "That address doesn't look right."; return; } }
     const label = $('contact-name').value;
     if (new TextEncoder().encode(label).length > 160) { $('contact-error').textContent = 'Choose a shorter name.'; return; }
-    $('contact-submit').disabled = true; $('contact-error').textContent = '';
+    $('contact-submit').disabled = true; $('contact-submit').textContent = 'Sending invite…'; $('contact-submit').classList.add('pending'); $('contact-error').textContent = '';
     act(async signal => {
       try {
         const resolved = await api('api/resolve-contact', {method: 'POST', body: {address: input}, signal});
@@ -677,7 +710,7 @@
         state.dms = state.dms.filter(dm => dm.group_id !== result.dm.group_id).concat(result.dm);
         closeSheet(); $('contact-form').reset(); $('address-preview').textContent = ''; openChat(result.dm.group_id);
       } catch (error) { if (error.name !== 'AbortError') $('contact-error').textContent = friendly(error); }
-      finally { $('contact-submit').disabled = false; }
+      finally { $('contact-submit').disabled = false; $('contact-submit').textContent = 'Send invite'; $('contact-submit').classList.remove('pending'); }
     });
   };
   document.addEventListener('visibilitychange', () => {

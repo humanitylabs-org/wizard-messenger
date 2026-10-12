@@ -6,6 +6,8 @@
   <meta name="color-scheme" content="dark">
   <meta name="referrer" content="no-referrer">
   <title>Messenger</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="app.css">
   <script src="app.js" defer></script>
 </head>
@@ -15,6 +17,7 @@
       <div class="setup-card">
         <h1 id="gate-title">Messenger</h1>
         <p id="gate-description">Opening your messages…</p>
+        <div id="gate-progress" class="loading-line" aria-hidden="true"><span class="spinner"></span></div>
         <form id="setup-form" hidden autocomplete="off">
           <label id="name-label">Your name<input id="display-name" placeholder="Optional" maxlength="160" autocomplete="nickname"></label>
           <label>Passphrase<span class="password-field"><input id="passphrase" type="password" autocomplete="off" required><button id="show-password" type="button" aria-label="Show passphrase" aria-pressed="false">Show</button></span></label>
@@ -31,6 +34,7 @@
       <aside class="list-pane" aria-label="Conversations">
         <header class="pane-header"><h1>Messages</h1><button id="add-contact" class="icon-button" aria-label="Add contact" title="Add contact">＋</button><button id="my-address" class="icon-button" aria-label="My address" title="My address"><span id="own-initial" class="own-avatar">M</span></button></header>
         <p id="list-error" class="error pane-error" role="status"></p>
+        <p id="list-loading" class="loading-line pane-loading" aria-hidden="true" hidden><span class="spinner"></span><span>Loading conversations…</span></p>
         <div id="conversation-list" class="conversation-list"></div>
       </aside>
       <section id="detail" class="detail-pane" aria-label="Conversation">
@@ -39,7 +43,7 @@
           <header class="pane-header chat-header"><button id="chat-back" class="icon-button" aria-label="Back to messages">‹</button><div class="chat-heading"><h2 id="chat-name"></h2><p id="chat-subline" class="subline"></p></div><button id="copy-peer" class="icon-button copy-peer" aria-label="Copy address" title="Copy address">⧉</button></header>
           <div id="invite-actions" class="invite-actions" hidden><p>This person wants to chat.</p><button id="accept-invite" class="primary">Accept</button><button id="decline-invite" class="secondary">Ignore</button></div>
           <p id="chat-error" class="error pane-error" role="status"></p>
-          <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="Messages"><button id="load-older" class="secondary older" hidden>Earlier messages</button><div id="messages" class="messages" role="log" aria-live="off"></div><p id="history-empty" class="helper history-empty" hidden>No messages yet.</p></div>
+          <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="Messages"><button id="load-older" class="secondary older" hidden>Earlier messages</button><p id="history-loading" class="loading-line history-loading" aria-hidden="true" hidden><span class="spinner"></span><span id="history-loading-text">Loading messages…</span></p><div id="messages" class="messages" role="log" aria-live="off"></div><p id="history-empty" class="helper history-empty" hidden>No messages yet.</p></div>
           <button id="new-messages" class="new-messages" hidden>New messages ↓</button>
           <form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Write a message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled>↑</button></form>
           <p id="composer-error" class="error composer-error" role="alert"></p>
@@ -53,6 +57,7 @@
         <div id="address-panel" hidden><p class="helper">Your public Messenger address. Share it with someone you want to chat with.</p><code id="public-address" class="address-card"></code><button id="copy-own" class="primary wide">Copy</button><p id="copy-error" class="error" role="status"></p><button id="lock" class="secondary wide lock-button">Lock Messenger</button></div>
       </section>
     </div>
+    <p id="activity-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
     <p id="back-warning" class="back-warning" role="status" hidden>Press back again to exit</p>
   </main>
 </body>

@@ -230,7 +230,7 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         path=urlsplit(self.path).path
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/api/spec':'../API-contract.json'}
+        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:

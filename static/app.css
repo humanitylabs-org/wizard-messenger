@@ -92,6 +92,12 @@ h1, h2 { font-size: 17px; font-weight: 600; }
 .message-status.failed { color: var(--msg-err); }
 .retry-button { font-size: 13px; padding: 0 10px; }
 .spinner { width: 12px; height: 12px; border: 1px solid var(--line-2); border-top-color: var(--ink-3); border-radius: 50%; animation: spin 1s linear infinite; }
+.loading-line { display: flex; align-items: center; gap: 9px; color: var(--ink-2); font-size: 13px; min-height: 24px; }
+.loading-line .spinner { flex: 0 0 16px; height: 16px; border-top-color: var(--violet-2); }
+#gate-progress { margin-top: 14px; }
+.pane-loading { padding: 12px 16px; flex-shrink: 0; }
+.history-loading { justify-content: center; padding: 16px 0; }
+button.pending::before { content: ''; display: inline-block; width: 12px; height: 12px; border: 1px solid var(--line-2); border-top-color: currentColor; border-radius: 50%; margin-right: 8px; vertical-align: -1px; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .date-separator { text-align: center; font-size: 11px; color: var(--ink-3); padding: 8px 0; }
 .older { display: block; margin: 0 auto 12px; font-size: 13px; }
