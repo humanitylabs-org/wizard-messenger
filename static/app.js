@@ -157,7 +157,10 @@
       }
       return null;
     } finally {
-      if (state.operation === op) { state.operation = null; schedule(); updateComposer(); }
+      if (state.operation === op) {
+        state.operation = null; schedule(); updateComposer();
+        if (bootstrap && launchTicket) boot(); // a link arrived during the earlier bootstrap
+      }
     }
   }
   class APIError extends Error {
@@ -695,10 +698,18 @@
   // Remove a one-use ticket synchronously, before the first request. It is never
   // persisted, logged or put into a reusable Authorization header.
   let launchTicket = null;
-  if (location.hash.startsWith('#ticket=')) {
+  function takeLaunchTicket() {
+    if (!location.hash.startsWith('#ticket=')) return false;
     const fragment = location.hash.slice(1); history.replaceState(history.state, '', location.pathname + location.search);
-    launchTicket = new URLSearchParams(fragment).get('ticket');
+    launchTicket = new URLSearchParams(fragment).get('ticket'); return true;
   }
+  takeLaunchTicket();
+  // A link may navigate an existing app window by fragment only: no new document.
+  addEventListener('hashchange', () => {
+    if (!takeLaunchTicket() || state.operation?.bootstrap) return;
+    if (state.authenticated) { launchTicket = null; run(snapshot); }
+    else boot();
+  });
   async function boot() {
     gate('opening');
     await run(async signal => {

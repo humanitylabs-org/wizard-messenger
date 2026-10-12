@@ -214,6 +214,23 @@ test('DOM fixture: a consumed setup link without a cookie grants no account setu
   assert.equal(f.e('setup-form').hidden,true);assert.match(f.e('gate-description').textContent,/setup link/);
   assert.equal(f.calls.some(c=>c.url==='api/setup'),false);
 });
+test('DOM fixture: setup link in an existing authenticated window strips its fragment without exchanging again',async()=>{
+  const f=await fixture({respond:(url,opts,base)=>url==='api/status'?{state:'setup_required'}:base(url,opts)});
+  f.context.location.hash='#ticket=fixture-fragment-link'; for(const fn of f.windowEvents.hashchange||[])fn(); await f.flush();
+  assert.equal(f.context.location.hash,'');assert.equal(f.e('setup-form').hidden,false);
+  assert.equal(f.calls.filter(c=>c.url==='api/view/session'&&c.opts.method==='POST').length,0);
+});
+test('DOM fixture: fresh fragment link recovers a mounted first-open gate',async()=>{
+  let exchanged=false;
+  const f=await fixture({respond:(url,opts,base)=>{
+    if(url==='api/view/session'){if(opts.method==='POST'){exchanged=true;return base(url,opts);}if(!exchanged)return {httpError:401,code:'setup_link_required'};}
+    if(url==='api/status')return {state:'setup_required'}; return base(url,opts);
+  }});
+  assert.equal(f.e('setup-form').hidden,true);
+  f.context.location.hash='#ticket=fixture-fresh-fragment';for(const fn of f.windowEvents.hashchange||[])fn();await f.flush();
+  assert.equal(f.context.location.hash,'');assert.equal(f.e('setup-form').hidden,false);
+  assert.equal(f.calls.filter(c=>c.url==='api/view/session'&&c.opts.method==='POST').length,1);
+});
 test('DOM fixture: one-use ticket is removed and exchanged without token persistence',async()=>{
   const f=await fixture({hash:'#ticket=fixture-opaque-ticket'});
   assert.equal(f.context.location.hash,'');assert.equal(f.calls[0].opts.method,'POST');assert.deepEqual(f.calls[0].body,{ticket:'fixture-opaque-ticket'});
