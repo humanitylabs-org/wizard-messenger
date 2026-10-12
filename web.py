@@ -179,8 +179,12 @@ class ViewHandler(Handler):
                 token,session=self.service.auth.create(ticket,allow_bootstrap=not self.service.engine.status().get('account_configured',False))
                 self.pending_cookie=self._cookie(token)
             elif method=='GET':
-                if not self.headers.get('Authorization') and self._session() is None and self.service.auth.credential:
-                    raise EngineError('session_unlock_required','Enter your passphrase to open Messenger',401)
+                if not self.headers.get('Authorization') and self._session() is None:
+                    if self.service.auth.credential:
+                        raise EngineError('session_unlock_required','Enter your passphrase to open Messenger',401)
+                    if not self.service.engine.status().get('account_configured',False):
+                        # First open from the Wizard launcher: only the owner's setup link can start setup.
+                        raise EngineError('setup_link_required','Ask your Wizard for your Messenger setup link',401)
                 self._authorize()
                 session=self._session()
                 if session is None:

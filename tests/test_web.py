@@ -109,6 +109,10 @@ class ViewBoundary(unittest.TestCase):
         s,_,d=self.request('POST','/mcp',{'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'messenger_send','arguments':{}}})
         self.assertEqual(s,200); self.assertIn('error',d)
         self.assertEqual(self.request('GET','/api/dms')[0],401)
+    def test_first_open_without_setup_link_says_so_and_grants_nothing(self):
+        s,h,d=self.request('GET','/api/view/session')
+        self.assertEqual(s,401); self.assertEqual(d['error']['code'],'setup_link_required'); self.assertNotIn('Set-Cookie',h)
+        self.assertEqual(self.request('GET','/api/identity')[0],401)
     def test_existing_account_can_sign_in_without_install_ticket(self):
         password='test-fixture-passphrase-123'
         self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':password},{'Authorization':'Bearer '+TOKEN})[0],200)

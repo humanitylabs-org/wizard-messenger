@@ -16,6 +16,15 @@ The first release is encrypted text DMs with dedicated Messenger accounts, publi
 - Sent means relay publication, not peer read. Preserve original request/event IDs on retry. An ambiguous send must be reconciled, not blindly resent.
 - Source/API/view files and build provenance ship together. The published API contract is `API-contract.json`; screen source is `static/`.
 
+## First open: the setup link
+
+Before an account exists, the view opened from the launcher says "Ask your Wizard for your Messenger setup link." When the owner asks for it:
+
+1. `POST <host api>/api/view/ticket` with `Authorization: Bearer <MESSENGER_API_TOKEN>` (from the App Manager's secrets file for `messenger`) and body `{"bootstrap": true}`.
+2. Give the owner `<Wizard origin><view.url>#ticket=<ticket>` (for example `https://wizard.example.ts.net/messenger/#ticket=…`). It works once, for up to seven days, and only before an account exists.
+
+Do not paste the API token anywhere, and never put the ticket in a URL query. After setup the owner just opens Messenger; restarts ask for the passphrase.
+
 For installation, populate the exact Wizard HTTPS origin from its current network settings and generate an application-only integration capability of at least 32 characters through the normal app-secret mechanism. Preserve app-data on updates. Owner bootstrap is a single-use capability issued by the authenticated local app API; it belongs only in the initial view fragment, never in logs or a public URL query. Existing-account sign-in uses the owner's passphrase and a scoped HttpOnly session, not an API-token field.
 
 The MCP has no message-read/send, agent participation or root-signing tools. Groups, media, phone push and independent phone-held messaging accounts are later work. Publication/index discovery is a separate release step for this local candidate.

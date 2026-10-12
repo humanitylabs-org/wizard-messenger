@@ -294,6 +294,11 @@ test('DOM fixture: normal later opening uses passphrase session bootstrap, not a
   const unlock=f.calls.find(c=>c.url==='api/view/unlock');assert.deepEqual(unlock.body,{vault_password:'fixture-bootstrap-passphrase'});assert.equal(unlock.opts.headers['X-Messenger-CSRF'],undefined);
   assert.equal(f.e('workspace').hidden,false);assert.equal(f.e('passphrase').value,'');assert.ok(![...f.saved.values()].join('').includes('fixture-bootstrap-passphrase'));
 });
+test('DOM fixture: first open from the launcher without a setup link explains the next step',async()=>{
+  const f=await fixture({respond:(url,opts,base)=>url==='api/view/session'?{httpError:401,code:'setup_link_required'}:base(url,opts)});
+  assert.equal(f.e('gate-title').textContent,'Messenger');assert.match(f.e('gate-description').textContent,/setup link/);
+  assert.equal(f.e('setup-form').hidden,true);assert.equal(f.e('reconnect').hidden,false);assert.equal(f.e('workspace').hidden,true);
+});
 test('DOM fixture: failed passphrase bootstrap remains Unlock, including HTTP401 failure',async()=>{
   const f=await fixture({respond:(url,opts,base)=>url==='api/view/session'?{httpError:401,code:'session_unlock_required'}:url==='api/view/unlock'?{httpError:401,code:'vault_unlock_failed'}:base(url,opts)});
   f.e('passphrase').value='fixture-bootstrap-wrong';f.e('passphrase').fire('input');f.e('setup-form').fire('submit');await f.flush();
