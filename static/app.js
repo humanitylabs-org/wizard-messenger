@@ -113,7 +113,7 @@
     csrf: null, authenticated: false, sessionLocked: false, mode: 'opening', identity: null, contacts: [], dms: [], invites: [],
     group: null, sheet: null, cache: new Map(), records: new Map(), scroll: new Map(), nodes: new Map(),
     operation: null, timer: null, reconnecting: false, setupFailed: false, listSignature: '', focusBefore: null,
-    initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null
+    initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null, chatOpening: null
   };
   const storagePrefix = () => 'wizard-messenger:v1:' + state.identity?.account_id + ':';
   function readRecord(group) {
@@ -152,13 +152,13 @@
     catch (error) {
       if (error.name !== 'AbortError' && state.operation === op) {
         state.reconnecting = true;
-        if (state.mode === 'ready') { $('list-error').textContent = friendly(error); renderHeader(); }
+        if (state.mode === 'ready') { (state.group ? $('chat-error') : $('list-error')).textContent = friendly(error); renderHeader(); }
         else if (state.mode !== 'reconnect') { $('setup-error').textContent = friendly(error); }
       }
       return null;
     } finally {
       if (state.operation === op) {
-        state.operation = null; schedule(); updateSetup(); updateComposer(); renderActivity();
+        state.operation = null; state.chatOpening = null; schedule(); updateSetup(); updateComposer(); renderActivity();
         if (bootstrap && launchTicket) boot(); // a link arrived during the earlier bootstrap
       }
     }
@@ -210,7 +210,7 @@
   function eraseView() {
     state.identity = null; state.contacts = []; state.dms = []; state.invites = [];
     state.group = null; state.sheet = null; state.cache.clear(); state.records.clear(); state.nodes.clear(); state.scroll.clear();
-    state.lastActivity = ''; state.listLoaded = false; state.listSignature = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
+    state.chatOpening = null; state.lastActivity = ''; state.listLoaded = false; state.listSignature = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
     $('public-address').textContent = ''; $('chat-name').textContent = ''; $('chat-subline').textContent = '';
     $('draft').value = ''; $('contact-address').value = ''; $('contact-name').value = '';
     $('passphrase').value = ''; $('confirm-passphrase').value = ''; $('display-name').value = '';
@@ -242,11 +242,11 @@
     const active = !!state.operation, gateBusy = active && (state.mode === 'opening' || (isBusy() && ['locked', 'setup_required'].includes(state.mode)));
     const listBusy = active && state.mode === 'ready' && !state.listLoaded && !state.reconnecting;
     const group = state.group, older = group && state.olderPending?.group === group;
-    const historyBusy = active && state.mode === 'ready' && group && !isIncoming(dmById(group)) && !state.reconnecting && (older || !cacheFor(group).loaded);
+    const historyBusy = state.mode === 'ready' && group && !isIncoming(dmById(group)) && !state.reconnecting && (older || state.chatOpening === group || (active && !cacheFor(group).loaded));
     $('gate-progress').hidden = !gateBusy; $('gate').setAttribute('aria-busy', String(gateBusy));
     $('list-loading').hidden = !listBusy; $('conversation-list').setAttribute('aria-busy', String(listBusy));
     $('history-loading').hidden = !historyBusy; $('messages').setAttribute('aria-busy', String(!!historyBusy));
-    $('history-loading-text').textContent = older ? 'Loading earlier messages…' : 'Loading messages…';
+    $('history-loading-text').textContent = older ? 'Loading earlier messages…' : group && cacheFor(group).loaded ? 'Refreshing messages…' : 'Loading messages…';
     $('load-older').disabled = !!older;
     let message = state.pendingInvite ? (state.pendingInvite.action === 'accept' ? 'Accepting invite…' : 'Ignoring invite…') : gateBusy ? (state.mode === 'opening' ? 'Opening your messages…' : state.mode === 'locked' ? 'Unlocking Messenger…' : 'Creating your address…') : listBusy ? 'Loading conversations…' : historyBusy ? $('history-loading-text').textContent : state.lastActivity || '';
     if ($('activity-announcement').textContent !== message) $('activity-announcement').textContent = message;
@@ -313,7 +313,7 @@
     finally { if (state.olderPending === marker) state.olderPending = null; renderActivity(); }
     cache.messages = mergeMessages(cache.messages, data.messages || []);
     if (older || !cache.loaded) cache.cursor = data.next_cursor || null;
-    cache.loaded = true; reconcile(group);
+    cache.loaded = true; if (state.chatOpening === group) state.chatOpening = null; reconcile(group);
     if (group === state.group) renderMessages({older});
   }
   function reconcile(group) {
@@ -396,7 +396,7 @@
     $('send').disabled = disabled || isBusy() || !$('draft').value.trim();
   }
   function markSeen() {
-    if (document.hidden || !state.group || state.mode !== 'ready') return;
+    if (document.hidden || !state.group || state.mode !== 'ready' || !cacheFor(state.group).loaded) return;
     const scroll = $('message-scroll'); if (!nearBottom(scroll.scrollTop, scroll.scrollHeight, scroll.clientHeight)) return;
     const last = cacheFor(state.group).messages.at(-1), record = readRecord(state.group);
     if (last && record.seen !== last.message_id) { record.seen = last.message_id; persist(state.group); renderList(); }
@@ -404,6 +404,8 @@
   function renderMessages({older = false} = {}) {
     if (!state.group || state.mode !== 'ready') return;
     const group = state.group, cache = cacheFor(group), record = readRecord(group), list = $('messages'), scroll = $('message-scroll');
+    // The last-message preview is for the list, never a complete thread window.
+    if (!cache.loaded) { list.replaceChildren(); state.nodes.clear(); $('history-empty').hidden = true; $('load-older').hidden = true; renderActivity(); return; }
     const oldTop = scroll.scrollTop, oldHeight = scroll.scrollHeight, bottom = !older && nearBottom(oldTop, oldHeight, scroll.clientHeight), oldCount = state.nodes.size;
     const anchor = [...list.children].find(n => n.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top);
     const anchorTop = anchor?.getBoundingClientRect().top;
@@ -462,7 +464,7 @@
   function openChat(group) {
     if (state.group === group) { closeSheet(); return; }
     cancel(); if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
-    state.group = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
+    state.group = group; state.chatOpening = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
     $('chat-error').textContent = ''; $('composer-error').textContent = ''; $('new-messages').hidden = true;
     $('draft').value = readRecord(group).draft; $('no-selection').hidden = true; $('chat').hidden = false;
     $('workspace').classList.add('has-chat'); renderHeader(); renderList(); renderMessages(); resizeDraft(); updateComposer(); armGuard();
@@ -470,7 +472,7 @@
   }
   function leaveChat() {
     if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
-    state.group = null; $('chat').hidden = true; $('no-selection').hidden = false;
+    state.group = null; state.chatOpening = null; $('chat').hidden = true; $('no-selection').hidden = false;
     $('workspace').classList.remove('has-chat'); $('draft').value = ''; state.nodes.clear(); $('messages').replaceChildren();
     renderList(); updateComposer();
   }

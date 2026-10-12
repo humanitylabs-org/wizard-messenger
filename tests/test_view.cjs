@@ -170,6 +170,31 @@ async function fixture({respond, saved=new Map(), hash='', standalone=false, hid
   return {context,document,elements,calls,timers,saved,history,windowEvents,flush,get pushes(){return pushes;},e:id=>elements.get(id),async poll(){const timer=[...timers.values()].find(t=>t.ms===3000);assert.ok(timer,'poll scheduled');timer.fn();await flush();}};
 }
 
+test('DOM fixture: last-message preview never masquerades as loaded thread history',async()=>{
+  let release;const history=new Promise(r=>release=r);
+  const incoming={message_id:'b'.repeat(64),text:'Earlier QA message',direction:'received',author:peerHex,created_at:1700000000};
+  const outgoing={message_id:'c'.repeat(64),text:'pong',direction:'sent',author:ownHex,created_at:1700000010};
+  const f=await fixture({respond:(url,opts,base)=>{
+    if(url.includes('/messages?limit=1')&&!url.includes('limit=100'))return {messages:[outgoing],next_cursor:null};
+    if(url.includes('/messages?limit=100'))return history;return base(url,opts);
+  }});
+  assert.match(f.e('conversation-list').textContent,/pong/);
+  f.e('conversation-list').children[0].fire('click');await f.flush();
+  assert.equal(f.e('history-loading').hidden,false);
+  assert.equal(f.e('messages').textContent,'','a one-message list preview is not a complete history window');
+  assert.equal(f.e('history-empty').hidden,true);
+  release({messages:[incoming,outgoing],next_cursor:null});await f.flush();
+  assert.match(f.e('messages').textContent,/Earlier QA message/);assert.match(f.e('messages').textContent,/pong/);assert.equal(f.e('history-loading').hidden,true);
+});
+test('DOM fixture: reopening known history labels its explicit refresh without blanking saved rows',async()=>{
+  let release,hold=false;const history=new Promise(r=>release=r);
+  const msg={message_id:'b'.repeat(64),text:'Known full history',direction:'received',author:peerHex,created_at:1700000000};
+  const f=await fixture({respond:(url,opts,base)=>url.includes('/messages?limit=100')?(hold?history:{messages:[msg],next_cursor:null}):base(url,opts)});
+  f.e('conversation-list').children[0].fire('click');await f.flush();f.e('chat-back').fire('click');await f.flush();hold=true;
+  f.e('conversation-list').children[0].fire('click');await f.flush();
+  assert.match(f.e('messages').textContent,/Known full history/);assert.equal(f.e('history-loading').hidden,false);assert.match(f.e('history-loading-text').textContent,/Refreshing/);
+  release({messages:[msg],next_cursor:null});await f.flush();assert.equal(f.e('history-loading').hidden,true);
+});
 test('DOM fixture: opening and initial list fetch show honest activity; polling stays quiet',async()=>{
   let releaseSession,releaseList;const session=new Promise(r=>releaseSession=r),list=new Promise(r=>releaseList=r);
   const f=await fixture({respond:(url,opts,base)=>url==='api/view/session'?session:url==='api/dms'?list:base(url,opts)});
