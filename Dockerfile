@@ -30,7 +30,10 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
     mkdir -p /app /data /run/messenger && chown 1000:1000 /data /run/messenger
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
-COPY engine.py server.py /app/
+COPY engine.py server.py web.py messenger_addresses.py API-contract.json /app/
+COPY vendor /app/vendor
+COPY static /app/static
+COPY favicon.svg icon.png /app/static/
 COPY engine/entrypoint.sh /app/entrypoint.sh
 COPY engine/upstream-license.txt engine/provenance.json engine/Cargo.lock /app/upstream/
 RUN chmod 755 /app/entrypoint.sh
@@ -39,5 +42,5 @@ USER 1000:1000
 WORKDIR /app
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"
-LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee"
+LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.1.0" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee"
 ENTRYPOINT ["/app/entrypoint.sh"]

@@ -1,0 +1,29 @@
+services:
+  messenger:
+    image: wizard-messenger:0.1.0-candidate
+    pull_policy: never
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    memswap_limit: 1g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      - /run/messenger:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
+    environment:
+      MESSENGER_API_TOKEN: ${MESSENGER_API_TOKEN:?Messenger capability required}
+      MESSENGER_ALLOWED_ORIGINS: ${MESSENGER_ALLOWED_ORIGINS:?Wizard HTTPS origin required}
+      MESSENGER_PUBLIC_PATH: ${MESSENGER_PUBLIC_PATH:-/apps/messenger/}
+      MESSENGER_COOKIE_SECURE: "1"
+      MESSENGER_DATA: /data
+      MESSENGER_PORT: "8765"
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    x-runtipi:
+      is_main: true
+      internal_port: 8765
+x-runtipi:
+  schema_version: 2
+  overrides: []

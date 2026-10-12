@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<defs>
+ <linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#17121F"/><stop offset="1" stop-color="#0C0A12"/></linearGradient>
+ <radialGradient id="top" cx=".5" cy="-.08" r=".75"><stop offset="0" stop-color="#00D6CF" stop-opacity=".40"/><stop offset=".8" stop-color="#00D6CF" stop-opacity="0"/></radialGradient>
+ <radialGradient id="bot" cx=".5" cy="1.2" r=".6"><stop offset="0" stop-color="#00D6CF" stop-opacity=".26"/><stop offset="1" stop-color="#00D6CF" stop-opacity="0"/></radialGradient>
+ <radialGradient id="bloom" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#00D6CF" stop-opacity=".42"/><stop offset="1" stop-color="#00D6CF" stop-opacity="0"/></radialGradient>
+ <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity=".07"/><stop offset=".38" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>
+ <linearGradient id="lit" x1=".4" y1="0" x2=".6" y2="1"><stop offset="0" stop-color="#94EEEB"/><stop offset=".46" stop-color="#00D6CF"/><stop offset="1" stop-color="#05AEAF"/></linearGradient>
+ <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="22"/></filter>
+ <filter id="lift" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity=".35"/></filter>
+ <clipPath id="sq"><rect width="512" height="512" rx="164"/></clipPath>
+</defs>
+<g clip-path="url(#sq)">
+ <rect width="512" height="512" fill="url(#base)"/>
+ <rect width="512" height="512" fill="url(#top)"/>
+ <rect width="512" height="512" fill="url(#bot)"/>
+ <circle cx="256" cy="256" r="160" fill="url(#bloom)" filter="url(#soft)"/>
+ <g transform="translate(76.8 76.8) scale(0.7)" filter="url(#lift)"><path d="M173 103H339C384 103 422 140 422 186V265C422 311 384 348 339 348H239C207 382 157 403 104 409C120 392 131 369 137 339C109 326 90 297 90 265V186C90 140 128 103 173 103ZM191 310H325L279 176C273 160 265 146 248 137C245 136 243 138 244 139C253 150 252 160 245 176Z" fill="url(#lit)" fill-rule="nonzero"/></g>
+ <rect width="512" height="512" fill="url(#sheen)"/>
+</g>
+<rect x="2" y="2" width="508" height="508" rx="162" fill="none" stroke="#00D6CF" stroke-opacity=".38" stroke-width="4"/>
+</svg>
