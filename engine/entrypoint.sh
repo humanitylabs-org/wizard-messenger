@@ -6,8 +6,8 @@ umask 077
 # the unprivileged app user with an empty capability set. Never stay root.
 if [ "$(id -u)" = 0 ]; then
   owner="$(stat -c %u:%g /data)"
-  [ "$owner" = 1000:1000 ] || chown 1000:1000 /data
-  chmod 700 /data
+  # chmod while root still owns it (no CAP_FOWNER), then hand it over.
+  if [ "$owner" != 1000:1000 ]; then chmod 700 /data; chown 1000:1000 /data; fi
   exec setpriv --reuid=1000 --regid=1000 --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- "$0" "$@"
 fi
 # No host bus/keychain socket is used. Unlock is an authenticated API action.
