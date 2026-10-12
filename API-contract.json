@@ -1,0 +1,34 @@
+{
+  "version": "messenger-api-v1",
+  "port": 8765,
+  "auth": {"type": "bearer", "header": "Authorization: Bearer <MESSENGER_API_TOKEN>", "all_api_and_mcp_routes_require_auth": true, "token_minimum_characters": 32, "browser_origins": "Exact comma-separated MESSENGER_ALLOWED_ORIGINS; no permissive CORS. Non-browser clients may omit Origin. Cross-site browser requests are rejected.", "secret_transport": "Setup passphrase and optional dedicated nsec travel only in authenticated JSON body, then private stdin/Unix socket. Require TLS termination or an authenticated local gateway. Never log/store either."},
+  "success": {"ok": true, "result": "route-specific object"},
+  "failure": {"ok": false, "error": {"code": "stable snake_case code", "message": "safe user-facing message"}},
+  "states": ["setup_required", "locked", "ready"],
+  "setup_semantics": "No identity is created automatically. A dedicated vault passphrase of at least 16 characters is needed to create/unlock. Keyring remains encrypted at rest. Restart always relocks. account_configured reports whether an identity exists; ready may have identity=null when a new vault has only been unlocked. The one messaging key is separate from Wizard root signing.",
+  "routes": [
+    {"method": "GET", "path": "/healthz", "auth": false, "result": {"ok": true, "service": "wizard-messenger"}},
+    {"method": "GET", "path": "/api/status", "result_fields": ["state", "engine", "mdk_version", "mdk_revision", "secret_store", "vault_provider", "requires_unlock_after_restart", "account_configured", "capabilities", "unsupported"]},
+    {"method": "GET", "path": "/api/setup", "result": "same as /api/status"},
+    {"method": "POST", "path": "/api/setup", "body": {"action": "create|unlock|import|lock", "vault_password": "dedicated passphrase, absent for lock", "display_name": "optional public display name, 1..160 UTF-8 bytes", "nsec": "dedicated messaging nsec, only for import (not integration-proved; do not expose in MVP UI)"}, "result": "status fields plus identity (public object or null)", "notes": "A repeated create reuses the existing identity and repairs its stable KeyPackage publication; it never creates a new key."},
+    {"method": "GET", "path": "/api/identity", "result": {"identity": {"account_id": "64-char hex", "npub": "upstream-generated npub", "display_name": "string", "dedicated_messaging_identity": true}}, "notes": "Locked returns HTTP 423; a newly unlocked vault without account returns identity:null."},
+    {"method": "GET", "path": "/api/contacts", "result": {"contacts": [{"pubkey": "original supplied lowercase npub or hex", "label": "local label"}]}},
+    {"method": "POST", "path": "/api/contacts", "body": {"pubkey": "npub or hex", "label": "1..160 UTF-8 bytes"}, "result": {"contact": "saved public metadata", "publication": "local_only"}},
+    {"method": "DELETE", "path": "/api/contacts/{pubkey}", "result": {"deleted": true}},
+    {"method": "GET", "path": "/api/invites", "result": {"invites": ["DmSummary"]}},
+    {"method": "POST", "path": "/api/invites/{group_id}/accept", "body": {}, "result": {"group_id": "hex", "action": "accept", "completed": true}},
+    {"method": "POST", "path": "/api/invites/{group_id}/decline", "body": {}, "result": {"group_id": "hex", "action": "decline", "completed": true}},
+    {"method": "GET", "path": "/api/dms", "result": {"dms": ["DmSummary"]}},
+    {"method": "POST", "path": "/api/dms", "body": {"pubkey": "peer npub or hex with a Marmot key package", "name": "optional local conversation name, defaults Direct message"}, "result": {"dm": "DmSummary", "invite_sent": "boolean", "reused": "true when an existing direct conversation is returned"}, "notes": "Reuses a known direct conversation for the exact peer instead of casually creating another MLS group. Otherwise creates a two-member group and encrypted welcome; recipient must accept."},
+    {"method": "GET", "path": "/api/dms/{group_id}/messages", "query": {"limit": "1..200, default 100", "before": "optional timestamp, paired with before_message_id", "before_message_id": "optional 64-character hex cursor id"}, "result": {"messages": ["TextMessage"], "next_cursor": "null or {before,before_message_id}"}},
+    {"method": "POST", "path": "/api/dms/{group_id}/messages", "body": {"text": "1..16384 UTF-8 bytes", "request_id": "optional but REQUIRED for UI retry safety: unique 16..128 alphanumeric, underscore or hyphen characters"}, "result": {"group_id": "hex", "message_ids": ["hex"], "published": "upstream publication count", "delivery": "published_not_receipt", "request_id": "echoed if supplied", "replayed": "true when a persisted accepted receipt is returned without another send"}, "notes": "Persist request_id with the draft before first submission. Reusing it with different content is HTTP 409 request_id_conflict. Intent without a receipt returns HTTP 409 send_outcome_unknown and does not send again; refresh canonical history. No invented peer read/delivery receipt."},
+    {"method": "POST", "path": "/api/dms/{group_id}/retry", "body": {"message_id": "optional known event id, never message text"}, "result_fields": ["group_id", "target_event_id", "retry_scope", "published", "message_ids", "maintenance_disposition"], "notes": "Upstream group_convergence retry republishes retained pending events, never fresh-encrypts/re-sends the plaintext body. The optional message_id is echoed for context; retry is group-scoped."},
+    {"method": "POST", "path": "/mcp", "body": "JSON-RPC 2.0", "tools": ["messenger_status", "messenger_public_identity"], "notes": "Read-only status/public identity only; no contacts, private keys, message bodies, send or arbitrary signer capability."}
+  ],
+  "models": {
+    "DmSummary": {"group_id": "upstream hex identifier", "name": "string", "pending_confirmation": "boolean", "welcomer_account_id": "public hex or null", "members": ["public membership identity objects only"]},
+    "TextMessage": {"message_id": "hex", "group_id": "hex", "author": "public hex", "author_name": "string", "text": "decrypted TEXT", "direction": "sent|received", "created_at": "MLS-authenticated inner event timestamp as exposed by upstream"}
+  },
+  "runtime": {"data_mount": "/data", "runtime_tmpfs": "/run/messenger", "uid_gid": "1000:1000", "read_only_root_supported": true, "host_sockets": false, "default_relays": ["wss://relay.eu.whitenoise.chat", "wss://relay.us.whitenoise.chat"], "test_only_loopback": "WN_ALLOW_LOOPBACK_RELAYS=1; never enable in production"},
+  "parent_owned": ["web/static views", "Wizard theme", "manifest", "app-manager packaging", "browser capability/session integration", "OS install QA"]
+}
