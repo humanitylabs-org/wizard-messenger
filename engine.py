@@ -303,7 +303,36 @@ class MarmotEngine:
         if len(members) != 2:
             raise EngineError('not_a_dm', 'Only two-member direct messages are supported', 409)
         # Only public identity fields; discard MLS cryptographic metadata.
-        return [{k:v for k,v in member.items() if k in ['account_id','member_id','npub','display_name','profile']} for member in members]
+        result=[{k:v for k,v in member.items() if k in ['account_id','member_id','npub','display_name','profile']} for member in members]
+        for member in result:
+            if not member.get('display_name'):
+                name=self._public_name(member.get('npub') or member.get('member_id') or member.get('account_id'))
+                if name: member['display_name']=name
+        return result
+
+    def _public_name(self, key):
+        """Best-effort public profile name from upstream's local user directory (cached)."""
+        if not isinstance(key,str) or not PUBLIC.fullmatch(key): return ''
+        cache=getattr(self,'_names',None)
+        if cache is None: cache=self._names={}
+        hit=cache.get(key)
+        if hit and hit[1]>time.monotonic(): return hit[0]
+        name=''
+        try:
+            found=self._execute({'Users':{'command':{'Show':{'pubkey':key}}}})
+            stack=[found]
+            while stack and not name:
+                item=stack.pop()
+                if isinstance(item,dict):
+                    for field in ['display_name','name']:
+                        value=item.get(field)
+                        if isinstance(value,str) and value.strip() and len(value.encode())<=160 and '\x00' not in value:
+                            name=value.strip(); break
+                    stack.extend(v for v in item.values() if isinstance(v,(dict,list)))
+                elif isinstance(item,list): stack.extend(item)
+        except EngineError: pass
+        cache[key]=(name,time.monotonic()+(300 if name else 30))
+        return name
 
     def dms(self):
         with self.mutex:
