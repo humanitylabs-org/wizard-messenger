@@ -14,7 +14,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 from typing import cast
-from engine import EngineError, MarmotEngine
+from engine import EngineError, MarmotEngine, vault_password
 from server import Handler, MessengerServer
 import messenger_addresses
 
@@ -70,8 +70,8 @@ class BrowserAuth:
             return self.sessions.get(hashlib.sha256(token.encode()).hexdigest())
     @staticmethod
     def _digest(password,salt):
-        if not isinstance(password,str) or not 16<=len(password)<=1024 or '\x00' in password or '\n' in password:
-            raise EngineError('vault_unlock_failed','That passphrase is not right',401)
+        try: vault_password(password)
+        except EngineError: raise EngineError('vault_unlock_failed','That passphrase is not right',401) from None
         return hashlib.scrypt(password.encode(),salt=bytes.fromhex(salt),n=16384,r=8,p=1,dklen=32).hex()
     def verify_password(self,password,rate_limit=False):
         with self.lock:
@@ -98,6 +98,8 @@ class ViewServer(MessengerServer):
         super().__init__(address,engine,token,origins)
         data=getattr(engine,'data',None)
         self.auth=BrowserAuth(Path(data)/'browser-auth.json' if data else None)
+        # One transaction for provider proof, engine transition and verifier issuance.
+        self.setup_lock=threading.Lock()
         self.public_path=os.environ.get('MESSENGER_PUBLIC_PATH','/')
         if not re.fullmatch(r'/(?:[a-zA-Z0-9_-]+/)*',self.public_path):
             raise ValueError('MESSENGER_PUBLIC_PATH must be an app path ending in /')
@@ -163,8 +165,9 @@ class ViewHandler(Handler):
             return 200,{'ok':True,'result':{'ticket':self.service.auth.ticket(bootstrap),'expires_in':7*24*3600 if bootstrap else 300}}
         if path=='/api/view/unlock' and method=='POST':
             self._origin(required=True); password=self._body().get('vault_password')
-            self.service.auth.verify_password(password,rate_limit=True)
-            status=self.service.engine.setup({'action':'unlock','vault_password':password})
+            with self.service.setup_lock:
+                self.service.auth.verify_password(password,rate_limit=True)
+                status=self.service.engine.setup({'action':'unlock','vault_password':password})
             token,session=self.service.auth.create(); self.pending_cookie=self._cookie(token)
             return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf'],'status':status}}
         if path=='/api/view/session':
@@ -192,19 +195,27 @@ class ViewHandler(Handler):
             self._authorize(); payload=self._body()
             if payload.get('action')=='import':
                 raise EngineError('unsupported_action','Use a new dedicated Messenger address in this release',400)
-            password=payload.get('vault_password')
-            before=self.service.engine.status()
-            if password and self.service.auth.credential:
-                self.service.auth.verify_password(password)
-            if password and not self.service.auth.credential and before.get('state')=='ready' and before.get('account_configured'):
-                raise EngineError('relock_required','Lock and unlock Messenger once to verify its passphrase',409)
-            try:
-                result=self.service.engine.setup(payload)
-            except EngineError:
-                if password and before.get('state')!='ready' and self.service.engine.status().get('state')=='ready':
+            action=payload.get('action'); password=payload.get('vault_password')
+            if action=='lock':
+                # Locking never proves or records a passphrase.
+                return 200,{'ok':True,'result':self.service.engine.setup({'action':'lock'})}
+            # Validate before any provider, account or verifier side effect.
+            vault_password(password)
+            with self.service.setup_lock:
+                if self.service.auth.credential:
+                    self.service.auth.verify_password(password)
+                before=self.service.engine.status().get('state')
+                try:
+                    result,proved=self.service.engine.setup_with_proof(payload)
+                except EngineError:
+                    # Serialized: a fresh transition to ready inside this lock was this password's unlock.
+                    if before!='ready' and self.service.engine.status().get('state')=='ready':
+                        self.service.auth.remember_password(password)
+                    raise
+                if proved:
                     self.service.auth.remember_password(password)
-                raise
-            if password: self.service.auth.remember_password(password)
+                elif not self.service.auth.credential:
+                    raise EngineError('relock_required','Lock and unlock Messenger once to confirm its passphrase',409)
             return 200,{'ok':True,'result':result}
         if path=='/api/identity' and method=='GET':
             self._authorize(); result=self.service.engine.identity()

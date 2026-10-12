@@ -41,6 +41,13 @@ def group_id(value):
         raise EngineError('invalid_group_id', 'Invalid group identifier', 400)
     return value
 
+def vault_password(value):
+    """The single passphrase rule shared by the vault and the browser verifier."""
+    if (not isinstance(value, str) or len(value) < 16 or len(value.encode('utf-8')) > 1024
+            or any(c in value for c in '\x00\r\n')):
+        raise EngineError('invalid_vault_password', 'Use a passphrase of at least 16 characters, on one line', 400)
+    return value
+
 class MarmotEngine:
     def __init__(self, data='/data', relays=None):
         self.data = Path(data)
@@ -138,8 +145,7 @@ class MarmotEngine:
         self.keyring_process = None
 
     def _unlock(self, password):
-        if not isinstance(password, str) or len(password) < 16 or len(password.encode()) > 1024 or '\x00' in password:
-            raise EngineError('invalid_vault_password', 'Use a dedicated vault passphrase of at least 16 characters', 400)
+        vault_password(password)
         self._stop_keyring()
         try:
             # Own the provider process. A failed first unlock must not leave a
@@ -165,13 +171,25 @@ class MarmotEngine:
                     break
                 time.sleep(.1)
             if not unlocked:
-                self._stop_keyring()
                 raise EngineError('vault_unlock_failed', 'The messaging vault remains locked', 423)
             self._launch()
             self.unlocked = True
+        except EngineError:
+            self._abort_start()
+            raise
         except (OSError, subprocess.TimeoutExpired):
-            self._stop_keyring()
+            self._abort_start()
             raise EngineError('vault_unavailable', 'The encrypted messaging vault is unavailable', 503) from None
+
+    def _abort_start(self):
+        """Every failed unlock/start leaves neither provider nor daemon running."""
+        self.unlocked = False
+        if self.daemon is not None and self.daemon.poll() is None:
+            self.daemon.terminate()
+            try: self.daemon.wait(timeout=10)
+            except subprocess.TimeoutExpired: self.daemon.kill(); self.daemon.wait()
+        self.daemon = None
+        self._stop_keyring()
 
     @staticmethod
     def _identity(account):
@@ -189,16 +207,23 @@ class MarmotEngine:
             return {'identity':self._identity(accounts[0])}
 
     def setup(self, payload):
+        return self.setup_with_proof(payload)[0]
+
+    def setup_with_proof(self, payload):
+        """Return (result, proved): proved is True only when THIS call's
+        passphrase is the one that just unlocked the encrypted provider."""
         with self.mutex:
             action = payload.get('action')
             if action == 'lock':
                 self.lock()
-                return self.status()
+                return self.status(), False
             if action not in ['unlock','create','import']:
                 raise EngineError('invalid_setup_action', 'Use unlock, create, import or lock', 400)
             name=text(payload['display_name'],'display name') if payload.get('display_name') is not None else None
+            proved = False
             if not self.unlocked or self.daemon is None or self.daemon.poll() is not None:
                 self._unlock(payload.get('vault_password'))
+                proved = True
             accounts = self._execute('Whoami')['accounts']
             if action == 'import' and accounts:
                 raise EngineError('identity_exists', 'A dedicated messaging identity already exists', 409)
@@ -230,7 +255,7 @@ class MarmotEngine:
                     # Persist only public presentation metadata after upstream
                     # publication; any failure leaves the identity intact.
                     self.marker.write_text(json.dumps(self.identity()['identity']))
-            return {**self.status(), **self.identity()}
+            return {**self.status(), **self.identity()}, proved
 
     def lock(self):
         with self.mutex:
@@ -311,7 +336,14 @@ class MarmotEngine:
     def invites(self):
         with self.mutex:
             self._require_ready()
-            return {'invites':[self._group(g,self._dm_members(g['group_id'])) for g in self._groups('Invites')['invites']]}
+            result=[]; unsupported=0
+            for g in self._groups('Invites')['invites']:
+                # A remote group invitation must not hide valid DM invitations.
+                try: result.append(self._group(g,self._dm_members(g['group_id'])))
+                except EngineError as e:
+                    if e.code!='not_a_dm': raise
+                    unsupported+=1
+            return {'invites':result,'unsupported_invites':unsupported}
 
     def invite_action(self, group, action):
         with self.mutex:

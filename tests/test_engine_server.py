@@ -123,4 +123,34 @@ class InputAndStorageTests(unittest.TestCase):
                 with self.assertRaises(EngineError): engine._rpc({'Execute':{}})
                 self.assertEqual(socket_mock.call_count,1)
 
+    def test_launch_failure_stops_unlocked_provider(self):
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as directory:
+            with patch.dict(os.environ,{'XDG_RUNTIME_DIR':directory+'/runtime'}): engine=MarmotEngine(directory+'/data',['wss://relay.invalid'])
+            provider=MagicMock(); provider.poll.return_value=None
+            owner=MagicMock(returncode=0); unlocked=MagicMock(returncode=0,stdout='(<false>,)')
+            with patch('engine.subprocess.Popen',return_value=provider), patch('engine.subprocess.run',side_effect=[owner,unlocked]), patch.object(engine,'_launch',side_effect=EngineError('engine_start_failed','x',503)):
+                with self.assertRaises(EngineError) as error: engine._unlock('dedicated-unit-test-passphrase')
+            self.assertEqual(error.exception.code,'engine_start_failed')
+            provider.terminate.assert_called_once()
+            self.assertIsNone(engine.keyring_process); self.assertFalse(engine.unlocked)
+
+    def test_unsupported_group_invite_does_not_hide_dm_invites(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as directory:
+            with patch.dict(os.environ,{'XDG_RUNTIME_DIR':directory+'/runtime'}): engine=MarmotEngine(directory+'/data',['wss://relay.invalid'])
+            invites={'invites':[{'group_id':'a'*32},{'group_id':'b'*32}]}
+            def members(group):
+                if group=='a'*32: raise EngineError('not_a_dm','group',409)
+                return [{'npub':'x'},{'npub':'y'}]
+            with patch.object(engine,'_require_ready'),patch.object(engine,'_groups',return_value=invites),patch.object(engine,'_dm_members',side_effect=members):
+                result=engine.invites()
+            self.assertEqual([i['group_id'] for i in result['invites']],['b'*32])
+            self.assertEqual(result['unsupported_invites'],1)
+
+    def test_vault_password_rule_is_shared_and_rejects_multiline(self):
+        from engine import vault_password
+        for bad in ['short','x'*15,'line-one-passphrase\nline-two','with-carriage-return\rxx','nul-byte-passphrase\x00x','é'*600]:
+            with self.assertRaises(EngineError): vault_password(bad)
+        self.assertEqual(vault_password('a-valid-unit-passphrase'),'a-valid-unit-passphrase')
+
 if __name__=='__main__': unittest.main()

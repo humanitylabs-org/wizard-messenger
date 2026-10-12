@@ -17,8 +17,17 @@ KEY='1'*64
 
 class FakeEngine:
     relays=['wss://relay.example.com']
-    def status(self): return {'state':'setup_required'}
-    def setup(self,data): return {'state':'ready'}
+    def __init__(self): self.ready=False; self.calls=0; self.unlocks=0; self.delay=None
+    def status(self): return {'state':'ready' if self.ready else 'setup_required','account_configured':self.ready}
+    def setup(self,data): return self.setup_with_proof(data)[0]
+    def setup_with_proof(self,data):
+        self.calls+=1
+        if data.get('action')=='lock': self.ready=False; return self.status(),False
+        proved=False
+        if not self.ready:
+            if self.delay: self.delay()
+            self.ready=True; self.unlocks+=1; proved=True
+        return self.status(),proved
     def identity(self): return {'identity':{'account_id':KEY,'npub':addresses.npub_encode(KEY)}}
     def contacts(self): return {'contacts':[]}
     def lock(self): pass
@@ -74,7 +83,7 @@ class ViewBoundary(unittest.TestCase):
         cookie,csrf=self.session()
         self.assertEqual(self.request('POST','/api/setup',{}, {'Cookie':cookie,'Origin':ORIGIN})[0],403)
         self.assertEqual(self.request('POST','/api/setup',{}, {'Cookie':cookie,'X-Messenger-CSRF':csrf})[0],403)
-        self.assertEqual(self.request('POST','/api/setup',{}, {'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})[0],200)
+        self.assertEqual(self.request('POST','/api/setup',{'action':'lock'}, {'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})[0],200)
     def test_bad_bearer_does_not_fall_back_to_cookie(self):
         cookie,_=self.session()
         self.assertEqual(self.request('GET','/api/status',headers={'Cookie':cookie,'Authorization':'Bearer bad'})[0],401)
@@ -117,6 +126,27 @@ class ViewBoundary(unittest.TestCase):
         self.server.auth.remember_password(password)
         self.assertEqual(self.request('POST','/api/setup',{'action':'unlock','vault_password':'a-different-test-passphrase'},{'Authorization':'Bearer '+TOKEN})[0],401)
         self.server.auth.verify_password(password)
+    def test_lock_with_password_never_records_a_verifier(self):
+        s,_,_=self.request('POST','/api/setup',{'action':'lock','vault_password':'chosen-but-never-provider-proved'},{'Authorization':'Bearer '+TOKEN})
+        self.assertEqual(s,200); self.assertIsNone(self.server.auth.credential)
+        self.assertEqual(self.request('POST','/api/view/unlock',{'vault_password':'chosen-but-never-provider-proved'},{'Origin':ORIGIN})[0],401)
+    def test_invalid_password_is_rejected_before_any_engine_side_effect(self):
+        s,_,d=self.request('POST','/api/setup',{'action':'create','vault_password':'line-one-passphrase\nline-two'},{'Authorization':'Bearer '+TOKEN})
+        self.assertEqual(s,400); self.assertEqual(d['error']['code'],'invalid_vault_password')
+        self.assertEqual(self.server.engine.calls,0); self.assertIsNone(self.server.auth.credential)
+    def test_concurrent_initial_setup_records_only_the_proved_password(self):
+        gate=threading.Event(); started=threading.Event()
+        def delay(): started.set(); gate.wait(3)
+        self.server.engine.delay=delay
+        results={}
+        def setup(name,password):
+            results[name]=self.request('POST','/api/setup',{'action':'create','vault_password':password},{'Authorization':'Bearer '+TOKEN})[0]
+        a=threading.Thread(target=setup,args=('a','proved-first-passphrase-123')); a.start(); started.wait(3)
+        b=threading.Thread(target=setup,args=('b','unproved-second-passphrase')); b.start()
+        gate.set(); a.join(5); b.join(5)
+        self.assertEqual(results,{'a':200,'b':401}); self.assertEqual(self.server.engine.unlocks,1)
+        self.server.auth.verify_password('proved-first-passphrase-123')
+        with self.assertRaises(EngineError): self.server.auth.verify_password('unproved-second-passphrase')
 
 class PersistentBrowserAuth(unittest.TestCase):
     def test_long_bootstrap_ticket_cannot_open_a_configured_account(self):

@@ -72,7 +72,7 @@
         "display_name": "optional public display name, 1..160 UTF-8 bytes"
       },
       "result": "status fields plus identity (public object or null)",
-      "notes": "A repeated create reuses the existing identity and repairs its stable KeyPackage publication; it never creates a new key. Key import is disabled in the web runtime until separately verified."
+      "notes": "A repeated create reuses the existing identity and repairs its stable KeyPackage publication; it never creates a new key. Key import is disabled in the web runtime until separately verified. The passphrase is validated (16+ characters, one line, at most 1024 bytes) before any side effect. lock never proves or records a passphrase. The browser verifier is recorded only from a passphrase that just unlocked the encrypted provider, inside one serialized setup transaction."
     },
     {
       "method": "GET",
@@ -125,7 +125,8 @@
       "result": {
         "invites": [
           "DmSummary"
-        ]
+        ],
+        "unsupported_invites": "count of non-DM (group) invitations, omitted from the list"
       }
     },
     {
