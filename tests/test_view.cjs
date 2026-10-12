@@ -294,6 +294,10 @@ test('DOM fixture: normal later opening uses passphrase session bootstrap, not a
   const unlock=f.calls.find(c=>c.url==='api/view/unlock');assert.deepEqual(unlock.body,{vault_password:'fixture-bootstrap-passphrase'});assert.equal(unlock.opts.headers['X-Messenger-CSRF'],undefined);
   assert.equal(f.e('workspace').hidden,false);assert.equal(f.e('passphrase').value,'');assert.ok(![...f.saved.values()].join('').includes('fixture-bootstrap-passphrase'));
 });
+test('DOM fixture: a new account with no chats shows the empty state and Add contact',async()=>{
+  const f=await fixture({respond:(url,opts,base)=>url==='api/dms'?{dms:[]}:url==='api/invites'?{invites:[]}:base(url,opts)});
+  assert.equal(f.e('workspace').hidden,false);assert.match(f.e('conversation-list').textContent,/No conversations yet/);assert.match(f.e('conversation-list').textContent,/Add contact/);
+});
 test('DOM fixture: first open from the launcher without a setup link explains the next step',async()=>{
   const f=await fixture({respond:(url,opts,base)=>url==='api/view/session'?{httpError:401,code:'setup_link_required'}:base(url,opts)});
   assert.equal(f.e('gate-title').textContent,'Messenger');assert.match(f.e('gate-description').textContent,/setup link/);
