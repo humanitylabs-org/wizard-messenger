@@ -175,6 +175,45 @@ test('DOM fixture: silent cookie session uses only relative API and same-origin 
   for(const call of f.calls) {assert.match(call.url,/^api\//);assert.equal(call.opts.credentials,'same-origin');assert.equal(call.opts.headers.Authorization,undefined);}
   assert.equal(f.pushes,0,'framed boot must not push joint history');
 });
+test('DOM fixture: parking during bootstrap never strands Opening or repeats the one-use exchange',async()=>{
+  let release; const session = new Promise(resolve=>{ release=resolve; });
+  const f=await fixture({hash:'#ticket=fixture-parked-ticket',respond:(url,opts,base)=>{
+    if(url==='api/view/session' && opts.method==='POST') return session;
+    if(url==='api/status')return {state:'setup_required'}; return base(url,opts);
+  }});
+  f.document.hidden=true; for(const fn of f.document.listeners.visibilitychange||[])fn();
+  release({authenticated:true,csrf_token:'fixture-parked-csrf'}); await f.flush();
+  f.document.hidden=false; for(const fn of f.document.listeners.visibilitychange||[])fn(); await f.flush();
+  assert.equal(f.e('setup-form').hidden,false);assert.equal(f.e('setup-submit').textContent,'Create address');
+  assert.equal(f.calls.filter(c=>c.url==='api/view/session'&&c.opts.method==='POST').length,1);
+});
+test('DOM fixture: waking while bootstrap is pending keeps the one-use request alive',async()=>{
+  let release; const session = new Promise(resolve=>{ release=resolve; });
+  const f=await fixture({hash:'#ticket=fixture-pending-ticket',respond:(url,opts,base)=>{
+    if(url==='api/view/session' && opts.method==='POST') return session;
+    if(url==='api/status')return {state:'setup_required'}; return base(url,opts);
+  }});
+  for(const hidden of [true,false]){f.document.hidden=hidden;for(const fn of f.document.listeners.visibilitychange||[])fn();}
+  release({authenticated:true,csrf_token:'fixture-pending-csrf'});await f.flush();
+  assert.equal(f.e('setup-form').hidden,false);assert.equal(f.calls[0].opts.signal.aborted,false);
+  assert.equal(f.calls.filter(c=>c.url==='api/view/session').length,1);
+});
+test('DOM fixture: a consumed setup link recovers only via an existing cookie session',async()=>{
+  const f=await fixture({hash:'#ticket=fixture-consumed-ticket',respond:(url,opts,base)=>{
+    if(url==='api/view/session'&&opts.method==='POST')return {httpError:401,code:'invalid_view_ticket'};
+    if(url==='api/status')return {state:'setup_required'};return base(url,opts);
+  }});
+  assert.equal(f.e('setup-form').hidden,false);
+  assert.deepEqual(f.calls.filter(c=>c.url==='api/view/session').map(c=>c.opts.method),['POST','GET']);
+});
+test('DOM fixture: a consumed setup link without a cookie grants no account setup',async()=>{
+  const f=await fixture({hash:'#ticket=fixture-consumed-ticket',respond:(url,opts,base)=>{
+    if(url==='api/view/session')return {httpError:401,code:opts.method==='POST'?'invalid_view_ticket':'setup_link_required'};
+    return base(url,opts);
+  }});
+  assert.equal(f.e('setup-form').hidden,true);assert.match(f.e('gate-description').textContent,/setup link/);
+  assert.equal(f.calls.some(c=>c.url==='api/setup'),false);
+});
 test('DOM fixture: one-use ticket is removed and exchanged without token persistence',async()=>{
   const f=await fixture({hash:'#ticket=fixture-opaque-ticket'});
   assert.equal(f.context.location.hash,'');assert.equal(f.calls[0].opts.method,'POST');assert.deepEqual(f.calls[0].body,{ticket:'fixture-opaque-ticket'});

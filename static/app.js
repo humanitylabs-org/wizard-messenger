@@ -145,9 +145,9 @@
   }
   const isBusy = () => state.operation?.action === true;
   const act = work => run(work, true);
-  async function run(work, action = false) {
+  async function run(work, action = false, bootstrap = false) {
     cancel();
-    const op = {controller: new AbortController(), action}; state.operation = op;
+    const op = {controller: new AbortController(), action, bootstrap}; state.operation = op;
     try { return await work(op.controller.signal); }
     catch (error) {
       if (error.name !== 'AbortError' && state.operation === op) {
@@ -180,7 +180,7 @@
       try { code = (await response.json()).error?.code || code; } catch { /* A gateway 401 may not be JSON. */ }
       signal?.throwIfAborted();
       // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
-      if (['vault_unlock_failed', 'invalid_vault_password'].includes(code)) throw new APIError(code, 401);
+      if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code)) throw new APIError(code, 401);
       const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
@@ -677,7 +677,15 @@
       finally { $('contact-submit').disabled = false; }
     });
   };
-  document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); else if (state.authenticated) run(snapshot); });
+  document.addEventListener('visibilitychange', () => {
+    // Wizard preloads linked views on a parked desk. A one-use session exchange
+    // must finish even while parked: aborting it can consume the ticket while
+    // stranding this document on Opening. Resume ordinary reads on return.
+    if (state.operation?.bootstrap) return;
+    if (document.hidden) cancel();
+    else if (state.authenticated) run(snapshot);
+    else if (state.mode === 'opening') boot();
+  });
   addEventListener('pagehide', cancel);
   function viewport() {
     const height = window.visualViewport?.height || window.innerHeight;
@@ -696,14 +704,22 @@
     await run(async signal => {
       try {
         const ticket = launchTicket; launchTicket = null;
-        const session = await api('api/view/session', ticket ? {method: 'POST', body: {ticket}, signal, session: true} : {signal, session: true});
+        let session;
+        try {
+          session = await api('api/view/session', ticket ? {method: 'POST', body: {ticket}, signal, session: true} : {signal, session: true});
+        } catch (error) {
+          if (error.code !== 'invalid_view_ticket') throw error;
+          // The bound preview may already have redeemed this link. Only its
+          // existing HttpOnly session can recover; the ticket is never replayed.
+          session = await api('api/view/session', {session: true});
+        }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
       } catch (error) {
         if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
         disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
-    });
+    }, false, true);
   }
   $('reconnect').onclick = boot;
   boot();
