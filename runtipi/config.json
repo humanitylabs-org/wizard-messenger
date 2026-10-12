@@ -5,22 +5,46 @@
   "available": true,
   "short_desc": "Encrypted text conversations with your peers, inside Wizard.",
   "author": "Humanity Labs",
-  "port": 8765,
-  "categories": ["communication"],
+  "port": 9245,
+  "categories": [
+    "communication"
+  ],
   "description": "Private two-person messaging with dedicated contact addresses and local encrypted history. Runs in its own isolated container with a documented API and customizable Wizard-themed view. This is a local candidate; repository/image publication remains pending. Initial setup creates a separate Messenger identity; after a restart, unlock with your passphrase. Groups, media, calls and phone push follow later.",
   "tipi_version": 1,
   "version": "0.1.0",
   "source": "https://github.com/humanitylabs-org/wizard-messenger",
   "exposable": false,
   "no_gui": false,
-  "supported_architectures": ["amd64", "arm64"],
+  "supported_architectures": [
+    "amd64",
+    "arm64"
+  ],
   "dynamic_config": true,
   "min_tipi_version": "4.8.0",
   "uid": 1000,
   "gid": 1000,
   "form_fields": [
-    {"type":"password","label":"Integration capability","env_variable":"MESSENGER_API_TOKEN","required":true,"hint":"Your Wizard generates this application-only capability. Use at least 32 characters; it is never pasted into the Messenger screen."},
-    {"type":"url","label":"Wizard web address","env_variable":"MESSENGER_ALLOWED_ORIGINS","required":true,"hint":"Your Wizard fills its own private HTTPS address, without a trailing slash. Browser writes are restricted to this exact origin."},
-    {"type":"text","label":"App path","env_variable":"MESSENGER_PUBLIC_PATH","required":false,"default":"/apps/messenger/","hint":"The standard Wizard app path. Keep the trailing slash."}
+    {
+      "type": "password",
+      "label": "Integration capability",
+      "env_variable": "MESSENGER_API_TOKEN",
+      "required": true,
+      "hint": "Your Wizard generates this application-only capability. Use at least 32 characters; it is never pasted into the Messenger screen."
+    },
+    {
+      "type": "url",
+      "label": "Wizard web address",
+      "env_variable": "MESSENGER_ALLOWED_ORIGINS",
+      "required": true,
+      "hint": "Your Wizard fills its own private HTTPS address, without a trailing slash. Browser writes are restricted to this exact origin."
+    },
+    {
+      "type": "text",
+      "label": "App path",
+      "env_variable": "MESSENGER_PUBLIC_PATH",
+      "required": false,
+      "default": "/apps/messenger/",
+      "hint": "The standard Wizard app path. Keep the trailing slash."
+    }
   ]
 }
