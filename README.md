@@ -2,6 +2,10 @@
 
 Encrypted text conversations with peers, inside Wizard OS. Each installation runs its own isolated container, documented HTTP API, minimal MCP and editable web view. Marmot MDK supplies the messaging engine; Wizard supplies the interface and app integration.
 
+## Private beta
+
+Version 0.1.2-beta.1 uses private GitHub release image archives for arm64/amd64. Follow [PRIVATE-BETA.md](PRIVATE-BETA.md) for exact installation, route configuration, first-run setup and restart checks. No package-registry login is needed beyond private repository read access.
+
 ## Candidate scope
 
 Dedicated Messenger account and public npub/nprofile contact code; contact resolution and explicit invitations; two-person encrypted text; local encrypted history; honest publication/failure state and request/event-ID retry; responsive Wizard view and drafts; explicit passphrase unlock after restart. The protected Wizard ID is separate. Groups, media, calls, private-key import, phone push and agent message access are later work.
@@ -21,9 +25,9 @@ Dedicated Messenger account and public npub/nprofile contact code; contact resol
 
 Sustained Rust/image builds and integration campaigns run on the remote build machine. The default Dockerfile builds the exact MDK source/lock. Audited matching binary carriers can be supplied using `MDK_BUILD_IMAGE`; distinguish this route from a clean default build.
 
-This local candidate uses `wizard-messenger:0.1.1-candidate` with `pull_policy: never`; load the architecture-matching image before installation. The Runtipi definition maps only its own `/data`, limits resources and exposes internal port 8765. The installer supplies a generated 32+ character application capability, exact private HTTPS origin and public app path through normal app-secret/configuration mechanisms. Keep secrets out of output and URL queries.
+This private beta uses `wizard-messenger:0.1.2-beta.1` with `pull_policy: never`; load the architecture-matching image before installation. The Runtipi definition maps only its own `/data`, limits resources and exposes internal port 8765. The installer supplies a generated 32+ character application capability, exact private HTTPS origin and public app path through normal app-secret/configuration mechanisms. Keep secrets out of output and URL queries.
 
-Repository/image destinations are reserved release metadata. This candidate is not publicly indexed or published. Publication and another person's installation require their corresponding authorization.
+This package is distributed through a private GitHub prerelease and is not publicly indexed. Recipient contact and access grants are not performed by the package.
 
 ## Privacy and limits
 

@@ -2,12 +2,12 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.1.1
+version: 0.1.2-beta.1
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
 license: MIT
-# Candidate release destination: not published or discoverable until authorized.
+# Private beta source; no public catalog listing.
 source: https://github.com/humanitylabs-org/wizard-messenger
 icon: icon.png
 runtime:
@@ -41,4 +41,4 @@ This candidate implements text DMs with dedicated messaging identities, invitati
 
 The API requires a generated capability for trusted integrations; browser access uses a scoped HttpOnly session, exact-origin checks and CSRF. Initial owner setup uses a single-use install capability. The MCP exposes public identity/status only; agent message access, groups, attachments and phone push are later work.
 
-Publication, index discovery and installation on someone else's Wizard remain separate release actions. The release source/image destinations above are reserved candidate metadata, not claims that they already exist.
+Private beta installation and versioned image-download instructions are in PRIVATE-BETA.md. Public indexing and recipient contact are not included.

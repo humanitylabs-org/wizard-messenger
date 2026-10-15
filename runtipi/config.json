@@ -9,9 +9,9 @@
   "categories": [
     "communication"
   ],
-  "description": "Private two-person messaging with dedicated contact addresses and local encrypted history. Runs in its own isolated container with a documented API and customizable Wizard-themed view. This is a local candidate; repository/image publication remains pending. Initial setup creates a separate Messenger identity; after a restart, unlock with your passphrase. Groups, media, calls and phone push follow later.",
-  "tipi_version": 1,
-  "version": "0.1.1",
+  "description": "Private two-person messaging with dedicated contact addresses and local encrypted history. Runs in its own isolated container with a documented API and customizable Wizard-themed view. Private beta: architecture-matching image archives are supplied in the private GitHub release. Initial setup creates a separate Messenger identity; after a restart, unlock with your passphrase. Groups, media, calls and phone push follow later.",
+  "tipi_version": 2,
+  "version": "0.1.2-beta.1",
   "source": "https://github.com/humanitylabs-org/wizard-messenger",
   "exposable": false,
   "no_gui": false,

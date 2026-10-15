@@ -164,6 +164,9 @@ async function fixture({respond, saved=new Map(), hash='', standalone=false, hid
       return {status:200,ok:true,json:async()=>({ok:true,result:value})};
     }};
   context.window=context;context.top=standalone?context:{};
+  // Domain fixtures only; real shared-client/host acceptance runs on Thales.
+  context.sharedHolds=new Set();
+  context.WizardApp={ready:()=>Promise.resolve({hosted:!standalone}),back:{register:handler=>{context.sharedBack=handler;return ()=>{};}},update:{hold:reason=>{const token={reason};context.sharedHolds.add(token);return {release:()=>context.sharedHolds.delete(token)};}}};
   vm.runInNewContext(source,context,{filename:'static/app.js'});
   const flush=async()=>{for(let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve));};
   await flush();
@@ -307,12 +310,14 @@ test('DOM fixture: setup match/minimum, CSRF body-only secret and first address 
     if(url==='api/setup'){created=true;return {state:'ready',identity:own};}return base(url,opts);
   }});
   assert.equal(f.e('setup-submit').disabled,true);
+  f.e('display-name').value='Fixture owner';f.e('display-name').fire('input');assert.equal(f.context.sharedHolds.size,1);
   f.e('passphrase').value='fixture-passphrase-123';f.e('confirm-passphrase').value='wrong';f.e('confirm-passphrase').fire('input');assert.equal(f.e('setup-submit').disabled,true);
   f.e('confirm-passphrase').value=f.e('passphrase').value;f.e('confirm-passphrase').fire('input');assert.equal(f.e('setup-submit').disabled,false);
   f.e('setup-form').fire('submit');await f.flush();
   const post=f.calls.find(c=>c.url==='api/setup');assert.equal(post.body.action,'create');assert.equal(post.opts.headers['X-Messenger-CSRF'],'fixture-csrf');
   assert.equal(f.e('passphrase').value,'');assert.equal(f.e('confirm-passphrase').value,'');assert.equal(f.e('sheet-title').textContent,'My address');
   assert.ok(![...f.saved.values()].join('').includes('fixture-passphrase-123'));
+  assert.equal(f.context.sharedHolds.size,0,'saved setup name is not unsaved work');
 });
 test('DOM fixture: wrong unlock passphrase stays locked, clears field and keeps focus',async()=>{
   const f=await fixture({respond:(url,opts,base)=>url==='api/status'?{state:'locked'}:url==='api/setup'?{httpError:423,code:'vault_unlock_failed'}:base(url,opts)});
@@ -341,6 +346,15 @@ test('DOM fixture: nested Back closes sheet then chat then returns false; still 
   f.e('my-address').fire('click');assert.equal(f.context.__wizardCloseOverlay(),true);assert.equal(f.e('sheet-layer').hidden,true);assert.equal(f.e('chat').hidden,false);
   assert.equal(f.context.__wizardCloseOverlay(),true);assert.equal(f.e('chat').hidden,true);assert.equal(f.e('workspace').hidden,false);
   assert.equal(f.context.__wizardCloseOverlay(),false);assert.equal(f.pushes,0);
+});
+test('shared domain Back is honest and holds drafts beyond nested close',async()=>{
+  const f=await fixture();assert.equal(f.context.sharedBack.canGoBack(),false);
+  f.e('conversation-list').children[0].fire('click');await f.flush();assert.equal(f.context.sharedBack.canGoBack(),true);
+  f.e('draft').value='Fixture held draft';f.e('draft').fire('input');assert.equal(f.context.sharedHolds.size,1);
+  assert.equal(f.context.sharedBack.back(),true);assert.equal(f.context.sharedBack.canGoBack(),false);assert.equal(f.context.sharedHolds.size,1);
+  f.e('conversation-list').children[0].fire('click');await f.flush();f.e('draft').value='';f.e('draft').fire('input');assert.equal(f.context.sharedHolds.size,0);
+  f.e('add-contact').fire('click');f.e('contact-address').value=peer.npub;f.e('contact-address').fire('input');
+  f.context.sharedBack.back();assert.equal(f.context.sharedHolds.size,1,'closing a contact sheet is not discarding its draft');
 });
 test('DOM fixture: outgoing invite stays Invite sent despite relay-published text',async()=>{
   let messages=[];

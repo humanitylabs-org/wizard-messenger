@@ -1,6 +1,6 @@
 services:
   messenger:
-    image: wizard-messenger:0.1.1-candidate
+    image: wizard-messenger:0.1.2-beta.1
     pull_policy: never
     read_only: true
     cap_drop: [ALL]

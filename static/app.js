@@ -108,6 +108,9 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = logic;
   if (typeof document === 'undefined') return;
 
+  if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
+  window.WizardApp.ready({name: 'messenger', version: '0.1.2-beta.1'});
+
   const $ = id => document.getElementById(id);
   const state = {
     csrf: null, authenticated: false, sessionLocked: false, mode: 'opening', identity: null, contacts: [], dms: [], invites: [],
@@ -116,6 +119,14 @@
     initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null, chatOpening: null
   };
   const storagePrefix = () => 'wizard-messenger:v1:' + state.identity?.account_id + ':';
+  let updateHold = null;
+  function syncUpdateHold() {
+    const setupPending = ['locked', 'setup_required'].includes(state.mode) && ['display-name', 'passphrase', 'confirm-passphrase'].some(id => $(id).value);
+    const pending = state.operation?.action || [...state.records.values()].some(record => record.draft || record.attempts.some(a => ['sending', 'checking', 'failed'].includes(a.state))) ||
+      ['draft', 'contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
+    if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
+    else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
+  }
   function readRecord(group) {
     if (!state.records.has(group)) {
       let saved = {};
@@ -123,6 +134,7 @@
       const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null};
       for (const attempt of record.attempts) if (attempt.state === 'sending') attempt.state = 'checking';
       state.records.set(group, record);
+      syncUpdateHold();
     }
     return state.records.get(group);
   }
@@ -134,6 +146,7 @@
       if (localStorage.getItem(storagePrefix() + group) !== value) throw new Error('storage');
       state.storageError = false; return true;
     } catch { state.storageError = true; return false; }
+    finally { syncUpdateHold(); }
   }
   function cancel() {
     clearTimeout(state.timer); state.timer = null;
@@ -252,6 +265,7 @@
     if ($('activity-announcement').textContent !== message) $('activity-announcement').textContent = message;
   }
   function updateSetup() {
+    syncUpdateHold();
     const create = state.mode === 'setup_required', password = $('passphrase').value;
     const pending = isBusy() && ['locked', 'setup_required'].includes(state.mode);
     $('setup-submit').classList.toggle('pending', pending);
@@ -467,7 +481,7 @@
     state.group = group; state.chatOpening = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
     $('chat-error').textContent = ''; $('composer-error').textContent = ''; $('new-messages').hidden = true;
     $('draft').value = readRecord(group).draft; $('no-selection').hidden = true; $('chat').hidden = false;
-    $('workspace').classList.add('has-chat'); renderHeader(); renderList(); renderMessages(); resizeDraft(); updateComposer(); armGuard();
+    $('workspace').classList.add('has-chat'); renderHeader(); renderList(); renderMessages(); resizeDraft(); updateComposer();
     run(snapshot);
   }
   function leaveChat() {
@@ -484,7 +498,7 @@
     $('workspace').inert = true;
     if (kind === 'address') $('public-address').textContent = publicAddress(state.identity);
     else renderContacts();
-    $('sheet').focus(); armGuard(); schedule();
+    $('sheet').focus(); schedule();
   }
   function closeSheet() {
     if (!state.sheet) return;
@@ -566,8 +580,7 @@
     } catch { errorTarget.textContent = 'Copy is unavailable. Select the address and copy it.'; }
   }
 
-  // This is the exact same-origin frame hook read by Wizard's web/app.js.
-  // No framed root sentinel and no guessed postMessage/Back aliases.
+  // Domain-only Back: the shared client owns platform/root behavior.
   function backStep() {
     const next = backLayer(state);
     if (!next.handled) return false;
@@ -576,42 +589,8 @@
     schedule(); return true;
   }
   window.__wizardCloseOverlay = backStep;
-  const standalone = window.top === window;
-  let guardOn = false, ignorePop = false, exitUntil = 0, watcher = null;
-  function armWatcher() {
-    if (!standalone || watcher || !('CloseWatcher' in window) || Date.now() < exitUntil) return;
-    try {
-      watcher = new CloseWatcher();
-      watcher.onclose = () => {
-        watcher = null;
-        if (backStep()) { exitUntil = 0; armWatcher(); }
-        else {
-          warnRoot();
-          if (guardOn && history.state?.messengerGuard) { ignorePop = true; guardOn = false; history.back(); }
-        }
-      };
-    } catch { /* History supplies the browser floor. */ }
-  }
-  function armGuard(force = false) {
-    if (!standalone || Date.now() < exitUntil) return;
-    if (!guardOn && (force === true || navigator.userActivation?.isActive)) { history.pushState({messengerGuard: true}, ''); guardOn = true; }
-    armWatcher();
-  }
-  function warnRoot() {
-    exitUntil = Date.now() + 2000; $('back-warning').hidden = false;
-    watcher?.destroy(); watcher = null;
-    setTimeout(() => { $('back-warning').hidden = true; exitUntil = 0; armGuard(true); }, 2000);
-  }
-  if (standalone) {
-    addEventListener('popstate', () => {
-      guardOn = history.state?.messengerGuard === true;
-      if (ignorePop) { ignorePop = false; return; }
-      if (Date.now() < exitUntil) return;
-      if (backStep()) { history.pushState({messengerGuard: true}, ''); guardOn = true; armWatcher(); }
-      else warnRoot();
-    });
-    for (const type of ['pointerdown', 'pointerup', 'click']) addEventListener(type, armGuard, true);
-  }
+  window.WizardApp.back.register({canGoBack: () => !!(state.sheet || state.group), back: backStep});
+  for (const id of ['contact-address', 'contact-name', 'display-name']) $(id).addEventListener('input', syncUpdateHold);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && backStep()) { event.preventDefault(); event.stopPropagation(); }
     if (event.key === 'Tab' && state.sheet) {
