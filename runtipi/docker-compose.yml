@@ -45,6 +45,9 @@ services:
       unified-init: {condition: service_completed_successfully}
       matrix: {condition: service_healthy}
     networks: [matrix-lane, model-lane, relay-egress]
+    # Loopback-only host port for the Wizard gateway, as in 0.1.x.
+    ports:
+      - 127.0.0.1:${APP_PORT}:8765
     x-runtipi:
       is_main: true
       internal_port: 8765
