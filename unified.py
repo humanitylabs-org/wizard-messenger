@@ -279,12 +279,31 @@ class UnifiedInbox:
             fail('telegram_not_configured', 'Telegram not configured. Supply TELEGRAM_API_ID and TELEGRAM_API_HASH at installation.', 409)
         return http(self.bridge, '/_matrix/provision/v3' + path + '?' + urlencode({'user_id': self.owner}), method, body, self.keys()['provisioning'], 65)
 
+    # A Telegram login waits on the owner leaving the app to read a code, so the current
+    # step lives here (shape only, never typed values) and the view resumes it on return.
+    PENDING_LOGIN_SECONDS = 15 * 60
+
+    def pending_login(self):
+        pending = getattr(self, '_pending_login', None)
+        if not pending or time.time() - pending['at'] > self.PENDING_LOGIN_SECONDS:
+            self._pending_login = None
+            return None
+        return pending['step']
+
+    def remember_login(self, result):
+        step = result.get('step', result) if isinstance(result, dict) else {}
+        if isinstance(result, dict) and result.get('login_id') and step.get('type') in ('user_input', 'display_and_wait'):
+            self._pending_login = {'at': time.time(), 'step': result}
+        else:
+            self._pending_login = None
+        return result
+
     def telegram_status(self):
         if not self.telegram_configured():
             return {'state': 'not_configured', 'message': 'Telegram not configured', 'logins': [], 'flows': []}
         try:
             result = self.provision('/whoami')
-            return {'state': 'connected' if result.get('logins') else 'disconnected', 'message': 'Telegram', 'logins': result.get('logins', []), 'flows': [f for f in result.get('login_flows', []) if f['id'] in ('qr', 'phone')]}
+            return {'state': 'connected' if result.get('logins') else 'disconnected', 'message': 'Telegram', 'logins': result.get('logins', []), 'flows': [f for f in result.get('login_flows', []) if f['id'] in ('qr', 'phone')], 'pending_login': self.pending_login()}
         except EngineError as error:
             return {'state': 'unavailable', 'message': error.message, 'logins': [], 'flows': []}
 
@@ -466,7 +485,7 @@ class UnifiedInbox:
             flow = payload.get('flow')
             if flow not in ('qr', 'phone'): fail('invalid_flow', 'Choose QR or phone login')
             self.matrix_token()
-            return self.provision('/login/start/' + flow, 'POST', {})
+            return self.remember_login(self.provision('/login/start/' + flow, 'POST', {}))
         if suffix == ['telegram', 'step'] and method == 'POST':
             values = [payload.get(k) for k in ('login_id', 'step_id', 'type')]
             if not all(isinstance(v, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,160}', v) for v in values) or values[2] not in ('user_input', 'display_and_wait'):
@@ -474,8 +493,9 @@ class UnifiedInbox:
             fields = payload.get('fields', {})
             if not isinstance(fields, dict) or not all(isinstance(k, str) and isinstance(v, str) and len(v) <= 1024 for k, v in fields.items()):
                 fail('invalid_step', 'Invalid login input')
-            return self.provision('/login/step/' + '/'.join(values), 'POST', fields)
+            return self.remember_login(self.provision('/login/step/' + '/'.join(values), 'POST', fields))
         if suffix == ['telegram', 'disconnect'] and method == 'POST': return self.provision('/logout/all', 'POST', {})
         if suffix == ['telegram', 'cancel'] and method == 'POST':
+            self._pending_login = None
             return self.provision('/login/cancel/' + quote(text(payload.get('login_id'), 160), safe=''), 'POST', {})
         fail('not_found', 'No such unified inbox route', 404)

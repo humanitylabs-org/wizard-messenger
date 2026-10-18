@@ -74,6 +74,29 @@ class UnifiedTests(unittest.TestCase):
             self.assertEqual(err.exception.code, 'telegram_not_configured')
             request.assert_not_called()
 
+    def test_telegram_code_step_survives_leaving_the_app(self):
+        code_step = {'login_id': 'L1', 'type': 'user_input', 'step_id': 'fi.mau.telegram.code',
+                     'user_input': {'fields': [{'id': 'code', 'type': 'code', 'name': 'Code'}]}}
+        responses = {'/login/start/phone': {'login_id': 'L1', 'type': 'user_input', 'step_id': 'fi.mau.telegram.phone', 'user_input': {'fields': []}},
+                     '/login/step/L1/fi.mau.telegram.phone/user_input': code_step,
+                     '/whoami': {'logins': [], 'login_flows': [{'id': 'phone'}]}}
+        self.inbox.telegram_configured = lambda: True
+        self.inbox.matrix_token = lambda: 'x'
+        self.inbox.provision = lambda path, method='GET', body=None: responses[path]
+        self.inbox.dispatch('POST', '/api/unified/telegram/start', {'flow': 'phone'})
+        self.inbox.dispatch('POST', '/api/unified/telegram/step', {'login_id': 'L1', 'step_id': 'fi.mau.telegram.phone', 'type': 'user_input', 'fields': {'phone_number': '+15550000000'}})
+        status = self.inbox.dispatch('GET', '/api/unified/telegram/status', {})
+        self.assertEqual(status['pending_login'], code_step)
+        self.assertNotIn('+1555', json.dumps(status))
+        responses['/login/cancel/L1'] = {}
+        self.inbox.dispatch('POST', '/api/unified/telegram/cancel', {'login_id': 'L1'})
+        self.assertIsNone(self.inbox.dispatch('GET', '/api/unified/telegram/status', {})['pending_login'])
+
+    def test_pending_telegram_login_expires(self):
+        self.inbox.remember_login({'login_id': 'L2', 'type': 'user_input'})
+        self.inbox._pending_login['at'] -= self.inbox.PENDING_LOGIN_SECONDS + 1
+        self.assertIsNone(self.inbox.pending_login())
+
     def test_translation_failure_allows_explicit_original_only(self):
         self.inbox.store.update(self.a['person_id'], {'language': 'th'})
         preview = self.inbox.preview(self.a['person_id'], {'text': 'Hello'})

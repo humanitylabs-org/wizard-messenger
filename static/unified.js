@@ -21,7 +21,6 @@
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
   function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
   function closeOverlay() {
-    if (s.login) call('telegram/cancel', {login_id: s.login.login_id}).catch(() => {});
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); lastFocus?.focus(); hold();
   }
   function back() {
@@ -189,6 +188,7 @@
     const sheet = overlay('Connected accounts'); sheet.append(node('h3', '', 'Telegram'));
     try {
       const status = await call('telegram/status'); if (s.overlay !== 'Connected accounts') return;
+      if (status.pending_login) { localStorage.setItem(LOGIN_FLAG, '1'); return loginStep(status.pending_login, true); }
       sheet.append(node('p', 'helper', status.message + (status.state === 'disconnected' ? ' · Not connected' : '')));
       if (status.state === 'not_configured') sheet.append(node('p', 'helper', 'Add TELEGRAM_API_ID and TELEGRAM_API_HASH in the app’s installation settings. Your phone number and login code stay inside this private Messenger.'));
       for (const [flow, label] of [['qr','Connect with QR'],['phone','Connect with phone']]) { const b = button(label, () => action(async () => loginStep(await call('telegram/start', {flow}))), 'primary wide'); b.disabled = status.state === 'not_configured' || status.state === 'unavailable'; sheet.append(b); }
@@ -214,21 +214,45 @@
     };
     try { const st = await api('api/view/agent-access'); if (s.overlay === 'Connected accounts') paint(st); } catch (e) { error(e); }
   }
-  function loginStep(result) {
+  const LOGIN_FLAG = 'messenger-telegram-login';
+  async function resumeLogin() {
+    // The owner leaves the app to read the Telegram code; bring the waiting step back on return.
+    if (!s.ready || s.overlay || s.busy || !localStorage.getItem(LOGIN_FLAG)) return;
+    try {
+      const status = await call('telegram/status');
+      if (status.pending_login && !s.overlay) loginStep(status.pending_login, true);
+      else if (!status.pending_login) localStorage.removeItem(LOGIN_FLAG);
+    } catch { /* status is retried on the next return */ }
+  }
+  function loginStep(result, resumed = false) {
     // bridgev2 embeds the LoginStep fields alongside login_id.
     s.login = null; const sheet = overlay('Connect Telegram'); s.login = result;
-    const step = result.step || result; sheet.append(node('p', 'helper', step.instructions || 'Continue on Telegram'));
+    const step = result.step || result;
+    if (step.type === 'complete') localStorage.removeItem(LOGIN_FLAG); else localStorage.setItem(LOGIN_FLAG, '1');
+    if (resumed) sheet.append(node('p', 'helper', 'Picking up where you left off.'));
+    sheet.append(node('p', 'helper', step.instructions || 'Continue on Telegram'));
+    const problem = node('p', 'error'); problem.setAttribute('role', 'alert');
     const advance = fields => action(async () => {
-      const current = s.login;
-      const next = await call('telegram/step', {login_id: result.login_id, step_id: step.step_id, type: step.type, fields});
-      if (s.login === current) { s.login = null; loginStep(next); }
+      const current = s.login; problem.textContent = '';
+      try {
+        const next = await call('telegram/step', {login_id: result.login_id, step_id: step.step_id, type: step.type, fields});
+        if (s.login === current) loginStep(next);
+      } catch (e) { problem.textContent = e.message || 'Telegram did not accept that. Try again.'; }
     });
     if (step.type === 'user_input') {
       const form = node('form'); form.autocomplete = 'off'; const inputs = {};
       for (const field of step.user_input.fields) {
-        const label = node('label', '', field.name); const input = node('input'); input.type = /password/.test(field.type) ? 'password' : /phone/.test(field.type) ? 'tel' : 'text'; input.required = !field.optional; input.autocomplete = /password/.test(field.type) ? 'current-password' : /code/.test(field.type) ? 'one-time-code' : 'off'; label.append(input); form.append(label); inputs[field.id] = input;
+        const label = node('label', '', field.name); const input = node('input');
+        input.type = /password/.test(field.type) ? 'password' : /phone/.test(field.type) ? 'tel' : 'text';
+        if (/code/.test(field.type) || /code/i.test(field.id)) { input.inputMode = 'numeric'; input.autocomplete = 'one-time-code'; }
+        else input.autocomplete = /password/.test(field.type) ? 'current-password' : 'off';
+        if (field.description) label.append(node('span', 'helper', field.description));
+        input.required = !field.optional; label.append(input); form.append(label); inputs[field.id] = input;
       }
-      form.append(button('Continue', () => form.requestSubmit(), 'primary wide')); form.onsubmit = e => { e.preventDefault(); const fields = Object.fromEntries(Object.entries(inputs).map(([id, input]) => [id, input.value])); for (const input of Object.values(inputs)) input.value = ''; advance(fields); }; sheet.append(form);
+      form.append(problem, button('Continue', () => form.requestSubmit(), 'primary wide'));
+      form.onsubmit = e => { e.preventDefault(); const fields = Object.fromEntries(Object.entries(inputs).map(([id, input]) => [id, input.value])); advance(fields); };
+      sheet.append(form);
+      requestAnimationFrame(() => Object.values(inputs)[0]?.focus());
     } else if (step.type === 'display_and_wait') {
       const display = step.display_and_wait;
       if (display.type === 'qr' && window.qrcode) {
@@ -237,18 +261,24 @@
         const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
         for (let y=0;y<count;y++) for (let x=0;x<count;x++) if (qr.isDark(y,x)) ctx.fillRect((x+4)*scale,(y+4)*scale,scale,scale); sheet.append(canvas);
       } else sheet.append(node('p', 'u-preview', display.data || 'Waiting for Telegram approval'));
-      sheet.append(button('I scanned it · Continue', () => advance({}), 'primary wide'));
-    } else if (step.type === 'complete') { s.login = null; sheet.append(node('p', '', 'Telegram connected.'), button('Done', () => { closeOverlay(); refresh(); }, 'primary wide')); }
-    else sheet.append(node('p', 'error', 'This Telegram login step is not supported by this preview. Cancel and try the phone flow.'));
+      sheet.append(problem, button('I scanned it · Continue', () => advance({}), 'primary wide'));
+    } else if (step.type === 'complete') { s.login = null; sheet.append(node('p', '', 'Telegram connected. Your chats will appear under People and Groups shortly.'), button('Done', () => { closeOverlay(); refresh(); }, 'primary wide')); return; }
+    else sheet.append(node('p', 'error', 'This Telegram login step is not supported yet. Cancel and try again.'));
+    sheet.append(button('Cancel login', () => action(async () => {
+      localStorage.removeItem(LOGIN_FLAG);
+      await call('telegram/cancel', {login_id: result.login_id}).catch(() => {});
+      closeOverlay();
+    }), 'secondary wide'));
   }
   function switchTab(tab) { if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; s.epoch++; document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   async function refresh() {
     if (!s.ready || document.hidden || s.busy || s.overlay) return;
     try { const result = await call('sync', {}); if (!s.person && s.tab !== 'messenger') await renderList(true); else if (s.person && !s.overlay) { const id = s.person, epoch = s.epoch; const timeline = await call('people/' + id); const scroll = $('unified-inbox').querySelector('.u-timeline'); if (scroll && s.person === id && s.epoch === epoch && !s.overlay) paintMessages(scroll, timeline.messages); } if (result.error) error(new Error(result.error)); } catch (e) { error(e); }
   }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeLogin(); });
   window.MessengerUnified = {
     mount(options) { api = options.api; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => switchTab(el.dataset.tab); $('connected-accounts').onclick = accounts; },
-    authenticated() { if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false; switchTab('people'); refresh(); timer = setInterval(refresh, 15000); },
+    authenticated() { if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false; switchTab('people'); refresh(); timer = setInterval(refresh, 15000); resumeLogin(); },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person), back,
     signout() { clearInterval(timer); closeOverlay(); s.ready = false; s.epoch++; $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
