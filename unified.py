@@ -360,7 +360,7 @@ class UnifiedInbox:
         messages = self.store.messages(person_id)
         for message in messages:
             if not message['outgoing'] and not person['language']:
-                message.update(translated=None, translation_error=None)
+                message.update(translation_error=None)
             if not message['outgoing'] and person['language'] and not message['translated']:
                 translated, error = self.translator.translate(message['original'], 'en')
                 message.update(translated=None if error else translated, translation_error=error)
@@ -368,6 +368,20 @@ class UnifiedInbox:
                     db.execute('UPDATE message SET translated=?,translation_error=? WHERE id=?', (message['translated'], error, message['id']))
         gaps = [self.store.get('history_gap:' + i['address']) for i in person['identities']]
         return {'person': person, 'messages': messages, 'history_warning': next((g for g in gaps if g), None)}
+
+    def translate_message(self, message_id):
+        """Owner tapped Translate under one incoming message: one model call, cached."""
+        with self.store.db() as db:
+            row = db.execute('SELECT original, translated FROM message WHERE id=? AND outgoing=0', (message_id,)).fetchone()
+        if not row:
+            fail('not_found', 'That message is no longer here', 404)
+        if row['translated']:
+            return {'id': message_id, 'translated': row['translated'], 'error': None}
+        translated, error = self.translator.translate(row['original'], 'en')
+        if not error:
+            with self.store.db() as db:
+                db.execute('UPDATE message SET translated=?, translation_error=NULL WHERE id=?', (translated, message_id))
+        return {'id': message_id, 'translated': None if error else translated, 'error': error}
 
     def preview(self, person_id, payload):
         person = self.store.person(person_id)
@@ -443,6 +457,8 @@ class UnifiedInbox:
                 if action == 'unmerge': return self.store.unmerge(person_id, payload.get('identity_id'))
                 if action == 'preview': return self.preview(person_id, payload)
                 if action == 'send': return self.confirm(person_id, payload)
+        if len(suffix) == 3 and suffix[0] == 'messages' and suffix[2] == 'translate' and method == 'POST':
+            return self.translate_message(text(suffix[1], 300))
         if len(suffix) == 3 and suffix[0] == 'groups' and suffix[2] == 'labels' and method == 'POST':
             return self.store.labels(suffix[1], payload.get('labels'))
         if suffix == ['telegram', 'status'] and method == 'GET': return self.telegram_status()

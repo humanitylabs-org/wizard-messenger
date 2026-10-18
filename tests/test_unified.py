@@ -117,12 +117,35 @@ class UnifiedTests(unittest.TestCase):
             self.inbox.timeline(self.a['person_id'])
             self.assertEqual(request.call_count, 1)
 
-    def test_disabling_translation_displays_original_without_deleting_cache(self):
+    def test_without_auto_translate_cache_is_kept_for_the_tap_toggle(self):
+        # The view shows the original by default and uses the cache only when the owner taps Translate.
         self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10, 'Hello')
         message = self.inbox.timeline(self.a['person_id'])['messages'][0]
-        self.assertIsNone(message['translated'])
+        self.assertEqual(message['translated'], 'Hello')
+        self.assertIsNone(message['translation_error'])
         self.assertEqual(message['original'], 'สวัสดี')
         self.assertEqual(self.inbox.store.messages(self.a['person_id'])[0]['translated'], 'Hello')
+
+    def test_tap_translate_calls_model_once_and_only_for_incoming(self):
+        from unittest.mock import Mock
+        self.inbox.store.add_message('$in', self.a, 'alice', False, 'สวัสดีครับ', 11)
+        self.inbox.store.add_message('$out', self.a, 'me', True, 'Hi there', 12)
+        self.inbox.translator.translate = Mock(return_value=('Hello', None))
+        first = self.inbox.dispatch('POST', '/api/unified/messages/$in/translate', {})
+        second = self.inbox.dispatch('POST', '/api/unified/messages/$in/translate', {})
+        self.assertEqual((first['translated'], second['translated']), ('Hello', 'Hello'))
+        self.assertEqual(self.inbox.translator.translate.call_count, 1)
+        with self.assertRaises(Exception):
+            self.inbox.dispatch('POST', '/api/unified/messages/$out/translate', {})
+
+    def test_english_people_trigger_no_model_calls(self):
+        from unittest.mock import Mock
+        self.inbox.store.add_message('$en', self.a, 'alice', False, 'See you at 7', 13)
+        self.inbox.translator.translate = Mock(return_value=('x', None))
+        self.inbox.timeline(self.a['person_id'])
+        preview = self.inbox.preview(self.a['person_id'], {'text': 'Sounds good'})
+        self.assertEqual(preview['translated'], 'Sounds good')
+        self.inbox.translator.translate.assert_not_called()
 
     def test_tinfoil_missing_key_is_honest(self):
         with patch.dict(os.environ, {'TINFOIL_API_KEY': ''}):

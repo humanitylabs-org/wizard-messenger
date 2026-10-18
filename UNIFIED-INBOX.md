@@ -20,13 +20,19 @@ Continuwuity was considered first (the published v26.7.2 image exists), but its 
 - Configure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` at install, then recreate the stack so init re-renders config. The UI uses the bridgev2 provisioning API for QR and phone/code/password steps, cancel and logout. Only the one internal owner is permitted; provisioning secrets never enter the UI.
 - Internal owner creation is separate from the Marmot identity. The homeserver is not exposed to other Matrix clients or federation.
 
+## Agent access boundary
+
+The app's machine key (`MESSENGER_API_TOKEN`) is held by the Wizard host, so any agent on the box can find it. With that key alone an agent can read status and identity, mint the owner's view ticket, resolve a contact address and run passphrase-proved setup. Every message, contact, People/Groups, send, sync, translate or Telegram-login route answers `403 agent_access_off`.
+
+The owner can allow agent access for 1 hour or 24 hours from **Connected accounts → Agent access**; it turns itself off when the time ends, and only the passphrase-unlocked owner session (cookie + CSRF) can change it. Every machine-key request outside the open set is logged by route shape (`/api/unified/people/:id/send`, never ids or content) and the last 20 entries show in the same panel. This guards against accidental exfiltration; an agent with host root can still read app data or mint a view session deliberately, so the private-agent seal remains the policy boundary until Messenger and the agents run in separately administered containers.
+
 ## People, Groups, translation
 
 A SQLite person has a display name, language and optional preferred identity. Each contact auto-creates an identity/person. Merge moves identities and their histories; Separate creates another person without deleting messages. The default reply channel is the identity with the newest incoming message; an explicit preferred identity or visible channel selector overrides it.
 
 Telegram portal metadata determines person vs group; Matrix spaces are omitted. Groups have owner-assigned labels and filtering. Existing Marmot supports DMs only; this change does not invent Marmot group-chat support.
 
-Incoming messages show an English translation above the original when the person has a language set. Outgoing English is previewed server-side, bound to the selected identity, and sent only after confirmation. Both source and sent text are retained. Confirmation uses a stable Matrix transaction ID; retries cannot change the body/channel. Failed translations offer **Send English original instead**, never silently pretend to translate. Cached translations include model and language in their key.
+Translation stays out of the way by default. Chats with no language set show the original text, send immediately and make no model calls. An incoming message containing letters outside the Latin script (Thai, Cyrillic, CJK…) gets a small **Translate** link; tapping it makes one cached model call and toggles between the English and the original. Setting a person's optional **Auto-translate** language switches that chat to the reviewed mode: incoming English is shown above the original, and outgoing English is previewed server-side, bound to the selected identity, and sent only after confirmation. Both source and sent text are retained. Confirmation uses a stable Matrix transaction ID; retries cannot change the body/channel. Failed translations offer **Send English original instead**, never silently pretend to translate. Cached translations include model and language in their key.
 
 Only Tinfoil's `https://inference.tinfoil.sh/v1/chat/completions` is called. Configure `TINFOIL_API_KEY` and `TRANSLATION_MODEL`; default `gemma4-31b` was selected from the live `/v1/models` response and tested in both directions. The locally configured `glm-5-3-flash` name was absent from that public endpoint; no other provider was substituted. This is the requested OpenAI-compatible TLS route, **not proof of client-side enclave attestation**. Translation is assistive, not guaranteed correct: review the send preview.
 

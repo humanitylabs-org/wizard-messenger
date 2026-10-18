@@ -75,6 +75,34 @@ class ViewBoundary(unittest.TestCase):
         self.assertEqual(status, 200)
         unified.dispatch.assert_called_with('POST', '/api/unified/sync', {})
 
+    def test_machine_key_cannot_read_or_send_messages_without_owner_grant(self):
+        bearer={'Authorization':'Bearer '+TOKEN}
+        for method,path,body in [('GET','/api/dms',None),('GET','/api/contacts',None),('POST','/api/dms/abc/messages',{'text':'x'}),('GET','/api/unified/people',None),('POST','/api/unified/people/p1/send',{})]:
+            s,_,d=self.request(method,path,body,bearer)
+            self.assertEqual((path,s,d['error']['code']),(path,403,'agent_access_off'))
+        self.assertEqual(self.request('GET','/api/status',headers=bearer)[0],200)
+        self.assertEqual(self.request('POST','/api/view/ticket',{},bearer)[0],200)
+        log=self.server.agent_access.recent()
+        self.assertTrue(log and all(e['outcome']=='blocked' for e in log))
+        self.assertNotIn('abc',json.dumps(log))
+    def test_only_owner_session_can_grant_and_grant_expires_to_off(self):
+        bearer={'Authorization':'Bearer '+TOKEN}
+        self.assertEqual(self.request('POST','/api/view/agent-access',{'minutes':60},bearer)[0],403)
+        cookie,csrf=self.session()
+        self.assertEqual(self.request('POST','/api/view/agent-access',{'minutes':60},{'Cookie':cookie,'Origin':ORIGIN})[0],403)
+        self.assertEqual(self.request('POST','/api/view/agent-access',{'minutes':99999},{'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})[0],400)
+        s,_,d=self.request('POST','/api/view/agent-access',{'minutes':60},{'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})
+        self.assertEqual(s,200); self.assertTrue(d['result']['enabled'])
+        self.assertNotEqual(self.request('GET','/api/dms',headers=bearer)[0],403)
+        self.assertEqual(self.server.agent_access.recent()[0]['outcome'],'allowed')
+        self.server.agent_access.until=0
+        self.assertEqual(self.request('GET','/api/dms',headers=bearer)[0],403)
+        s,_,d=self.request('GET','/api/view/agent-access',headers={'Cookie':cookie})
+        self.assertEqual(s,200); self.assertFalse(d['result']['enabled'])
+    def test_owner_cookie_reads_are_not_gated_or_logged(self):
+        cookie,_=self.session()
+        self.assertNotEqual(self.request('GET','/api/dms',headers={'Cookie':cookie})[0],403)
+        self.assertEqual(self.server.agent_access.recent(),[])
     def test_static_contains_no_api_capability(self):
         s,h,b=self.request('GET','/')
         self.assertEqual(s,200); self.assertNotIn(TOKEN.encode(),b); self.assertNotIn('Set-Cookie',h)

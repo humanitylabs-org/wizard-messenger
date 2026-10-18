@@ -11,6 +11,9 @@
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
   let api, timer, lastFocus, updateHold;
+  // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
+  const foreignScript = t => /(?![\p{Script=Latin}])\p{L}/u.test(t || '');
+  const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
   const node = (tag, cls, content) => { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) el.textContent = content; return el; };
   const button = (label, fn, cls = 'secondary') => { const el = node('button', cls, label); el.type = 'button'; el.onclick = fn; return el; };
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
@@ -82,17 +85,33 @@
       draw();
     } catch (e) { error(e); }
   }
-  function paintMessages(scroll, messages) {
-    const signature = JSON.stringify(messages.map(m => [m.id, m.translated, m.translation_error]));
+  function paintMessages(scroll, messages, auto = false) {
+    const signature = JSON.stringify([auto, messages.map(m => [m.id, m.translated, m.translation_error, shown[m.id]])]);
     if (scroll.dataset.signature === signature) return;
     const follow = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 64;
     const top = scroll.scrollTop;
     scroll.replaceChildren(); scroll.dataset.signature = signature;
     for (const m of messages) {
       const bubble = node('article', 'u-message' + (m.outgoing ? ' outgoing' : ''));
-      bubble.append(node('p', '', m.translated || m.original));
-      if (m.translated && m.translated !== m.original) bubble.append(node('p', 'u-original', m.original));
-      if (m.translation_error) bubble.append(node('p', 'u-original error', m.translation_error));
+      if (auto || m.outgoing) {
+        bubble.append(node('p', '', m.translated || m.original));
+        if (m.translated && m.translated !== m.original) bubble.append(node('p', 'u-original', m.original));
+        if (m.translation_error) bubble.append(node('p', 'u-original error', m.translation_error));
+      } else {
+        const translated = shown[m.id] === 'translated' && m.translated;
+        bubble.append(node('p', '', translated ? m.translated : m.original));
+        if (foreignScript(m.original)) {
+          const toggle = button(translated ? 'Show original' : 'Translate', () => action(async () => {
+            if (!translated && !m.translated) {
+              const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {});
+              if (r.error) throw new Error(r.error);
+              m.translated = r.translated;
+            }
+            shown[m.id] = translated ? 'original' : 'translated'; paintMessages(scroll, messages, auto);
+          }), 'u-translate link');
+          bubble.append(toggle);
+        }
+      }
       const meta = node('footer'); meta.append(node('span', 'u-badge', m.network), node('time', '', new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}))); bubble.append(meta); scroll.append(bubble);
     }
     if (!messages.length) scroll.append(node('p', 'u-empty', 'No messages yet.'));
@@ -108,17 +127,26 @@
       root.querySelector('header').append(button('Edit', () => editPerson(p)));
       if (result.history_warning) root.append(node('p', 'helper', result.history_warning));
       const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log');
-      paintMessages(scroll, result.messages);
+      paintMessages(scroll, result.messages, !!p.language && p.language !== 'en');
       root.append(scroll);
       const form = node('form', 'u-composer');
       const channel = node('select'); channel.setAttribute('aria-label', 'Send using channel');
       for (const i of p.identities) { const opt = node('option', '', i.network + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
       channel.value = p.preferred_identity || p.identities[0].id;
       const draft = node('textarea'); draft.placeholder = 'Write in English…'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || ''; draft.oninput = () => { s.drafts[id] = draft.value; try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { error(new Error('Draft storage is unavailable. Keep this window open.')); } hold(); };
-      const send = button('Preview send', () => form.requestSubmit(), 'primary');
+      const reviewed = !!p.language && p.language !== 'en';
+      const send = button(reviewed ? 'Preview send' : 'Send', () => form.requestSubmit(), 'primary');
       form.append(channel, draft, send); form.onsubmit = e => { e.preventDefault(); if (!draft.value.trim()) return; action(async () => {
         const preview = await call('people/' + id + '/preview', {text: draft.value, identity_id: channel.value});
         if (s.person !== id) return;
+        if (!reviewed && !preview.error && preview.translated === preview.original) {
+          // Plain English chat: no review sheet, the preview is only the server's send receipt.
+          const receipt = await call('people/' + id + '/send', {preview_id: preview.id, send_original: false});
+          if (s.drafts[id] === preview.original) { s.drafts[id] = ''; sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); }
+          await openPerson(id);
+          if (receipt.state === 'queued') error(new Error('Queued in Messenger, not yet published. Use the Messenger tab to check or retry the existing event.'));
+          return;
+        }
         const sheet = overlay('Review before sending');
         sheet.append(node('p', 'helper', p.identities.find(i => i.id === preview.identity_id).network + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));
         if (preview.error) sheet.append(node('p', 'error', preview.error));
@@ -138,8 +166,8 @@
     const sheet = overlay('Person & channels'); const form = node('form');
     const name = node('input'); name.value = p.display_name; name.maxLength = 160;
     const nameLabel = node('label', '', 'Name'); nameLabel.append(name);
-    const lang = node('select'); for (const [value, label] of [['','No translation'],['th','Thai'],['en','English'],['ja','Japanese'],['zh','Chinese'],['es','Spanish'],['fr','French'],['de','German']]) { const o = node('option', '', label); o.value = value; lang.append(o); } lang.value = p.language;
-    const langLabel = node('label', '', 'Their language'); langLabel.append(lang);
+    const lang = node('select'); for (const [value, label] of [['','Off'],['th','Thai'],['en','English'],['ja','Japanese'],['zh','Chinese'],['es','Spanish'],['fr','French'],['de','German']]) { const o = node('option', '', label); o.value = value; lang.append(o); } lang.value = p.language;
+    const langLabel = node('label', '', 'Auto-translate (optional)'); langLabel.append(lang);
     const preferred = node('select'); const auto = node('option', '', 'Reply on their last-used channel'); auto.value = ''; preferred.append(auto);
     for (const i of p.identities) { const o = node('option', '', i.network + ' · ' + i.label); o.value = i.id; preferred.append(o); } preferred.value = p.preferred_identity || '';
     const preferredLabel = node('label', '', 'Default reply channel'); preferredLabel.append(preferred);
@@ -166,6 +194,25 @@
       for (const [flow, label] of [['qr','Connect with QR'],['phone','Connect with phone']]) { const b = button(label, () => action(async () => loginStep(await call('telegram/start', {flow}))), 'primary wide'); b.disabled = status.state === 'not_configured' || status.state === 'unavailable'; sheet.append(b); }
       if (status.logins?.length) sheet.append(button('Disconnect Telegram', () => action(async () => { await call('telegram/disconnect', {}); await accounts(); }), 'secondary wide'));
     } catch (e) { error(e); }
+    agentAccess(sheet);
+  }
+  async function agentAccess(sheet) {
+    const box = node('section', 'u-agent-access'); sheet.append(box);
+    const paint = st => {
+      box.replaceChildren(node('h3', '', 'Agent access'));
+      box.append(node('p', 'helper', st.enabled
+        ? 'Agents can read and send your messages until ' + new Date(st.until).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + '.'
+        : 'Off. Agents can see Messenger status only, never your messages.'));
+      const set = minutes => action(async () => paint(await api('api/view/agent-access', {method: 'POST', body: {minutes}})));
+      if (st.enabled) box.append(button('Turn off now', () => set(0), 'primary wide'));
+      else box.append(button('Allow for 1 hour', () => set(60), 'secondary wide'), button('Allow for 24 hours', () => set(1440), 'secondary wide'));
+      if (st.log.length) {
+        const list = node('ul', 'u-access-log');
+        for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', new Date(e.t).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' · ' + e.outcome + ' · ' + e.method + ' ' + e.route));
+        box.append(node('p', 'helper', 'Recent agent requests'), list);
+      }
+    };
+    try { const st = await api('api/view/agent-access'); if (s.overlay === 'Connected accounts') paint(st); } catch (e) { error(e); }
   }
   function loginStep(result) {
     // bridgev2 embeds the LoginStep fields alongside login_id.
