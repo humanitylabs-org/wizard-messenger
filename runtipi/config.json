@@ -9,9 +9,9 @@
   "categories": [
     "communication"
   ],
-  "description": "Private two-person messaging with dedicated contact addresses and local encrypted history. Runs in its own isolated container with a documented API and customizable Wizard-themed view. Private beta: architecture-matching image archives are supplied in the private GitHub release. Initial setup creates a separate Messenger identity; after a restart, unlock with your passphrase. Groups, media, calls and phone push follow later.",
+  "description": "Private unified inbox with People, Groups, Telegram and optional Tinfoil translation. Matrix is internal plumbing; existing encrypted Marmot DMs remain available. Unified history is stored locally as plaintext; Telegram cloud chats are not end-to-end encrypted.",
   "tipi_version": 2,
-  "version": "0.1.2-beta.1",
+  "version": "0.2.0-unified.1",
   "source": "https://github.com/humanitylabs-org/wizard-messenger",
   "exposable": false,
   "no_gui": false,
@@ -45,6 +45,31 @@
       "required": false,
       "default": "/apps/messenger/",
       "hint": "The standard Wizard app path. Keep the trailing slash."
+    },
+    {
+      "type": "text",
+      "label": "Telegram application API ID",
+      "env_variable": "TELEGRAM_API_ID",
+      "required": false
+    },
+    {
+      "type": "password",
+      "label": "Telegram application API hash",
+      "env_variable": "TELEGRAM_API_HASH",
+      "required": false
+    },
+    {
+      "type": "password",
+      "label": "Tinfoil translation API key",
+      "env_variable": "TINFOIL_API_KEY",
+      "required": false
+    },
+    {
+      "type": "text",
+      "label": "Tinfoil translation model",
+      "env_variable": "TRANSLATION_MODEL",
+      "required": false,
+      "default": "gemma4-31b"
     }
   ]
 }

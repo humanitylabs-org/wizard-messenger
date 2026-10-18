@@ -56,6 +56,25 @@ class ViewBoundary(unittest.TestCase):
         self.assertEqual(s,200)
         self.assertIn('HttpOnly',h['Set-Cookie']); self.assertIn('SameSite=Strict',h['Set-Cookie']); self.assertIn('Secure',h['Set-Cookie'])
         return h['Set-Cookie'].split(';')[0],d['result']['csrf_token']
+    def test_unified_routes_keep_owner_cookie_csrf_and_origin_boundary(self):
+        from unittest.mock import Mock
+        unified = Mock()
+        unified.dispatch.return_value = {'people': []}
+        self.server.unified = unified
+        status, _, _ = self.request('GET', '/api/unified/people')
+        self.assertEqual(status, 401)
+        unified.dispatch.assert_not_called()
+        cookie, csrf = self.session()
+        status, _, _ = self.request('POST', '/api/unified/people/id/merge', {'source_id': 'x'}, {'Cookie': cookie, 'Origin': ORIGIN})
+        self.assertEqual(status, 403)
+        unified.dispatch.assert_not_called()
+        status, _, body = self.request('GET', '/api/unified/people', headers={'Cookie': cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['result'], {'people': []})
+        status, _, _ = self.request('POST', '/api/unified/sync', {}, {'Cookie': cookie, 'Origin': ORIGIN, 'X-Messenger-CSRF': csrf})
+        self.assertEqual(status, 200)
+        unified.dispatch.assert_called_with('POST', '/api/unified/sync', {})
+
     def test_static_contains_no_api_capability(self):
         s,h,b=self.request('GET','/')
         self.assertEqual(s,200); self.assertNotIn(TOKEN.encode(),b); self.assertNotIn('Set-Cookie',h)

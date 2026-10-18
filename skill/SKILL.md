@@ -7,7 +7,9 @@ description: Use when opening Messenger or checking its account and connection s
 
 Messenger is an installed Wizard container app. Its view opens through its `view.url` from the app registry; its APIs and MCP stay behind the box's authenticated app route. Do not install it as a host daemon or create a separate ad-hoc web service.
 
-The first release is encrypted text DMs with dedicated Messenger accounts, public `npub`/`nprofile` contact codes and explicit invitations. The protected root Wizard ID is separate. Existing NIP-05 handles can be resolved when adding a contact if they point to a Marmot-enabled account.
+The unified preview additionally offers People, Groups and Telegram under the same authenticated owner UI; see UNIFIED-INBOX.md. Translation is reviewed before sending and uses only configured Tinfoil. Unified history is plaintext on the box; Telegram cloud chats are not end-to-end encrypted. Never drive an owner login, send, merge or disconnect without authorization.
+
+The original release is encrypted text DMs with dedicated Messenger accounts, public `npub`/`nprofile` contact codes and explicit invitations. The protected root Wizard ID is separate. Existing NIP-05 handles can be resolved when adding a contact if they point to a Marmot-enabled account.
 
 - Call `messenger_status` to inspect setup/locked/ready and connection capabilities.
 - Call `messenger_public_identity` only for the public address; never request a private key.

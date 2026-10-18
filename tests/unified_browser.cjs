@@ -1,0 +1,41 @@
+const {chromium} = require('playwright');
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+(async () => {
+  const browser = await chromium.launch({headless:true});
+  const page = await browser.newPage({viewport:{width:390,height:844}, deviceScaleFactor:1, colorScheme:'dark', ignoreHTTPSErrors:true});
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const base = process.env.PREVIEW_URL || 'https://localhost:19247/';
+  const evidence = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(evidence,{recursive:true});
+  await page.goto(base); await page.locator('#inbox-tabs').waitFor({state:'visible'});
+  await page.locator('.u-person').first().waitFor({state:'visible'});
+  await page.screenshot({path:evidence+'/people.png'});
+  await page.locator('.u-person').filter({hasText:'Mali · simulated portal'}).last().click();
+  await page.locator('.u-message').first().waitFor({state:'visible'});
+  assert.ok(await page.locator('.u-original').count()>0,'original beneath translation');
+  await page.screenshot({path:evidence+'/person-translation.png'});
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.locator('.u-overlay').waitFor({state:'visible'});
+  await page.goBack(); await page.locator('.u-overlay').waitFor({state:'hidden'});
+  assert.equal(await page.locator('.u-timeline').count(),1,'first physical Back only closes overlay');
+  await page.goBack(); await page.locator('.u-person').first().waitFor({state:'visible'});
+  assert.equal(await page.locator('.u-timeline').count(),0,'second Back leaves thread');
+  await page.goBack(); assert.ok(page.url().startsWith(base),'root Back cannot leave app');
+  await page.getByRole('button',{name:'Groups',exact:true}).click();
+  await page.locator('.u-person').first().waitFor({state:'visible'});
+  await page.getByText('Press back again to exit', {exact:true}).waitFor({state:'hidden',timeout:5000});
+  await page.screenshot({path:evidence+'/groups.png'});
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('button',{name:'Connect with phone'}).waitFor({state:'visible'});
+  await page.screenshot({path:evidence+'/connect-telegram.png'});
+  const phone = page.getByRole('button',{name:'Connect with phone'});
+  if (await phone.isEnabled()) {
+    await phone.click(); await page.getByLabel('Phone number',{exact:true}).waitFor({state:'visible'});
+    await page.screenshot({path:evidence+'/telegram-phone-flow.png'});
+  }
+  assert.deepEqual(errors,[]);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),'no horizontal overflow');
+  fs.writeFileSync(evidence+'/browser-proof.json',JSON.stringify({viewport:'390x844',dark:true,physicalBackOverlayThreadRoot:true,realSharedWizardApp:true,errors},null,2));
+  console.log(JSON.stringify({pass:true,evidence,screenshots:fs.readdirSync(evidence).filter(x=>x.endsWith('.png')),errors}));
+  await browser.close();
+})().catch(error=>{console.error(error);process.exit(1)});

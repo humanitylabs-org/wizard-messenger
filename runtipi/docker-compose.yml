@@ -1,17 +1,29 @@
 services:
+  unified-init:
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.1}
+    pull_policy: never
+    user: "0:0"
+    entrypoint: [python3, /app/unified_setup.py]
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    restart: "no"
   messenger:
-    image: wizard-messenger:0.1.2-beta.1
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.1}
     pull_policy: never
     read_only: true
     cap_drop: [ALL]
-    # Root only long enough to own Runtipi's root-created /data, then setpriv drops
-    # to uid 1000 with an empty capability set (engine/entrypoint.sh).
-    user: "0:0"
-    cap_add: [CHOWN, SETUID, SETGID]
+    user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 1g
-    memswap_limit: 1g
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
       - /run/messenger:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
@@ -22,11 +34,98 @@ services:
       MESSENGER_COOKIE_SECURE: "1"
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
+      UNIFIED_ENABLED: "1"
+      MATRIX_URL: http://matrix:8008
+      TELEGRAM_BRIDGE_URL: http://telegram:29317
+      TRANSLATION_URL: http://translation:8766
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-gemma4-31b}
     volumes:
       - ${APP_DATA_DIR}/data:/data
+    depends_on:
+      unified-init: {condition: service_completed_successfully}
+      matrix: {condition: service_healthy}
+    networks: [matrix-lane, model-lane, relay-egress]
     x-runtipi:
       is_main: true
       internal_port: 8765
+  matrix:
+    # Official Synapse v1.163.0 multi-architecture manifest.
+    image: ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    user: "1000:1000"
+    entrypoint: [python, -m, synapse.app.homeserver, --config-path, /data/homeserver.yaml]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000"]
+    mem_limit: 768m
+    pids_limit: 128
+    volumes:
+      - ${APP_DATA_DIR}/data/matrix:/data
+    depends_on:
+      unified-init: {condition: service_completed_successfully}
+    networks: [matrix-lane]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  telegram:
+    # Official bridgev2 Go rewrite v0.2610.0, not the legacy Python bridge.
+    image: dock.mau.dev/mautrix/telegram@sha256:ed3f3b39289fae425a875311d8875729271c24f88ba03209bd1bfbaf31e6c78f
+    user: "1000:1000"
+    entrypoint: [/bin/sh, -c]
+    command:
+      - 'if [ -f /data/configured ]; then exec /usr/bin/mautrix-telegram -c /data/config.yaml; else printf "%s\n" "Telegram not configured"; exec sleep infinity; fi'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000"]
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+      - ${APP_DATA_DIR}/data/telegram:/data
+    depends_on:
+      unified-init: {condition: service_completed_successfully}
+      matrix: {condition: service_healthy}
+    networks: [matrix-lane, telegram-egress]
+    healthcheck:
+      test: [CMD-SHELL, "test ! -f /data/configured || wget -q -O /dev/null http://127.0.0.1:29317/_matrix/mau/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  translation:
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.1}
+    pull_policy: never
+    entrypoint: [python3, /app/translation.py]
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+    environment:
+      TINFOIL_API_KEY: ${TINFOIL_API_KEY:-}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-gemma4-31b}
+    volumes:
+      - ${APP_DATA_DIR}/data/translation:/data:ro
+    depends_on:
+      unified-init: {condition: service_completed_successfully}
+    networks: [model-lane, model-egress]
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8766/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+networks:
+  matrix-lane: {internal: true}
+  model-lane: {internal: true}
+  telegram-egress: {}
+  model-egress: {}
+  # Existing Marmot relay traffic is preserved. Matrix has no egress network.
+  relay-egress: {}
 x-runtipi:
   schema_version: 2
   overrides: []

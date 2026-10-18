@@ -1,12 +1,16 @@
 # Wizard Messenger
 
+## Unified inbox preview
+
+The `feature/unified-inbox` branch adds private Matrix + Telegram plumbing, People, Groups and reviewed Tinfoil translation without replacing the existing Messenger UI. See [UNIFIED-INBOX.md](UNIFIED-INBOX.md) for installation, security boundaries, exact verification scope and known limitations. **Unified history is plaintext on the box; Telegram cloud chats are not end-to-end encrypted.** The sections below describe the retained Marmot/private-beta baseline.
+
 Encrypted text conversations with peers, inside Wizard OS. Each installation runs its own isolated container, documented HTTP API, minimal MCP and editable web view. Marmot MDK supplies the messaging engine; Wizard supplies the interface and app integration.
 
 ## Private beta
 
 Version 0.1.2-beta.1 uses private GitHub release image archives for arm64/amd64. Follow [PRIVATE-BETA.md](PRIVATE-BETA.md) for exact installation, route configuration, first-run setup and restart checks. No package-registry login is needed beyond private repository read access.
 
-## Candidate scope
+## Retained Marmot scope
 
 Dedicated Messenger account and public npub/nprofile contact code; contact resolution and explicit invitations; two-person encrypted text; local encrypted history; honest publication/failure state and request/event-ID retry; responsive Wizard view and drafts; explicit passphrase unlock after restart. The protected Wizard ID is separate. Groups, media, calls, private-key import, phone push and agent message access are later work.
 

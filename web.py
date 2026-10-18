@@ -17,6 +17,7 @@ from typing import cast
 from engine import EngineError, MarmotEngine, vault_password
 from server import Handler, MessengerServer
 import messenger_addresses
+from unified import UnifiedInbox
 
 class BrowserAuth:
     def __init__(self,path=None):
@@ -106,6 +107,14 @@ class ViewServer(MessengerServer):
         self.cookie_secure=os.environ.get('MESSENGER_COOKIE_SECURE','1')!='0'
         self.static_root=Path(__file__).parent/'static'
         self.RequestHandlerClass=ViewHandler
+        self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        if self.unified:
+            self.unified.start()
+
+    def server_close(self):
+        if getattr(self, 'unified', None):
+            self.unified.close()
+        super().server_close()
 
 class ViewHandler(Handler):
     @property
@@ -158,6 +167,12 @@ class ViewHandler(Handler):
     def _dispatch(self,method):
         self.pending_cookie=None
         path=urlsplit(self.path).path
+        if path.startswith('/api/unified/'):
+            self._authorize()
+            if self.service.unified is None:
+                raise EngineError('not_configured','Unified inbox is not enabled',503)
+            result = self.service.unified.dispatch(method,path,self._body() if method == 'POST' else {})
+            return 200, {'ok':True,'result':result}
         if path=='/api/view/ticket' and method=='POST':
             # Only a trusted API caller/proxy can mint an initial browser capability.
             super()._authorize(); payload=self._body()
@@ -230,7 +245,7 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         path=urlsplit(self.path).path
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:

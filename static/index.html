@@ -10,10 +10,15 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="app.css">
   <script src="/wizard-os-home/core/app-client.js" defer></script>
+  <link rel="stylesheet" href="unified.css">
+  <script src="qr.js" defer></script>
+  <script src="unified.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <main id="messenger" aria-label="Messenger">
+    <nav id="inbox-tabs" aria-label="Inbox sections" hidden><button data-tab="people">People</button><button data-tab="groups">Groups</button><button data-tab="messenger">Messenger</button><button id="connected-accounts" aria-label="Settings">⚙</button></nav>
+    <section id="unified-inbox" hidden></section>
     <section id="gate" class="gate" aria-labelledby="gate-title">
       <div class="setup-card">
         <h1 id="gate-title">Messenger</h1>

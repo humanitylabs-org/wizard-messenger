@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.1.2-beta.1'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.1'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -177,7 +177,7 @@
     }
   }
   class APIError extends Error {
-    constructor(code, status) { super(code); this.code = code; this.status = status; }
+    constructor(code, status, message) { super(message || code); this.code = code; this.status = status; }
   }
   async function api(path, {method = 'GET', body, signal, session = false} = {}) {
     if (!path.startsWith('api/')) throw new Error('invalid_route');
@@ -202,7 +202,7 @@
     }
     const envelope = await response.json();
     signal?.throwIfAborted();
-    if (!response.ok || envelope.ok !== true) throw new APIError(envelope.error?.code || 'request_failed', response.status);
+    if (!response.ok || envelope.ok !== true) throw new APIError(envelope.error?.code || 'request_failed', response.status, envelope.error?.message);
     return envelope.result;
   }
   function friendly(error) {
@@ -232,6 +232,7 @@
     $('no-selection').hidden = false;
   }
   function disconnect(unlockRequired = false) {
+    window.MessengerUnified?.signout();
     cancel(); eraseView(); state.csrf = null; state.authenticated = false;
     state.sessionLocked = unlockRequired; gate(unlockRequired ? 'locked' : 'reconnect');
   }
@@ -582,6 +583,7 @@
 
   // Domain-only Back: the shared client owns platform/root behavior.
   function backStep() {
+    if (window.MessengerUnified?.active()) return window.MessengerUnified.back();
     const next = backLayer(state);
     if (!next.handled) return false;
     cancel();
@@ -589,7 +591,7 @@
     schedule(); return true;
   }
   window.__wizardCloseOverlay = backStep;
-  window.WizardApp.back.register({canGoBack: () => !!(state.sheet || state.group), back: backStep});
+  window.WizardApp.back.register({canGoBack: () => window.MessengerUnified?.active() ? window.MessengerUnified.canGoBack() : !!(state.sheet || state.group), back: backStep});
   for (const id of ['contact-address', 'contact-name', 'display-name']) $(id).addEventListener('input', syncUpdateHold);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && backStep()) { event.preventDefault(); event.stopPropagation(); }
@@ -650,12 +652,12 @@
         if (state.sessionLocked) {
           const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
           if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-          state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
+          state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
         } else {
           await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
         }
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
-        await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
+        window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
       } catch (error) {
         $('passphrase').value = ''; $('confirm-passphrase').value = '';
         if (error.name !== 'AbortError') { state.setupFailed = creating; $('setup-error').textContent = friendly(error); $('passphrase').focus(); }
@@ -664,7 +666,7 @@
   };
   $('lock').onclick = () => {
     act(async signal => {
-      try { await api('api/setup', {method: 'POST', body: {action: 'lock'}, signal}); eraseView(); gate('locked'); }
+      try { await api('api/setup', {method: 'POST', body: {action: 'lock'}, signal}); window.MessengerUnified?.signout(); eraseView(); gate('locked'); }
       catch (error) { if (error.name !== 'AbortError') $('copy-error').textContent = friendly(error); }
     });
   };
@@ -739,13 +741,14 @@
           session = await api('api/view/session', {session: true});
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
+        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated(); await snapshot(signal);
       } catch (error) {
         if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
         disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
     }, false, true);
   }
+  window.MessengerUnified?.mount({api});
   $('reconnect').onclick = boot;
   boot();
 })();

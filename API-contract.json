@@ -306,6 +306,140 @@
       "method": "GET",
       "path": "/api/spec",
       "result": "this contract"
+    },
+    {
+      "method": "GET",
+      "path": "/api/unified/status",
+      "auth": true,
+      "result": "telegram state, Matrix error, Marmot state"
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/sync",
+      "auth": true,
+      "result": "ready|syncing|unavailable",
+      "body": {}
+    },
+    {
+      "method": "GET",
+      "path": "/api/unified/people",
+      "auth": true,
+      "result": "people with identities and language"
+    },
+    {
+      "method": "GET",
+      "path": "/api/unified/groups",
+      "auth": true,
+      "result": "groups with identities and labels"
+    },
+    {
+      "method": "GET",
+      "path": "/api/unified/people/{id}",
+      "auth": true,
+      "result": "person, messages (original/translated/network), history_warning"
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/people/{id}",
+      "auth": true,
+      "result": "updated person",
+      "body": {
+        "display_name": "optional name",
+        "language": "optional: empty|en|th|ja|zh|es|fr|de",
+        "preferred_identity": "optional identity ID or empty for last-used"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/people/{id}/merge",
+      "auth": true,
+      "result": "target person; history follows identities",
+      "body": {
+        "source_id": "person to merge into target"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/people/{id}/unmerge",
+      "auth": true,
+      "result": "new person",
+      "body": {
+        "identity_id": "identity to separate"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/people/{id}/preview",
+      "auth": true,
+      "result": "id, original, translated, error, identity_id, language; 15-minute confirmation",
+      "body": {
+        "text": "English draft",
+        "identity_id": "optional channel"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/people/{id}/send",
+      "auth": true,
+      "result": "state, event_id; stable idempotent transaction",
+      "body": {
+        "preview_id": "server preview ID",
+        "send_original": "explicit boolean"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/groups/{identity_id}/labels",
+      "auth": true,
+      "result": "labels",
+      "body": {
+        "labels": [
+          "Family"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/unified/telegram/status",
+      "auth": true,
+      "result": "state, message, logins, flows; not_configured is normal"
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/telegram/start",
+      "auth": true,
+      "result": "bridgev2 login_id and LoginStep (sensitive; never persist/log)",
+      "body": {
+        "flow": "qr|phone"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/telegram/step",
+      "auth": true,
+      "result": "next bridgev2 LoginStep",
+      "body": {
+        "login_id": "opaque",
+        "step_id": "bridge step",
+        "type": "user_input|display_and_wait",
+        "fields": "field ID/string map; secrets stay in request body"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/telegram/cancel",
+      "auth": true,
+      "result": "bridge cancellation receipt",
+      "body": {
+        "login_id": "opaque"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/telegram/disconnect",
+      "auth": true,
+      "result": "logs out all bridge sessions",
+      "body": {}
     }
   ],
   "models": {
@@ -342,5 +476,6 @@
   },
   "parent_owned": [
     "Wizard app-manager and private proxy deployment; view, session bridge and API now ship inside the same Messenger image"
-  ]
+  ],
+  "unified_privacy": "Matrix and Telegram history and translations are plaintext in app-local SQLite. Telegram cloud chats are not end-to-end encrypted. Text selected for translation is sent only to Tinfoil. Existing Marmot keyring/history is unchanged."
 }
