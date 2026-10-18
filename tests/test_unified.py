@@ -117,6 +117,13 @@ class UnifiedTests(unittest.TestCase):
             self.inbox.timeline(self.a['person_id'])
             self.assertEqual(request.call_count, 1)
 
+    def test_disabling_translation_displays_original_without_deleting_cache(self):
+        self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10, 'Hello')
+        message = self.inbox.timeline(self.a['person_id'])['messages'][0]
+        self.assertIsNone(message['translated'])
+        self.assertEqual(message['original'], 'สวัสดี')
+        self.assertEqual(self.inbox.store.messages(self.a['person_id'])[0]['translated'], 'Hello')
+
     def test_tinfoil_missing_key_is_honest(self):
         with patch.dict(os.environ, {'TINFOIL_API_KEY': ''}):
             result = translate('Hello', 'th')

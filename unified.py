@@ -248,6 +248,10 @@ class UnifiedInbox:
             fail('not_configured', 'Private messaging plumbing is not configured', 503)
 
     def matrix_token(self):
+        with self.lock:
+            return self._matrix_token()
+
+    def _matrix_token(self):
         token = self.store.get('matrix_token')
         if token:
             return token
@@ -355,6 +359,8 @@ class UnifiedInbox:
                     self.store.add_message('messenger:' + m['message_id'], identity, m.get('author', ''), m.get('direction') == 'sent', m.get('text', ''), int(stamp))
         messages = self.store.messages(person_id)
         for message in messages:
+            if not message['outgoing'] and not person['language']:
+                message.update(translated=None, translation_error=None)
             if not message['outgoing'] and person['language'] and not message['translated']:
                 translated, error = self.translator.translate(message['original'], 'en')
                 message.update(translated=None if error else translated, translation_error=error)
