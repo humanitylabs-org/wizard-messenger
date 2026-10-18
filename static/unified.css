@@ -83,7 +83,7 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-send:disabled { background: var(--raised); color: var(--ink-3); opacity: 1; }
 
 /* Sheets: always solid, never text over text */
-.u-overlay { position: absolute; inset: 0; z-index: 80; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; animation: sheet-in 140ms var(--ease); }
+.u-overlay { position: absolute; inset: 0; z-index: 80; background: rgba(0,0,0,.82); display: flex; align-items: flex-end; justify-content: center; animation: sheet-in 140ms var(--ease); }
 .u-sheet { background: var(--surface); color: var(--ink); border-radius: 20px 20px 0 0; padding: 8px 20px max(24px,env(safe-area-inset-bottom)); max-height: 92%; overflow: auto; width: 100%; max-width: 480px; animation: sheet-up 200ms var(--ease); }
 .u-sheet.tall { height: 92%; display: flex; flex-direction: column; }
 .u-sheet header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 -8px 6px 0; }
