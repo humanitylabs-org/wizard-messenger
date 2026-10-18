@@ -92,6 +92,7 @@
     scroll.replaceChildren(); scroll.dataset.signature = signature;
     for (const m of messages) {
       const bubble = node('article', 'u-message' + (m.outgoing ? ' outgoing' : ''));
+      if (m.kind === 'group' && !m.outgoing && m.sender) bubble.append(node('p', 'u-sender', m.sender.startsWith('@') ? m.sender.slice(1).split(':')[0] : m.sender));
       if (auto || m.outgoing) {
         bubble.append(node('p', '', m.translated || m.original));
         if (m.translated && m.translated !== m.original) bubble.append(node('p', 'u-original', m.original));

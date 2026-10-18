@@ -20,6 +20,10 @@ Continuwuity was considered first (the published v26.7.2 image exists), but its 
 - Configure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` at install, then recreate the stack so init re-renders config. The UI uses the bridgev2 provisioning API for QR and phone/code/password steps, cancel and logout. Only the one internal owner is permitted; provisioning secrets never enter the UI.
 - Internal owner creation is separate from the Marmot identity. The homeserver is not exposed to other Matrix clients or federation.
 
+## Telegram history
+
+On login the bridge creates rooms for the owner's 50 most recent Telegram chats and copies the last 50 messages of each (forward backfill, which stock Synapse supports). Chats beyond those 50 appear when they next get a message. Photos, video, voice, files, locations and stickers show as a short label plus any caption; group messages show the sender's name. Older history (backward backfill) needs Beeper's batch-send API and stays off.
+
 ## Agent access boundary
 
 The app's machine key (`MESSENGER_API_TOKEN`) is held by the Wizard host, so any agent on the box can find it. With that key alone an agent can read status and identity, mint the owner's view ticket, resolve a contact address and run passphrase-proved setup. Every message, contact, People/Groups, send, sync, translate or Telegram-login route answers `403 agent_access_off`.

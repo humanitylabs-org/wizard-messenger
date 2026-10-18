@@ -170,6 +170,28 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual(preview['translated'], 'Sounds good')
         self.inbox.translator.translate.assert_not_called()
 
+    def test_media_and_notices_become_readable_lines(self):
+        from unified import message_text
+        ev = lambda t, c: {'type': t, 'content': c}
+        self.assertEqual(message_text(ev('m.room.message', {'msgtype': 'm.text', 'body': 'hi'})), 'hi')
+        self.assertEqual(message_text(ev('m.room.message', {'msgtype': 'm.image', 'body': 'IMG_1.jpg', 'filename': 'IMG_1.jpg'})), '[Photo]')
+        self.assertEqual(message_text(ev('m.room.message', {'msgtype': 'm.image', 'body': 'look', 'filename': 'IMG_1.jpg'})), '[Photo] look')
+        self.assertEqual(message_text(ev('m.room.message', {'msgtype': 'm.file', 'body': 'deck.pdf'})), '[File] deck.pdf')
+        self.assertEqual(message_text(ev('m.room.message', {'msgtype': 'm.emote', 'body': 'waves'})), '* waves')
+        self.assertEqual(message_text(ev('m.sticker', {'body': '😀'})), '[Sticker] 😀')
+        self.assertIsNone(message_text(ev('m.room.message', {'msgtype': 'm.text', 'body': 'x', 'm.relates_to': {'rel_type': 'm.replace'}})))
+        self.assertIsNone(message_text(ev('m.reaction', {})))
+
+    def test_setup_turns_on_recent_history_for_fifty_chats(self):
+        import yaml
+        import unified_setup
+        with patch.dict('os.environ', {'TELEGRAM_API_ID': '12345', 'TELEGRAM_API_HASH': 'a' * 32}):
+            unified_setup.setup(self.tmp.name)
+        config = yaml.safe_load((Path(self.tmp.name) / 'telegram' / 'config.yaml').read_text())
+        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 50))
+        self.assertEqual(config['network']['sync']['login_sync_limit'], 50)
+        self.assertFalse(config['backfill']['queue']['enabled'])
+
     def test_tinfoil_missing_key_is_honest(self):
         with patch.dict(os.environ, {'TINFOIL_API_KEY': ''}):
             result = translate('Hello', 'th')

@@ -183,7 +183,7 @@ class PeopleStore:
     def messages(self, person_id):
         self.person(person_id)
         with self.db() as db:
-            return [dict(r) for r in db.execute('SELECT * FROM (SELECT m.*,i.network,i.label FROM message m JOIN identity i ON m.identity_id=i.id WHERE i.person_id=? ORDER BY m.timestamp DESC,m.id DESC LIMIT 2000) ORDER BY timestamp,id', (person_id,))]
+            return [dict(r) for r in db.execute('SELECT * FROM (SELECT m.*,i.network,i.label,i.kind FROM message m JOIN identity i ON m.identity_id=i.id WHERE i.person_id=? ORDER BY m.timestamp DESC,m.id DESC LIMIT 2000) ORDER BY timestamp,id', (person_id,))]
 
 
 class Translator:
@@ -209,6 +209,31 @@ class Translator:
         with self.store.db() as db:
             db.execute('INSERT OR REPLACE INTO translation VALUES (?,?)', (key, translated))
         return translated, None
+
+
+MEDIA_LABELS = {'m.image': 'Photo', 'm.video': 'Video', 'm.audio': 'Voice message', 'm.file': 'File', 'm.location': 'Location'}
+
+
+def message_text(event):
+    # Text, notices and emotes as written; media as a short label plus any caption. Edits and other events are skipped.
+    content = event.get('content') or {}
+    if content.get('m.relates_to', {}).get('rel_type') == 'm.replace':
+        return None
+    if event.get('type') == 'm.sticker':
+        return '[Sticker] ' + content.get('body', '') if content.get('body') else '[Sticker]'
+    if event.get('type') != 'm.room.message':
+        return None
+    kind, body = content.get('msgtype'), content.get('body', '')
+    if kind in ('m.text', 'm.notice'):
+        return body
+    if kind == 'm.emote':
+        return '* ' + body
+    if kind in MEDIA_LABELS:
+        caption = body if content.get('filename') and body != content.get('filename') else ''
+        if kind == 'm.file' and not caption:
+            caption = content.get('filename') or body
+        return '[' + MEDIA_LABELS[kind] + ']' + (' ' + caption if caption else '')
+    return None
 
 
 class UnifiedInbox:
@@ -338,12 +363,14 @@ class UnifiedInbox:
                     continue
                 kind = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
                 identity = self.store.identity('telegram', room, label, kind)
+                names = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member'}
                 for event in data.get('timeline', {}).get('events', []):
-                    if event.get('type') == 'm.room.message' and event.get('content', {}).get('msgtype') == 'm.text':
-                        content = event['content']
-                        if content.get('m.relates_to', {}).get('rel_type') == 'm.replace':
-                            continue
-                        self.store.add_message(event['event_id'], identity, event.get('sender', ''), event.get('sender') == self.owner, content.get('body', ''), event.get('origin_server_ts', 0))
+                    body = message_text(event)
+                    if body is None:
+                        continue
+                    sender = event.get('sender', '')
+                    # Groups show who wrote each message; the display name is what the bridge already set.
+                    self.store.add_message(event['event_id'], identity, names.get(sender) or sender, sender == self.owner, body, event.get('origin_server_ts', 0))
             self.store.put('sync_token', result['next_batch'])
             self.store.put('sync_error', '')
             return {'state': 'ready'}
