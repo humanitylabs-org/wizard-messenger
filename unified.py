@@ -104,6 +104,18 @@ class PeopleStore:
             db.execute('INSERT INTO identity VALUES (?,?,?,?,?,?,0)', (identity_id, person_id, network, address, label, kind))
             return dict(db.execute('SELECT * FROM identity WHERE id=?', (identity_id,)).fetchone())
 
+    def forget(self, network, address):
+        with self.db() as db:
+            row = db.execute('SELECT id,person_id FROM identity WHERE network=? AND address=?', (network, address)).fetchone()
+            if not row:
+                return False
+            db.execute('DELETE FROM message WHERE identity_id=?', (row[0],))
+            db.execute('DELETE FROM room_label WHERE identity_id=?', (row[0],))
+            db.execute('DELETE FROM identity WHERE id=?', (row[0],))
+            if not db.execute('SELECT 1 FROM identity WHERE person_id=?', (row[1],)).fetchone():
+                db.execute('DELETE FROM person WHERE id=?', (row[1],))
+            return True
+
     def person(self, person_id):
         with self.db() as db:
             row = db.execute('SELECT * FROM person WHERE id=?', (person_id,)).fetchone()
@@ -354,6 +366,9 @@ class UnifiedInbox:
                 # Never auto-join arbitrary invitations: bridge bot/ghost namespace only.
                 if any(e.get('type') == 'm.room.member' and e.get('state_key') == self.owner and e.get('sender', '').startswith(('@telegram_', '@telegrambot:')) for e in events):
                     self.mx('/join/' + quote(room, safe=''), 'POST', {})
+            for room in result.get('rooms', {}).get('leave', {}):
+                # A bridged chat that was removed (e.g. on disconnect) leaves no stale card behind.
+                self.store.forget('telegram', room)
             for room, data in result.get('rooms', {}).get('join', {}).items():
                 if data.get('timeline', {}).get('limited'):
                     self.store.put('history_gap:' + room, 'Earlier history may be incomplete')

@@ -65,6 +65,8 @@ def setup(root):
     config['appservice']['bot']['avatar'] = ''
     config['database'].update(type='sqlite3-fk-wal', uri='file:/data/telegram.db?_txlock=immediate', max_open_conns=1, max_idle_conns=1)
     config['bridge']['permissions'] = {'*': 'block', '@owner:messenger.internal': 'admin'}
+    # Disconnect clears the bridged copies (Telegram itself is untouched), so a reconnect rebuilds every chat with recent history.
+    config['bridge']['cleanup_on_logout'] = {'enabled': True, 'manual': {k: 'delete' for k in ('private', 'relayed', 'shared_no_users', 'shared_has_users')}, 'bad_credentials': {k: 'nothing' for k in ('private', 'relayed', 'shared_no_users', 'shared_has_users')}}
     config['matrix']['federate_rooms'] = False
     config['provisioning'].update(shared_secret=keys['provisioning'], allow_matrix_auth=False)
     config['double_puppet'].update(servers={}, secrets={})

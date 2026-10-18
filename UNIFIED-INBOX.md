@@ -26,7 +26,7 @@ The first tab is **Chats**: only conversations that have messages, newest first,
 
 ## Telegram history
 
-On login the bridge creates rooms for the owner's 50 most recent Telegram chats and copies the last 50 messages of each (forward backfill, which stock Synapse supports). Chats beyond those 50 appear when they next get a message. Photos, video, voice, files, locations and stickers show as a short label plus any caption; group messages show the sender's name. Older history (backward backfill) needs Beeper's batch-send API and stays off.
+On login the bridge creates rooms for the owner's 50 most recent Telegram chats and copies the last 50 messages of each (forward backfill, which stock Synapse supports). Chats beyond those 50 appear when they next get a message. The chat list is fetched only at sign-in, so Disconnect deletes the bridged copies (never anything on Telegram) and the next Connect rebuilds every chat with fresh history; cards for removed rooms are dropped. Photos, video, voice, files, locations and stickers show as a short label plus any caption; group messages show the sender's name. Older history (backward backfill) needs Beeper's batch-send API and stays off.
 
 ## Agent access boundary
 

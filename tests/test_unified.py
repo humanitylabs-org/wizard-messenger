@@ -203,6 +203,23 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual(config['network']['sync']['login_sync_limit'], 50)
         self.assertFalse(config['backfill']['queue']['enabled'])
 
+    def test_left_telegram_room_is_forgotten(self):
+        self.store = PeopleStore(Path(self.tmp.name) / 'forget.db')
+        gone = self.store.identity('telegram', '!gone', 'Old')
+        self.store.add_message('$g', gone, 'x', False, 'hi', 1)
+        self.assertTrue(self.store.forget('telegram', '!gone'))
+        self.assertEqual(self.store.people(chats=False), [])
+        self.assertFalse(self.store.forget('telegram', '!gone'))
+
+    def test_disconnect_cleans_bridged_copies(self):
+        import yaml
+        import unified_setup
+        with patch.dict('os.environ', {'TELEGRAM_API_ID': '12345', 'TELEGRAM_API_HASH': 'a' * 32}):
+            unified_setup.setup(self.tmp.name)
+        config = yaml.safe_load((Path(self.tmp.name) / 'telegram' / 'config.yaml').read_text())
+        self.assertTrue(config['bridge']['cleanup_on_logout']['enabled'])
+        self.assertEqual(config['bridge']['cleanup_on_logout']['manual']['private'], 'delete')
+
     def test_tinfoil_missing_key_is_honest(self):
         with patch.dict(os.environ, {'TINFOIL_API_KEY': ''}):
             result = translate('Hello', 'th')
