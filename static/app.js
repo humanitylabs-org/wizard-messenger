@@ -407,7 +407,7 @@
   }
   function updateComposer() {
     const dm = dmById(state.group), disabled = state.mode !== 'ready' || !dm || isIncoming(dm);
-    $('draft').disabled = disabled; $('draft').placeholder = isIncoming(dm) ? 'Accept this invite to write a message' : 'Write a message';
+    $('draft').disabled = disabled; $('draft').placeholder = isIncoming(dm) ? 'Accept this invite to write a message' : 'Message';
     $('send').disabled = disabled || isBusy() || !$('draft').value.trim();
   }
   function markSeen() {
@@ -576,8 +576,12 @@
     if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
-      const old = control.textContent; control.textContent = 'Copied'; control.classList.add('copied');
-      setTimeout(() => { control.textContent = old; control.classList.remove('copied'); }, 1500);
+      // Icon buttons keep their glyph; the copied state is a class plus an accessible label.
+      const icon = control.classList.contains('icon-button');
+      const old = icon ? control.getAttribute('aria-label') : control.textContent;
+      if (icon) control.setAttribute('aria-label', 'Copied'); else control.textContent = 'Copied';
+      control.classList.add('copied');
+      setTimeout(() => { if (icon) control.setAttribute('aria-label', old || 'Copy'); else control.textContent = old; control.classList.remove('copied'); }, 1500);
     } catch { errorTarget.textContent = 'Copy is unavailable. Select the address and copy it.'; }
   }
 

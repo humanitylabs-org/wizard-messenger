@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#121214">
   <meta name="referrer" content="no-referrer">
   <title>Messenger</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -17,10 +18,11 @@
 </head>
 <body>
   <main id="messenger" aria-label="Messenger">
-    <nav id="inbox-tabs" aria-label="Inbox sections" hidden><button data-tab="people">Chats</button><button data-tab="groups">Groups</button><button data-tab="messenger">Messenger</button><button id="connected-accounts" aria-label="Settings">⚙</button></nav>
+    <nav id="inbox-tabs" aria-label="Inbox sections" hidden><button data-tab="people" aria-label="Chats"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 11.5a8.4 8.4 0 0 1-12.2 7.5L3 21l2-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg><span>Chats</span></button><button data-tab="groups" aria-label="Groups"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg><span>Groups</span></button><button data-tab="messenger" aria-label="Messenger"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Messenger</span></button></nav>
     <section id="unified-inbox" hidden></section>
     <section id="gate" class="gate" aria-labelledby="gate-title">
       <div class="setup-card">
+        <span class="gate-mark" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 11.5a8.4 8.4 0 0 1-12.2 7.5L3 21l2-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg></span>
         <h1 id="gate-title">Messenger</h1>
         <p id="gate-description">Opening your messages…</p>
         <div id="gate-progress" class="loading-line" aria-hidden="true"><span class="spinner"></span></div>
@@ -38,27 +40,28 @@
     </section>
     <section id="workspace" class="workspace" hidden>
       <aside class="list-pane" aria-label="Conversations">
-        <header class="pane-header"><h1>Messages</h1><button id="add-contact" class="icon-button" aria-label="Add contact" title="Add contact">＋</button><button id="my-address" class="icon-button" aria-label="My address" title="My address"><span id="own-initial" class="own-avatar">M</span></button></header>
+        <header class="pane-header"><h1>Messenger</h1><button id="add-contact" class="icon-button" aria-label="Add contact" title="Add contact"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg></button><button id="my-address" class="icon-button" aria-label="My address" title="My address"><span id="own-initial" class="own-avatar">M</span></button></header>
         <p id="list-error" class="error pane-error" role="status"></p>
         <p id="list-loading" class="loading-line pane-loading" aria-hidden="true" hidden><span class="spinner"></span><span>Loading conversations…</span></p>
         <div id="conversation-list" class="conversation-list"></div>
       </aside>
       <section id="detail" class="detail-pane" aria-label="Conversation">
-        <div id="no-selection" class="empty-state"><p>Choose a conversation to read your messages.</p></div>
+        <div id="no-selection" class="empty-state"><p>Choose a conversation</p></div>
         <div id="chat" class="chat" hidden>
-          <header class="pane-header chat-header"><button id="chat-back" class="icon-button" aria-label="Back to messages">‹</button><div class="chat-heading"><h2 id="chat-name"></h2><p id="chat-subline" class="subline"></p></div><button id="copy-peer" class="icon-button copy-peer" aria-label="Copy address" title="Copy address">⧉</button></header>
+          <header class="pane-header chat-header"><button id="chat-back" class="icon-button" aria-label="Back to messages"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 12H5M11 5l-7 7 7 7"/></svg></button><div class="chat-heading"><h2 id="chat-name"></h2><p id="chat-subline" class="subline"></p></div><button id="copy-peer" class="icon-button copy-peer" aria-label="Copy address" title="Copy address"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></header>
           <div id="invite-actions" class="invite-actions" hidden><p>This person wants to chat.</p><button id="accept-invite" class="primary">Accept</button><button id="decline-invite" class="secondary">Ignore</button></div>
           <p id="chat-error" class="error pane-error" role="status"></p>
           <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="Messages"><button id="load-older" class="secondary older" hidden>Earlier messages</button><p id="history-loading" class="loading-line history-loading" aria-hidden="true" hidden><span class="spinner"></span><span id="history-loading-text">Loading messages…</span></p><div id="messages" class="messages" role="log" aria-live="off"></div><p id="history-empty" class="helper history-empty" hidden>No messages yet.</p></div>
-          <button id="new-messages" class="new-messages" hidden>New messages ↓</button>
-          <form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Write a message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled>↑</button></form>
+          <button id="new-messages" class="new-messages" hidden>New messages</button>
+          <form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12 20 4l-4 16-4-6.5L4 12z"/><path d="m12 13.5 8-9.5"/></svg></button></form>
           <p id="composer-error" class="error composer-error" role="alert"></p>
         </div>
       </section>
     </section>
     <div id="sheet-layer" class="sheet-layer" hidden>
       <section id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">
-        <header class="sheet-header"><h2 id="sheet-title"></h2><button id="close-sheet" class="icon-button" aria-label="Close">×</button></header>
+        <span class="grabber" aria-hidden="true"></span>
+        <header class="sheet-header"><h2 id="sheet-title"></h2><button id="close-sheet" class="icon-button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 6 6 18M6 6l12 12"/></svg></button></header>
         <form id="contact-form" hidden autocomplete="off"><label>Their address<input id="contact-address" placeholder="npub… or name@domain" spellcheck="false" autocapitalize="none" autocomplete="off" required></label><p id="address-preview" class="helper address-preview"></p><label>Name<input id="contact-name" placeholder="Optional" maxlength="160" autocomplete="off"></label><p id="contact-error" class="error" role="alert"></p><button id="contact-submit" class="primary wide" type="submit">Send invite</button><div id="saved-contacts" class="saved-contacts"></div></form>
         <div id="address-panel" hidden><p class="helper">Your public Messenger address. Share it with someone you want to chat with.</p><code id="public-address" class="address-card"></code><button id="copy-own" class="primary wide">Copy</button><p id="copy-error" class="error" role="status"></p><button id="lock" class="secondary wide lock-button">Lock Messenger</button></div>
       </section>
