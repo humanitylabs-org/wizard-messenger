@@ -16,13 +16,24 @@ class PeopleTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = PeopleStore(Path(self.tmp.name) / 'people.db')
 
+    def test_chats_list_newest_first_and_hides_silent_contacts(self):
+        old = self.store.identity('telegram', '!old', 'Zed')
+        new = self.store.identity('telegram', '!new', 'Amy')
+        self.store.identity('telegram', '!quiet', 'Bob')
+        self.store.add_message('$1', old, 'zed', False, 'old news', 100)
+        self.store.add_message('$2', new, 'me', True, 'fresh', 200)
+        chats = self.store.people()
+        self.assertEqual([p['display_name'] for p in chats], ['Amy', 'Zed'])
+        self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'me', 'timestamp': 200})
+        self.assertEqual([p['display_name'] for p in self.store.people(chats=False)], ['Amy', 'Bob', 'Zed'])
+
     def test_auto_create_deduplicates_and_preserves_rename(self):
         a = self.store.identity('telegram', '!one', 'Alice')
         self.store.update(a['person_id'], {'display_name': 'Alice Thai', 'language': 'th'})
         b = self.store.identity('telegram', '!one', 'Upstream rename')
         self.assertEqual(a['id'], b['id'])
-        self.assertEqual(self.store.people()[0]['display_name'], 'Alice Thai')
-        self.assertEqual(len(self.store.people()), 1)
+        self.assertEqual(self.store.people(chats=False)[0]['display_name'], 'Alice Thai')
+        self.assertEqual(len(self.store.people(chats=False)), 1)
 
     def test_merge_unmerge_keeps_messages_and_last_used_route(self):
         a = self.store.identity('telegram', '!one', 'Alice')
@@ -34,7 +45,7 @@ class PeopleTests(unittest.TestCase):
         self.assertEqual([m['network'] for m in self.store.messages(a['person_id'])], ['telegram', 'messenger'])
         self.store.update(a['person_id'], {'preferred_identity': b['id']})
         new = self.store.unmerge(a['person_id'], b['id'])
-        self.assertEqual(len(self.store.people()), 2)
+        self.assertEqual(len(self.store.people(chats=False)), 2)
         self.assertEqual(self.store.messages(new['id'])[0]['original'], 'hi')
         self.assertIsNone(self.store.person(a['person_id'])['preferred_identity'])
 
@@ -42,7 +53,7 @@ class PeopleTests(unittest.TestCase):
         group = self.store.identity('telegram', '!group', 'Family', 'group')
         person = self.store.identity('messenger', 'abc', 'Alice')
         self.store.labels(group['id'], ['Family', 'Family', 'Friends'])
-        self.assertEqual(self.store.people('group')[0]['labels'], ['Family', 'Friends'])
+        self.assertEqual(self.store.people('group', chats=False)[0]['labels'], ['Family', 'Friends'])
         with self.assertRaises(EngineError): self.store.merge(person['person_id'], group['person_id'])
         with self.assertRaises(EngineError): self.store.labels(person['id'], ['Family'])
 

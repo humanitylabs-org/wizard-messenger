@@ -39,3 +39,8 @@ html[data-inbox-tab=messenger] #workspace {flex:1;min-height:0}
 .u-phone{display:flex;gap:8px;align-items:stretch}.u-phone input{flex:1;min-width:0}
 .u-prefix{display:grid;place-items:center;min-width:64px;padding:0 10px;border:1px solid var(--line-2);border-radius:12px;background:#1a1330;color:var(--text);font-variant-numeric:tabular-nums}
 .u-message .u-sender{margin:0 0 4px;font-size:12px;font-weight:600;color:var(--accent)}
+
+.u-person{min-height:72px}.u-chat-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.u-chat-top strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u-when{font-size:12px;color:var(--muted);flex-shrink:0}.u-snippet{display:block;margin-top:4px;color:var(--muted);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u-person-info{flex:1;min-width:0}.u-new-chat{align-self:flex-end;margin:0 0 10px}
+.u-directory{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-height:60vh;overflow:auto}.u-directory-row{display:flex;justify-content:space-between;align-items:center;gap:10px;text-align:left;padding:12px;border:1px solid var(--border);border-radius:12px;background:#1a1330;color:var(--text)}

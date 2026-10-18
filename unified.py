@@ -113,12 +113,20 @@ class PeopleStore:
             result['identities'] = [dict(r) for r in db.execute('SELECT * FROM identity WHERE person_id=? ORDER BY last_used DESC,id', (person_id,))]
             return result
 
-    def people(self, kind='person'):
+    def people(self, kind='person', chats=True):
+        # Chats: only conversations with messages, newest first, each with its latest line.
+        # Directory (chats=False): everyone A-Z, used by New chat.
         with self.db() as db:
-            ids = [r[0] for r in db.execute('SELECT DISTINCT p.id FROM person p JOIN identity i ON i.person_id=p.id WHERE i.kind=? ORDER BY p.display_name COLLATE NOCASE', (kind,))]
+            if chats:
+                ids = [r[0] for r in db.execute('SELECT p.id FROM person p JOIN identity i ON i.person_id=p.id JOIN message m ON m.identity_id=i.id WHERE i.kind=? GROUP BY p.id ORDER BY MAX(m.timestamp) DESC', (kind,))]
+            else:
+                ids = [r[0] for r in db.execute('SELECT DISTINCT p.id FROM person p JOIN identity i ON i.person_id=p.id WHERE i.kind=? ORDER BY p.display_name COLLATE NOCASE', (kind,))]
             result = [self.person(i) for i in ids]
             for person in result:
                 person['labels'] = [r[0] for r in db.execute('SELECT DISTINCT label FROM room_label WHERE identity_id IN (SELECT id FROM identity WHERE person_id=?)', (person['id'],))]
+                if chats:
+                    last = db.execute('SELECT m.original,m.outgoing,m.sender,m.timestamp FROM message m JOIN identity i ON m.identity_id=i.id WHERE i.person_id=? ORDER BY m.timestamp DESC,m.id DESC LIMIT 1', (person['id'],)).fetchone()
+                    person['last'] = {'text': last[0][:140], 'outgoing': bool(last[1]), 'sender': last[2], 'timestamp': last[3]}
             return result
 
     def update(self, person_id, payload):
@@ -490,6 +498,9 @@ class UnifiedInbox:
             self.marmot()
             kind = 'group' if suffix[0] == 'groups' else 'person'
             return {suffix[0]: self.store.people(kind)}
+        if suffix == ['directory'] and method == 'GET':
+            self.marmot()
+            return {'people': self.store.people('person', chats=False), 'groups': self.store.people('group', chats=False)}
         if len(suffix) >= 2 and suffix[0] == 'people':
             person_id = suffix[1]
             if len(suffix) == 2:

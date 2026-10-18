@@ -55,7 +55,8 @@
   }
   async function renderList(quiet = false) {
     const epoch = ++s.epoch;
-    const root = quiet ? $('unified-inbox') : base(s.tab === 'groups' ? 'Groups' : 'People', s.tab === 'groups' ? 'Your circles, across networks' : 'One person. Every conversation.');
+    const root = quiet ? $('unified-inbox') : base(s.tab === 'groups' ? 'Groups' : 'Chats', s.tab === 'groups' ? 'Newest first' : 'Newest first, every network');
+    if (!quiet && s.tab === 'people') root.append(button('New chat', () => newChat(), 'secondary u-new-chat'));
     if (!quiet) root.append(node('p', 'helper u-loading', 'Loading…'));
     try {
       const result = await call(s.tab === 'groups' ? 'groups' : 'people');
@@ -68,13 +69,20 @@
         for (const p of people.filter(p => !label || p.labels.includes(label))) {
           const card = button('', () => openPerson(p.id), 'u-person');
           card.append(node('span', 'u-avatar', p.display_name.slice(0, 1).toUpperCase()));
-          const info = node('span', 'u-person-info'); info.append(node('strong', '', p.display_name));
+          const info = node('span', 'u-person-info');
+          const top = node('span', 'u-chat-top'); top.append(node('strong', '', p.display_name));
+          if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
+          info.append(top);
+          if (p.last) {
+            const who = p.last.outgoing ? 'You: ' : s.tab === 'groups' && p.last.sender ? (p.last.sender.startsWith('@') ? p.last.sender.slice(1).split(':')[0] : p.last.sender).split(' ')[0] + ': ' : '';
+            info.append(node('span', 'u-snippet', who + p.last.text));
+          }
           const badges = node('span', 'u-badges'); for (const n of new Set(p.identities.map(i => i.network))) badges.append(node('span', 'u-badge', n));
-          if (p.language) badges.append(node('span', 'u-badge language', p.language === 'th' ? 'Thai ↔ English' : p.language + ' ↔ English'));
           for (const l of p.labels || []) badges.append(node('span', 'u-badge', l));
-          info.append(badges); card.append(info, node('span', '', '›')); list.append(card);
+          if (badges.children.length > 1 || (p.labels || []).length) info.append(badges);
+          card.append(info); list.append(card);
         }
-        if (!list.children.length) list.append(node('p', 'u-empty', label ? 'No groups with this label.' : s.tab === 'groups' ? 'Group chats appear here when an account is connected.' : 'Your contacts appear here when messages arrive. Connect Telegram in Settings, or open Messenger to add a contact.'));
+        if (!list.children.length) list.append(node('p', 'u-empty', label ? 'No groups with this label.' : s.tab === 'groups' ? 'Group chats appear here when an account is connected.' : 'Your chats appear here when messages arrive. Connect Telegram in Settings, or tap New chat.'));
       };
       if (s.tab === 'groups') {
         const select = node('select'); select.setAttribute('aria-label', 'Filter groups by label');
@@ -82,6 +90,32 @@
         select.onchange = () => { label = select.value; draw(); }; root.insertBefore(select, list);
       }
       draw();
+    } catch (e) { error(e); }
+  }
+  function when(ms) {
+    const d = new Date(ms), now = new Date();
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    if (now - d < 6 * 864e5) return d.toLocaleDateString([], {weekday: 'short'});
+    return d.toLocaleDateString([], {month: 'short', day: 'numeric'});
+  }
+  async function newChat() {
+    // The full A-Z contact list lives only here.
+    const sheet = overlay('New chat');
+    const search = node('input'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
+    const list = node('div', 'u-directory'); sheet.append(search, list);
+    try {
+      const d = await call('directory'); if (s.overlay !== 'New chat') return;
+      const all = [...d.people, ...d.groups.map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
+      const draw = () => {
+        const q = search.value.trim().toLowerCase(); list.replaceChildren();
+        for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 200)) {
+          const row = button('', () => { closeOverlay(); openPerson(p.id); }, 'u-directory-row');
+          row.append(node('strong', '', p.display_name), node('span', 'u-badge', p.group ? 'group' : [...new Set(p.identities.map(i => i.network))].join(' · ')));
+          list.append(row);
+        }
+        if (!list.children.length) list.append(node('p', 'u-empty', 'No one matches.'));
+      };
+      search.oninput = draw; draw(); requestAnimationFrame(() => search.focus());
     } catch (e) { error(e); }
   }
   function paintMessages(scroll, messages, auto = false) {
