@@ -14,6 +14,7 @@ runtime:
   kind: runtipi
   config: runtipi/config.json
   compose: runtipi/docker-compose.yml
+  package: image
 api:
   path: /api
   port: 8765
@@ -34,6 +35,10 @@ health: /healthz
 provides: [messaging]
 needs: []
 ---
+
+## Registry packaging
+
+The Runtipi runtime uses `package: image` and the multi-architecture GHCR index pinned in `runtipi/docker-compose.yml`. `.github/workflows/image.yml` calls the shared native linux/amd64 and linux/arm64 builder and runs the existing Python and Node tests. The Dockerfile's `MDK_BUILD_IMAGE` and `MESSENGER_RUNTIME_BASE` defaults are digest-pinned public multi-arch images; the MDK binaries are compiled from the existing exact upstream revision and audited lockfile, not substituted with a private binary image. An authenticated installer can fetch the exact digest with `pull_policy: missing`. Package visibility is unchanged; historical private-beta archive instructions are a separate installation path.
 
 Messenger runs entirely in its own isolated container. Its web view uses only its documented HTTP API; the UI source is shipped separately so a Wizard can customize it. Marmot MDK supplies encrypted conversation and relay synchronization.
 

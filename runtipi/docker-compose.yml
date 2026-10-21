@@ -1,7 +1,7 @@
 services:
   messenger:
-    image: wizard-messenger:0.1.2-beta.1
-    pull_policy: never
+    image: ghcr.io/humanitylabs-org/wizard-messenger:sha-fd3189f589c3789655792507943f8581b81616c3@sha256:fedbebcd0500c6c6ab591fd251e8a887ba58279bdda91c3e2b5ed72ada294be1
+    pull_policy: missing
     read_only: true
     cap_drop: [ALL]
     # Root only long enough to own Runtipi's root-created /data, then setpriv drops
