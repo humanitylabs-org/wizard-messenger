@@ -45,7 +45,10 @@ with archive.open('wb') as f:
     if compress.wait() != 0 or save.wait() != 0:
         raise SystemExit('Image export failed')
 with archive.open('rb') as f:
-    checksum = hashlib.file_digest(f, 'sha256').hexdigest()
+    digest = hashlib.sha256()
+    for block in iter(lambda: f.read(1 << 20), b''):
+        digest.update(block)
+    checksum = digest.hexdigest()  # Thales' system python predates hashlib.file_digest
 receipt = {'revision': a.revision, 'tag': a.tag, 'id': image['Id'], 'architecture': image['Architecture'], 'mdk_sha256': hashes, 'archive': str(archive), 'archive_sha256': checksum, 'carrier': a.carrier, 'method': 'audited carrier reuse, not a fresh Rust build'}
 (out / 'image-receipt.json').write_text(json.dumps(receipt, indent=2))
 print(json.dumps(receipt, indent=2))
