@@ -151,6 +151,26 @@
   const fmtSize = b => !b ? '' : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
   const QUICK = ['❤️', '👍', '👎', '😂', '😮', '😢'];
   const MORE = ['🙏', '🔥', '🎉', '👏', '😍', '🤔', '😅', '🙌', '💯', '😎', '🥲', '😡', '🤯', '🤝', '👀', '✅', '😘', '🥰', '😆', '😬', '🤣', '😭', '🤗', '😴', '💪', '👌', '🙃', '😇', '🤩', '😱', '💔', '⭐', '🌹', '☕', '🍻', '🎂', '🚀', '💡', '📌', '❓', '❗', '👋'];
+  // Saved copy on this device: the list and recent threads paint before the session handshake; Lock erases it.
+  const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
+  let saveTimer = null, savedOrder = [];
+  function persist() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const threads = {};
+      for (const id of savedOrder.slice(0, THREADS_KEPT)) { const t = store.threads[id]; if (t) threads[id] = {person: t.person, has_more: true, messages: t.messages.filter(m => !m.pending && !m.failed).slice(-MESSAGES_KEPT).map(({retry, local, ...m}) => m)}; }
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({lists: store.lists, threads, order: savedOrder.slice(0, THREADS_KEPT)})); } catch { /* storage full or blocked: still works online */ }
+    }, 400);
+  }
+  function restore() {
+    try {
+      const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); if (!c?.lists?.people) return false;
+      store.lists = {people: c.lists.people, groups: c.lists.groups || null}; savedOrder = c.order || [];
+      for (const [id, t] of Object.entries(c.threads || {})) store.threads[id] = {...t, stale: true};
+      return true;
+    } catch { return false; }
+  }
+  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
   let recent = [];
   let csrf = () => '';
   let feedCtl = null;
@@ -187,6 +207,7 @@
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
     if (s.person && store.threads[s.person]) { paintHead(); paintThread(); }
     else if (!s.person && s.tab !== 'messenger') drawList();
+    persist();
   }
   async function feed() {
     feedCtl?.abort(); const ctl = feedCtl = new AbortController();
@@ -206,13 +227,24 @@
     const root = listBase(key === 'groups' ? 'Groups' : 'Chats');
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
     if (key === 'people' && s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
-    if (store.lists[key]) return drawList();
+    if (store.lists[key]) { drawList(); if (!store.seq && s.ready) freshen(key, epoch); return; }
     list.append(skeleton(8, 'list'));
+    if (!s.ready) return;
     try {
       const r = await call(key);
       if (!store.lists[key]) store.lists[key] = r[key] || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
       if (s.epoch === epoch && !s.person) drawList();
+      persist();
+    } catch (e) { error(e); }
+  }
+  // A saved list painted first; the server's copy replaces it, then the change feed keeps it current.
+  async function freshen(key, epoch) {
+    try {
+      const r = await call(key); store.lists[key] = r[key] || [];
+      if (!store.seq) { store.seq = r.seq || 0; feed(); }
+      if (s.epoch === epoch && !s.person) drawList();
+      persist();
     } catch (e) { error(e); }
   }
   function drawList() {
@@ -264,15 +296,19 @@
     s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
     const cached = store.threads[id];
     buildThread(id, cached?.person || hint || {display_name: '', identities: []});
-    if (cached) { paintThread(true); markRead(); return; }
-    view.scroll.append(skeleton(6, 'bubbles'));
+    savedOrder = [id, ...savedOrder.filter(x => x !== id)];
+    if (cached) { paintThread(true); if (!cached.stale) { markRead(); persist(); return; } }
+    else view.scroll.append(skeleton(6, 'bubbles'));
+    if (!s.ready) return;
     try {
       const r = await call('people/' + id + '?limit=60');
       store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, warning: r.history_warning};
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
+      persist();
       if (s.epoch !== epoch) return;
-      buildThread(id, r.person); paintThread(true); markRead();
+      if (cached) { paintHead(); paintThread(); } else { buildThread(id, r.person); paintThread(true); }
+      markRead();
     } catch (e) { error(e); }
   }
   function reviewedOf(p) { return !!p.language && p.language !== 'en'; }
@@ -831,8 +867,16 @@
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   window.MessengerUnified = {
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
-    authenticated() { if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false; switchTab('people'); resumeLogin(); if (store.seq) feed(); },
+    // Saved chats paint at once; the session handshake and the server's copy follow behind.
+    paintSaved() { if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },
+    authenticated() {
+      if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false;
+      const painted = document.documentElement.dataset.inboxTab;
+      if (!painted) switchTab('people');
+      else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
+      resumeLogin(); if (store.seq) feed();
+    },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout() { feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

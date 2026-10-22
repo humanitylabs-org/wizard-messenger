@@ -1,3 +1,4 @@
+import time
 import json
 import os
 from pathlib import Path
@@ -178,6 +179,17 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual(self.inbox.translator.translate.call_count, 1)
         with self.assertRaises(Exception):
             self.inbox.dispatch('POST', '/api/unified/messages/$out/translate', {})
+
+    def test_chat_list_cost_follows_chats_not_messages(self):
+        store = PeopleStore(Path(self.tmp.name) / 'speed.db')
+        ids = [store.identity('telegram', '!p%d' % n, 'P%d' % n) for n in range(100)]
+        with store.db() as db:
+            db.executemany('INSERT INTO message(id,identity_id,sender,outgoing,original,translated,timestamp) VALUES (?,?,?,?,?,?,?)', [('e%d' % n, ids[n % 100]['id'], 'x', 0, 'hi', None, n) for n in range(30000)])
+        started = time.perf_counter(); chats = store.people()
+        self.assertLess(time.perf_counter() - started, 0.25)
+        self.assertEqual(len(chats), 100)
+        self.assertEqual(chats[0]['last']['timestamp'], 29999)
+        self.assertEqual([c['last']['timestamp'] for c in chats], sorted((c['last']['timestamp'] for c in chats), reverse=True))
 
     def test_english_people_trigger_no_model_calls(self):
         from unittest.mock import Mock

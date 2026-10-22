@@ -97,8 +97,8 @@ const assert = require('node:assert/strict');
   s = Date.now();
   await page.locator('.u-person').filter({hasText: 'Ben Carter'}).first().click();
   await page.locator('.u-row').first().waitFor(); mark('reopen_cached', s);
-  await page.locator('.u-timeline').evaluate(el => el.scrollTop = 0);
-  await page.locator('.u-message').filter({hasText: 'Older message 1 from'}).first().waitFor({timeout: 10000});
+  for (let i = 0; i < 12 && !(await page.locator('.u-message').filter({hasText: 'Older message 1 from'}).count()); i++) { await page.locator('.u-timeline').evaluate(el => el.scrollTop = 0); await page.waitForTimeout(400); }
+  await page.locator('.u-message').filter({hasText: 'Older message 1 from'}).first().waitFor({timeout: 5000});
   if (process.env.LIVE_CMD) {
     // Another device writes to this chat; the change feed must paint it without any reload.
     await page.locator('.u-timeline').evaluate(el => el.scrollTop = el.scrollHeight);
@@ -119,6 +119,12 @@ const assert = require('node:assert/strict');
   await page.getByRole('button', {name: 'Chats', exact: true}).click(); await page.locator('.u-person').first().waitFor();
   // Cold reload: time from navigation to a painted chat list.
   s = Date.now(); await page.reload(); await page.locator('.u-person').first().waitFor(); mark('cold_reload_to_list', s);
+  // After reload the saved thread paints, the server copy replaces it, and sending still works.
+  s = Date.now(); await page.locator('.u-person').filter({hasText: 'Ben Carter'}).first().click();
+  await page.locator('.u-row').first().waitFor(); mark('reopen_after_reload', s);
+  await page.fill('.u-field textarea', 'After reload' + tag); await page.locator('.u-send').click();
+  await page.locator('.u-message.outgoing:not(.pending)').filter({hasText: 'After reload' + tag}).first().waitFor({timeout: 15000});
+  if (process.env.LIVE_CMD) await page.locator('.u-message').filter({hasText: 'Live from another device' + tag}).first().waitFor({timeout: 10000});
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
   const out = {pass: true, timings_ms: t, errors, bad_responses: bad};
   fs.writeFileSync(ev + '/proof.json', JSON.stringify(out, null, 2));
