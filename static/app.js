@@ -154,7 +154,8 @@
   }
   function schedule() {
     clearTimeout(state.timer);
-    if (!document.hidden && !state.operation && state.authenticated) state.timer = setTimeout(() => run(snapshot), 3000);
+    // The Marmot engine serialises every RPC; poll it fast only while its own tab is in front.
+    if (!document.hidden && !state.operation && state.authenticated) state.timer = setTimeout(() => run(snapshot), window.MessengerUnified?.active() ? 60000 : 3000);
   }
   const isBusy = () => state.operation?.action === true;
   const act = work => run(work, true);

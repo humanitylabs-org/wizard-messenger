@@ -146,9 +146,11 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self.close_connection=True
             status,data=500,{'ok':False,'error':{'code':'internal_error','message':'Messenger could not complete the request'}}
+        if status is None: return  # response already streamed (media)
         try: self._reply(status,data)
         except (BrokenPipeError,ConnectionResetError): pass
     def do_GET(self): self._handle('GET')
+    def do_PUT(self): self._handle('PUT')
     def do_POST(self): self._handle('POST')
     def do_DELETE(self): self._handle('DELETE')
     def do_OPTIONS(self): self._reply(405,{'ok':False,'error':{'code':'cross_origin_disabled','message':'Cross-origin browser access is disabled'}})

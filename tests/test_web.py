@@ -73,7 +73,7 @@ class ViewBoundary(unittest.TestCase):
         self.assertEqual(body['result'], {'people': []})
         status, _, _ = self.request('POST', '/api/unified/sync', {}, {'Cookie': cookie, 'Origin': ORIGIN, 'X-Messenger-CSRF': csrf})
         self.assertEqual(status, 200)
-        unified.dispatch.assert_called_with('POST', '/api/unified/sync', {})
+        unified.dispatch.assert_called_with('POST', '/api/unified/sync', {}, {}, None)
 
     def test_machine_key_cannot_read_or_send_messages_without_owner_grant(self):
         bearer={'Authorization':'Bearer '+TOKEN}

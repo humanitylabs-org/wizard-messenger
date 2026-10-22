@@ -12,12 +12,12 @@ import secrets
 import signal
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 from typing import cast
 from engine import EngineError, MarmotEngine, vault_password
 from server import Handler, MessengerServer
 import messenger_addresses
-from unified import UnifiedInbox
+from unified import UnifiedInbox, Blob, UPLOAD_MAX
 
 class BrowserAuth:
     def __init__(self,path=None):
@@ -108,7 +108,8 @@ AGENT_GRANT_MAX_MINUTES = 24 * 60
 
 ROUTE_WORDS = {'api', 'dms', 'messages', 'contacts', 'invites', 'retry', 'accept', 'decline', 'setup', 'unified', 'people',
                'groups', 'labels', 'merge', 'unmerge', 'preview', 'send', 'translate', 'sync', 'telegram', 'status', 'start',
-               'step', 'disconnect', 'cancel', 'view', 'session', 'identity', 'resolve-contact', 'mcp', 'spec'}
+               'step', 'disconnect', 'cancel', 'view', 'session', 'identity', 'resolve-contact', 'mcp', 'spec',
+               'updates', 'media', 'upload', 'read', 'typing', 'react', 'edit', 'delete', 'directory'}
 
 def route_shape(path):
     # Log the route's shape only: every id, address or unknown segment becomes :id.
@@ -226,6 +227,52 @@ class ViewHandler(Handler):
     def _reply(self,status,data):
         body=json.dumps(data,ensure_ascii=False).encode()
         self._headers(status,body,'application/json; charset=utf-8')
+    def _raw_body(self):
+        # Owner media upload: raw bytes, size-capped before reading; the type is sniffed server-side.
+        if self.headers.get('Transfer-Encoding'):
+            raise EngineError('invalid_request','Chunked bodies are not supported',400)
+        try: length=int(self.headers.get('Content-Length','0'))
+        except ValueError: raise EngineError('invalid_length','Invalid body length',400) from None
+        if not 0 < length <= UPLOAD_MAX:
+            raise EngineError('too_large','Files up to 25 MB can be sent',413)
+        self.connection.settimeout(120)
+        data=b''
+        while len(data)<length:
+            chunk=self.rfile.read(min(1<<20,length-len(data)))
+            if not chunk: raise EngineError('invalid_length','Upload was interrupted',400)
+            data+=chunk
+        return data
+    def _blob(self,blob):
+        # Media: private cache, Range for audio/video seeking, inline only for safe types.
+        size=blob.path.stat().st_size
+        start,end,status=0,size-1,200
+        rng=re.fullmatch(r'bytes=(\d*)-(\d*)',self.headers.get('Range','').strip())
+        if rng and size:
+            a,b=rng.groups()
+            if a: start=int(a); end=min(int(b),size-1) if b else size-1
+            elif b: start=max(0,size-int(b))
+            if start>end or start>=size:
+                self.send_response(416); self.send_header('Content-Range','bytes */%d'%size); self.send_header('Content-Length','0'); self.end_headers(); return None
+            status=206
+        self.send_response(status)
+        self.send_header('Content-Type',blob.mime)
+        self.send_header('Content-Length',str(end-start+1))
+        self.send_header('Accept-Ranges','bytes')
+        if status==206: self.send_header('Content-Range','bytes %d-%d/%d'%(start,end,size))
+        self.send_header('Cache-Control','private, max-age=86400, immutable')
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Referrer-Policy','no-referrer')
+        self.send_header('Content-Security-Policy',"default-src 'none'; sandbox")
+        safe=re.sub(r'[^A-Za-z0-9._-]','_',blob.filename or 'file')[:80]
+        self.send_header('Content-Disposition',('inline' if blob.inline else 'attachment')+'; filename="'+safe+'"')
+        self.end_headers()
+        with blob.path.open('rb') as f:
+            f.seek(start); left=end-start+1
+            while left>0:
+                chunk=f.read(min(65536,left))
+                if not chunk: break
+                self.wfile.write(chunk); left-=len(chunk)
+        return None
     def _agent_gate(self,method,path):
         # Machine-key callers only; a bad key still fails in _authorize as before.
         if not self.headers.get('Authorization') or (method,path) in BEARER_OPEN: return
@@ -251,7 +298,13 @@ class ViewHandler(Handler):
             self._authorize()
             if self.service.unified is None:
                 raise EngineError('not_configured','Unified inbox is not enabled',503)
-            result = self.service.unified.dispatch(method,path,self._body() if method == 'POST' else {})
+            raw = self._raw_body() if method == 'PUT' else None
+            if method == 'GET' and path.startswith('/api/unified/updates'):
+                # Long-poll: the socket must outlive the hold.
+                self.connection.settimeout(60)
+            result = self.service.unified.dispatch(method,path,self._body() if method == 'POST' else {},parse_qs(urlsplit(self.path).query),raw)
+            if isinstance(result, Blob):
+                self._blob(result); return None, None
             return 200, {'ok':True,'result':result}
         if path=='/api/view/ticket' and method=='POST':
             # Only a trusted API caller/proxy can mint an initial browser capability.
@@ -339,7 +392,7 @@ class ViewHandler(Handler):
             body=source.read_bytes()
             mime=mimetypes.guess_type(source.name)[0] or 'application/octet-stream'
             if mime.startswith('text/') or mime in ['application/javascript','application/json']: mime+='; charset=utf-8'
-            csp="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
+            csp="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
             self._headers(200,body,mime,csp)
         except EngineError as e: self._reply(e.status,{'ok':False,'error':{'code':e.code,'message':e.message}})
         except (BrokenPipeError,ConnectionResetError): pass

@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 from engine import EngineError
@@ -146,9 +147,15 @@ class UnifiedTests(unittest.TestCase):
         with patch('unified.http', return_value={'text': 'Hello', 'error': None}) as request:
             self.inbox.store.update(self.a['person_id'], {'language': 'th'})
             self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10)
+            # Opening never waits on the model: the line is queued and arrives via the change feed.
+            first = self.inbox.timeline(self.a['person_id'])
+            self.assertTrue(first['translating'])
+            self.assertEqual(request.call_count, 0)
+            self.inbox.translate_pending()
             message = self.inbox.timeline(self.a['person_id'])['messages'][0]
             self.assertEqual((message['translated'], message['original']), ('Hello', 'สวัสดี'))
             self.inbox.timeline(self.a['person_id'])
+            self.inbox.translate_pending()
             self.assertEqual(request.call_count, 1)
 
     def test_without_auto_translate_cache_is_kept_for_the_tap_toggle(self):
@@ -236,6 +243,170 @@ class UnifiedTests(unittest.TestCase):
         self.assertFalse(config['enable_registration'])
         self.assertEqual(config['federation_domain_whitelist'], [])
         self.assertEqual(config['listeners'][0]['resources'][0]['names'], ['client'])
+
+
+class SignalMvpTests(unittest.TestCase):
+    """Speed + chat features: change feed, one-call send, relations, media proxy."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.engine = Mock()
+        self.engine.status.return_value = {'state': 'locked'}
+        self.inbox = UnifiedInbox(self.tmp.name, self.engine)
+        self.a = self.inbox.store.identity('telegram', '!a', 'Alice')
+        self.pid = self.a['person_id']
+        self.inbox.matrix_token = lambda: 'x'
+        self.inbox.rooms['!a'] = {'telegram': True, 'kind': 'person', 'label': 'Alice', 'names': {'@telegram_1:messenger.internal': 'Alice'}}
+
+    def event(self, eid, content, etype='m.room.message', sender='@telegram_1:messenger.internal', ts=1000, **extra):
+        return dict({'event_id': eid, 'type': etype, 'sender': sender, 'origin_server_ts': ts, 'content': content}, **extra)
+
+    def ingest(self, *events):
+        for e in events:
+            self.inbox.ingest(self.a, self.inbox.rooms['!a'], e)
+
+    def test_list_routes_never_touch_marmot_engine(self):
+        self.engine.reset_mock()
+        self.inbox.dispatch('GET', '/api/unified/people', {})
+        self.inbox.dispatch('GET', '/api/unified/groups', {})
+        self.inbox.dispatch('GET', '/api/unified/directory', {})
+        self.inbox.dispatch('POST', '/api/unified/sync', {})
+        self.engine.dms.assert_not_called()
+        self.engine.identity.assert_not_called()
+
+    def test_updates_feed_returns_new_rows_and_wakes_waiters(self):
+        seq = self.inbox.store.seq
+        self.assertEqual(self.inbox.updates(seq, 0)['messages'], {})
+        import threading
+        result = {}
+        t = threading.Thread(target=lambda: result.update(self.inbox.updates(seq, 5)))
+        t.start()
+        time.sleep(0.2)
+        started = time.time()
+        self.ingest(self.event('$1', {'msgtype': 'm.text', 'body': 'hi'}))
+        t.join(3)
+        self.assertLess(time.time() - started, 1.5)
+        self.assertEqual([m['original'] for m in result['messages'][self.pid]], ['hi'])
+        self.assertEqual(result['people'][0]['unread'], 1)
+        self.assertGreater(result['seq'], seq)
+
+    def test_one_call_send_is_idempotent_by_client_id(self):
+        self.inbox.mx = Mock(return_value={'event_id': '$sent'})
+        body = {'text': 'hello', 'client_id': 'c-1234567890'}
+        first = self.inbox.dispatch('POST', '/api/unified/people/%s/send' % self.pid, body)
+        again = self.inbox.dispatch('POST', '/api/unified/people/%s/send' % self.pid, body)
+        self.assertEqual(self.inbox.mx.call_count, 1)
+        self.assertEqual(first['message']['id'], again['message']['id'])
+        self.assertIn('/send/m.room.message/c-1234567890', self.inbox.mx.call_args.args[0])
+        self.assertEqual(first['message']['client_id'], 'c-1234567890')
+
+    def test_translated_chats_still_require_review(self):
+        self.inbox.store.update(self.pid, {'language': 'th'})
+        self.inbox.mx = Mock()
+        with self.assertRaises(EngineError) as err:
+            self.inbox.send(self.pid, {'text': 'hello', 'client_id': 'c-1234567890'})
+        self.assertEqual(err.exception.code, 'review_required')
+        self.inbox.mx.assert_not_called()
+
+    def test_reply_reaction_edit_redaction_ingest(self):
+        self.ingest(self.event('$q', {'msgtype': 'm.text', 'body': 'question?'}))
+        self.ingest(self.event('$r', {'msgtype': 'm.text', 'body': '> <@x> question?\n\nanswer', 'm.relates_to': {'m.in_reply_to': {'event_id': '$q'}}}, sender='@owner:messenger.internal', ts=2000))
+        self.ingest(self.event('$re', {'m.relates_to': {'rel_type': 'm.annotation', 'event_id': '$q', 'key': '👍'}}, etype='m.reaction'))
+        self.ingest(self.event('$ed', {'msgtype': 'm.text', 'body': '* question!', 'm.new_content': {'msgtype': 'm.text', 'body': 'question!'}, 'm.relates_to': {'rel_type': 'm.replace', 'event_id': '$q'}}))
+        rows = {m['id']: m for m in self.inbox.timeline(self.pid)['messages']}
+        self.assertEqual(rows['$r']['original'], 'answer')
+        self.assertEqual(rows['$r']['reply']['text'], 'question!')
+        self.assertEqual(rows['$q']['reactions'], [{'key': '👍', 'count': 1, 'mine': False}])
+        self.assertTrue(rows['$q']['edited'])
+        self.ingest(self.event('$x', {}, etype='m.room.redaction', redacts='$re'))
+        self.ingest(self.event('$y', {}, etype='m.room.redaction', redacts='$q'))
+        rows = {m['id']: m for m in self.inbox.timeline(self.pid)['messages']}
+        self.assertEqual(rows['$q']['reactions'], [])
+        self.assertTrue(rows['$q']['deleted'])
+        self.assertEqual(rows['$q']['original'], '')
+
+    def test_react_replaces_own_reaction(self):
+        self.ingest(self.event('$q', {'msgtype': 'm.text', 'body': 'hi'}))
+        self.inbox.mx = Mock(side_effect=[{'event_id': '$r1'}, {}, {'event_id': '$r2'}, {}])
+        self.inbox.react('$q', {'key': '👍'})
+        out = self.inbox.react('$q', {'key': '❤️'})
+        self.assertEqual(out['message']['reactions'], [{'key': '❤️', 'count': 1, 'mine': True}])
+        self.assertIn('/redact/%24r1/', self.inbox.mx.call_args_list[1].args[0])
+        self.inbox.react('$q', {'key': '❤️'})  # tapping the same one again removes it
+        self.assertEqual(self.inbox.row('$q')['reactions'], [])
+
+    def test_media_rows_hide_mxc_and_upgrade_label_rows(self):
+        self.inbox.store.add_message('$img', self.a, 'Alice', False, '[Photo] look', 5)
+        self.ingest(self.event('$img', {'msgtype': 'm.image', 'body': 'look', 'filename': 'a.jpg', 'url': 'mxc://messenger.internal/abc',
+                                        'info': {'mimetype': 'image/jpeg', 'w': 800, 'h': 600, 'size': 1234}}, ts=5))
+        row = self.inbox.timeline(self.pid)['messages'][0]
+        self.assertEqual((row['msgtype'], row['original']), ('m.image', 'look'))
+        self.assertEqual(row['media']['w'], 800)
+        self.assertNotIn('mxc', json.dumps(self.inbox.timeline(self.pid)))
+        self.assertNotIn('mxc', json.dumps(self.inbox.updates(0, 0)))
+
+    def test_voice_note_ingest(self):
+        self.ingest(self.event('$v', {'msgtype': 'm.audio', 'body': 'Voice message', 'url': 'mxc://messenger.internal/v',
+                                      'info': {'mimetype': 'audio/ogg', 'duration': 4200}, 'org.matrix.msc3245.voice': {},
+                                      'org.matrix.msc1767.audio': {'duration': 4200, 'waveform': [0, 512, 1024, 256]}}))
+        row = self.inbox.timeline(self.pid)['messages'][0]
+        self.assertTrue(row['media']['voice'])
+        self.assertEqual(row['media']['waveform'], [0, 50, 100, 25])
+        self.assertEqual(self.inbox.store.people()[0]['last']['voice'], True)
+
+    def test_media_proxy_caches_and_serves_safe_types_only(self):
+        self.ingest(self.event('$svg', {'msgtype': 'm.file', 'body': 'x.svg', 'url': 'mxc://messenger.internal/svg', 'info': {'mimetype': 'image/svg+xml'}}))
+        self.ingest(self.event('$jpg', {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/jpg', 'info': {'mimetype': 'image/jpeg'}}))
+        class Resp:
+            def __init__(self, data): self.data, self.headers = data, {'Content-Type': 'image/svg+xml'}
+            def read(self, n=-1):
+                d, self.data = self.data, b''
+                return d
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        with patch('unified.urlopen', return_value=Resp(b'<svg onload=alert(1)>')) as op:
+            blob = self.inbox.dispatch('GET', '/api/unified/media/$svg', {})
+            self.assertFalse(blob.inline)
+            self.assertEqual(blob.mime, 'application/octet-stream')
+        with patch('unified.urlopen', return_value=Resp(b'\xff\xd8\xff\xe0jpegdata')) as op:
+            blob = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['full']})
+            self.assertEqual((blob.mime, blob.inline), ('image/jpeg', True))
+            self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['full']})
+            self.assertEqual(op.call_count, 1)  # second read from the private cache
+            self.assertNotIn('access_token', op.call_args.args[0].full_url)
+
+    def test_upload_sniffs_type_and_sends_voice_note(self):
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self, *a): return b'{"content_uri": "mxc://messenger.internal/up"}'
+        with self.assertRaises(EngineError):
+            self.inbox.upload(self.pid, 'image', b'<html>not an image</html>')
+        with patch('unified.urlopen', return_value=Resp()):
+            up = self.inbox.upload(self.pid, 'voice', b'OggS' + b'\0' * 100)
+        self.inbox.mx = Mock(return_value={'event_id': '$voice'})
+        out = self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'v-1234567890', 'media': {'duration': 3000, 'waveform': [1, 2, 3]}})
+        content = self.inbox.mx.call_args.args[2]
+        self.assertEqual(content['msgtype'], 'm.audio')
+        self.assertIn('org.matrix.msc3245.voice', content)
+        self.assertEqual(content['info']['duration'], 3000)
+        self.assertTrue(out['message']['media']['voice'])
+
+    def test_read_marks_chat_read_and_posts_receipt(self):
+        self.ingest(self.event('$1', {'msgtype': 'm.text', 'body': 'a'}, ts=10), self.event('$2', {'msgtype': 'm.text', 'body': 'b'}, ts=20))
+        self.assertEqual(self.inbox.store.people()[0]['unread'], 2)
+        self.inbox.mx = Mock(return_value={})
+        self.inbox.read(self.pid, {'timestamp': 20})
+        self.assertEqual(self.inbox.store.people()[0]['unread'], 0)
+        time.sleep(0.2)
+        self.assertIn('/receipt/m.read/%242', self.inbox.mx.call_args.args[0])
+
+    def test_peer_read_receipt_and_typing(self):
+        self.inbox.store.add_message('$mine', self.a, '@owner:messenger.internal', True, 'yo', 50)
+        self.inbox.ephemeral(dict(self.a), [{'type': 'm.receipt', 'content': {'$mine': {'m.read': {'@telegram_1:messenger.internal': {'ts': 60}}}}},
+                                            {'type': 'm.typing', 'content': {'user_ids': ['@telegram_1:messenger.internal']}}])
+        self.assertEqual(self.inbox.store.people()[0]['peer_read_ts'], 50)
+        self.assertEqual(self.inbox.timeline(self.pid)['typing'], ['Alice'])
 
 
 if __name__ == '__main__': unittest.main()
