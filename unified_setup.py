@@ -49,6 +49,8 @@ def setup(root):
         'federation_domain_whitelist': [], 'allow_public_rooms_over_federation': False,
         'trusted_key_servers': [], 'suppress_key_server_warning': True,
         'url_preview_enabled': False, 'enable_metrics': False,
+        # One owner on a private homeserver: Synapse's public-server defaults (0.2 msg/s) throttle fast chatting.
+        'rc_message': {'per_second': 50, 'burst_count': 300},
         'log_config': '/data/log.yaml',
     })
     write(root / 'matrix' / 'log.yaml', {'version': 1, 'handlers': {'null': {'class': 'logging.NullHandler'}}, 'root': {'handlers': ['null'], 'level': 'WARNING'}, 'disable_existing_loggers': False})

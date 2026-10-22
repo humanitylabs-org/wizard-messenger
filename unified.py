@@ -22,7 +22,7 @@ import sqlite3
 import threading
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
 from engine import EngineError
 from typing import NoReturn
@@ -94,6 +94,7 @@ MIGRATIONS = [
     ('message', 'edited', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'deleted', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'client_id', 'TEXT'),
+    ('message', 'failed', 'TEXT'),
     ('identity', 'last_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'peer_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
@@ -140,6 +141,7 @@ class PeopleStore:
             db.executescript('''
             CREATE TABLE IF NOT EXISTS reaction(event_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, sender TEXT NOT NULL, key TEXT NOT NULL, outgoing INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS room_meta(room TEXT PRIMARY KEY, json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS redacted(event_id TEXT PRIMARY KEY);
             CREATE INDEX IF NOT EXISTS message_identity_ts ON message(identity_id, timestamp);
             CREATE INDEX IF NOT EXISTS message_seq ON message(seq);
             CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
@@ -357,12 +359,15 @@ class PeopleStore:
         with self.db() as db:
             if not db.execute('SELECT 1 FROM message WHERE id=?', (message_id,)).fetchone():
                 return False
+            if db.execute('SELECT 1 FROM redacted WHERE event_id=?', (event_id,)).fetchone():
+                return False  # a late sync echo of a reaction we already removed
             db.execute('INSERT OR IGNORE INTO reaction VALUES (?,?,?,?,?)', (event_id, message_id, sender, key, int(outgoing)))
         return self.bump(message_id)
 
     def redact(self, event_id):
         """A redaction removes a reaction or blanks a message ("This message was deleted")."""
         with self.db() as db:
+            db.execute('INSERT OR IGNORE INTO redacted VALUES (?)', (event_id,))
             row = db.execute('SELECT message_id FROM reaction WHERE event_id=?', (event_id,)).fetchone()
             if row:
                 db.execute('DELETE FROM reaction WHERE event_id=?', (event_id,))
@@ -557,13 +562,13 @@ class UnifiedInbox:
     def start(self):
         def receive():
             while not self.stop.is_set():
-                started = time.time()
                 try:
-                    self.sync(timeout_ms=20000)
+                    ok = self.sync(timeout_ms=20000).get('state') in ('ready', 'syncing')
                 except Exception:
+                    ok = False
                     self.store.put('sync_error', 'Private messaging sync failed. Retry is automatic.')
-                # A long-poll returns as soon as anything happens; only back off after quick failures.
-                self.stop.wait(0.2 if time.time() - started > 2 else 3)
+                # A long-poll returns as soon as anything happens: go straight back; back off only after failures.
+                self.stop.wait(0.05 if ok else 3)
 
         def translate():
             while not self.stop.is_set():
@@ -718,6 +723,16 @@ class UnifiedInbox:
                     ok = db.execute('SELECT 1 FROM message WHERE id=? AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
                 if ok:
                     self.store.bump(relates.get('event_id'), ',original=?,translated=NULL,translation_error=NULL,edited=1', (new['body'],))
+            return
+        if sender.startswith('@telegrambot:'):
+            # Bridge error notices are not chat lines: mark our newest recent outgoing message as failed.
+            if content.get('msgtype') == 'm.notice':
+                stamp = event.get('origin_server_ts', 0)
+                with self.store.db() as db:
+                    row = db.execute('SELECT id FROM message WHERE identity_id=? AND outgoing=1 AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1',
+                                     (identity['id'], stamp - 120000, stamp + 5000)).fetchone()
+                if row:
+                    self.store.bump(row[0], ',failed=?', ('Telegram did not accept this message',))
             return
         parts = message_parts(event)
         if parts is None:
@@ -1077,6 +1092,8 @@ class UnifiedInbox:
         if identity['network'] != 'telegram':
             fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
         mime = sniff(data)
+        if kind == 'voice' and mime == 'video/mp4':
+            mime = 'audio/mp4'  # Safari records voice into an mp4 container
         ok = {'image': ('image/jpeg', 'image/png', 'image/gif', 'image/webp'), 'voice': ('audio/ogg', 'audio/webm', 'audio/mp4')}[kind]
         if mime not in ok:
             fail('invalid_upload', 'That file type is not supported here', 415)
@@ -1245,8 +1262,8 @@ class UnifiedInbox:
         self.timings = (self.timings + [(name, int((time.time() - started) * 1000))])[-200:]
 
     def dispatch(self, method, path, payload, query=None, raw=None):
-        parts = path.strip('/').split('/')
-        suffix = parts[2:]
+        parts = path.split('?')[0].strip('/').split('/')
+        suffix = [unquote(x) for x in parts[2:]]
         query = query or {}
         q = lambda k, d=None: (query.get(k) or [d])[0]
         if suffix == ['status'] and method == 'GET':

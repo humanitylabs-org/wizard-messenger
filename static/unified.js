@@ -25,6 +25,11 @@
     compose: ['M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z', 'M15 5l4 4'],
     more: ['M12 5.5v.01', 'M12 12v.01', 'M12 18.5v.01'],
     send: ['M4 12 20 4l-4 16-4-6.5L4 12z', 'm12 13.5 8-9.5'],
+    down: ['M12 5v14', 'm5 12 7 7 7-7'], plus: ['M12 5v14', 'M5 12h14'],
+    mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
+    play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
+    copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
+    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
@@ -47,16 +52,16 @@
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
-  function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
+  function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy || store.pending > 0 || !!view.recording; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
   function closeOverlay() {
-    s.login = null; s.overlay = null; $('u-overlay')?.remove(); lastFocus?.focus(); hold();
+    s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
   function back() {
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
-    else if (s.person) { s.person = null; s.epoch++; inChat(false); renderList(); }
+    else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); renderList(); }
     else { s.search = null; s.epoch++; renderList(); }
     return true;
   }
@@ -100,52 +105,6 @@
     if (onInfo) head.append(iconButton('more', 'Edit', onInfo));
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
-  async function renderList(quiet = false) {
-    const epoch = ++s.epoch, groups = s.tab === 'groups';
-    const root = quiet ? $('unified-inbox') : listBase(groups ? 'Groups' : 'Chats');
-    if (!quiet) root.append(node('p', 'u-loading', 'Loading…'));
-    try {
-      const result = await call(groups ? 'groups' : 'people');
-      if (s.epoch !== epoch || s.person) return;
-      root.querySelector('.u-loading')?.remove(); root.querySelector('.u-list')?.remove(); root.querySelector('.u-chips')?.remove(); root.querySelector('.u-fab')?.remove();
-      const people = result[s.tab] || []; if (!groups) s.people = people;
-      const list = node('div', 'u-list'); root.append(list);
-      let label = root.dataset.label || '';
-      const draw = () => {
-        list.replaceChildren();
-        const q = (s.search || '').trim().toLowerCase();
-        for (const p of people.filter(p => (!label || p.labels.includes(label)) && (!q || p.display_name.toLowerCase().includes(q)))) {
-          const card = button('', () => openPerson(p.id), 'u-person');
-          card.append(avatar(p.display_name));
-          const info = node('span', 'u-person-info');
-          const top = node('span', 'u-chat-top'); top.append(node('strong', '', p.display_name));
-          if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
-          info.append(top);
-          const extra = [...(networksOf(p).length > 1 ? networksOf(p).map(cap) : []), ...(p.labels || [])];
-          if (p.last) {
-            const who = p.last.outgoing ? 'You: ' : groups && p.last.sender ? (p.last.sender.startsWith('@') ? p.last.sender.slice(1).split(':')[0] : p.last.sender).split(' ')[0] + ': ' : '';
-            info.append(node('span', 'u-snippet', who + p.last.text));
-          } else info.append(node('span', 'u-snippet', extra.length ? '' : cap(networksOf(p)[0] || '')));
-          if (extra.length) info.append(node('span', 'u-tags', extra.join(' · ')));
-          card.append(info); list.append(card);
-        }
-        if (!list.children.length) list.append(node('p', 'u-empty', q ? 'No matches' : label ? 'No groups with this label' : groups ? 'Group chats appear here once an account is connected.' : 'No chats yet. Connect Telegram in Settings, or start a new chat.'));
-      };
-      list.addEventListener('filter', draw);
-      if (groups) {
-        const labels = [...new Set(people.flatMap(p => p.labels))];
-        if (labels.length) {
-          const chips = node('div', 'u-chips'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Filter groups by label');
-          const paintChips = () => { for (const c of chips.children) c.setAttribute('aria-pressed', String(c.dataset.label === label)); };
-          for (const l of ['', ...labels]) { const chip = button(l || 'All', () => { label = l; root.dataset.label = l; paintChips(); draw(); }, 'u-chip'); chip.dataset.label = l; chips.append(chip); }
-          paintChips(); root.insertBefore(chips, list);
-        }
-      } else if (s.search == null) {
-        const fab = iconButton('compose', 'New chat', () => newChat(), 'u-fab'); root.append(fab);
-      }
-      draw();
-    } catch (e) { error(e); }
-  }
   function when(ms) {
     const d = new Date(ms), now = new Date();
     if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
@@ -181,101 +140,536 @@
       search.oninput = draw; draw(); requestAnimationFrame(() => search.focus());
     } catch (e) { error(e); }
   }
-  function paintMessages(scroll, messages, auto = false, multi = false) {
-    const signature = JSON.stringify([auto, multi, messages.map(m => [m.id, m.translated, m.translation_error, shown[m.id]])]);
-    if (scroll.dataset.signature === signature) return;
-    const follow = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 64;
-    const top = scroll.scrollTop;
-    scroll.replaceChildren(); scroll.dataset.signature = signature;
-    let day = '', prev = null;
-    messages.forEach((m, index) => {
+  // ---------- live store: lists and open threads stay in memory and follow the change feed ----------
+  const store = {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}, pending: 0};
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 32);
+  const listKey = p => (p.identities || []).some(i => i.kind === 'group') ? 'groups' : 'people';
+  const mediaURL = (id, kind) => 'api/unified/media/' + encodeURIComponent(id) + (kind ? '?kind=' + kind : '');
+  const nameOf = sender => !sender ? '' : sender.startsWith('@') ? sender.slice(1).split(':')[0] : sender;
+  const fmtDur = ms => { const t = Math.max(0, Math.round((ms || 0) / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
+  const fmtSize = b => !b ? '' : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+  const QUICK = ['❤️', '👍', '👎', '😂', '😮', '😢'];
+  const MORE = ['🙏', '🔥', '🎉', '👏', '😍', '🤔', '😅', '🙌', '💯', '😎', '🥲', '😡', '🤯', '🤝', '👀', '✅', '😘', '🥰', '😆', '😬', '🤣', '😭', '🤗', '😴', '💪', '👌', '🙃', '😇', '🤩', '😱', '💔', '⭐', '🌹', '☕', '🍻', '🎂', '🚀', '💡', '📌', '❓', '❗', '👋'];
+  let recent = [];
+  let csrf = () => '';
+  let feedCtl = null;
+
+  function snippet(last) {
+    if (!last) return '';
+    if (last.deleted) return 'This message was deleted';
+    const label = last.voice ? '🎤 Voice message' : {'m.image': '📷 Photo', 'm.video': '🎬 Video', 'm.audio': '🎵 Audio', 'm.file': '📎 File', 'm.sticker': 'Sticker', 'm.location': '📍 Location'}[last.msgtype];
+    return label ? label + (last.text ? ' · ' + last.text : '') : last.text;
+  }
+  function mergeList(people) {
+    for (const p of people) {
+      const list = store.lists[listKey(p)]; if (!list) continue;
+      const i = list.findIndex(x => x.id === p.id); if (i >= 0) list[i] = p; else list.push(p);
+      list.sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
+      const t = store.threads[p.id]; if (t) Object.assign(t.person, {peer_read_ts: p.peer_read_ts, last_read_ts: p.last_read_ts, display_name: p.display_name});
+    }
+  }
+  function mergeMessages(pid, rows) {
+    const t = store.threads[pid]; if (!t) return;
+    const oldest = t.messages.find(m => !m.pending)?.timestamp ?? 0;
+    for (const m of rows) {
+      const i = t.messages.findIndex(x => x.id === m.id || (m.client_id && x.client_id === m.client_id));
+      if (i >= 0) { const local = t.messages[i].local; t.messages[i] = m; if (local) m.local = local; }
+      else if (!t.has_more || m.timestamp >= oldest) t.messages.push(m);
+    }
+    t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || (a.id < b.id ? -1 : 1));
+  }
+  function apply(r) {
+    if (r.reset) { store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
+    store.seq = Math.max(store.seq, r.seq);
+    if (r.people?.length) mergeList(r.people);
+    for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
+    for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
+    if (s.person && store.threads[s.person]) { paintHead(); paintThread(); }
+    else if (!s.person && s.tab !== 'messenger') drawList();
+  }
+  async function feed() {
+    feedCtl?.abort(); const ctl = feedCtl = new AbortController();
+    while (s.ready && !ctl.signal.aborted) {
+      if (document.hidden) { await sleep(800); continue; }
+      try {
+        // Long-poll: answers the moment anything changes; jitter keeps two views from syncing up.
+        apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: ctl.signal}));
+      } catch (e) { if (ctl.signal.aborted) return; await sleep(3000); }
+    }
+  }
+
+  // ---------- chat list ----------
+  function skeleton(rows, cls) { const box = node('div', 'u-skeleton ' + cls); for (let i = 0; i < rows; i++) { const r = node('div', 'u-sk-row'); r.append(node('span', 'u-sk-av'), node('span', 'u-sk-lines')); box.append(r); } return box; }
+  async function renderList() {
+    const epoch = ++s.epoch, key = s.tab === 'groups' ? 'groups' : 'people';
+    const root = listBase(key === 'groups' ? 'Groups' : 'Chats');
+    const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
+    if (key === 'people' && s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
+    if (store.lists[key]) return drawList();
+    list.append(skeleton(8, 'list'));
+    try {
+      const r = await call(key);
+      if (!store.lists[key]) store.lists[key] = r[key] || [];
+      if (!store.seq) { store.seq = r.seq || 0; feed(); }
+      if (s.epoch === epoch && !s.person) drawList();
+    } catch (e) { error(e); }
+  }
+  function drawList() {
+    const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
+    const groups = s.tab === 'groups', people = store.lists[groups ? 'groups' : 'people']; if (!people) return;
+    let label = root.dataset.label || '';
+    if (groups && !root.querySelector('.u-chips')) {
+      const labels = [...new Set(people.flatMap(p => p.labels || []))];
+      if (labels.length) {
+        const chips = node('div', 'u-chips'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Filter groups by label');
+        const paintChips = () => { for (const c of chips.children) c.setAttribute('aria-pressed', String(c.dataset.label === (root.dataset.label || ''))); };
+        for (const l of ['', ...labels]) { const chip = button(l || 'All', () => { root.dataset.label = l; paintChips(); drawList(); }, 'u-chip'); chip.dataset.label = l; chips.append(chip); }
+        paintChips(); root.insertBefore(chips, list);
+      }
+    }
+    const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
+    for (const p of people.filter(p => (!label || (p.labels || []).includes(label)) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
+      const card = button('', () => openPerson(p.id, p), 'u-person' + (p.unread ? ' unread' : ''));
+      card.append(avatar(p.display_name));
+      const info = node('span', 'u-person-info');
+      const top = node('span', 'u-chat-top'); top.append(node('strong', '', p.display_name));
+      if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
+      const bottom = node('span', 'u-chat-bottom');
+      const typing = (store.typing[p.id] || []).length;
+      if (typing) bottom.append(node('span', 'u-snippet typing', 'typing…'));
+      else if (p.last) {
+        const who = p.last.outgoing ? 'You: ' : groups && p.last.sender ? nameOf(p.last.sender).split(' ')[0] + ': ' : '';
+        bottom.append(node('span', 'u-snippet', who + snippet(p.last)));
+      }
+      if (p.unread) bottom.append(node('span', 'u-badge', p.unread > 99 ? '99+' : String(p.unread)));
+      else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
+      info.append(top, bottom);
+      const extra = [...(networksOf(p).length > 1 ? networksOf(p).map(cap) : []), ...(p.labels || [])];
+      if (extra.length) info.append(node('span', 'u-tags', extra.join(' · ')));
+      card.append(info); frag.append(card);
+    }
+    if (!frag.children.length) frag.append(node('p', 'u-empty', q ? 'No matches' : label ? 'No groups with this label' : groups ? 'Group chats appear here once an account is connected.' : 'No chats yet. Connect Telegram in Settings, or start a new chat.'));
+    list.replaceChildren(frag);
+  }
+
+  // ---------- conversation ----------
+  const view = {};  // live DOM handles for the open thread
+  const els = new Map(); // message key -> bubble element (keyed render)
+  const player = new Audio(); let playing = null;
+  player.onended = player.onpause = () => { playing?.classList.remove('playing'); if (player.ended) for (const i of playing?.querySelectorAll('.u-wave i') || []) i.classList.remove('on'); };
+  player.ontimeupdate = () => { if (playing) { const f = player.duration ? player.currentTime / player.duration : 0; for (const i of playing.querySelectorAll('.u-wave i')) i.classList.toggle('on', +i.dataset.at < f); } const t = playing?.querySelector('.u-dur'); if (t) t.textContent = fmtDur((player.duration - player.currentTime) * 1000); };
+
+  async function openPerson(id, hint) {
+    s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
+    const cached = store.threads[id];
+    buildThread(id, cached?.person || hint || {display_name: '', identities: []});
+    if (cached) { paintThread(true); markRead(); return; }
+    view.scroll.append(skeleton(6, 'bubbles'));
+    try {
+      const r = await call('people/' + id + '?limit=60');
+      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, warning: r.history_warning};
+      store.typing[id] = r.typing || [];
+      if (!store.seq) { store.seq = r.seq || 0; feed(); }
+      if (s.epoch !== epoch) return;
+      buildThread(id, r.person); paintThread(true); markRead();
+    } catch (e) { error(e); }
+  }
+  function reviewedOf(p) { return !!p.language && p.language !== 'en'; }
+  function subtitle(p) {
+    if ((store.typing[p.id] || []).length) return 'typing…';
+    const langName = {th: 'Thai', ja: 'Japanese', zh: 'Chinese', es: 'Spanish', fr: 'French', de: 'German'}[p.language] || p.language;
+    return reviewedOf(p) ? 'Auto-translate · ' + langName : networksOf(p).map(cap).join(' · ');
+  }
+  function paintHead() {
+    const t = store.threads[s.person]; if (!t || !view.sub) return;
+    view.sub.textContent = subtitle(t.person); view.sub.classList.toggle('typing', (store.typing[s.person] || []).length > 0);
+  }
+  function buildThread(id, p) {
+    const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null);
+    view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
+    const t = store.threads[id];
+    const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
+    scroll.oncontextmenu = e => { if (e.target.closest('.u-message')) e.preventDefault(); };
+    scroll.onscroll = () => { const near = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80; view.bottom = near; view.pill.hidden = near; if (near) markRead(); if (scroll.scrollTop < 400) older(); };
+    const pill = iconButton('down', 'Scroll to newest', () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'}), 'u-down'); pill.hidden = true;
+    const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
+    Object.assign(view, {root, scroll, pill, id});
+    root.append(composer(id, p));
+  }
+  function nearBottom() { const sc = view.scroll; return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
+  function paintThread(toBottom = false) {
+    const t = store.threads[view.id], scroll = view.scroll; if (!t || !scroll) return;
+    const follow = toBottom || nearBottom(), p = t.person, auto = reviewedOf(p), multi = networksOf(p).length > 1, group = (p.identities || []).some(i => i.kind === 'group');
+    const kids = [node('div', 'u-spacer')];
+    if (t.has_more) kids.push(node('p', 'u-older', 'Loading earlier messages…'));
+    let day = '';
+    const side = m => (m.outgoing ? 'o' : 'i' + (m.sender || ''));
+    t.messages.forEach((m, i) => {
       const label = dayLabel(m.timestamp);
-      if (label !== day) { day = label; prev = null; scroll.append(node('p', 'u-day', label)); }
-      const next = messages[index + 1];
-      const side = m => (m.outgoing ? 'o' : 'i') + (m.outgoing ? '' : m.sender || '');
-      const joinsPrev = prev && side(prev) === side(m) && m.timestamp - prev.timestamp < 5 * 6e4;
-      const joinsNext = next && dayLabel(next.timestamp) === day && side(next) === side(m) && next.timestamp - m.timestamp < 5 * 6e4;
-      const bubble = node('article', 'u-message' + (m.outgoing ? ' outgoing' : '') + (joinsPrev ? ' joined-prev' : '') + (joinsNext ? ' joined-next' : ''));
-      if (m.kind === 'group' && !m.outgoing && m.sender && !joinsPrev) bubble.append(node('p', 'u-sender', m.sender.startsWith('@') ? m.sender.slice(1).split(':')[0] : m.sender));
-      if (auto || m.outgoing) {
-        bubble.append(node('p', '', m.translated || m.original));
-        if (m.translated && m.translated !== m.original) bubble.append(node('p', 'u-original', m.original));
-        if (m.translation_error) bubble.append(node('p', 'u-original error', m.translation_error));
+      if (label !== day) { day = label; kids.push(node('p', 'u-day', label)); }
+      const prev = t.messages[i - 1], next = t.messages[i + 1];
+      const jp = prev && dayLabel(prev.timestamp) === day && side(prev) === side(m) && m.timestamp - prev.timestamp < 3e5;
+      const jn = next && dayLabel(next.timestamp) === day && side(next) === side(m) && next.timestamp - m.timestamp < 3e5;
+      const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
+      const read = m.outgoing && p.peer_read_ts >= m.timestamp;
+      const key = m.client_id || m.id;
+      const sig = JSON.stringify([m.id, m.original, m.translated, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
+      let el = els.get(key);
+      if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
+      kids.push(el);
+    });
+    if (!t.messages.length) kids.push(node('p', 'u-empty', 'No messages yet. Say hi 👋'));
+    const before = scroll.scrollHeight - scroll.scrollTop;
+    const same = kids.length === scroll.children.length && kids.every((k, i) => k === scroll.children[i] || (i === 0 && scroll.children[0].className === 'u-spacer') || (k.className === 'u-day' && scroll.children[i].className === 'u-day' && k.textContent === scroll.children[i].textContent) || (k.className === 'u-older' && scroll.children[i].className === 'u-older'));
+    if (!same) scroll.replaceChildren(...kids);
+    if (follow) scroll.scrollTop = scroll.scrollHeight;
+    else if (view.anchor) { scroll.scrollTop = scroll.scrollHeight - before; }
+    view.anchor = false;
+    if (follow) markRead();
+  }
+  async function older() {
+    const t = store.threads[view.id]; if (!t || !t.has_more || view.loadingOlder) return;
+    const first = t.messages.find(m => !m.pending); if (!first) return;
+    view.loadingOlder = true; const id = view.id;
+    try {
+      const r = await call('people/' + id + '?limit=60&before=' + first.timestamp);
+      const known = new Set(t.messages.map(m => m.id));
+      t.messages = [...r.messages.filter(m => !known.has(m.id)), ...t.messages]; t.has_more = r.has_more;
+      if (view.id === id) { view.anchor = true; paintThread(); }
+    } catch (e) { error(e); } finally { view.loadingOlder = false; }
+  }
+  function markRead() {
+    const t = store.threads[view.id]; if (!t || document.hidden || !view.scroll || !nearBottom()) return;
+    const last = [...t.messages].reverse().find(m => !m.outgoing && !m.pending);
+    if (!last || last.timestamp <= (t.person.last_read_ts || 0) || view.reading === last.timestamp) return;
+    view.reading = last.timestamp; t.person.last_read_ts = last.timestamp;
+    const row = store.lists[listKey(t.person)]?.find(x => x.id === view.id); if (row) row.unread = 0;
+    call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
+  }
+  const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
+  function richText(cls, text) {
+    const p = node('p', cls); let at = 0;
+    for (const m of text.matchAll(URL_RE)) { p.append(text.slice(at, m.index)); const a = node('a', '', m[0]); a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer'; p.append(a); at = m.index + m[0].length; }
+    p.append(text.slice(at)); return p;
+  }
+  function bubble(m, pos, ctx) {
+    const row = node('div', 'u-row' + (m.outgoing ? ' outgoing' : '') + ' pos-' + pos); row.dataset.id = m.id;
+    const b = node('article', 'u-message' + (m.outgoing ? ' outgoing' : '') + (m.deleted ? ' deleted' : '') + (m.pending ? ' pending' : '') + (m.failed ? ' failed' : ''));
+    const visual = !m.deleted && ['m.image', 'm.sticker', 'm.video'].includes(m.msgtype);
+    if (visual && !m.original) b.classList.add('bare');
+    if (ctx.group && !m.outgoing && m.sender && (pos === 'first' || pos === 'single')) b.append(node('p', 'u-sender tone-text-' + toneOf(m.sender), nameOf(m.sender)));
+    if (m.reply) {
+      const q = button('', () => jumpTo(m.reply.id), 'u-quote');
+      q.append(node('strong', '', m.reply.outgoing ? 'You' : nameOf(m.reply.sender) || 'Them'), node('span', '', m.reply.deleted ? 'Deleted message' : m.reply.voice ? '🎤 Voice message' : m.reply.text || {'m.image': '📷 Photo', 'm.video': '🎬 Video', 'm.file': '📎 File', 'm.sticker': 'Sticker'}[m.reply.msgtype] || ''));
+      b.append(q);
+    }
+    if (m.deleted) b.append(node('p', 'u-deleted', m.outgoing ? 'You deleted this message' : 'This message was deleted'));
+    else if (visual) b.append(visualMedia(m));
+    else if (m.msgtype === 'm.audio') b.append(voice(m));
+    else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
+    else if (m.msgtype === 'm.location') { const geo = /^geo:([-\d.]+),([-\d.]+)/.exec(m.media?.geo || ''); const a = node('a', 'u-file', '📍 ' + (m.original || 'Location')); if (geo) { a.href = 'https://www.openstreetmap.org/?mlat=' + geo[1] + '&mlon=' + geo[2] + '#map=16/' + geo[1] + '/' + geo[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; } b.append(a); }
+    if (!m.deleted && m.original && m.msgtype !== 'm.location') {
+      if (ctx.auto || m.outgoing) {
+        b.append(richText('u-text', m.translated || m.original));
+        if (m.translated && m.translated !== m.original) b.append(node('p', 'u-original', m.original));
+        if (m.translation_error) b.append(node('p', 'u-original error', m.translation_error));
       } else {
         const translated = shown[m.id] === 'translated' && m.translated;
-        bubble.append(node('p', '', translated ? m.translated : m.original));
-        if (foreignScript(m.original)) {
-          const toggle = button(translated ? 'Show original' : 'Translate', () => action(async () => {
-            if (!translated && !m.translated) {
-              const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {});
-              if (r.error) throw new Error(r.error);
-              m.translated = r.translated;
-            }
-            shown[m.id] = translated ? 'original' : 'translated'; paintMessages(scroll, messages, auto, multi);
-          }), 'u-translate link');
-          bubble.append(toggle);
-        }
+        b.append(richText('u-text', translated ? m.translated : m.original));
+        if (foreignScript(m.original)) b.append(button(translated ? 'Show original' : 'Translate', () => translate(m), 'u-translate link'));
       }
-      const meta = node('footer');
-      if (multi) meta.append(node('span', 'u-net', cap(m.network)));
-      meta.append(node('time', '', new Date(m.timestamp).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})));
-      bubble.append(meta); scroll.append(bubble); prev = m;
-    });
-    if (!messages.length) scroll.append(node('p', 'u-empty', 'No messages yet'));
-    scroll.scrollTop = follow ? scroll.scrollHeight : top;
+    }
+    const meta = node('footer');
+    if (ctx.multi) meta.append(node('span', 'u-net', cap(m.network)));
+    if (m.edited && !m.deleted) meta.append(node('span', 'u-edited', 'edited'));
+    meta.append(node('time', '', new Date(m.timestamp).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})));
+    if (m.outgoing) meta.append(m.failed ? node('span', 'u-status-ic fail', '!') : m.pending ? node('span', 'u-status-ic clock', '◷') : node('span', 'u-status-ic' + (ctx.read ? ' read' : ''), ctx.read ? '✓✓' : '✓'));
+    b.append(meta);
+    row.append(b);
+    if (m.failed) row.append(button(m.failed === true ? 'Not sent · Tap to retry' : 'Not sent · ' + m.failed + ' · Retry', () => m.retry ? m.retry() : null, 'u-retry link'));
+    if (m.reactions?.length) {
+      const strip = node('div', 'u-reactions');
+      for (const r of m.reactions) strip.append(button(r.key + (r.count > 1 ? ' ' + r.count : ''), () => react(m, r.key), 'u-react' + (r.mine ? ' mine' : '')));
+      row.append(strip);
+    }
+    if (!m.pending && !m.deleted) gestures(row, b, m);
+    return row;
   }
-  async function openPerson(id) {
-    s.person = id; const epoch = ++s.epoch; inChat(true);
-    threadBase('…', '');
-    try {
-      const result = await call('people/' + id);
-      if (s.epoch !== epoch) return;
-      const p = result.person, multi = networksOf(p).length > 1;
-      const reviewed = !!p.language && p.language !== 'en';
-      const langName = {th: 'Thai', ja: 'Japanese', zh: 'Chinese', es: 'Spanish', fr: 'French', de: 'German'}[p.language] || p.language;
-      const root = threadBase(p.display_name, reviewed ? 'Auto-translate · ' + langName : networksOf(p).map(cap).join(' · '), () => editPerson(p));
-      if (result.history_warning) root.append(node('p', 'u-note', result.history_warning));
-      const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log');
-      paintMessages(scroll, result.messages, reviewed, multi);
-      root.append(scroll);
-      const form = node('form', 'u-composer');
-      const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
-      for (const i of p.identities) { const opt = node('option', '', 'via ' + cap(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
-      channel.value = p.preferred_identity || p.identities[0].id;
-      channel.hidden = p.identities.length < 2;
-      const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
-      const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
-      const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; send.disabled = !draft.value.trim(); };
-      draft.oninput = () => { s.drafts[id] = draft.value; grow(); try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { error(new Error('Draft storage is unavailable. Keep this window open.')); } hold(); };
-      draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
-      const row = node('div', 'u-compose-row'); row.append(draft, send);
-      form.append(channel, row); form.onsubmit = e => { e.preventDefault(); submit(); };
-      // Sending never depends on native form submission, which sandboxed hosts can block.
-      function submit() { if (!draft.value.trim()) return; action(async () => {
-        const preview = await call('people/' + id + '/preview', {text: draft.value, identity_id: channel.value});
-        if (s.person !== id) return;
-        if (!reviewed && !preview.error && preview.translated === preview.original) {
-          // Plain English chat: no review sheet, the preview is only the server's send receipt.
-          const receipt = await call('people/' + id + '/send', {preview_id: preview.id, send_original: false});
-          if (s.drafts[id] === preview.original) { s.drafts[id] = ''; sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); }
-          await openPerson(id);
-          if (receipt.state === 'queued') error(new Error('Queued in Messenger, not yet published. Use the Messenger tab to check or retry the existing event.'));
-          return;
-        }
-        const sheet = overlay('Review before sending');
-        sheet.append(node('p', 'helper', cap(p.identities.find(i => i.id === preview.identity_id).network) + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));
-        if (preview.error) sheet.append(node('p', 'error', preview.error));
-        const confirm = original => action(async () => {
-          const receipt = await call('people/' + id + '/send', {preview_id: preview.id, send_original: original});
-          if (s.drafts[id] === preview.original) { s.drafts[id] = ''; sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); }
-          closeOverlay(); await openPerson(id);
-          if (receipt.state === 'queued') error(new Error('Queued in Messenger, not yet published. Use the Messenger tab to check or retry the existing event.'));
-        });
-        if (!preview.error) sheet.append(button('Send', () => confirm(false), 'primary wide'));
-        if (preview.error || preview.translated !== preview.original) sheet.append(button('Send English original instead', () => confirm(true), 'secondary wide'));
-      }); };
-      root.append(form); grow(); scroll.scrollTop = scroll.scrollHeight; hold();
-    } catch (e) { error(e); }
+  function toneOf(name) { let h = 0; for (const ch of name || '?') h = (h * 31 + ch.codePointAt(0)) >>> 0; return h % TONES; }
+  function visualMedia(m) {
+    const box = node('button', 'u-media'); box.type = 'button'; box.setAttribute('aria-label', m.msgtype === 'm.video' ? 'Play video' : 'Open photo');
+    const w = m.media?.w, h = m.media?.h;
+    if (w && h) box.style.aspectRatio = w + ' / ' + h; else box.classList.add('unsized');
+    if (m.msgtype === 'm.video') {
+      const v = node('video'); v.preload = 'metadata'; v.playsInline = true; v.src = m.local || mediaURL(m.id); v.muted = true; box.append(v, node('span', 'u-play', '▶'));
+      if (m.media?.duration) box.append(node('span', 'u-vdur', fmtDur(m.media.duration)));
+    } else {
+      const img = node('img'); img.alt = m.original || 'Photo'; img.decoding = 'async'; img.loading = 'lazy';
+      img.onload = () => { img.classList.add('in'); if (!w && view.scroll && nearBottom()) view.scroll.scrollTop = view.scroll.scrollHeight; };
+      img.onerror = () => { box.classList.add('broken'); box.append(node('span', 'u-broken', 'Photo unavailable')); };
+      img.src = m.local || mediaURL(m.id, 'thumb'); box.append(img);
+      if (m.msgtype === 'm.sticker') box.classList.add('sticker');
+    }
+    if (!m.pending) box.onclick = () => viewer(m); else box.append(node('span', 'u-spin'));
+    return box;
+  }
+  function viewer(m) {
+    closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Photo';
+    const layer = node('div', 'u-overlay u-viewer'); layer.id = 'u-overlay'; layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-label', 'Photo');
+    const bar = node('header'); const save = node('a', 'icon-button u-save'); save.href = mediaURL(m.id); save.download = ''; save.setAttribute('aria-label', 'Save'); save.append(icon('download'));
+    bar.append(iconButton('close', 'Close', closeOverlay), node('span', 'u-viewer-who', m.outgoing ? 'You' : nameOf(m.sender)), save);
+    let media;
+    if (m.msgtype === 'm.video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.src = mediaURL(m.id); }
+    else { media = node('img'); media.alt = m.original || 'Photo'; media.src = mediaURL(m.id); }
+    layer.append(bar, media); if (m.original) layer.append(node('p', 'u-viewer-cap', m.original));
+    layer.onclick = e => { if (e.target === layer || e.target === media && media.tagName === 'IMG') closeOverlay(); };
+    $('messenger').append(layer); hold();
+  }
+  function voice(m) {
+    const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
+    const play = iconButton('play', 'Play voice message', () => {
+      if (m.pending && !m.local) return;
+      if (playing === box && !player.paused) { player.pause(); return; }
+      if (playing !== box) { playing?.classList.remove('playing'); playing = box; player.src = m.local || mediaURL(m.id); }
+      box.classList.add('playing'); player.play().catch(e => { box.classList.remove('playing'); error(new Error('Could not play this voice message')); });
+    }, 'u-vplay');
+    const bars = node('div', 'u-wave'); const wave = m.media?.waveform?.length ? m.media.waveform : Array.from({length: 40}, (_, i) => 30 + 25 * Math.sin(i * 1.7 + (m.id.length % 5)));
+    const n = Math.min(40, wave.length); for (let i = 0; i < n; i++) { const bar = node('i'); bar.style.height = Math.max(12, wave[Math.floor(i * wave.length / n)]) + '%'; bar.dataset.at = String(i / n); bars.append(bar); }
+    bars.onclick = e => { if (playing === box && player.duration) { const r = bars.getBoundingClientRect(); player.currentTime = player.duration * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); } };
+    box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)));
+    if (!m.media?.voice && m.media?.filename) box.append(node('span', 'u-file-name', m.media.filename));
+    return box;
+  }
+  function jumpTo(id) { const el = view.scroll?.querySelector('[data-id="' + CSS.escape(id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
+  function translate(m) {
+    action(async () => {
+      if (shown[m.id] !== 'translated' && !m.translated) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
+      shown[m.id] = shown[m.id] === 'translated' ? 'original' : 'translated'; paintThread();
+    });
+  }
+
+  // Long-press (or right-click) opens the menu; a short swipe right replies, like Signal.
+  function gestures(row, b, m) {
+    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false;
+    b.addEventListener('pointerdown', e => {
+      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate')) return;
+      x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
+      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); menu(m, b); }, 450);
+    });
+    b.addEventListener('pointermove', e => {
+      const mx = e.clientX - x0, my = e.clientY - y0;
+      if (timer && Math.hypot(mx, my) > 8) { clearTimeout(timer); timer = null; }
+      if (e.pointerType === 'touch' && (swiping || (mx > 12 && Math.abs(my) < 10))) { swiping = true; dx = Math.max(0, Math.min(72, mx)); row.style.transform = 'translateX(' + dx + 'px)'; row.classList.toggle('arm', dx > 56); }
+    });
+    const end = () => { if (timer) { clearTimeout(timer); timer = null; } if (swiping) { row.style.transform = ''; row.classList.remove('arm'); if (dx > 56) startReply(m); swiping = false; } };
+    b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end); b.addEventListener('pointerleave', end);
+    b.addEventListener('contextmenu', e => { e.preventDefault(); if (timer) clearTimeout(timer); timer = null; menu(m, b); });
+  }
+  function menu(m, b) {
+    const t = store.threads[view.id]; if (!t) return;
+    closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Message';
+    const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
+    const panel = node('div', 'u-menu'); panel.setAttribute('role', 'menu');
+    const telegram = m.network === 'telegram';
+    if (telegram) {
+      const strip = node('div', 'u-quick');
+      const mine = m.reactions?.find(r => r.mine)?.key;
+      for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn' + (mine === k ? ' mine' : '')));
+      strip.append(button('＋', () => { panel.replaceChildren(grid(m)); }, 'u-qr-btn more'));
+      panel.append(strip);
+    }
+    const list = node('div', 'u-actions');
+    const item = (label, ic, fn, cls = '') => { const it = button('', () => { closeOverlay(); fn(); }, 'u-act ' + cls); it.setAttribute('role', 'menuitem'); it.append(icon(ic), node('span', '', label)); list.append(it); };
+    if (!m.deleted) item('Reply', 'reply', () => startReply(m));
+    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original).then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
+    if (m.media && !m.deleted) item('Save', 'download', () => { const a = node('a'); a.href = mediaURL(m.id); a.download = m.media.filename || ''; a.click(); });
+    if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
+    item('Delete for me', 'trash', () => del(m, false), 'danger');
+    if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
+    panel.append(list); layer.append(panel);
+    layer.onclick = e => { if (e.target === layer) closeOverlay(); };
+    $('messenger').append(layer);
+    const r = b.getBoundingClientRect(), H = $('messenger').clientHeight;
+    panel.style.top = Math.max(12, Math.min(r.bottom + 8, H - 16 - (telegram ? 380 : 320))) + 'px';
+    panel.classList.add(m.outgoing ? 'right' : 'left');
+    b.closest('.u-row')?.classList.add('lifted'); layer.addEventListener('remove', () => {}); view.lifted = b.closest('.u-row');
+    panel.querySelector('button')?.focus(); hold();
+  }
+  function grid(m) {
+    const box = node('div', 'u-grid');
+    for (const k of [...QUICK, ...MORE]) box.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn'));
+    return box;
+  }
+  function toast(text) { const el = node('p', 'u-toast', text); $('messenger').append(el); setTimeout(() => el.remove(), 1600); }
+  async function react(m, key) {
+    recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
+    const t = store.threads[view.id]; const before = m.reactions;
+    // Optimistic: one reaction per person, tapping your own again removes it.
+    const others = (m.reactions || []).map(r => r.mine ? {...r, count: r.count - 1, mine: false} : r).filter(r => r.count > 0);
+    const had = (m.reactions || []).some(r => r.mine && r.key === key);
+    if (!had) { const e = others.find(r => r.key === key); if (e) { e.count++; e.mine = true; } else others.push({key, count: 1, mine: true}); }
+    m.reactions = others; paintThread();
+    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
+    catch (e) { m.reactions = before; paintThread(); error(e); }
+  }
+  async function del(m, everyone) {
+    if (everyone && !confirm('Delete this message for everyone?')) return;
+    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, [r.message]); paintThread(); } catch (e) { error(e); }
+  }
+  function startReply(m) { view.edit = null; view.reply = m; view.paintBar?.(); view.draft?.focus(); }
+  function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = m.original; view.grow?.(); view.paintBar?.(); view.draft.focus(); }
+
+  // ---------- composer: text, photo, voice; optimistic and idempotent ----------
+  function composer(id, p) {
+    const form = node('form', 'u-composer');
+    const bar = node('div', 'u-bar'); bar.hidden = true;
+    const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
+    for (const i of p.identities || []) { const opt = node('option', '', 'via ' + cap(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
+    channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
+    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => i.network === 'telegram');
+    const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
+    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.hidden = true;
+    const attach = iconButton('plus', 'Attach photo', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
+    const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
+    const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
+    const field = node('div', 'u-field'); field.append(draft);
+    const row = node('div', 'u-compose-row'); row.append(attach, field, send, mic, file);
+    const paintBar = () => {
+      bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach;
+      bar.hidden = !target && !a;
+      if (target) {
+        const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
+        bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
+      }
+      if (a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = a.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(a.url); view.attach = null; paintBar(); grow(); })); bar.append(chip); }
+    };
+    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
+    let typingAt = 0, idle = null;
+    const typing = on => { if (!telegramOnly) return; call('people/' + id + '/typing', {typing: on}).catch(() => {}); };
+    draft.oninput = () => {
+      s.drafts[id] = view.edit ? s.drafts[id] : draft.value; grow(); saveDrafts(); hold();
+      if (draft.value && Date.now() - typingAt > 4000) { typingAt = Date.now(); typing(true); }
+      clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
+    };
+    draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
+    file.onchange = async () => { const f = file.files[0]; file.value = ''; if (!f) return; try { view.attach = await preparePhoto(f); paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
+    form.onsubmit = e => { e.preventDefault(); submit(); };
+    function submit() {
+      const text = draft.value.trim(), a = view.attach;
+      if (!text && !a) return;
+      if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }
+      if (reviewed && !a) return reviewSend(id, p, text, channel.value);
+      if (typingAt) { typingAt = 0; typing(false); }
+      draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
+      queueSend(id, {text, photo: a, reply, identity_id: channel.value});
+    }
+    async function record() {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return error(new Error('Voice recording is not available in this browser.'));
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}}); }
+      catch { return error(new Error('Microphone access was blocked. Allow the microphone for Wizard and try again.')); }
+      const type = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+      const rec = new MediaRecorder(stream, type ? {mimeType: type, audioBitsPerSecond: 32000} : {});
+      const chunks = [], levels = []; const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const an = ctx.createAnalyser(); an.fftSize = 512; ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
+      const started = Date.now(); let cancelled = false;
+      const panel = node('div', 'u-recording'); const clock = node('span', 'u-rec-time', '0:00'); const live = node('div', 'u-wave live');
+      const stopAll = () => { clearInterval(tick); stream.getTracks().forEach(t => t.stop()); ctx.close().catch(() => {}); panel.remove(); row.hidden = false; view.recording = null; hold(); };
+      panel.append(iconButton('trash', 'Cancel recording', () => { cancelled = true; rec.stop(); }, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', () => rec.stop(), 'u-send'));
+      row.hidden = true; form.append(panel); view.recording = rec; hold();
+      const tick = setInterval(() => {
+        an.getByteTimeDomainData(buf); let sum = 0; for (const v of buf) sum += (v - 128) ** 2;
+        const level = Math.min(1024, Math.round(Math.sqrt(sum / buf.length) * 40)); levels.push(level);
+        clock.textContent = fmtDur(Date.now() - started);
+        const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); while (live.children.length > 40) live.firstChild.remove();
+        if (Date.now() - started > 15 * 60e3) rec.stop();
+      }, 100);
+      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        stopAll(); const duration = Date.now() - started;
+        if (cancelled || duration < 600) { if (!cancelled) toast('Hold on a little longer to record'); return; }
+        const blob = new Blob(chunks, {type: (rec.mimeType || type || 'audio/webm').split(';')[0]});
+        const step = Math.max(1, levels.length / 64); const waveform = Array.from({length: Math.min(64, levels.length)}, (_, i) => levels[Math.floor(i * step)]);
+        const reply = view.reply; view.reply = null; paintBar();
+        queueSend(id, {voice: {blob, duration, waveform, url: URL.createObjectURL(blob)}, reply, identity_id: channel.value});
+      };
+      rec.start(250);
+    }
+    Object.assign(view, {draft, grow, paintBar});
+    form.append(bar, channel, row); grow(); paintBar();
+    return form;
+  }
+  function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
+  async function preparePhoto(f) {
+    if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
+    if (f.type === 'image/gif') { const bmp = await createImageBitmap(f); return {blob: f, url: URL.createObjectURL(f), w: bmp.width, h: bmp.height}; }
+    // Downscale like Signal's "standard" quality: long edge 2048, JPEG.
+    const bmp = await createImageBitmap(f, {imageOrientation: 'from-image'});
+    const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    const canvas = node('canvas'); canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
+    return {blob, url: URL.createObjectURL(blob), w, h};
+  }
+  async function upload(id, kind, blob) {
+    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
+    let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
+    if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Upload failed. Tap to retry.');
+    return env.result;
+  }
+  const queues = {};
+  function queueSend(id, job) {
+    const t = store.threads[id]; if (!t) return;
+    const client_id = 'w' + uid();
+    const m = {id: 'pending:' + client_id, client_id, outgoing: true, pending: true, original: job.text || '', timestamp: Date.now(), network: t.person.identities?.[0]?.network || 'telegram',
+      msgtype: job.photo ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
+      reply: job.reply ? {id: job.reply.id, sender: job.reply.sender, outgoing: job.reply.outgoing, text: job.reply.original, msgtype: job.reply.msgtype, voice: job.reply.media?.voice} : null};
+    if (job.photo) { m.local = job.photo.url; m.media = {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'}; }
+    if (job.voice) { m.local = job.voice.url; m.media = {voice: true, duration: job.voice.duration, waveform: job.voice.waveform.map(v => Math.round(v / 10.24))}; }
+    t.messages.push(m); store.pending++; hold();
+    if (s.person === id) paintThread(true);
+    const run = async () => {
+      m.pending = true; m.failed = false; if (s.person === id) paintThread();
+      try {
+        let upload_id, media;
+        if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
+        if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
+        const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, media});
+        if (r.message) mergeMessages(id, [r.message]);
+        if (r.state === 'queued') toast('Queued in Messenger, not yet published');
+        store.pending--; hold();
+      } catch (e) {
+        m.pending = false; m.failed = e.message && e.message.length < 80 ? e.message : true; m.retry = () => { queues[id] = (queues[id] || Promise.resolve()).then(run); };
+        // still owed: the update hold stays until it is sent
+      }
+      if (s.person === id) paintThread();
+    };
+    queues[id] = (queues[id] || Promise.resolve()).then(run);
+  }
+  async function editMsg(m, text) {
+    const before = m.original; m.original = text; m.edited = true; paintThread();
+    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/edit', {text}); mergeMessages(view.id, [r.message]); paintThread(); }
+    catch (e) { m.original = before; paintThread(); error(e); }
+  }
+  function reviewSend(id, p, text, identity_id) {
+    action(async () => {
+      const preview = await call('people/' + id + '/preview', {text, identity_id});
+      if (s.person !== id) return;
+      const sheet = overlay('Review before sending');
+      sheet.append(node('p', 'helper', cap(p.identities.find(i => i.id === preview.identity_id).network) + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));
+      if (preview.error) sheet.append(node('p', 'error', preview.error));
+      const reply = view.reply;
+      const confirmSend = original => action(async () => {
+        const r = await call('people/' + id + '/send', {preview_id: preview.id, send_original: original, reply_to: reply?.id || null, client_id: 'w' + uid()});
+        if (s.drafts[id] === preview.original || (s.drafts[id] || '').trim() === preview.original) { s.drafts[id] = ''; saveDrafts(); if (view.draft) { view.draft.value = ''; view.grow(); } }
+        view.reply = null; view.paintBar?.(); closeOverlay();
+        if (r.message) { mergeMessages(id, [r.message]); paintThread(true); }
+        if (r.state === 'queued') toast('Queued in Messenger, not yet published');
+      });
+      if (!preview.error) sheet.append(button('Send', () => confirmSend(false), 'primary wide'));
+      if (preview.error || preview.translated !== preview.original) sheet.append(button('Send English original instead', () => confirmSend(true), 'secondary wide'));
+    });
   }
   function editPerson(p) {
     const sheet = overlay(p.identities.every(i => i.kind === 'person') ? 'Contact' : 'Group'); const form = node('form');
@@ -288,7 +682,7 @@
     for (const i of p.identities) { const o = node('option', '', cap(i.network) + ' · ' + i.label); o.value = i.id; preferred.append(o); } preferred.value = p.preferred_identity || '';
     const preferredLabel = node('label', '', 'Reply on'); preferredLabel.append(preferred);
     form.append(nameLabel, langLabel); if (p.identities.length > 1) form.append(preferredLabel);
-    const save = () => action(async () => { await call('people/' + p.id, {display_name: name.value, language: lang.value, preferred_identity: preferred.value}); closeOverlay(); await openPerson(p.id); });
+    const save = () => action(async () => { await call('people/' + p.id, {display_name: name.value, language: lang.value, preferred_identity: preferred.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); });
     form.append(button('Save', save, 'primary wide'));
     form.onsubmit = e => { e.preventDefault(); save(); }; sheet.append(form);
     if (p.identities.every(i => i.kind === 'person')) {
@@ -296,9 +690,9 @@
       if (others.length) {
         const select = node('select'); select.setAttribute('aria-label', 'Merge another person'); for (const x of others) { const o = node('option', '', x.display_name); o.value = x.id; select.append(o); }
         const mergeLabel = node('label', '', 'Same person on another network'); mergeLabel.append(select);
-        sheet.append(node('h3', '', 'Merge'), mergeLabel, button('Merge', () => action(async () => { await call('people/' + p.id + '/merge', {source_id: select.value}); closeOverlay(); await openPerson(p.id); }), 'secondary wide'));
+        sheet.append(node('h3', '', 'Merge'), mergeLabel, button('Merge', () => action(async () => { await call('people/' + p.id + '/merge', {source_id: select.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); }), 'secondary wide'));
       }
-      if (p.identities.length > 1) for (const i of p.identities) sheet.append(button('Separate ' + cap(i.network) + ' · ' + i.label, () => action(async () => { await call('people/' + p.id + '/unmerge', {identity_id: i.id}); closeOverlay(); await openPerson(p.id); }), 'secondary wide'));
+      if (p.identities.length > 1) for (const i of p.identities) sheet.append(button('Separate ' + cap(i.network) + ' · ' + i.label, () => action(async () => { await call('people/' + p.id + '/unmerge', {identity_id: i.id}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); }), 'secondary wide'));
     } else {
       const labels = node('input'); labels.placeholder = 'Family, Friends'; labels.value = (p.labels || []).join(', ');
       const labelsLabel = node('label', '', 'Labels'); labelsLabel.append(labels);
@@ -430,25 +824,15 @@
       closeOverlay();
     }), 'secondary wide'));
   }
-  function switchTab(tab) { if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
-  async function refresh() {
-    if (!s.ready || document.hidden || s.busy || s.overlay) return;
-    try {
-      const result = await call('sync', {});
-      if (!s.person && s.tab !== 'messenger') await renderList(true);
-      else if (s.person && !s.overlay) {
-        const id = s.person, epoch = s.epoch; const timeline = await call('people/' + id);
-        const scroll = $('unified-inbox').querySelector('.u-timeline'), p = timeline.person || {};
-        if (scroll && s.person === id && s.epoch === epoch && !s.overlay) paintMessages(scroll, timeline.messages, !!p.language && p.language !== 'en', networksOf(p).length > 1);
-      }
-      if (result.error) error(new Error(result.error));
-    } catch (e) { error(e); }
-  }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeLogin(); });
+  function switchTab(tab) { if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
+  function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
+  // Keyboard open/close: keep the newest message glued above the composer.
+  window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   window.MessengerUnified = {
-    mount(options) { api = options.api; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
-    authenticated() { if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false; switchTab('people'); refresh(); timer = setInterval(refresh, 15000); resumeLogin(); },
+    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
+    authenticated() { if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false; switchTab('people'); resumeLogin(); if (store.seq) feed(); },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout() { clearInterval(timer); closeOverlay(); s.ready = false; s.epoch++; inChat(false); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout() { feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

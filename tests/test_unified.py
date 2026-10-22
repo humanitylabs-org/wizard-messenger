@@ -334,6 +334,9 @@ class SignalMvpTests(unittest.TestCase):
         self.assertIn('/redact/%24r1/', self.inbox.mx.call_args_list[1].args[0])
         self.inbox.react('$q', {'key': '❤️'})  # tapping the same one again removes it
         self.assertEqual(self.inbox.row('$q')['reactions'], [])
+        # a late sync echo of the removed reaction must not resurrect it
+        self.ingest(self.event('$r2', {'m.relates_to': {'rel_type': 'm.annotation', 'event_id': '$q', 'key': '❤️'}}, etype='m.reaction', sender='@owner:messenger.internal'))
+        self.assertEqual(self.inbox.row('$q')['reactions'], [])
 
     def test_media_rows_hide_mxc_and_upgrade_label_rows(self):
         self.inbox.store.add_message('$img', self.a, 'Alice', False, '[Photo] look', 5)
@@ -400,6 +403,13 @@ class SignalMvpTests(unittest.TestCase):
         self.assertEqual(self.inbox.store.people()[0]['unread'], 0)
         time.sleep(0.2)
         self.assertIn('/receipt/m.read/%242', self.inbox.mx.call_args.args[0])
+
+    def test_bridge_error_notice_marks_send_failed_not_a_chat_line(self):
+        self.inbox.store.add_message('$mine', self.a, '@owner:messenger.internal', True, 'yo', 50000)
+        self.ingest(self.event('$n', {'msgtype': 'm.notice', 'body': 'Failed to bridge'}, sender='@telegrambot:messenger.internal', ts=51000))
+        rows = self.inbox.timeline(self.pid)['messages']
+        self.assertEqual([r['id'] for r in rows], ['$mine'])
+        self.assertTrue(rows[0]['failed'])
 
     def test_peer_read_receipt_and_typing(self):
         self.inbox.store.add_message('$mine', self.a, '@owner:messenger.internal', True, 'yo', 50)

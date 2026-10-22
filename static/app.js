@@ -753,7 +753,7 @@
       }
     }, false, true);
   }
-  window.MessengerUnified?.mount({api});
+  window.MessengerUnified?.mount({api, csrf: () => state.csrf});
   $('reconnect').onclick = boot;
   boot();
 })();
