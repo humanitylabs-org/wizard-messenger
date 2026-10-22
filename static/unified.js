@@ -12,6 +12,20 @@
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
   let api, timer, lastFocus, updateHold;
+  // Saved copy of the chat list and recent conversations on this device, so the
+  // screen paints instantly and the server only confirms. Lock erases it.
+  const CACHE_KEY = 'messenger-unified-cache-v1', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
+  const saved = (() => { try { const c = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); return {lists: c.lists || {}, threads: c.threads || {}, order: c.order || []}; } catch { return {lists: {}, threads: {}, order: []}; } })();
+  let saveTimer;
+  function persistCache() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(CACHE_KEY, JSON.stringify(saved)); } catch { /* Storage full or blocked: the app still works online. */ } }, 250); }
+  function rememberList(tab, list) { saved.lists[tab] = list; persistCache(); }
+  function rememberThread(id, result) {
+    saved.threads[id] = {...result, messages: (result.messages || []).slice(-MESSAGES_KEPT)};
+    saved.order = [id, ...saved.order.filter(x => x !== id)];
+    for (const old of saved.order.splice(THREADS_KEPT)) delete saved.threads[old];
+    persistCache();
+  }
+  function wipeCache() { saved.lists = {}; saved.threads = {}; saved.order = []; clearTimeout(saveTimer); try { localStorage.removeItem(CACHE_KEY); } catch { /* nothing stored */ } }
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
   const foreignScript = t => /(?![\p{Script=Latin}])\p{L}/u.test(t || '');
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
@@ -101,15 +115,39 @@
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   async function renderList(quiet = false) {
-    const epoch = ++s.epoch, groups = s.tab === 'groups';
+    const epoch = ++s.epoch, groups = s.tab === 'groups', tab = s.tab;
     const root = quiet ? $('unified-inbox') : listBase(groups ? 'Groups' : 'Chats');
-    if (!quiet) root.append(node('p', 'u-loading', 'Loading…'));
+    const cached = saved.lists[tab];
+    if (cached && !quiet) paintList(root, cached, groups);
+    else if (!quiet) root.append(node('p', 'u-loading', 'Loading…'));
+    if (!s.ready) return;
     try {
-      const result = await call(groups ? 'groups' : 'people');
-      if (s.epoch !== epoch || s.person) return;
+      const fresh = (await call(groups ? 'groups' : 'people'))[tab] || [];
+      if (s.epoch !== epoch || s.person || s.tab !== tab) return;
+      const changed = JSON.stringify(fresh) !== JSON.stringify(saved.lists[tab]);
+      if (changed || !root.querySelector('.u-list')) { rememberList(tab, fresh); paintList(root, fresh, groups); }
+      if (!groups) prefetch(fresh);
+    } catch (e) { error(e); }
+  }
+  // Open the newest conversations ahead of the tap, one at a time, so they show instantly.
+  let prefetching = false;
+  async function prefetch(people) {
+    if (prefetching) return; prefetching = true;
+    try {
+      for (const p of people.slice(0, 12)) {
+        const have = saved.threads[p.id];
+        if (have && have.messages?.at(-1)?.timestamp >= (p.last?.timestamp || 0)) continue;
+        if (!s.ready || document.hidden || s.busy) break;
+        try { rememberThread(p.id, await call('people/' + p.id)); } catch { break; }
+      }
+    } finally { prefetching = false; }
+  }
+  function paintList(root, people, groups) {
+    {
+      const top = root.querySelector('.u-list')?.scrollTop || 0;
       root.querySelector('.u-loading')?.remove(); root.querySelector('.u-list')?.remove(); root.querySelector('.u-chips')?.remove(); root.querySelector('.u-fab')?.remove();
-      const people = result[s.tab] || []; if (!groups) s.people = people;
-      const list = node('div', 'u-list'); root.append(list);
+      if (!groups) s.people = people;
+      const list = node('div', 'u-list'); root.append(list); requestAnimationFrame(() => { list.scrollTop = top; });
       let label = root.dataset.label || '';
       const draw = () => {
         list.replaceChildren();
@@ -144,7 +182,7 @@
         const fab = iconButton('compose', 'New chat', () => newChat(), 'u-fab'); root.append(fab);
       }
       draw();
-    } catch (e) { error(e); }
+    }
   }
   function when(ms) {
     const d = new Date(ms), now = new Date();
@@ -226,10 +264,21 @@
   }
   async function openPerson(id) {
     s.person = id; const epoch = ++s.epoch; inChat(true);
-    threadBase('…', '');
+    const cached = saved.threads[id];
+    if (cached) drawPerson(id, cached); else threadBase((s.people.find(x => x.id === id) || {}).display_name || '…', '');
+    if (!s.ready) return;
     try {
       const result = await call('people/' + id);
-      if (s.epoch !== epoch) return;
+      if (s.epoch !== epoch || s.person !== id) return;
+      const before = saved.threads[id]; rememberThread(id, result);
+      const scroll = $('unified-inbox').querySelector('.u-timeline');
+      if (before && scroll && JSON.stringify(before.person) === JSON.stringify(result.person) && before.history_warning === result.history_warning) {
+        const p = result.person; paintMessages(scroll, result.messages, !!p.language && p.language !== 'en', networksOf(p).length > 1);
+      } else drawPerson(id, result);
+    } catch (e) { error(e); }
+  }
+  function drawPerson(id, result) {
+    try {
       const p = result.person, multi = networksOf(p).length > 1;
       const reviewed = !!p.language && p.language !== 'en';
       const langName = {th: 'Thai', ja: 'Japanese', zh: 'Chinese', es: 'Spanish', fr: 'French', de: 'German'}[p.language] || p.language;
@@ -275,6 +324,7 @@
         if (preview.error || preview.translated !== preview.original) sheet.append(button('Send English original instead', () => confirm(true), 'secondary wide'));
       }); };
       root.append(form); grow(); scroll.scrollTop = scroll.scrollHeight; hold();
+      if (!matchMedia('(pointer: coarse)').matches && document.activeElement === document.body) draft.focus({preventScroll: true});
     } catch (e) { error(e); }
   }
   function editPerson(p) {
@@ -434,21 +484,27 @@
   async function refresh() {
     if (!s.ready || document.hidden || s.busy || s.overlay) return;
     try {
-      const result = await call('sync', {});
+      // The server syncs Telegram by itself every few seconds; this only reads its local copy.
       if (!s.person && s.tab !== 'messenger') await renderList(true);
       else if (s.person && !s.overlay) {
         const id = s.person, epoch = s.epoch; const timeline = await call('people/' + id);
         const scroll = $('unified-inbox').querySelector('.u-timeline'), p = timeline.person || {};
-        if (scroll && s.person === id && s.epoch === epoch && !s.overlay) paintMessages(scroll, timeline.messages, !!p.language && p.language !== 'en', networksOf(p).length > 1);
+        if (scroll && s.person === id && s.epoch === epoch && !s.overlay) { rememberThread(id, timeline); paintMessages(scroll, timeline.messages, !!p.language && p.language !== 'en', networksOf(p).length > 1); }
       }
-      if (result.error) error(new Error(result.error));
     } catch (e) { error(e); }
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeLogin(); });
   window.MessengerUnified = {
     mount(options) { api = options.api; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
-    authenticated() { if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false; switchTab('people'); refresh(); timer = setInterval(refresh, 15000); resumeLogin(); },
+    // Saved chats paint at once; the session handshake and server read follow behind.
+    paintSaved() { if (s.ready || !saved.lists.people) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },
+    authenticated() {
+      if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false;
+      if (document.documentElement.dataset.inboxTab && s.tab !== 'messenger') { if (s.person) openPerson(s.person); else renderList(); }
+      else if (!document.documentElement.dataset.inboxTab) switchTab('people');
+      timer = setInterval(refresh, 5000); resumeLogin();
+    },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout() { clearInterval(timer); closeOverlay(); s.ready = false; s.epoch++; inChat(false); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { if (wipe) wipeCache(); clearInterval(timer); closeOverlay(); s.ready = false; s.epoch++; inChat(false); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

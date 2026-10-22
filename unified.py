@@ -69,6 +69,8 @@ class PeopleStore:
             CREATE TABLE IF NOT EXISTS room_label(identity_id TEXT NOT NULL REFERENCES identity(id), label TEXT NOT NULL, PRIMARY KEY(identity_id,label));
             CREATE TABLE IF NOT EXISTS translation(cache_key TEXT PRIMARY KEY, translated TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS message_identity_time ON message(identity_id, timestamp DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
             CREATE TABLE IF NOT EXISTS preview(id TEXT PRIMARY KEY, person_id TEXT NOT NULL, identity_id TEXT NOT NULL, original TEXT NOT NULL, translated TEXT NOT NULL, error TEXT, expires INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'preview', send_original INTEGER, event_id TEXT);
             ''')
         os.chmod(self.path, 0o600)
@@ -128,17 +130,33 @@ class PeopleStore:
     def people(self, kind='person', chats=True):
         # Chats: only conversations with messages, newest first, each with its latest line.
         # Directory (chats=False): everyone A-Z, used by New chat.
+        # One connection and indexed lookups: cost follows the number of chats, not of messages.
         with self.db() as db:
-            if chats:
-                ids = [r[0] for r in db.execute('SELECT p.id FROM person p JOIN identity i ON i.person_id=p.id JOIN message m ON m.identity_id=i.id WHERE i.kind=? GROUP BY p.id ORDER BY MAX(m.timestamp) DESC', (kind,))]
+            persons = {r['id']: dict(r) for r in db.execute('SELECT DISTINCT p.* FROM person p JOIN identity i ON i.person_id=p.id WHERE i.kind=?', (kind,))}
+            for person in persons.values():
+                person['identities'], person['labels'] = [], set()
+            for r in db.execute('SELECT * FROM identity WHERE person_id IN (SELECT person_id FROM identity WHERE kind=?) ORDER BY last_used DESC,id', (kind,)):
+                if r['person_id'] in persons:
+                    persons[r['person_id']]['identities'].append(dict(r))
+            for r in db.execute('SELECT i.person_id,l.label FROM room_label l JOIN identity i ON i.id=l.identity_id WHERE i.kind=?', (kind,)):
+                if r[0] in persons:
+                    persons[r[0]]['labels'].add(r[1])
+            if not chats:
+                result = sorted(persons.values(), key=lambda p: p['display_name'].casefold())
             else:
-                ids = [r[0] for r in db.execute('SELECT DISTINCT p.id FROM person p JOIN identity i ON i.person_id=p.id WHERE i.kind=? ORDER BY p.display_name COLLATE NOCASE', (kind,))]
-            result = [self.person(i) for i in ids]
+                result = []
+                for person in persons.values():
+                    last = None
+                    for identity in person['identities']:
+                        row = db.execute('SELECT original,outgoing,sender,timestamp,id FROM message WHERE identity_id=? ORDER BY timestamp DESC,id DESC LIMIT 1', (identity['id'],)).fetchone()
+                        if row and (last is None or (row[3], row[4]) > (last[3], last[4])):
+                            last = row
+                    if last:
+                        person['last'] = {'text': last[0][:140], 'outgoing': bool(last[1]), 'sender': last[2], 'timestamp': last[3]}
+                        result.append(person)
+                result.sort(key=lambda p: p['last']['timestamp'], reverse=True)
             for person in result:
-                person['labels'] = [r[0] for r in db.execute('SELECT DISTINCT label FROM room_label WHERE identity_id IN (SELECT id FROM identity WHERE person_id=?)', (person['id'],))]
-                if chats:
-                    last = db.execute('SELECT m.original,m.outgoing,m.sender,m.timestamp FROM message m JOIN identity i ON m.identity_id=i.id WHERE i.person_id=? ORDER BY m.timestamp DESC,m.id DESC LIMIT 1', (person['id'],)).fetchone()
-                    person['last'] = {'text': last[0][:140], 'outgoing': bool(last[1]), 'sender': last[2], 'timestamp': last[3]}
+                person['labels'] = sorted(person['labels'])
             return result
 
     def update(self, person_id, payload):
@@ -277,6 +295,10 @@ class UnifiedInbox:
                     self.sync()
                 except Exception:
                     self.store.put('sync_error', 'Private messaging sync failed. Retry is automatic.')
+                try:
+                    self.marmot()  # Messenger contacts join the directory here, off the read path.
+                except Exception:
+                    pass
                 self.stop.wait(5)
         self.worker = threading.Thread(target=receive, name='matrix-sync', daemon=True)
         self.worker.start()
@@ -510,11 +532,9 @@ class UnifiedInbox:
             self.marmot()
             return self.sync()
         if suffix in (['people'], ['groups']) and method == 'GET':
-            self.marmot()
             kind = 'group' if suffix[0] == 'groups' else 'person'
             return {suffix[0]: self.store.people(kind)}
         if suffix == ['directory'] and method == 'GET':
-            self.marmot()
             return {'people': self.store.people('person', chats=False), 'groups': self.store.people('group', chats=False)}
         if len(suffix) >= 2 and suffix[0] == 'people':
             person_id = suffix[1]

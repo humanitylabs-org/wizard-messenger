@@ -305,11 +305,10 @@
     state.dms = (await api('api/dms', {signal})).dms || [];
     // The frozen summary has no preview/unread fields. Query real latest events;
     // never manufacture list previews from names or a fixture conversation.
-    for (const dm of state.dms) {
-      if (dm.group_id === state.group) continue;
-      const data = await api('api/dms/' + encodeURIComponent(dm.group_id) + '/messages?limit=1', {signal});
-      const cache = cacheFor(dm.group_id); cache.messages = mergeMessages(cache.messages, data.messages || []);
-      reconcile(dm.group_id);
+    const latest = await Promise.all(state.dms.filter(dm => dm.group_id !== state.group).map(async dm => [dm.group_id, await api('api/dms/' + encodeURIComponent(dm.group_id) + '/messages?limit=1', {signal})]));
+    for (const [group, data] of latest) {
+      const cache = cacheFor(group); cache.messages = mergeMessages(cache.messages, data.messages || []);
+      reconcile(group);
     }
     if (state.group) {
       const dm = dmById(state.group);
@@ -670,7 +669,7 @@
   };
   $('lock').onclick = () => {
     act(async signal => {
-      try { await api('api/setup', {method: 'POST', body: {action: 'lock'}, signal}); window.MessengerUnified?.signout(); eraseView(); gate('locked'); }
+      try { await api('api/setup', {method: 'POST', body: {action: 'lock'}, signal}); window.MessengerUnified?.signout(true); eraseView(); gate('locked'); }
       catch (error) { if (error.name !== 'AbortError') $('copy-error').textContent = friendly(error); }
     });
   };
@@ -753,6 +752,7 @@
     }, false, true);
   }
   window.MessengerUnified?.mount({api});
+  window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = boot;
   boot();
 })();
