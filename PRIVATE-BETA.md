@@ -60,7 +60,7 @@ WAM generates the integration capability. It must retain the skill and project t
 
 Use two fresh installations and disposable identities. Exchange public contact codes, invite explicitly, accept on the recipient, send one message each way, and confirm recipient plaintext. “Sent” means relay publication, not peer read. Restart each app, prove a wrong passphrase fails, unlock correctly, and read both prior messages exactly once before sending another. Rerun `configure` and `compose up -d`, checking identity and history remain. API/MCP access exposes only documented capabilities; MCP intentionally has no private send/read tools.
 
-Stop/start: `docker compose -p messenger-beta --project-directory "$APP_ROOT" -f "$APP_ROOT/compose.json" stop` / `start`. Stop preserves data. An upgrade loads the new verified image and recreates the service with the same mount; unlock after restart. Never delete `data/` or run `down -v` as an update. Keep an encrypted whole-app-data backup for rollback; an npub alone is not a history backup. Recipient target gateway/access checks remain explicit; do not claim installation on Miguel's machine until it is actually run there.
+Stop/start: `docker compose -p messenger-beta --project-directory "$APP_ROOT" -f "$APP_ROOT/compose.json" stop` / `start`. Stop preserves data. An upgrade loads the new verified image and recreates the service with the same mount; unlock after restart. Never delete `data/` or run `down -v` as an update. Keep an encrypted whole-app-data backup for rollback; an npub alone is not a history backup. Recipient target gateway/access checks remain explicit; do not claim installation on a recipient's machine until it is actually run there.
 
 ## Not included
 
