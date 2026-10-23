@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10.3'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10.4'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -654,28 +654,34 @@
     $('setup-submit').disabled = true;
     act(async signal => {
       try {
-        if (state.sessionLocked) {
-          const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
-          if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-          state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
-        } else {
-          await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
-        }
+        if (!(await unlockWith(password, signal, creating, name))) return;
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
         window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
+        if (!creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
       } catch (error) {
         $('passphrase').value = ''; $('confirm-passphrase').value = '';
         if (error.name !== 'AbortError') { state.setupFailed = creating; $('setup-error').textContent = friendly(error); $('passphrase').focus(); }
       } finally { updateSetup(); }
     });
   };
-  // Fingerprint / face unlock (passkey on this device). Opens the view only;
-  // after a server restart the passphrase is still needed once.
+  async function unlockWith(password, signal, creating = false, name = '') {
+    if (state.sessionLocked) {
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
+      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
+    } else {
+      await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
+    }
+    return true;
+  }
+  // Fingerprint / face unlock (passkey on this device). With the WebAuthn PRF extension the phone's fingerprint
+  // key also seals the passphrase (AES-GCM under a key only the phone can derive), so a fingerprint reopens
+  // Messenger after a restart or Lock too. The server stores only the sealed copy and can never open it.
   const passkeySupported = !!(window.PublicKeyCredential && navigator.credentials?.get);
   const b64u = buffer => btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const unb64u = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((text.length + 3) % 4)), c => c.charCodeAt(0));
   function renderPasskey() {
-    $('fingerprint-unlock').hidden = !(passkeySupported && state.passkey && state.mode === 'locked' && state.sessionLocked);
+    $('fingerprint-unlock').hidden = !(passkeySupported && state.passkey && state.mode === 'locked');
     $('fingerprint-toggle').hidden = !passkeySupported;
     $('fingerprint-toggle').textContent = state.passkey ? 'Turn off fingerprint unlock' : 'Unlock with fingerprint next time';
   }
@@ -684,13 +690,52 @@
     try { state.passkey = !!(await api('api/view/passkey', {session: true}))?.enabled; } catch { state.passkey = false; }
     renderPasskey();
   }
+  const sealKey = async (prf, use) => crypto.subtle.deriveKey({name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode('wizard-messenger passphrase v1')},
+    await crypto.subtle.importKey('raw', prf, 'HKDF', false, ['deriveKey']), {name: 'AES-GCM', length: 256}, false, [use]);
+  async function fingerprint(options, signal) {
+    const salt = options.prf?.salt ? unb64u(options.prf.salt) : null;
+    const credential = await navigator.credentials.get({signal, publicKey: {...options, prf: undefined, challenge: unb64u(options.challenge),
+      allowCredentials: options.allowCredentials.map(c => ({...c, id: unb64u(c.id)})), ...(salt ? {extensions: {prf: {eval: {first: salt}}}} : {})}});
+    const prf = credential.getClientExtensionResults?.().prf?.results?.first;
+    return {credential, prf: prf ? new Uint8Array(prf) : null};
+  }
+  async function openSealed(prf, wrap) {
+    const raw = unb64u(wrap);
+    const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: raw.subarray(0, 12)}, await sealKey(prf, 'decrypt'), raw.subarray(12));
+    return new TextDecoder().decode(plain);
+  }
+  // After the owner types the passphrase, one fingerprint touch seals it so restarts need only the fingerprint.
+  async function rememberOnFingerprint(password) {
+    const options = await api('api/view/passkey/unlock-options', {method: 'POST', body: {}, session: true});
+    if (!options.prf?.salt) return;
+    const {credential, prf} = await fingerprint(options);
+    if (!prf) { state.passkeyWrapped = true; console.warn('fingerprint seal: this passkey has no PRF; it opens the view only'); return; }
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({name: 'AES-GCM', iv}, await sealKey(prf, 'encrypt'), new TextEncoder().encode(password)));
+    const wrap = new Uint8Array(12 + ct.length); wrap.set(iv); wrap.set(ct, 12);
+    await api('api/view/passkey/wrap', {method: 'POST', body: {id: credential.id, wrap: b64u(wrap)}});
+    state.passkeyWrapped = true; $('setup-error').textContent = '';
+  }
   $('fingerprint-unlock').onclick = () => {
     if (isBusy()) return;
     $('setup-error').textContent = '';
     act(async signal => {
       try {
         const options = await api('api/view/passkey/unlock-options', {method: 'POST', body: {}, signal, session: true});
-        const credential = await navigator.credentials.get({signal, publicKey: {...options, challenge: unb64u(options.challenge), allowCredentials: options.allowCredentials.map(c => ({...c, id: unb64u(c.id)}))}});
+        const {credential, prf} = await fingerprint(options, signal);
+        const wrap = options.prf?.wraps?.[credential.id];
+        if (prf && wrap) {
+          let password = null; try { password = await openSealed(prf, wrap); } catch { /* resealed on next passphrase */ }
+          if (password) {
+            try {
+              if (await unlockWith(password, signal)) { state.passkeyWrapped = true; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+              return;
+            } catch (error) {
+              if (error.code === 'vault_unlock_failed') { api('api/view/passkey/wrap', {method: 'POST', body: {id: credential.id, wrap: null}}).catch(() => {}); }
+              throw error;
+            }
+          }
+        }
         const r = credential.response;
         const session = await api('api/view/passkey/unlock', {method: 'POST', session: true, signal, body: {id: credential.id, clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature)}});
         if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
@@ -711,11 +756,11 @@
         if (wasOn) await api('api/view/passkey/clear', {method: 'POST', body: {}, signal});
         else {
           const o = await api('api/view/passkey/register-options', {method: 'POST', body: {}, signal});
-          const credential = await navigator.credentials.create({signal, publicKey: {...o, challenge: unb64u(o.challenge), user: {...o.user, id: unb64u(o.user.id)}, excludeCredentials: o.excludeCredentials.map(c => ({...c, id: unb64u(c.id)}))}});
+          const credential = await navigator.credentials.create({signal, publicKey: {...o, challenge: unb64u(o.challenge), user: {...o.user, id: unb64u(o.user.id)}, excludeCredentials: o.excludeCredentials.map(c => ({...c, id: unb64u(c.id)})), extensions: {prf: {}}}});
           await api('api/view/passkey/register', {method: 'POST', signal, body: {clientDataJSON: b64u(credential.response.clientDataJSON), attestationObject: b64u(credential.response.attestationObject)}});
         }
         await refreshPasskey();
-        $('copy-error').textContent = wasOn ? 'Fingerprint unlock is off.' : 'Fingerprint unlock is on. Messenger asks for it instead of your passphrase.';
+        $('copy-error').textContent = wasOn ? 'Fingerprint unlock is off.' : 'Fingerprint unlock is on. Type your passphrase once more next time it asks; after that your fingerprint reopens Messenger, even after restarts.';
       } catch (error) {
         if (error.name !== 'AbortError') $('copy-error').textContent = error.name === 'NotAllowedError' ? 'Fingerprint setup cancelled.' : error.name === 'InvalidStateError' ? 'This phone is already set up.' : friendly(error);
       }

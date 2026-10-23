@@ -294,12 +294,20 @@
   const player = (() => {
     let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
     const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
+    // so pause/seek/next note doesn't pump the volume.
+    let ducked = false, undock = 0;
+    const music = on => {
+      clearTimeout(undock);
+      if (on) { if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
+      undock = setTimeout(() => { if (ducked && !src) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
+    };
     const paint = () => {
       if (!box || !buf) return; const at = src ? offset + ctx.currentTime - startedAt : offset, f = Math.min(1, at / buf.duration);
       for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
       const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
     };
-    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); };
+    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
     const load = url => {
       if (!decoded.has(url)) {
         // Notes recorded here decode from the Blob itself: the CSP keeps fetch() off blob: URLs.
@@ -313,8 +321,8 @@
     const start = () => {
       halt(); src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
       if (offset >= buf.duration - 0.05) offset = 0;
-      startedAt = ctx.currentTime; src.start(0, offset); box.classList.add('playing');
-      src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); };
+      startedAt = ctx.currentTime; src.start(0, offset); box.classList.add('playing'); music(true);
+      src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); music(false); };
       timer = setInterval(paint, 100); paint();
     };
     return {

@@ -12,6 +12,8 @@ const assert = require('node:assert/strict');
   await ctx.addInitScript(() => {
     window.__voiceUploads = [];
     const f = window.fetch; window.fetch = async function (u, o) { if (String(u).includes('upload?kind=voice') && o?.body instanceof Blob) { const b = new Uint8Array(await o.body.arrayBuffer()); window.__voiceUploads.push({type: o.body.type, head: String.fromCharCode(...b.subarray(0, 4)), size: b.length, b64: btoa(String.fromCharCode(...b))}); } return f.call(this, u, o); };
+    window.__ducks = []; let app;
+    Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { const real = v.audio; app = Object.freeze({...v, capture: v.capture, audio: {duck: on => { window.__ducks.push(on); return real ? real.duck(on) : Promise.resolve(false); }}}); }});
     window.__mediaPlays = 0; window.__webAudioStarts = 0;
     const play = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function () { window.__mediaPlays++; return play.call(this); };
     const start = AudioBufferSourceNode.prototype.start; AudioBufferSourceNode.prototype.start = function (...a) { window.__webAudioStarts++; return start.apply(this, a); };
@@ -67,6 +69,8 @@ const assert = require('node:assert/strict');
   const aac = fs.readFileSync(process.env.AAC || __dirname + '/../../messenger-mvp-preview/seedfiles/voice.aac').toString('base64');
   const conv = await page.evaluate(async b64 => { const b = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); const o = await window.MessengerUnified_toOggOpus(new Blob([b], {type: 'audio/aac'})); const u = new Uint8Array(await o.arrayBuffer()); return {type: o.type, head: String.fromCharCode(...u.subarray(0, 4)), b64: btoa(String.fromCharCode(...u))}; }, aac);
   assert.equal(conv.head, 'OggS', 'AAC converted to Ogg'); fs.writeFileSync(ev + '/from-aac.ogg', Buffer.from(conv.b64, 'base64'));
+  const ducks = await page.evaluate(() => window.__ducks);
+  assert.ok(ducks.includes(true) && ducks.at(-1) === false, 'music ducked during playback and restored: ' + JSON.stringify(ducks));
   const plays = await page.evaluate(() => ({media: window.__mediaPlays, webAudio: window.__webAudioStarts}));
   console.log(JSON.stringify({plays, failedMarks: failed, uploadBytes: uploads[0].size, errors}));
   assert.equal(plays.media, 0, 'no media element played'); assert.ok(plays.webAudio >= 2, 'web audio played');

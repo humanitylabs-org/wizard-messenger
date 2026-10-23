@@ -163,8 +163,12 @@ class Passkeys:
         self.lock = threading.RLock()
         self.challenges = {}
         self.keys = []
+        self.prf_salt = None
         if self.path and self.path.exists():
-            self.keys = json.loads(self.path.read_text()).get('keys', [])
+            data = json.loads(self.path.read_text())
+            self.keys = data.get('keys', []); self.prf_salt = data.get('prf_salt')
+        if not self.prf_salt:
+            self.prf_salt = b64u(secrets.token_bytes(32))
 
     def _save(self):
         if not self.path:
@@ -172,7 +176,7 @@ class Passkeys:
         tmp = self.path.with_suffix('.tmp')
         with tmp.open('w') as f:
             os.chmod(tmp, 0o600)
-            json.dump({'keys': self.keys}, f)
+            json.dump({'keys': self.keys, 'prf_salt': self.prf_salt}, f)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, self.path)
@@ -248,8 +252,25 @@ class Passkeys:
         with self.lock:
             if not self.keys:
                 raise PasskeyError('none')
+            # prf: the phone derives a secret from this salt with its fingerprint key. Each wrap is the passphrase
+            # sealed by the phone under that secret; the server can never open it, only the phone with a fingerprint.
             return {'challenge': self._challenge('unlock'), 'rpId': rp_id, 'userVerification': 'required', 'timeout': 60000,
-                    'allowCredentials': [{'type': 'public-key', 'id': k['id']} for k in self.keys]}
+                    'allowCredentials': [{'type': 'public-key', 'id': k['id']} for k in self.keys],
+                    'prf': {'salt': self.prf_salt, 'wraps': {k['id']: k['wrap'] for k in self.keys if k.get('wrap')}}}
+
+    def set_wrap(self, cred_id, wrap):
+        with self.lock:
+            key = next((k for k in self.keys if k['id'] == cred_id), None)
+            if not key:
+                raise PasskeyError('unknown_key')
+            if wrap is None:
+                key.pop('wrap', None)
+            else:
+                if not isinstance(wrap, str) or not 40 <= len(wrap) <= 2048 or not set(wrap) <= set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'):
+                    raise PasskeyError('bad_wrap')
+                key['wrap'] = wrap
+            self._save()
+            return self.state()
 
     def unlock(self, payload, rp_id, origin):
         with self.lock:
@@ -272,5 +293,6 @@ class Passkeys:
         with self.lock:
             self.keys = []
             self.challenges = {}
+            self.prf_salt = b64u(secrets.token_bytes(32))
             self._save()
             return self.state()

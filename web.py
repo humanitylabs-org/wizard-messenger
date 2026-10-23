@@ -318,6 +318,8 @@ class ViewHandler(Handler):
             if path=='/api/view/passkey/register' and method=='POST':
                 body=self._body(); return 200,{'ok':True,'result':keys.register(body,rp,origin,body.get('label',''))}
             if path=='/api/view/passkey/clear' and method=='POST': return 200,{'ok':True,'result':keys.clear()}
+            if path=='/api/view/passkey/wrap' and method=='POST':
+                body=self._body(); return 200,{'ok':True,'result':keys.set_wrap(body.get('id'),body.get('wrap'))}
         except PasskeyError as error:
             code=str(error)
             raise EngineError('passkey_'+code,{'none':'Fingerprint unlock is not set up','expired':'That took too long. Try again.'}.get(code,'Fingerprint unlock did not work. Use your passphrase.'),401 if path.endswith('/unlock') else 400) from None
