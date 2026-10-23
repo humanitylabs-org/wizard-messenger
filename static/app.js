@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10.4'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10.5'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -251,7 +251,7 @@
       $('passphrase').type = 'password'; $('show-password').textContent = 'Show';
       $('show-password').setAttribute('aria-label', 'Show passphrase'); $('show-password').setAttribute('aria-pressed', 'false');
     }
-    if (changed && locked) refreshPasskey();
+    if (changed && locked) { refreshPasskey(); refreshPhoneVault(); }
     updateSetup(); renderActivity(); renderPasskey();
   }
   function renderActivity() {
@@ -655,9 +655,11 @@
     act(async signal => {
       try {
         if (!(await unlockWith(password, signal, creating, name))) return;
+        phone.typed = password;
+        if (phone.available && !phone.saved && !localStorage.getItem('messenger.fingerprint.declined')) savePhoneFingerprint(password);
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
         window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
-        if (!creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
+        if (!phone.available && !creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
       } catch (error) {
         $('passphrase').value = ''; $('confirm-passphrase').value = '';
         if (error.name !== 'AbortError') { state.setupFailed = creating; $('setup-error').textContent = friendly(error); $('passphrase').focus(); }
@@ -680,10 +682,25 @@
   const passkeySupported = !!(window.PublicKeyCredential && navigator.credentials?.get);
   const b64u = buffer => btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const unb64u = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((text.length + 3) % 4)), c => c.charCodeAt(0));
+  // In the Wizard OS Android app the phone itself keeps the passphrase behind your fingerprint (WizardApp.vault:
+  // Android Keystore + fingerprint prompt). Nothing about it is stored on the server, and it survives restarts.
+  const phone = {available: false, saved: false, typed: null, tried: false};
+  const vault = () => window.WizardApp?.vault;
+  async function refreshPhoneVault() {
+    try { Object.assign(phone, await vault()?.has() || {}); } catch { phone.available = false; }
+    renderPasskey();
+    if (phone.saved && state.mode === 'locked' && !phone.tried && !isBusy()) { phone.tried = true; $('fingerprint-unlock').click(); }
+  }
+  async function savePhoneFingerprint(password) {
+    try { await vault().seal(password, 'Unlock Messenger with your fingerprint'); phone.saved = true; localStorage.removeItem('messenger.fingerprint.declined'); return true; }
+    catch (error) { if (error.code === 'cancelled') localStorage.setItem('messenger.fingerprint.declined', '1'); return false; }
+    finally { renderPasskey(); }
+  }
   function renderPasskey() {
-    $('fingerprint-unlock').hidden = !(passkeySupported && state.passkey && state.mode === 'locked');
-    $('fingerprint-toggle').hidden = !passkeySupported;
-    $('fingerprint-toggle').textContent = state.passkey ? 'Turn off fingerprint unlock' : 'Unlock with fingerprint next time';
+    const usePhone = phone.available;
+    $('fingerprint-unlock').hidden = !(state.mode === 'locked' && (usePhone ? phone.saved : passkeySupported && state.passkey));
+    $('fingerprint-toggle').hidden = !(usePhone || passkeySupported);
+    $('fingerprint-toggle').textContent = (usePhone ? phone.saved : state.passkey) ? 'Turn off fingerprint unlock' : usePhone ? 'Unlock with fingerprint' : 'Unlock with fingerprint next time';
   }
   async function refreshPasskey() {
     if (!passkeySupported) return;
@@ -720,6 +737,18 @@
     if (isBusy()) return;
     $('setup-error').textContent = '';
     act(async signal => {
+      if (phone.available && phone.saved) {
+        try {
+          const password = await vault().open('Unlock Messenger');
+          if (await unlockWith(password, signal)) { phone.typed = password; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+        } catch (error) {
+          if (error.name === 'AbortError') return;
+          if (error.code === 'vault_unlock_failed' || error.code === 'invalidated' || error.code === 'not_saved') { await vault().forget(); phone.saved = false; renderPasskey(); }
+          $('setup-error').textContent = error.code === 'cancelled' ? '' : error.code === 'vault_unlock_failed' ? 'Your password changed. Type it once and your fingerprint takes over again.'
+            : error.code === 'invalidated' ? 'Your phone\'s fingerprints changed. Type your password once to turn fingerprint back on.' : error.code ? "Fingerprint didn't work. Type your password." : friendly(error);
+        } finally { updateSetup(); }
+        return;
+      }
       try {
         const options = await api('api/view/passkey/unlock-options', {method: 'POST', body: {}, signal, session: true});
         const {credential, prf} = await fingerprint(options, signal);
@@ -750,6 +779,14 @@
   $('fingerprint-toggle').onclick = () => {
     if (isBusy()) return;
     $('copy-error').textContent = '';
+    if (phone.available) {
+      act(async () => {
+        if (phone.saved) { await vault().forget(); phone.saved = false; renderPasskey(); $('copy-error').textContent = 'Fingerprint unlock is off. Messenger asks for your password.'; return; }
+        if (!phone.typed) { $('copy-error').textContent = 'Lock Messenger, then type your password once: your fingerprint takes over from then on.'; return; }
+        if (await savePhoneFingerprint(phone.typed)) $('copy-error').textContent = 'Fingerprint unlock is on, even after Messenger restarts.';
+      });
+      return;
+    }
     act(async signal => {
       try {
         const wasOn = state.passkey;
@@ -853,6 +890,6 @@
   window.MessengerUnified?.mount({api, csrf: () => state.csrf});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = boot;
-  refreshPasskey();
+  refreshPasskey(); refreshPhoneVault();
   boot();
 })();
