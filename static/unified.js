@@ -155,7 +155,7 @@
   const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
   let saveTimer = null, savedOrder = [];
   function persist() {
-    clearTimeout(saveTimer);
+    syncBadge(); clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const threads = {};
       for (const id of savedOrder.slice(0, THREADS_KEPT)) { const t = store.threads[id]; if (t) threads[id] = {person: t.person, has_more: true, messages: t.messages.filter(m => !m.pending && !m.failed).slice(-MESSAGES_KEPT).map(({retry, local, ...m}) => m)}; }
@@ -169,6 +169,16 @@
       for (const [id, t] of Object.entries(c.threads || {})) store.threads[id] = {...t, stale: true};
       return true;
     } catch { return false; }
+  }
+  // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
+  const unreadById = {};
+  let badgeShown = -1;
+  function noteUnread(rows) { for (const p of rows || []) unreadById[p.id] = Math.max(0, p.unread | 0); }
+  function syncBadge() {
+    noteUnread(store.lists.people); noteUnread(store.lists.groups);
+    const n = Object.values(unreadById).reduce((a, b) => a + b, 0);
+    if (n === badgeShown) return; badgeShown = n;
+    try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
   function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
   let recent = [];
@@ -200,9 +210,9 @@
     t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || (a.id < b.id ? -1 : 1));
   }
   function apply(r) {
-    if (r.reset) { store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
+    if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
     store.seq = Math.max(store.seq, r.seq);
-    if (r.people?.length) mergeList(r.people);
+    if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
     for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
     if (s.person && store.threads[s.person]) { paintHead(); paintThread(); }
@@ -381,6 +391,7 @@
     if (!last || last.timestamp <= (t.person.last_read_ts || 0) || view.reading === last.timestamp) return;
     view.reading = last.timestamp; t.person.last_read_ts = last.timestamp;
     const row = store.lists[listKey(t.person)]?.find(x => x.id === view.id); if (row) row.unread = 0;
+    unreadById[view.id] = 0; syncBadge();
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
   }
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
@@ -875,8 +886,10 @@
       if (!painted) switchTab('people');
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed();
+      // Groups count toward the badge before the Groups tab is ever opened.
+      if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();
