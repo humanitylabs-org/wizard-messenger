@@ -167,6 +167,14 @@ button { touch-action: manipulation; }
 .u-row.outgoing.pos-first .u-message, .u-row.outgoing.pos-mid .u-message { border-bottom-right-radius: 4px; }
 .u-row.outgoing.pos-mid .u-message, .u-row.outgoing.pos-last .u-message { border-top-right-radius: 4px; }
 .u-message .u-text a { color: inherit; text-decoration: underline; }
+.u-message .u-text.rich { margin: 0; font-size: 15px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.u-message .u-text.rich strong { font-weight: 700; }
+.u-message .u-text.rich code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, currentColor 12%, transparent); }
+.u-message .u-text.rich pre { margin: 4px 0; padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: pre; background: color-mix(in srgb, currentColor 10%, transparent); }
+.u-message .u-text.rich pre code { padding: 0; background: none; }
+.u-message .u-text.rich blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid color-mix(in srgb, currentColor 40%, transparent); }
+.u-message .u-text.rich ul, .u-message .u-text.rich ol { margin: 4px 0; padding-left: 20px; white-space: normal; }
+.u-message .u-text.rich .u-spoiler:not(.shown) { color: transparent; background: var(--ink-3, #888); border-radius: 4px; cursor: pointer; }
 .u-message.pending { opacity: .85; }
 .u-message.failed { box-shadow: inset 0 0 0 1px var(--err); }
 .u-message.deleted { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }

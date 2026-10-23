@@ -350,7 +350,7 @@
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([m.id, m.original, m.translated, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
+      const sig = JSON.stringify([m.id, m.original, m.formatted, m.translated, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -384,10 +384,50 @@
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
   }
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
-  function richText(cls, text) {
-    const p = node('p', cls); let at = 0;
-    for (const m of text.matchAll(URL_RE)) { p.append(text.slice(at, m.index)); const a = node('a', '', m[0]); a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer'; p.append(a); at = m.index + m[0].length; }
-    p.append(text.slice(at)); return p;
+  function linkify(into, text) {
+    let at = 0;
+    for (const m of text.matchAll(URL_RE)) { into.append(text.slice(at, m.index)); const a = node('a', '', m[0]); a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer'; into.append(a); at = m.index + m[0].length; }
+    into.append(text.slice(at));
+  }
+  // Formatted messages (Telegram bold/italic/code/spoilers...) arrive as server-sanitised HTML. Parse it inertly and
+  // rebuild only allowlisted elements: nothing from the message is ever assigned as markup.
+  const RICH = {STRONG: 'strong', EM: 'em', U: 'u', S: 's', CODE: 'code', PRE: 'pre', BLOCKQUOTE: 'blockquote', BR: 'br', SPAN: 'span', UL: 'ul', OL: 'ol', LI: 'li', P: 'span', SUP: 'sup', SUB: 'sub', A: 'a'};
+  function richNodes(into, from) {
+    for (const child of from.childNodes) {
+      if (child.nodeType === 3) { if (into.closest?.('a, code, pre')) into.append(child.textContent); else linkify(into, child.textContent); continue; }
+      if (child.nodeType !== 1) continue;
+      const tag = RICH[child.tagName];
+      if (!tag) { richNodes(into, child); continue; }
+      const el = document.createElement(tag);
+      if (tag === 'a') { const href = child.getAttribute('href') || ''; if (/^(https?:|mailto:)/i.test(href)) { el.href = href; el.target = '_blank'; el.rel = 'noopener noreferrer'; } }
+      if (tag === 'span' && child.hasAttribute('data-spoiler')) { el.className = 'u-spoiler'; el.tabIndex = 0; el.addEventListener('click', e => { if (!el.classList.contains('shown')) { e.stopPropagation(); el.classList.add('shown'); } }); }
+      if (child.tagName === 'P') { if (into.childNodes.length) into.append(document.createElement('br')); }
+      into.append(el);
+      if (tag !== 'br') richNodes(el, child);
+    }
+  }
+  function richText(cls, text, formatted) {
+    const p = node(formatted ? 'div' : 'p', cls);
+    if (formatted) { p.classList.add('rich'); richNodes(p, new DOMParser().parseFromString('<body>' + formatted, 'text/html').body); if (p.textContent.trim()) return p; p.replaceChildren(); }
+    linkify(p, text); return p;
+  }
+  // Editing a formatted message: hand back the markers you would type (**bold**, __italic__, ~~strike~~, `code`).
+  function asMarkdown(m) {
+    if (!m.formatted) return m.original;
+    const walk = el => [...el.childNodes].map(c => {
+      if (c.nodeType === 3) return c.textContent;
+      if (c.nodeType !== 1) return '';
+      const inner = walk(c), t = c.tagName;
+      if (t === 'BR') return '\n';
+      if (t === 'STRONG') return '**' + inner + '**';
+      if (t === 'EM') return '__' + inner + '__';
+      if (t === 'S') return '~~' + inner + '~~';
+      if (t === 'PRE') return '```' + inner + '```';
+      if (t === 'CODE') return c.parentNode?.tagName === 'PRE' ? inner : '`' + inner + '`';
+      if (t === 'SPAN' && c.hasAttribute('data-spoiler')) return '||' + inner + '||';
+      return inner;
+    }).join('');
+    return walk(new DOMParser().parseFromString('<body>' + m.formatted, 'text/html').body);
   }
   function bubble(m, pos, ctx) {
     const row = node('div', 'u-row' + (m.outgoing ? ' outgoing' : '') + ' pos-' + pos); row.dataset.id = m.id;
@@ -407,12 +447,12 @@
     else if (m.msgtype === 'm.location') { const geo = /^geo:([-\d.]+),([-\d.]+)/.exec(m.media?.geo || ''); const a = node('a', 'u-file', '📍 ' + (m.original || 'Location')); if (geo) { a.href = 'https://www.openstreetmap.org/?mlat=' + geo[1] + '&mlon=' + geo[2] + '#map=16/' + geo[1] + '/' + geo[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; } b.append(a); }
     if (!m.deleted && m.original && m.msgtype !== 'm.location') {
       if (ctx.auto || m.outgoing) {
-        b.append(richText('u-text', m.translated || m.original));
+        b.append(m.translated ? richText('u-text', m.translated) : richText('u-text', m.original, m.formatted));
         if (m.translated && m.translated !== m.original) b.append(node('p', 'u-original', m.original));
         if (m.translation_error) b.append(node('p', 'u-original error', m.translation_error));
       } else {
         const translated = shown[m.id] === 'translated' && m.translated;
-        b.append(richText('u-text', translated ? m.translated : m.original));
+        b.append(translated ? richText('u-text', m.translated) : richText('u-text', m.original, m.formatted));
         if (foreignScript(m.original)) b.append(button(translated ? 'Show original' : 'Translate', () => translate(m), 'u-translate link'));
       }
     }
@@ -554,7 +594,7 @@
     try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, [r.message]); paintThread(); } catch (e) { error(e); }
   }
   function startReply(m) { view.edit = null; view.reply = m; view.paintBar?.(); view.draft?.focus(); }
-  function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = m.original; view.grow?.(); view.paintBar?.(); view.draft.focus(); }
+  function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = asMarkdown(m); view.grow?.(); view.paintBar?.(); view.draft.focus(); }
 
   // ---------- composer: text, photo, voice; optimistic and idempotent ----------
   function composer(id, p) {
@@ -594,7 +634,7 @@
     function submit() {
       const text = draft.value.trim(), a = view.attach;
       if (!text && !a) return;
-      if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }
+      if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== asMarkdown(m)) editMsg(m, text); return; }
       if (reviewed && !a) return reviewSend(id, p, text, channel.value);
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
