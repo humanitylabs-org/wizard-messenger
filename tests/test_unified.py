@@ -148,6 +148,7 @@ class UnifiedTests(unittest.TestCase):
         with patch('unified.http', return_value={'text': 'Hello', 'error': None}) as request:
             self.inbox.store.update(self.a['person_id'], {'language': 'th'})
             self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10)
+            self.inbox.store.put('format_backfill:!a', '1')  # this test counts model calls only
             # Opening never waits on the model: the line is queued and arrives via the change feed.
             first = self.inbox.timeline(self.a['person_id'])
             self.assertTrue(first['translating'])
@@ -369,6 +370,45 @@ class SignalMvpTests(unittest.TestCase):
         self.assertEqual(rows['$q']['reactions'], [])
         self.assertTrue(rows['$q']['deleted'])
         self.assertEqual(rows['$q']['original'], '')
+
+    def test_telegram_formatting_is_kept_and_sanitised(self):
+        self.ingest(self.event('$b', {'msgtype': 'm.text', 'body': 'Meet at noon', 'format': 'org.matrix.custom.html',
+                                      'formatted_body': 'Meet at <strong>noon</strong><img src=x onerror=alert(1)><script>x</script>'}),
+                    self.event('$p', {'msgtype': 'm.text', 'body': 'plain', 'format': 'org.matrix.custom.html', 'formatted_body': 'plain'}),
+                    self.event('$r', {'msgtype': 'm.text', 'body': '> <@x> q\n\nyes', 'format': 'org.matrix.custom.html',
+                                      'formatted_body': '<mx-reply><blockquote><b>q</b></blockquote></mx-reply><i>yes</i>', 'm.relates_to': {'m.in_reply_to': {'event_id': '$b'}}}))
+        rows = {m['id']: m for m in self.inbox.timeline(self.pid)['messages']}
+        self.assertEqual(rows['$b']['original'], 'Meet at noon')
+        self.assertEqual(rows['$b']['formatted'], 'Meet at <strong>noon</strong>')
+        self.assertIsNone(rows['$p']['formatted'])
+        self.assertEqual(rows['$r']['formatted'], '<em>yes</em>')
+        # An edit carries its own formatting.
+        self.ingest(self.event('$e', {'msgtype': 'm.text', 'body': '* Meet at one', 'm.new_content': {'msgtype': 'm.text', 'body': 'Meet at one',
+                    'format': 'org.matrix.custom.html', 'formatted_body': 'Meet at <b>one</b>'}, 'm.relates_to': {'rel_type': 'm.replace', 'event_id': '$b'}}))
+        self.assertEqual(self.inbox.store.message('$b')['formatted'], 'Meet at <strong>one</strong>')
+
+    def test_rows_stored_before_formatting_upgrade_once_on_reread(self):
+        self.ingest(self.event('$old', {'msgtype': 'm.text', 'body': 'big news'}))
+        seq = self.inbox.store.seq
+        rich = self.event('$old', {'msgtype': 'm.text', 'body': 'big news', 'format': 'org.matrix.custom.html', 'formatted_body': '<b>big</b> news'})
+        self.ingest(rich)
+        self.assertEqual(self.inbox.store.message('$old')['formatted'], '<strong>big</strong> news')
+        self.assertGreater(self.inbox.store.seq, seq)
+        changed = Mock()
+        self.inbox.store.on_change = changed
+        self.ingest(rich)
+        changed.assert_not_called()
+
+    def test_sent_markdown_reaches_telegram_as_formatting(self):
+        self.inbox.mx = Mock(return_value={'event_id': '$sent'})
+        r = self.inbox.dispatch('POST', '/api/unified/people/%s/send' % self.pid, {'text': '**Bold** and `a_b`', 'client_id': 'c-1234567890'})
+        content = self.inbox.mx.call_args.args[2]
+        self.assertEqual(content['body'], 'Bold and a_b')
+        self.assertEqual(content['format'], 'org.matrix.custom.html')
+        self.assertEqual(content['formatted_body'], '<strong>Bold</strong> and <code>a_b</code>')
+        self.assertEqual(r['message']['formatted'], '<strong>Bold</strong> and <code>a_b</code>')
+        self.inbox.dispatch('POST', '/api/unified/people/%s/send' % self.pid, {'text': 'snake_case 2*3', 'client_id': 'c-1234567891'})
+        self.assertNotIn('format', self.inbox.mx.call_args.args[2])
 
     def test_react_replaces_own_reaction(self):
         self.ingest(self.event('$q', {'msgtype': 'm.text', 'body': 'hi'}))

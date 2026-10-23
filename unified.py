@@ -10,6 +10,8 @@ and wakes `/updates` waiters, so the view never re-fetches whole threads.
 from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
+import html
+from html.parser import HTMLParser
 import hmac
 import json
 import os
@@ -95,6 +97,7 @@ MIGRATIONS = [
     ('message', 'deleted', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'client_id', 'TEXT'),
     ('message', 'failed', 'TEXT'),
+    ('message', 'formatted', 'TEXT'),
     ('identity', 'last_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'peer_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
@@ -319,15 +322,19 @@ class PeopleStore:
         return {'labels': labels}
 
     def add_message(self, event_id, identity, sender, outgoing, original, timestamp, translated=None,
-                    msgtype='m.text', media=None, reply_to=None, client_id=None):
-        """Insert once; a later sighting with richer media upgrades a label-only row in place."""
+                    msgtype='m.text', media=None, reply_to=None, client_id=None, formatted=None):
+        """Insert once; a later sighting with richer media or formatting upgrades the row in place."""
         media_json = json.dumps(media, ensure_ascii=False) if media else None
         with self.db() as db:
             seq = self.next_seq()
-            cur = db.execute('INSERT OR IGNORE INTO message(id,identity_id,sender,outgoing,original,translated,timestamp,seq,msgtype,media,reply_to,client_id) '
-                             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                             (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id))
+            cur = db.execute('INSERT OR IGNORE INTO message(id,identity_id,sender,outgoing,original,translated,timestamp,seq,msgtype,media,reply_to,client_id,formatted) '
+                             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                             (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id, formatted))
             inserted = cur.rowcount == 1
+            if not inserted and formatted:
+                # Rows stored before formatting support (or by our own send echo) gain the rich version once.
+                cur = db.execute('UPDATE message SET formatted=?,seq=? WHERE id=? AND formatted IS NULL AND edited=0', (formatted, self.next_seq(), event_id))
+                inserted = cur.rowcount == 1
             if not inserted and msgtype != 'm.text':
                 cur = db.execute("UPDATE message SET msgtype=?,media=?,original=?,reply_to=COALESCE(reply_to,?),seq=? WHERE id=? AND (msgtype='m.text' OR media IS NULL)",
                                  (msgtype, media_json, original, reply_to, seq, event_id))
@@ -489,6 +496,153 @@ def message_text(event):
             caption = content.get('filename') or body
         return '[' + MEDIA_LABELS[kind] + ']' + (' ' + caption if caption else '')
     return None
+
+
+# Rich text: Telegram entities arrive from the bridge as Matrix HTML (`formatted_body`); `body` is plain.
+# Keep a strict allowlist only; the view rebuilds it node by node again before showing it.
+FORMAT_TAGS = {'b': 'strong', 'strong': 'strong', 'i': 'em', 'em': 'em', 'u': 'u', 's': 's', 'del': 's', 'strike': 's',
+               'code': 'code', 'pre': 'pre', 'blockquote': 'blockquote', 'a': 'a', 'br': 'br', 'span': 'span',
+               'ul': 'ul', 'ol': 'ol', 'li': 'li', 'p': 'p', 'h1': 'strong', 'h2': 'strong', 'h3': 'strong',
+               'h4': 'strong', 'h5': 'strong', 'h6': 'strong', 'sup': 'sup', 'sub': 'sub'}
+RICH_TAGS = {'strong', 'em', 'u', 's', 'code', 'pre', 'blockquote', 'ul', 'ol', 'span', 'sup', 'sub'}
+FORMAT_DROP = {'mx-reply', 'script', 'style', 'head', 'title'}
+
+
+class _FormatCleaner(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out, self.stack, self.drop, self.rich = [], [], 0, False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in FORMAT_DROP:
+            self.drop += 1
+            return
+        if self.drop or tag not in FORMAT_TAGS:
+            return
+        name, attrs = FORMAT_TAGS[tag], dict(attrs)
+        extra = ''
+        if name == 'br':
+            self.out.append('<br>')
+            return
+        if name == 'a':
+            href = (attrs.get('href') or '').strip()
+            if href.startswith('https://matrix.to/'):
+                name = 'span'  # mentions: show the name, no link to the bridge's internal IDs
+            elif re.match(r'(?i)(https?:|mailto:)', href):
+                extra, self.rich = ' href="%s"' % html.escape(href, quote=True), True
+            else:
+                name = 'span'
+        if name == 'span':
+            if 'data-mx-spoiler' in attrs:
+                extra, self.rich = ' data-spoiler=""', True
+        elif name == 'code' and re.match(r'language-[\w+-]{1,32}$', attrs.get('class') or ''):
+            extra = ' class="%s"' % attrs['class']
+        if name in RICH_TAGS and name != 'span':
+            self.rich = True
+        self.stack.append((tag, name))
+        self.out.append('<%s%s>' % (name, extra))
+
+    def handle_endtag(self, tag):
+        if tag in FORMAT_DROP:
+            self.drop = max(0, self.drop - 1)
+            return
+        if self.drop or tag not in FORMAT_TAGS or FORMAT_TAGS[tag] == 'br':
+            return
+        if any(t == tag for t, _ in self.stack):
+            while self.stack:
+                t, name = self.stack.pop()
+                self.out.append('</%s>' % name)
+                if t == tag:
+                    break
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == 'br' and not self.drop:
+            self.out.append('<br>')
+
+    def handle_data(self, data):
+        if not self.drop:
+            self.out.append(html.escape(data, quote=False))
+
+    def result(self):
+        while self.stack:
+            self.out.append('</%s>' % self.stack.pop()[1])
+        return ''.join(self.out).strip()
+
+
+def clean_format(source):
+    """Sanitised rich HTML for a message, or None when it carries no formatting worth keeping."""
+    if not isinstance(source, str) or not source.strip() or len(source) > 65536:
+        return None
+    cleaner = _FormatCleaner()
+    try:
+        cleaner.feed(source)
+        cleaner.close()
+    except Exception:
+        return None
+    out = cleaner.result()
+    if not (cleaner.rich and out):
+        return None
+    # One line-break form: <br>. Literal newlines stay only inside code blocks.
+    parts = re.split(r'(<pre>.*?</pre>)', out, flags=re.S)
+    block = r'</?(?:ul|ol|li|blockquote|pre|p)>'
+    return ''.join(part if part.startswith('<pre>') else
+                   re.sub(r'<br>\n|\n', '<br>', re.sub(r'\s*\n\s*(%s)\s*\n?\s*|(%s)\s*\n\s*' % (block, block), lambda m: m.group(1) or m.group(2), part))
+                   for part in parts)
+
+
+def message_format(content):
+    content = content or {}
+    if content.get('format') != 'org.matrix.custom.html':
+        return None
+    return clean_format(content.get('formatted_body'))
+
+
+MD_RULES = [(re.compile(r'\*\*(?=\S)(.+?)(?<=\S)\*\*', re.S), 'strong'), (re.compile(r'__(?=\S)(.+?)(?<=\S)__', re.S), 'em'),
+            (re.compile(r'~~(?=\S)(.+?)(?<=\S)~~', re.S), 's'), (re.compile(r'\|\|(?=\S)(.+?)(?<=\S)\|\|', re.S), 'spoiler')]
+
+
+def markdown_format(body):
+    """Telegram-style markers typed in Messenger (**bold**, __italic__, ~~strike~~, ||spoiler||, `code`, ```block```)
+    -> (plain body, formatted HTML) so Telegram receives real formatting; (body, None) when there is none."""
+    if not isinstance(body, str) or not re.search(r'\*\*|__|~~|\|\||`', body):
+        return body, None
+    plain, rich, codes = [], [], []
+
+    def stash(text, tag):
+        codes.append((text, tag))
+        return '\x00%d\x00' % (len(codes) - 1)
+
+    work = re.sub(r'```(?:[\w+-]*\n)?(.+?)\n?```', lambda m: stash(m.group(1), 'pre'), body, flags=re.S)
+    work = re.sub(r'`([^`\n]+)`', lambda m: stash(m.group(1), 'code'), work)
+    rich_text, plain_text = html.escape(work, quote=False), work
+    for rule, tag in MD_RULES:
+        open_tag = '<span data-mx-spoiler>' if tag == 'spoiler' else '<%s>' % tag
+        close_tag = '</span>' if tag == 'spoiler' else '</%s>' % tag
+        rich_text = rule.sub(lambda m: open_tag + m.group(1) + close_tag, rich_text)
+        plain_text = rule.sub(lambda m: m.group(1), plain_text)
+
+    def unstash(text, as_html):
+        def put(m):
+            code, tag = codes[int(m.group(1))]
+            if not as_html:
+                return code
+            return '<pre><code>%s</code></pre>' % html.escape(code, quote=False) if tag == 'pre' else '<code>%s</code>' % html.escape(code, quote=False)
+        return re.sub(r'\x00(\d+)\x00', put, text)
+
+    rich_text, plain_text = unstash(rich_text, True), unstash(plain_text, False)
+    if rich_text == html.escape(body, quote=False):
+        return body, None
+    # Line breaks outside code blocks become <br>; inside <pre> they stay literal.
+    parts = re.split(r'(<pre>.*?</pre>)', rich_text, flags=re.S)
+    rich_text = ''.join(part if part.startswith('<pre>') else part.replace('\n', '<br>') for part in parts).replace('</pre><br>', '</pre>')
+    return plain_text, rich_text
+
+
+def text_content(body, formatted=None):
+    content = {'msgtype': 'm.text', 'body': body}
+    if formatted:
+        content.update(format='org.matrix.custom.html', formatted_body=formatted)
+    return content
 
 
 REPLY_FALLBACK = re.compile(r'\A(?:> [^\n]*\n)+\n', re.S)
@@ -742,7 +896,8 @@ class UnifiedInbox:
                 with self.store.db() as db:
                     ok = db.execute('SELECT 1 FROM message WHERE id=? AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
                 if ok:
-                    self.store.bump(relates.get('event_id'), ',original=?,translated=NULL,translation_error=NULL,edited=1', (new['body'],))
+                    self.store.bump(relates.get('event_id'), ',original=?,formatted=?,translated=NULL,translation_error=NULL,edited=1',
+                                    (new['body'], message_format(new)))
             return
         if sender.startswith('@telegrambot:'):
             # Bridge error notices are not chat lines: mark our newest recent outgoing message as failed.
@@ -758,8 +913,11 @@ class UnifiedInbox:
         if parts is None:
             return
         msgtype, body, media, reply_to = parts
+        formatted = message_format(event.get('content')) if msgtype in ('m.text', 'm.image', 'm.video', 'm.audio', 'm.file') and body else None
+        if formatted and (event.get('content') or {}).get('msgtype') == 'm.emote':
+            formatted = '* ' + formatted
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to)
+                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, formatted=formatted)
 
     def ephemeral(self, identity, events):
         for event in events:
@@ -843,9 +1001,9 @@ class UnifiedInbox:
         finally:
             self.sync_lock.release()
 
-    def backfill_media(self, identity):
-        """Rows stored before media support carry only "[Photo] caption"; re-read recent room history once
-        and upgrade those rows in place so the pictures appear a moment after the thread opens."""
+    def backfill_media(self, identity, pages=3, mark=None):
+        """Rows stored before media (or formatting) support carry only plain text; re-read recent room history once
+        and upgrade those rows in place so pictures and bold/italic appear a moment after the thread opens."""
         room = identity['address']
         if room in self.backfilled or identity['network'] != 'telegram':
             return
@@ -855,7 +1013,7 @@ class UnifiedInbox:
             try:
                 meta = self.room_meta(room, {})
                 token = None
-                for _ in range(3):
+                for _ in range(pages):
                     query = {'dir': 'b', 'limit': 100}
                     if token:
                         query['from'] = token
@@ -866,6 +1024,8 @@ class UnifiedInbox:
                     token = page.get('end')
                     if not token or not page.get('chunk'):
                         break
+                if mark:
+                    self.store.put(mark, '1')
             except Exception:
                 self.backfilled.discard(room)
         threading.Thread(target=run, name='media-backfill', daemon=True).start()
@@ -919,6 +1079,10 @@ class UnifiedInbox:
                     self.tq.put((message['id'], message['original']))
             if message['msgtype'] == 'm.text' and re.match(r'\[(Photo|Video|Voice message|File|Sticker)\]', message['original']):
                 self.backfill_media(next(i for i in person['identities'] if i['id'] == message['identity_id']))
+        for identity in person['identities']:
+            # History stored before formatting support: re-read it once per chat so bold/italic come back.
+            if identity['network'] == 'telegram' and not self.store.get('format_backfill:' + identity['address']):
+                self.backfill_media(identity, pages=10, mark='format_backfill:' + identity['address'])
         gaps = [self.store.get('history_gap:' + i['address']) for i in person['identities']]
         typing = self.typing.get(person_id)
         return {'person': person, 'messages': messages, 'has_more': has_more, 'translating': pending, 'seq': self.store.seq,
@@ -1016,8 +1180,10 @@ class UnifiedInbox:
             reply_to = self.reply_target(identity, payload.get('reply_to'))
             # Stable transaction ID makes even ambiguous Matrix retries idempotent.
             delivery = 'sent'
+            formatted = None
             if identity['network'] == 'telegram':
-                content = {'msgtype': 'm.text', 'body': body}
+                body, formatted = markdown_format(body)
+                content = text_content(body, formatted)
                 if reply_to:
                     content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
                 result = self.mx(self.room(identity['address']) + '/send/m.room.message/' + p['id'], 'PUT', content)
@@ -1027,7 +1193,7 @@ class UnifiedInbox:
                 event = 'messenger:' + result['message_ids'][0]
                 delivery = 'sent' if result['published'] else 'queued'
             self.store.add_message(event, identity, self.owner, True, body, int(time.time() * 1000), p['original'] if body != p['original'] else None,
-                                   reply_to=reply_to, client_id=payload.get('client_id'))
+                                   reply_to=reply_to, client_id=payload.get('client_id'), formatted=formatted)
             with self.store.db() as db:
                 db.execute('UPDATE preview SET status=?,event_id=? WHERE id=?', (delivery, event, p['id']))
                 # A sync may have received our event before the confirm receipt.
@@ -1087,11 +1253,12 @@ class UnifiedInbox:
             event = 'messenger:' + result['message_ids'][0]
             self.store.add_message(event, identity, self.owner, True, body, int(time.time() * 1000), client_id=client_id)
             return {'state': 'sent' if result['published'] else 'queued', 'event_id': event, 'message': self.row(event)}
-        msgtype, media = 'm.text', None
+        msgtype, media, formatted = 'm.text', None, None
         if upload:
             msgtype, content, media = self.media_content(upload, body, payload)
         else:
-            content = {'msgtype': 'm.text', 'body': body}
+            body, formatted = markdown_format(body)
+            content = text_content(body, formatted)
         if reply_to:
             content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
         started = time.time()
@@ -1099,7 +1266,7 @@ class UnifiedInbox:
         self.timing('send', started)
         event = result['event_id']
         self.store.add_message(event, identity, self.owner, True, body if upload is None else (body or ''), int(time.time() * 1000),
-                               msgtype=msgtype, media=media, reply_to=reply_to, client_id=client_id)
+                               msgtype=msgtype, media=media, reply_to=reply_to, client_id=client_id, formatted=formatted)
         if upload:
             self.uploads.pop(payload.get('upload_id'), None)
         return {'state': 'sent', 'event_id': event, 'message': self.row(event)}
@@ -1254,10 +1421,11 @@ class UnifiedInbox:
         new = text(payload.get('text'))
         if not message['outgoing'] or message['deleted'] or message['network'] != 'telegram' or message['msgtype'] != 'm.text':
             fail('not_editable', 'Only your own text messages can be edited', 409)
+        new, formatted = markdown_format(new)
+        fallback = text_content('* ' + new, '* ' + formatted if formatted else None)
         self.mx(self.room(message['address']) + '/send/m.room.message/' + secrets.token_hex(12), 'PUT',
-                {'msgtype': 'm.text', 'body': '* ' + new, 'm.new_content': {'msgtype': 'm.text', 'body': new},
-                 'm.relates_to': {'rel_type': 'm.replace', 'event_id': message_id}})
-        self.store.bump(message_id, ',original=?,translated=NULL,edited=1', (new,))
+                dict(fallback, **{'m.new_content': text_content(new, formatted), 'm.relates_to': {'rel_type': 'm.replace', 'event_id': message_id}}))
+        self.store.bump(message_id, ',original=?,formatted=?,translated=NULL,edited=1', (new, formatted))
         return {'message': self.row(message_id)}
 
     def delete(self, message_id, payload):

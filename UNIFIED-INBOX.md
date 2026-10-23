@@ -28,6 +28,10 @@ The first tab is **Chats**: only conversations that have messages, newest first,
 
 On login the bridge creates rooms for the owner's 50 most recent Telegram chats and copies the last 50 messages of each (forward backfill, which stock Synapse supports). Chats beyond those 50 appear when they next get a message. The chat list is fetched only at sign-in, so Disconnect deletes the bridged copies (never anything on Telegram) and the next Connect rebuilds every chat with fresh history; cards for removed rooms are dropped. Photos, video, voice, files, locations and stickers show as a short label plus any caption; group messages show the sender's name. Older history (backward backfill) needs Beeper's batch-send API and stays off.
 
+## Formatting
+
+Telegram entities reach Matrix as `formatted_body` HTML while `body` is plain, so bold, italic, underline, strikethrough, code, quotes, links and spoilers are kept in `message.formatted` after a strict server allowlist and rebuilt node by node in the view (no markup assignment). Edits carry their own formatting. History stored before this re-reads up to 1000 recent events per Telegram chat once, the first time the chat opens. Typing `**bold**`, `__italic__`, `~~strike~~`, `||spoiler||`, `` `code` `` or fenced code sends real Telegram formatting with a plain `body`; editing a formatted message puts the markers back in the composer. Proof: `tests/formatting_browser.cjs` on the disposable preview.
+
 ## Agent access boundary
 
 The app's machine key (`MESSENGER_API_TOKEN`) is held by the Wizard host, so any agent on the box can find it. With that key alone an agent can read status and identity, mint the owner's view ticket, resolve a contact address and run passphrase-proved setup. Every message, contact, People/Groups, send, sync, translate or Telegram-login route answers `403 agent_access_off`.

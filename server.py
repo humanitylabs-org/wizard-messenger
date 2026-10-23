@@ -80,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get('jsonrpc') != '2.0':
             return 400,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32600,'message':'Invalid request'}}
         if method == 'initialize':
-            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.10.5'}}
+            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.10.6'}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
         elif method == 'tools/list': result={'tools':MCP_TOOLS}
