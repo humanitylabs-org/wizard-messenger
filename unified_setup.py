@@ -26,8 +26,11 @@ def setup(root):
     private = root / 'unified' / 'secrets.json'
     if private.exists():
         keys = json.loads(private.read_text())
+        if 'doublepuppet' not in keys:
+            keys['doublepuppet'] = secrets.token_urlsafe(48)
+            write(private, keys)
     else:
-        keys = {k: secrets.token_urlsafe(48) for k in ('as_token', 'hs_token', 'provisioning', 'registration', 'owner_password', 'translation_token')}
+        keys = {k: secrets.token_urlsafe(48) for k in ('as_token', 'hs_token', 'provisioning', 'registration', 'owner_password', 'translation_token', 'doublepuppet')}
         write(private, keys)
     write(root / 'translation' / 'auth.json', {'translation_token': keys['translation_token']})
     registration = {
@@ -38,6 +41,13 @@ def setup(root):
         'de.sorunome.msc2409.push_ephemeral': True,
     }
     write(root / 'matrix' / 'telegram-registration.yaml', registration)
+    # Double puppeting: what the owner does in the Telegram app itself (messages sent,
+    # chats read) arrives as the owner, not as their Telegram ghost. Owner only, no URL.
+    write(root / 'matrix' / 'doublepuppet-registration.yaml', {
+        'id': 'doublepuppet', 'url': None, 'as_token': keys['doublepuppet'], 'hs_token': secrets.token_urlsafe(32),
+        'sender_localpart': 'doublepuppet-' + keys['doublepuppet'][:8].lower().replace('-', 'x').replace('_', 'x'), 'rate_limited': False,
+        'namespaces': {'users': [{'exclusive': False, 'regex': '@owner:messenger\\.internal'}], 'aliases': [], 'rooms': []},
+    })
     write(root / 'matrix' / 'homeserver.yaml', {
         'server_name': 'messenger.internal', 'pid_file': '/tmp/synapse.pid',
         'listeners': [{'port': 8008, 'type': 'http', 'tls': False, 'bind_addresses': ['0.0.0.0'], 'resources': [{'names': ['client'], 'compress': False}]}],
@@ -45,7 +55,7 @@ def setup(root):
         'media_store_path': '/data/media', 'signing_key_path': '/data/signing.key',
         'report_stats': False, 'enable_registration': False,
         'registration_shared_secret': keys['registration'],
-        'app_service_config_files': ['/data/telegram-registration.yaml'],
+        'app_service_config_files': ['/data/telegram-registration.yaml', '/data/doublepuppet-registration.yaml'],
         'federation_domain_whitelist': [], 'allow_public_rooms_over_federation': False,
         'trusted_key_servers': [], 'suppress_key_server_warning': True,
         'url_preview_enabled': False, 'enable_metrics': False,
@@ -71,7 +81,7 @@ def setup(root):
     config['bridge']['cleanup_on_logout'] = {'enabled': True, 'manual': {k: 'delete' for k in ('private', 'relayed', 'shared_no_users', 'shared_has_users')}, 'bad_credentials': {k: 'nothing' for k in ('private', 'relayed', 'shared_no_users', 'shared_has_users')}}
     config['matrix']['federate_rooms'] = False
     config['provisioning'].update(shared_secret=keys['provisioning'], allow_matrix_auth=False)
-    config['double_puppet'].update(servers={}, secrets={})
+    config['double_puppet'].update(servers={}, secrets={'messenger.internal': 'as_token:' + keys['doublepuppet']})
     config['logging'] = {'min_level': 'error', 'writers': [{'type': 'stdout', 'format': 'json'}]}
     # Bring recent history into each new or quiet chat (forward backfill works on stock Synapse),
     # and bridge the owner's 50 most recent dialogs on login instead of 15.

@@ -221,6 +221,12 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 50))
         self.assertEqual(config['network']['sync']['login_sync_limit'], 50)
         self.assertFalse(config['backfill']['queue']['enabled'])
+        self.assertTrue(config['double_puppet']['secrets']['messenger.internal'].startswith('as_token:'))
+        home = json.loads((Path(self.tmp.name) / 'matrix' / 'homeserver.yaml').read_text())
+        self.assertIn('/data/doublepuppet-registration.yaml', home['app_service_config_files'])
+        reg = json.loads((Path(self.tmp.name) / 'matrix' / 'doublepuppet-registration.yaml').read_text())
+        self.assertIsNone(reg['url'])
+        self.assertEqual(reg['namespaces']['users'], [{'exclusive': False, 'regex': '@owner:messenger\\.internal'}])
 
     def test_left_telegram_room_is_forgotten(self):
         self.store = PeopleStore(Path(self.tmp.name) / 'forget.db')
@@ -319,6 +325,33 @@ class SignalMvpTests(unittest.TestCase):
             self.inbox.send(self.pid, {'text': 'hello', 'client_id': 'c-1234567890'})
         self.assertEqual(err.exception.code, 'review_required')
         self.inbox.mx.assert_not_called()
+
+    def lines(self):
+        with self.inbox.store.db() as db:
+            return {r[0]: bool(r[1]) for r in db.execute('SELECT id,outgoing FROM message')}
+
+    def test_lines_written_in_the_telegram_app_are_mine(self):
+        me = '@telegram_42:messenger.internal'
+        self.inbox.rooms['!a']['names'][me] = 'James'
+        with self.inbox.store.db() as db:
+            db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', ('!a', json.dumps(self.inbox.rooms['!a'])))
+        self.ingest(self.event('$old', {'msgtype': 'm.text', 'body': 'sent from my phone'}, sender=me, ts=500),
+                    self.event('$in', {'msgtype': 'm.text', 'body': 'hello'}, ts=400))
+        self.assertEqual(self.lines(), {'$in': False, '$old': False})
+        with patch.object(self.inbox, 'telegram_configured', return_value=True), patch.object(self.inbox, 'provision', return_value={'logins': [{'id': '42'}]}):
+            self.inbox.learn_me()
+        self.assertEqual(self.lines(), {'$in': False, '$old': True})
+        chat = self.inbox.store.people()[0]
+        self.assertEqual(chat['unread'], 0)
+        self.ingest(self.event('$new', {'msgtype': 'm.text', 'body': 'again'}, sender=me, ts=900),
+                    self.event('$r', {'msgtype': 'm.text', 'body': 'reply'}, ts=1000))
+        self.assertTrue(self.lines()['$new'])
+        self.assertEqual(self.inbox.store.people()[0]['unread'], 1)
+        # Reading the chat in the Telegram app clears it here.
+        self.inbox.ephemeral(self.a, [{'type': 'm.receipt', 'content': {'$r': {'m.read': {self.inbox.owner: {'ts': 1}}}}}])
+        self.assertEqual(self.inbox.store.people()[0]['unread'], 0)
+        # Survives a restart without asking the bridge again.
+        self.assertIn(me, UnifiedInbox(self.tmp.name, self.engine).mine)
 
     def test_reply_reaction_edit_redaction_ingest(self):
         self.ingest(self.event('$q', {'msgtype': 'm.text', 'body': 'question?'}))

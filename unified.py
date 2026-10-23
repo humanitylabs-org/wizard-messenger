@@ -341,6 +341,22 @@ class PeopleStore:
             self.changed()
         return inserted
 
+    def claim_own(self, ghost):
+        """Lines the owner wrote in the Telegram app were stored as incoming; mark them outgoing, chats read up to them."""
+        with self.db() as db:
+            rooms = [(r[0], json.loads(r[1]).get('names', {}).get(ghost)) for r in db.execute('SELECT room,json FROM room_meta')]
+            changed = 0
+            for room, name in rooms:
+                row = db.execute("SELECT id FROM identity WHERE network='telegram' AND address=?", (room,)).fetchone()
+                if not row:
+                    continue
+                senders = [ghost] + ([name] if name else [])
+                q = ','.join('?' * len(senders))
+                changed += db.execute('UPDATE message SET outgoing=1,seq=? WHERE identity_id=? AND outgoing=0 AND sender IN (%s)' % q, (self.next_seq(), row[0], *senders)).rowcount
+                db.execute('UPDATE identity SET last_read_ts=MAX(last_read_ts,(SELECT COALESCE(MAX(timestamp),0) FROM message WHERE identity_id=? AND outgoing=1)),seq=? WHERE id=?', (row[0], self.next_seq(), row[0]))
+        self.changed()
+        return changed
+
     def bump(self, message_id, sql='', args=()):
         with self.db() as db:
             cur = db.execute('UPDATE message SET seq=?' + sql + ' WHERE id=?', (self.next_seq(), *args, message_id))
@@ -538,6 +554,10 @@ class UnifiedInbox:
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
         self.owner = '@owner:messenger.internal'
+        # The owner's own Telegram account appears as a ghost (@telegram_<id>) for anything
+        # done in the Telegram app before double puppeting existed: that is still "me".
+        self.mine = set(json.loads(self.store.get('own_ghosts') or '[]'))
+        self.mine_checked = 0
         self.matrix = os.environ.get('MATRIX_URL', 'http://matrix:8008')
         self.bridge = os.environ.get('TELEGRAM_BRIDGE_URL', 'http://telegram:29317')
         self.stop = threading.Event()
@@ -706,7 +726,7 @@ class UnifiedInbox:
     def ingest(self, identity, meta, event):
         etype, content = event.get('type'), event.get('content') or {}
         sender = event.get('sender', '')
-        outgoing = sender == self.owner
+        outgoing = self.is_me(sender)
         relates = content.get('m.relates_to') or {}
         if etype == 'm.room.redaction':
             target = event.get('redacts') or content.get('redacts')
@@ -744,7 +764,7 @@ class UnifiedInbox:
     def ephemeral(self, identity, events):
         for event in events:
             if event.get('type') == 'm.typing':
-                users = [u for u in (event.get('content') or {}).get('user_ids', []) if u != self.owner]
+                users = [u for u in (event.get('content') or {}).get('user_ids', []) if not self.is_me(u)]
                 names = self.rooms.get(identity['address'], {}).get('names', {})
                 now = [names.get(u) or 'Someone' for u in users]
                 if self.typing.get(identity['person_id'], {}).get('names') != now:
@@ -758,15 +778,37 @@ class UnifiedInbox:
                                 row = db.execute('SELECT timestamp FROM message WHERE id=?', (event_id,)).fetchone()
                             if not row:
                                 continue
-                            if user == self.owner:
+                            if self.is_me(user):
                                 self.store.touch_identity(identity['id'], last_read_ts=row[0])
                             elif user != '@telegrambot:messenger.internal':
                                 self.store.touch_identity(identity['id'], peer_read_ts=row[0])
+
+    def is_me(self, user):
+        return user == self.owner or user in self.mine
+
+    def learn_me(self):
+        """Find the owner's Telegram ghost from the bridge login; fix lines already stored under it."""
+        if time.time() - self.mine_checked < 300 or not self.telegram_configured():
+            return
+        self.mine_checked = time.time()
+        try:
+            logins = self.provision('/whoami').get('logins') or []
+        except EngineError:
+            return
+        found = {'@telegram_%s:messenger.internal' % l['id'] for l in logins if str(l.get('id', '')).isdecimal()}
+        if found - self.mine:
+            self.mine |= found
+            self.store.put('own_ghosts', json.dumps(sorted(self.mine)))
+        for ghost in sorted(self.mine):
+            if not self.store.get('own_fixed:' + ghost):
+                self.store.claim_own(ghost)
+                self.store.put('own_fixed:' + ghost, '1')
 
     def sync(self, timeout_ms=0):
         if not self.sync_lock.acquire(blocking=False):
             return {'state': 'syncing'}
         try:
+            self.learn_me()
             since = self.store.get('sync_token')
             query = {'timeout': timeout_ms if since else 0, 'filter': json.dumps({'room': {'timeline': {'limit': 100}}})}
             if since:
