@@ -33,6 +33,9 @@ const assert = require('node:assert/strict');
   const before = await page.locator('.u-row.outgoing .u-voice').count();
   // Record ~2.5 s from the fake microphone and send.
   await page.locator('.u-composer .u-mic, button[aria-label="Record voice message"]').first().click();
+  await page.locator('.u-recording').waitFor();
+  const shared = await page.evaluate(() => window.WizAppCapture?.current?.('messenger') || window.WizardApp.capture.current());
+  assert.ok(shared?.id, 'recording is held by the shared Wizard capture service: ' + JSON.stringify(shared));
   await page.waitForTimeout(2500);
   await page.locator('.u-recording .u-send').click();
   await page.locator('.u-row.outgoing .u-voice').nth(before).waitFor({timeout: 10000});
@@ -60,6 +63,10 @@ const assert = require('node:assert/strict');
     await page.screenshot({path: ev + '/voice-playing-' + name + '.png'});
     await box.locator('.u-vplay').click().catch(() => {}); await page.waitForTimeout(2500);
   }
+  // Android's native recorder hands back AAC: it must become Ogg Opus too.
+  const aac = fs.readFileSync(process.env.AAC || __dirname + '/../../messenger-mvp-preview/seedfiles/voice.aac').toString('base64');
+  const conv = await page.evaluate(async b64 => { const b = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); const o = await window.MessengerUnified_toOggOpus(new Blob([b], {type: 'audio/aac'})); const u = new Uint8Array(await o.arrayBuffer()); return {type: o.type, head: String.fromCharCode(...u.subarray(0, 4)), b64: btoa(String.fromCharCode(...u))}; }, aac);
+  assert.equal(conv.head, 'OggS', 'AAC converted to Ogg'); fs.writeFileSync(ev + '/from-aac.ogg', Buffer.from(conv.b64, 'base64'));
   const plays = await page.evaluate(() => ({media: window.__mediaPlays, webAudio: window.__webAudioStarts}));
   console.log(JSON.stringify({plays, failedMarks: failed, uploadBytes: uploads[0].size, errors}));
   assert.equal(plays.media, 0, 'no media element played'); assert.ok(plays.webAudio >= 2, 'web audio played');

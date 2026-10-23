@@ -642,37 +642,35 @@
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
       queueSend(id, {text, photo: a, reply, identity_id: channel.value});
     }
+    // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
+    // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
+    // elsewhere it is the shared browser recorder with the same external-mic guard. Messenger never opens the mic itself.
     async function record() {
-      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return error(new Error('Voice recording is not available in this browser.'));
-      let stream;
-      try { stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}}); }
-      catch { return error(new Error('Microphone access was blocked. Allow the microphone for Wizard and try again.')); }
-      const type = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-      const rec = new MediaRecorder(stream, type ? {mimeType: type, audioBitsPerSecond: 32000} : {});
-      const chunks = [], levels = []; const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const an = ctx.createAnalyser(); an.fftSize = 512; ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
-      const started = Date.now(); let cancelled = false;
+      if (!window.WizardApp?.capture) return error(new Error('Voice notes need Wizard. Open Messenger from Wizard and try again.'));
+      let session;
+      try { session = await WizardApp.capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576}); }
+      catch (e) { return error(new Error(e?.code === 'busy' ? 'The microphone is busy with another Wizard recording.' : e?.message || 'Could not start recording.')); }
+      const levels = [], started = Date.now(); let done = false;
       const panel = node('div', 'u-recording'); const clock = node('span', 'u-rec-time', '0:00'); const live = node('div', 'u-wave live');
-      const stopAll = () => { clearInterval(tick); stream.getTracks().forEach(t => t.stop()); ctx.close().catch(() => {}); panel.remove(); row.hidden = false; view.recording = null; hold(); };
-      panel.append(iconButton('trash', 'Cancel recording', () => { cancelled = true; rec.stop(); }, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', () => rec.stop(), 'u-send'));
-      row.hidden = true; form.append(panel); view.recording = rec; hold();
+      const close = () => { done = true; clearInterval(tick); offLevel?.(); panel.remove(); row.hidden = false; view.recording = null; hold(); };
+      let last = 0; const offLevel = session.onLevel?.(v => { last = v; });
       const tick = setInterval(() => {
-        an.getByteTimeDomainData(buf); let sum = 0; for (const v of buf) sum += (v - 128) ** 2;
-        const level = Math.min(1024, Math.round(Math.sqrt(sum / buf.length) * 40)); levels.push(level);
-        clock.textContent = fmtDur(Date.now() - started);
+        const level = Math.round(Math.min(1, last * 1.6) * 1024); levels.push(level); clock.textContent = fmtDur(Date.now() - started);
         const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); while (live.children.length > 40) live.firstChild.remove();
-        if (Date.now() - started > 15 * 60e3) rec.stop();
       }, 100);
-      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-      rec.onstop = () => {
-        stopAll(); const duration = Date.now() - started;
-        if (cancelled || duration < 600) { if (!cancelled) toast('Hold on a little longer to record'); return; }
-        const blob = new Blob(chunks, {type: (rec.mimeType || type || 'audio/webm').split(';')[0]}), url = URL.createObjectURL(blob); localAudio.set(url, blob);
+      const cancel = async () => { if (done) return; close(); try { await session.cancel(); } catch (e) { error(new Error('Could not discard the recording: ' + (e.message || e))); } };
+      const finish = async () => {
+        if (done) return; close();
+        let take; try { take = await session.stop(); } catch (e) { return error(new Error('Recording kept on this device; try again. ' + (e.message || ''))); }
+        const duration = take.durationMs || Date.now() - started;
+        if (duration < 600 || !take.blob?.size) { toast('Hold on a little longer to record'); WizardApp.capture.ack(take.id).catch(() => {}); return; }
         const step = Math.max(1, levels.length / 64); const waveform = Array.from({length: Math.min(64, levels.length)}, (_, i) => levels[Math.floor(i * step)]);
+        const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
         const reply = view.reply; view.reply = null; paintBar();
-        queueSend(id, {voice: {blob, duration, waveform, url}, reply, identity_id: channel.value});
+        queueSend(id, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply, identity_id: channel.value});
       };
-      rec.start(250);
+      panel.append(iconButton('trash', 'Cancel recording', cancel, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', finish, 'u-send'));
+      row.hidden = true; form.append(panel); view.recording = {stop: finish, cancel}; hold();
     }
     Object.assign(view, {draft, grow, paintBar});
     form.append(bar, channel, row); grow(); paintBar();
@@ -699,6 +697,10 @@
       }
     }
     if (codec && codec !== 'A_OPUS') throw new Error('not opus'); if (!packets.length) throw new Error('empty');
+    return oggFromOpus(packets, channels, head);
+  }
+  // Opus packets -> Ogg Opus file (RFC 7845).
+  function oggFromOpus(packets, channels, head) {
     const ascii = t => Uint8Array.from(t, c => c.charCodeAt(0));
     if (!head || String.fromCharCode(...head.subarray(0, 8)) !== 'OpusHead') {
       head = new Uint8Array(19); head.set(ascii('OpusHead')); const d = new DataView(head.buffer); head[8] = 1; head[9] = channels; d.setUint16(10, 312, true); d.setUint32(12, 48000, true);
@@ -727,7 +729,29 @@
     const total = new Uint8Array(pages.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of pages) { total.set(p, o); o += p.length; }
     return total;
   }
-  window.MessengerUnified_webmToOgg = webmToOgg; // test hook
+  window.MessengerUnified_webmToOgg = webmToOgg; window.MessengerUnified_toOggOpus = b => toOggOpus(b); // test hooks
+  // Any recording -> Ogg Opus. WebM Opus (shared browser recorder) is rewrapped as is; anything else (the Android
+  // recorder's AAC) is decoded and re-encoded with WebCodecs at 32 kbit/s mono, like Telegram's own voice notes.
+  async function toOggOpus(blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return new Blob([bytes], {type: 'audio/ogg'});
+    if (bytes[0] === 0x1a && bytes[1] === 0x45) { try { return new Blob([webmToOgg(bytes)], {type: 'audio/ogg'}); } catch { /* re-encode below */ } }
+    if (!window.AudioEncoder) throw new Error('This device cannot prepare voice notes for Telegram yet');
+    const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const decoded = await new AC(1, 48000, 48000).decodeAudioData(bytes.buffer.slice(0));
+    // Mix to mono at 48 kHz.
+    const off = new AC(1, Math.max(1, Math.ceil(decoded.duration * 48000)), 48000), src = off.createBufferSource();
+    src.buffer = decoded; src.connect(off.destination); src.start(); const pcm = (await off.startRendering()).getChannelData(0);
+    const packets = []; let err = null;
+    const enc = new AudioEncoder({output: c => { const p = new Uint8Array(c.byteLength); c.copyTo(p); packets.push(p); }, error: e => { err = e; }});
+    enc.configure({codec: 'opus', sampleRate: 48000, numberOfChannels: 1, bitrate: 32000});
+    for (let at = 0; at < pcm.length; at += 960) {
+      const frame = pcm.slice(at, at + 960);
+      enc.encode(new AudioData({format: 'f32', sampleRate: 48000, numberOfFrames: frame.length, numberOfChannels: 1, timestamp: Math.round(at / 48), data: frame}));
+    }
+    await enc.flush(); enc.close(); if (err) throw err; if (!packets.length) throw new Error('Voice note was empty');
+    return new Blob([oggFromOpus(packets, 1)], {type: 'audio/ogg'});
+  }
   function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
@@ -740,8 +764,8 @@
     return {blob, url: URL.createObjectURL(blob), w, h};
   }
   async function upload(id, kind, blob) {
-    // Telegram takes voice notes only as Ogg Opus; Chrome records Opus in WebM, so rewrap it (no re-encode). Retries too.
-    if (kind === 'voice' && blob.type === 'audio/webm') { try { blob = new Blob([webmToOgg(new Uint8Array(await blob.arrayBuffer()))], {type: 'audio/ogg'}); } catch { /* the bridge marks it not sent */ } }
+    // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
+    if (kind === 'voice') blob = await toOggOpus(blob);
     const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
       headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
     let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
@@ -767,6 +791,7 @@
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
         const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, media});
         if (r.message) mergeMessages(id, [r.message]);
+        if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
       } catch (e) {
