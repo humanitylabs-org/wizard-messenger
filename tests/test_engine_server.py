@@ -49,8 +49,9 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(status,500); self.assertNotIn(secret,json.dumps(data))
     def test_empty_token_is_rejected(self):
         with self.assertRaises(ValueError): MessengerServer(('127.0.0.1',0),FakeEngine(),'',['https://view.invalid'])
-    def test_empty_origin_list_is_rejected(self):
-        with self.assertRaises(ValueError): MessengerServer(('127.0.0.1',0),FakeEngine(),self.token,[])
+    def test_empty_origin_list_means_same_host_only(self):
+        server=MessengerServer(('127.0.0.1',0),FakeEngine(),self.token,[]); server.server_close()
+        self.assertEqual(server.origins,frozenset())
 
 class InputAndStorageTests(unittest.TestCase):
     def test_identifier_validation_does_not_repair_source_tokens(self):
@@ -159,11 +160,11 @@ class InputAndStorageTests(unittest.TestCase):
             members={'members':[{'member_id':'a'*64,'mls_leaf':'secret-ish'},{'member_id':'b'*64}]}
             def execute(command):
                 key=command['Users']['command']['Show']['pubkey']
-                if key=='a'*64: return {'user':{'metadata':{'display_name':'James QA'}}}
+                if key=='a'*64: return {'user':{'metadata':{'display_name':'Alex QA'}}}
                 raise EngineError('marmot_operation_failed','unknown',502)
             with patch.object(engine,'_groups',return_value=members),patch.object(engine,'_execute',side_effect=execute) as ex:
                 first=engine._dm_members('c'*32); engine._dm_members('c'*32)
-            self.assertEqual(first[0]['display_name'],'James QA'); self.assertNotIn('display_name',first[1])
+            self.assertEqual(first[0]['display_name'],'Alex QA'); self.assertNotIn('display_name',first[1])
             self.assertNotIn('mls_leaf',first[0]); self.assertEqual(ex.call_count,2)
 
 if __name__=='__main__': unittest.main()

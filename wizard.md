@@ -2,12 +2,12 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.2.0-unified.1
+version: 0.2.0-unified.10
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
 license: MIT
-# Private beta source; no public catalog listing.
+# Alpha: listed in the Wizard App Store (Alpha channel).
 source: https://github.com/humanitylabs-org/wizard-messenger
 icon: icon.png
 runtime:

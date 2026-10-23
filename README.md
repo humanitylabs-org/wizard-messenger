@@ -1,8 +1,18 @@
 # Wizard Messenger
 
-## Unified inbox preview
+## Install (Wizard App Store, Alpha)
 
-The `feature/unified-inbox` branch adds private Matrix + Telegram plumbing, People, Groups and reviewed Tinfoil translation without replacing the existing Messenger UI. See [UNIFIED-INBOX.md](UNIFIED-INBOX.md) for installation, security boundaries, exact verification scope and known limitations. **Unified history is plaintext on the box; Telegram cloud chats are not end-to-end encrypted.** The sections below describe the retained Marmot/private-beta baseline.
+Open **Store** in Wizard and get **Messenger**. Everything installs on your own box; nothing is shared with Humanity Labs.
+
+- **First open:** ask your Wizard for your Messenger setup link, then choose a passphrase (16+ characters). It encrypts your private Messenger chats. After the server restarts you type it once.
+- **Fingerprint unlock:** in Messenger → your address → *Unlock with fingerprint next time*. Your phone stays signed in for 30 days; *Lock Messenger* signs out at once.
+- **Telegram (optional):** create your own Telegram app ID and hash at https://my.telegram.org → *API development tools*, enter them in the app's settings in Wizard, then *Connect Telegram* inside Messenger. Messages, reads and history sync both ways. Telegram cloud chats are not end-to-end encrypted, and the bridged history is stored on your box.
+- **Translation (optional):** add a Tinfoil API key in the app settings.
+- Your Wizard agent cannot read your messages unless you allow it for a limited time in Messenger → Connected accounts.
+
+## Unified inbox
+
+Messenger adds private Matrix + Telegram plumbing, People, Groups and reviewed Tinfoil translation without replacing the existing Messenger UI. See [UNIFIED-INBOX.md](UNIFIED-INBOX.md) for installation, security boundaries, exact verification scope and known limitations. **Unified history is plaintext on the box; Telegram cloud chats are not end-to-end encrypted.** The sections below describe the retained Marmot/private-beta baseline.
 
 Encrypted text conversations with peers, inside Wizard OS. Each installation runs its own isolated container, documented HTTP API, minimal MCP and editable web view. Marmot MDK supplies the messaging engine; Wizard supplies the interface and app integration.
 

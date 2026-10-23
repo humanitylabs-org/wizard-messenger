@@ -33,6 +33,7 @@
           <label id="confirm-label">Confirm passphrase<input id="confirm-passphrase" type="password" autocomplete="off" required></label>
           <p id="setup-error" class="error" role="alert"></p>
           <button id="setup-submit" class="primary wide" type="submit">Create address</button>
+          <button id="fingerprint-unlock" class="secondary wide" type="button" hidden>Unlock with fingerprint</button>
           <p class="helper privacy">Only this Wizard can read your messages.</p>
         </form>
         <button id="reconnect" class="secondary wide" type="button" hidden>Try again</button>
@@ -63,7 +64,7 @@
         <span class="grabber" aria-hidden="true"></span>
         <header class="sheet-header"><h2 id="sheet-title"></h2><button id="close-sheet" class="icon-button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 6 6 18M6 6l12 12"/></svg></button></header>
         <form id="contact-form" hidden autocomplete="off"><label>Their address<input id="contact-address" placeholder="npub… or name@domain" spellcheck="false" autocapitalize="none" autocomplete="off" required></label><p id="address-preview" class="helper address-preview"></p><label>Name<input id="contact-name" placeholder="Optional" maxlength="160" autocomplete="off"></label><p id="contact-error" class="error" role="alert"></p><button id="contact-submit" class="primary wide" type="submit">Send invite</button><div id="saved-contacts" class="saved-contacts"></div></form>
-        <div id="address-panel" hidden><p class="helper">Your public Messenger address. Share it with someone you want to chat with.</p><code id="public-address" class="address-card"></code><button id="copy-own" class="primary wide">Copy</button><p id="copy-error" class="error" role="status"></p><button id="lock" class="secondary wide lock-button">Lock Messenger</button></div>
+        <div id="address-panel" hidden><p class="helper">Your public Messenger address. Share it with someone you want to chat with.</p><code id="public-address" class="address-card"></code><button id="copy-own" class="primary wide">Copy</button><p id="copy-error" class="error" role="status"></p><button id="fingerprint-toggle" class="secondary wide lock-button" type="button" hidden>Unlock with fingerprint</button><button id="lock" class="secondary wide lock-button">Lock Messenger</button></div>
       </section>
     </div>
     <p id="activity-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>

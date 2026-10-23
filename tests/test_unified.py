@@ -332,7 +332,7 @@ class SignalMvpTests(unittest.TestCase):
 
     def test_lines_written_in_the_telegram_app_are_mine(self):
         me = '@telegram_42:messenger.internal'
-        self.inbox.rooms['!a']['names'][me] = 'James'
+        self.inbox.rooms['!a']['names'][me] = 'Alex'
         with self.inbox.store.db() as db:
             db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', ('!a', json.dumps(self.inbox.rooms['!a'])))
         self.ingest(self.event('$old', {'msgtype': 'm.text', 'body': 'sent from my phone'}, sender=me, ts=500),

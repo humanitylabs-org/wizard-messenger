@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.9'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -197,7 +197,7 @@
       try { code = (await response.json()).error?.code || code; } catch { /* A gateway 401 may not be JSON. */ }
       signal?.throwIfAborted();
       // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
-      if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code)) throw new APIError(code, 401);
+      if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code) || code.startsWith('passkey_')) throw new APIError(code, 401);
       const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
@@ -251,7 +251,8 @@
       $('passphrase').type = 'password'; $('show-password').textContent = 'Show';
       $('show-password').setAttribute('aria-label', 'Show passphrase'); $('show-password').setAttribute('aria-pressed', 'false');
     }
-    updateSetup(); renderActivity();
+    if (changed && locked) refreshPasskey();
+    updateSetup(); renderActivity(); renderPasskey();
   }
   function renderActivity() {
     const active = !!state.operation, gateBusy = active && (state.mode === 'opening' || (isBusy() && ['locked', 'setup_required'].includes(state.mode)));
@@ -668,6 +669,58 @@
       } finally { updateSetup(); }
     });
   };
+  // Fingerprint / face unlock (passkey on this device). Opens the view only;
+  // after a server restart the passphrase is still needed once.
+  const passkeySupported = !!(window.PublicKeyCredential && navigator.credentials?.get);
+  const b64u = buffer => btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64u = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((text.length + 3) % 4)), c => c.charCodeAt(0));
+  function renderPasskey() {
+    $('fingerprint-unlock').hidden = !(passkeySupported && state.passkey && state.mode === 'locked' && state.sessionLocked);
+    $('fingerprint-toggle').hidden = !passkeySupported;
+    $('fingerprint-toggle').textContent = state.passkey ? 'Turn off fingerprint unlock' : 'Unlock with fingerprint next time';
+  }
+  async function refreshPasskey() {
+    if (!passkeySupported) return;
+    try { state.passkey = !!(await api('api/view/passkey', {session: true}))?.enabled; } catch { state.passkey = false; }
+    renderPasskey();
+  }
+  $('fingerprint-unlock').onclick = () => {
+    if (isBusy()) return;
+    $('setup-error').textContent = '';
+    act(async signal => {
+      try {
+        const options = await api('api/view/passkey/unlock-options', {method: 'POST', body: {}, signal, session: true});
+        const credential = await navigator.credentials.get({signal, publicKey: {...options, challenge: unb64u(options.challenge), allowCredentials: options.allowCredentials.map(c => ({...c, id: unb64u(c.id)}))}});
+        const r = credential.response;
+        const session = await api('api/view/passkey/unlock', {method: 'POST', session: true, signal, body: {id: credential.id, clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature)}});
+        if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
+        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
+        window.MessengerUnified?.authenticated(); await snapshot(signal);
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        $('setup-error').textContent = error.name === 'NotAllowedError' ? 'Fingerprint cancelled. Use your passphrase.' : error.code === 'passkey_vault_locked' ? 'Type your passphrase once: Messenger restarted or was locked.' : error.code?.startsWith('passkey_') ? "Fingerprint unlock didn't work. Use your passphrase." : friendly(error);
+      } finally { updateSetup(); }
+    });
+  };
+  $('fingerprint-toggle').onclick = () => {
+    if (isBusy()) return;
+    $('copy-error').textContent = '';
+    act(async signal => {
+      try {
+        const wasOn = state.passkey;
+        if (wasOn) await api('api/view/passkey/clear', {method: 'POST', body: {}, signal});
+        else {
+          const o = await api('api/view/passkey/register-options', {method: 'POST', body: {}, signal});
+          const credential = await navigator.credentials.create({signal, publicKey: {...o, challenge: unb64u(o.challenge), user: {...o.user, id: unb64u(o.user.id)}, excludeCredentials: o.excludeCredentials.map(c => ({...c, id: unb64u(c.id)}))}});
+          await api('api/view/passkey/register', {method: 'POST', signal, body: {clientDataJSON: b64u(credential.response.clientDataJSON), attestationObject: b64u(credential.response.attestationObject)}});
+        }
+        await refreshPasskey();
+        $('copy-error').textContent = wasOn ? 'Fingerprint unlock is off.' : 'Fingerprint unlock is on. Messenger asks for it instead of your passphrase.';
+      } catch (error) {
+        if (error.name !== 'AbortError') $('copy-error').textContent = error.name === 'NotAllowedError' ? 'Fingerprint setup cancelled.' : error.name === 'InvalidStateError' ? 'This phone is already set up.' : friendly(error);
+      }
+    });
+  };
   $('lock').onclick = () => {
     act(async signal => {
       try { await api('api/setup', {method: 'POST', body: {action: 'lock'}, signal}); window.MessengerUnified?.signout(true); eraseView(); gate('locked'); }
@@ -755,5 +808,6 @@
   window.MessengerUnified?.mount({api, csrf: () => state.csrf});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = boot;
+  refreshPasskey();
   boot();
 })();

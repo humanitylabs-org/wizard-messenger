@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.9}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.10}
     pull_policy: never
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
@@ -16,7 +16,7 @@ services:
       - ${APP_DATA_DIR}/data:/data
     restart: "no"
   messenger:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.9}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.10}
     pull_policy: never
     read_only: true
     cap_drop: [ALL]
@@ -29,8 +29,8 @@ services:
       - /run/messenger:rw,noexec,nosuid,size=64m,mode=0700,uid=1000,gid=1000
     environment:
       MESSENGER_API_TOKEN: ${MESSENGER_API_TOKEN:?Messenger capability required}
-      MESSENGER_ALLOWED_ORIGINS: ${MESSENGER_ALLOWED_ORIGINS:?Wizard HTTPS origin required}
-      MESSENGER_PUBLIC_PATH: ${MESSENGER_PUBLIC_PATH:-/apps/messenger/}
+      MESSENGER_ALLOWED_ORIGINS: ${MESSENGER_ALLOWED_ORIGINS:-}
+      MESSENGER_PUBLIC_PATH: ${MESSENGER_PUBLIC_PATH:-/messenger/}
       MESSENGER_COOKIE_SECURE: "1"
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
@@ -99,7 +99,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.9}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.10}
     pull_policy: never
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"

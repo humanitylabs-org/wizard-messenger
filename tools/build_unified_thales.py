@@ -10,33 +10,37 @@ import subprocess
 p = argparse.ArgumentParser()
 p.add_argument('--revision', required=True)
 p.add_argument('--context', default='colima')
-p.add_argument('--carrier', default='wizard-messenger:0.1.2-beta.1-amd64')
+p.add_argument('--arch', choices=['amd64', 'arm64'], default='amd64')
+p.add_argument('--carrier', default='')
 p.add_argument('--tag', default='wizard-messenger:0.2.0-unified.1')
 a = p.parse_args()
+a.carrier = a.carrier or 'wizard-messenger:0.1.2-beta.1-' + a.arch
 root = Path(__file__).resolve().parents[1]
-if not str(root).startswith('/Volumes/ThalesMedia/'):
-    raise SystemExit('Image builds belong on the designated external build volume')
+build_root = os.environ.get('MESSENGER_BUILD_ROOT', '')
+if build_root and not str(root).startswith(build_root.rstrip('/') + '/'):
+    raise SystemExit('Image builds belong under MESSENGER_BUILD_ROOT')
 if len(a.revision) != 40 or any(c not in '0123456789abcdef' for c in a.revision):
     raise SystemExit('Use the exact pushed source revision')
 os.environ['PATH'] = '/opt/homebrew/bin:' + os.environ.get('PATH', '')
 docker = ['docker', '--context', a.context]
-provenance = json.loads((root / 'engine/provenance.json').read_text())['amd64']
+provenance = json.loads((root / 'engine/provenance.json').read_text())[a.arch]
 expected = {name: provenance[name + '_sha256'] for name in ('wn', 'wnd')}
 def verify(image):
-    output = subprocess.check_output(docker + ['run', '--rm', '--platform', 'linux/amd64', '--network', 'none', '--entrypoint', 'sha256sum', image, '/usr/local/bin/wn', '/usr/local/bin/wnd'], text=True)
+    output = subprocess.check_output(docker + ['run', '--rm', '--platform', 'linux/' + a.arch, '--network', 'none', '--entrypoint', 'sha256sum', image, '/usr/local/bin/wn', '/usr/local/bin/wnd'], text=True)
     hashes = {Path(line.split()[1]).name: line.split()[0] for line in output.splitlines()}
     if hashes != expected:
         raise SystemExit('Audited MDK binary checksum mismatch')
     return hashes
 verify(a.carrier)
-subprocess.run(docker + ['build', '--platform', 'linux/amd64', '--build-arg', 'MDK_BUILD_IMAGE=' + a.carrier, '--build-arg', 'MESSENGER_RUNTIME_BASE=' + a.carrier, '--label', 'org.opencontainers.image.revision=' + a.revision, '-t', a.tag, '.'], cwd=root, check=True)
+subprocess.run(docker + ['build', '--platform', 'linux/' + a.arch, '--build-arg', 'MDK_BUILD_IMAGE=' + a.carrier, '--build-arg', 'MESSENGER_RUNTIME_BASE=' + a.carrier, '--label', 'org.opencontainers.image.revision=' + a.revision, '-t', a.tag, '.'], cwd=root, check=True)
 hashes = verify(a.tag)
 image = json.loads(subprocess.check_output(docker + ['image', 'inspect', a.tag], text=True))[0]
-assert image['Architecture'] == 'amd64'
+assert image['Architecture'] == a.arch
 assert image['Config']['Labels']['org.opencontainers.image.revision'] == a.revision
 out = root.parent / 'artifacts'
 out.mkdir(exist_ok=True)
-archive = out / 'wizard-messenger-unified-amd64.tar.gz'
+# Per revision and arch: parallel builds of other branches never overwrite this release's archive.
+archive = out / ('wizard-messenger-%s-%s.tar.gz' % (a.revision[:12], a.arch))
 with archive.open('wb') as f:
     save = subprocess.Popen(docker + ['save', a.tag], stdout=subprocess.PIPE)
     compress = subprocess.Popen(['gzip', '-1'], stdin=save.stdout, stdout=f)
@@ -48,7 +52,7 @@ with archive.open('rb') as f:
     digest = hashlib.sha256()
     for block in iter(lambda: f.read(1 << 20), b''):
         digest.update(block)
-    checksum = digest.hexdigest()  # Thales' system python predates hashlib.file_digest
+    checksum = digest.hexdigest()  # older system pythons lack hashlib.file_digest
 receipt = {'revision': a.revision, 'tag': a.tag, 'id': image['Id'], 'architecture': image['Architecture'], 'mdk_sha256': hashes, 'archive': str(archive), 'archive_sha256': checksum, 'carrier': a.carrier, 'method': 'audited carrier reuse, not a fresh Rust build'}
-(out / 'image-receipt.json').write_text(json.dumps(receipt, indent=2))
+(out / ('image-receipt-%s-%s.json' % (a.revision[:12], a.arch))).write_text(json.dumps(receipt, indent=2))
 print(json.dumps(receipt, indent=2))

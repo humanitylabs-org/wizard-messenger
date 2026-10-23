@@ -199,6 +199,28 @@ class ViewBoundary(unittest.TestCase):
         self.server.auth.verify_password('proved-first-passphrase-123')
         with self.assertRaises(EngineError): self.server.auth.verify_password('unproved-second-passphrase')
 
+    def test_fingerprint_reopens_a_ready_vault_but_never_a_locked_one(self):
+        from test_passkey import Phone
+        import passkey
+        rp='wizard.example.com'; phone=Phone()
+        self.assertEqual(self.request('POST','/api/view/passkey/register-options',{},{'Origin':ORIGIN})[0],401)
+        self.assertEqual(self.request('POST','/api/view/passkey/register-options',{},{'Authorization':'Bearer '+TOKEN})[0],403)
+        cookie,csrf=self.session(); self.server.engine.ready=True
+        h={'Origin':ORIGIN,'Cookie':cookie,'X-Messenger-CSRF':csrf}
+        s,_,d=self.request('POST','/api/view/passkey/register-options',{},h); self.assertEqual(s,200)
+        s,_,d=self.request('POST','/api/view/passkey/register',phone.create(d['result']),h)
+        self.assertEqual(s,200); self.assertTrue(d['result']['enabled'])
+        s,_,d=self.request('GET','/api/view/passkey',headers={'Origin':ORIGIN}); self.assertTrue(d['result']['enabled'])
+        s,_,d=self.request('POST','/api/view/passkey/unlock-options',{},{'Origin':ORIGIN}); self.assertEqual(s,200)
+        s,hdr,d=self.request('POST','/api/view/passkey/unlock',phone.get(d['result']),{'Origin':ORIGIN})
+        self.assertEqual(s,200); self.assertIn('Max-Age=2592000',hdr['Set-Cookie']); self.assertTrue(d['result']['csrf_token'])
+        self.assertEqual(self.request('GET','/api/status',headers={'Cookie':hdr['Set-Cookie'].split(';')[0]})[0],200)
+        self.assertEqual(self.request('POST','/api/view/passkey/unlock-options',{},{'Origin':'https://evil.example'})[0],403)
+        self.server.engine.ready=False  # restart or Lock: only the passphrase opens the vault
+        s,_,d=self.request('POST','/api/view/passkey/unlock-options',{},{'Origin':ORIGIN})
+        s,_,d=self.request('POST','/api/view/passkey/unlock',phone.get(d['result']),{'Origin':ORIGIN})
+        self.assertEqual((s,d['error']['code']),(401,'passkey_vault_locked'))
+
 class PersistentBrowserAuth(unittest.TestCase):
     def test_long_bootstrap_ticket_cannot_open_a_configured_account(self):
         auth=BrowserAuth(); ticket=auth.ticket(bootstrap=True)
@@ -257,3 +279,18 @@ class AddressCodec(unittest.TestCase):
             self.assertTrue(result['nip05_verified']); self.assertEqual(result['pubkey'],KEY)
 
 if __name__=='__main__': unittest.main()
+
+class SameHostOrigin(unittest.TestCase):
+    def test_no_configured_origin_accepts_only_the_page_own_address(self):
+        server=ViewServer(('127.0.0.1',0),FakeEngine(),TOKEN,[])
+        t=threading.Thread(target=server.serve_forever,daemon=True); t.start()
+        try:
+            def post(origin,host):
+                c=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+                c.request('POST','/api/view/session',json.dumps({'ticket':'x'}),{'Content-Type':'application/json','Origin':origin,'Host':host})
+                r=c.getresponse(); r.read(); c.close(); return r.status
+            self.assertEqual(post('https://box.example','box.example'),401)  # origin passes; bad ticket
+            self.assertEqual(post('https://evil.example','box.example'),403)
+            self.assertEqual(post('https://box.example:8443','box.example'),403)
+        finally:
+            server.shutdown(); server.server_close()

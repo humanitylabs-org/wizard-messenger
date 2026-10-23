@@ -10,8 +10,8 @@
     "social"
   ],
   "description": "Private unified inbox with People, Groups, Telegram and optional Tinfoil translation. Matrix is internal plumbing; existing encrypted Marmot DMs remain available. Unified history is stored locally as plaintext; Telegram cloud chats are not end-to-end encrypted.",
-  "tipi_version": 15,
-  "version": "0.2.0-unified.9",
+  "tipi_version": 16,
+  "version": "0.2.0-unified.10",
   "source": "https://github.com/humanitylabs-org/wizard-messenger",
   "exposable": false,
   "no_gui": false,
@@ -32,18 +32,19 @@
       "hint": "Your Wizard generates this application-only capability. Use at least 32 characters; it is never pasted into the Messenger screen."
     },
     {
-      "type": "url",
-      "label": "Wizard web address",
+      "type": "text",
+      "label": "Extra trusted Wizard web address (optional)",
       "env_variable": "MESSENGER_ALLOWED_ORIGINS",
-      "required": true,
-      "hint": "Your Wizard fills its own private HTTPS address, without a trailing slash. Browser writes are restricted to this exact origin."
+      "required": false,
+      "default": "",
+      "hint": "Leave empty: Messenger accepts browser writes only from the address it is opened on. Add exact origins, comma-separated, only if your proxy rewrites the Host header."
     },
     {
       "type": "text",
       "label": "App path",
       "env_variable": "MESSENGER_PUBLIC_PATH",
       "required": false,
-      "default": "/apps/messenger/",
+      "default": "/messenger/",
       "hint": "The standard Wizard app path. Keep the trailing slash."
     },
     {

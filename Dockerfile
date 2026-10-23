@@ -4,7 +4,7 @@ FROM ${MDK_BUILD_IMAGE} AS mdk
 USER root
 WORKDIR /build/mdk
 ENV CARGO_BUILD_JOBS=1 CARGO_HOME=/build/cache CARGO_TARGET_DIR=/build/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
-# A received, hash-audited Thales binary image may be supplied for packaging.
+# A received, hash-audited prebuilt binary image may be supplied for packaging.
 # The default path always builds the exact upstream source and Cargo.lock.
 RUN --mount=type=cache,target=/build/cache --mount=type=cache,target=/build/target \
     mkdir -p /out && \
@@ -30,7 +30,7 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
     mkdir -p /app /data /run/messenger && chown 1000:1000 /data /run/messenger
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
-COPY engine.py server.py web.py messenger_addresses.py unified.py unified_setup.py translation.py API-contract.json /app/
+COPY engine.py server.py web.py passkey.py messenger_addresses.py unified.py unified_setup.py translation.py API-contract.json /app/
 COPY plumbing /app/plumbing
 COPY vendor /app/vendor
 COPY static /app/static

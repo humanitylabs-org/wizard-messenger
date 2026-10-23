@@ -164,7 +164,7 @@ async function fixture({respond, saved=new Map(), hash='', standalone=false, hid
       return {status:200,ok:true,json:async()=>({ok:true,result:value})};
     }};
   context.window=context;context.top=standalone?context:{};
-  // Domain fixtures only; real shared-client/host acceptance runs on Thales.
+  // Domain fixtures only; real shared-client/host acceptance runs on the build host.
   context.sharedHolds=new Set();
   context.WizardApp={ready:()=>Promise.resolve({hosted:!standalone}),back:{register:handler=>{context.sharedBack=handler;return ()=>{};}},update:{hold:reason=>{const token={reason};context.sharedHolds.add(token);return {release:()=>context.sharedHolds.delete(token)};}}};
   vm.runInNewContext(source,context,{filename:'static/app.js'});

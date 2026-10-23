@@ -21,8 +21,6 @@ class MessengerServer(ThreadingHTTPServer):
     def __init__(self, address, engine, token, origins):
         if not isinstance(token,str) or len(token)<32:
             raise ValueError('MESSENGER_API_TOKEN must contain at least 32 characters')
-        if not origins:
-            raise ValueError('MESSENGER_ALLOWED_ORIGINS must specify the browser view origin')
         self.engine, self.token, self.origins=engine, token, frozenset(origins)
         super().__init__(address,Handler)
 
@@ -30,6 +28,11 @@ class Handler(BaseHTTPRequestHandler):
     @property
     def service(self) -> MessengerServer:
         return cast(MessengerServer, self.server)
+    def _origin_allowed(self,origin):
+        # Configured origins, or the page's own address (the Wizard gateway keeps Host), like other Wizard apps.
+        if origin in self.service.origins: return True
+        u=urlsplit(origin or '')
+        return u.scheme in ('http','https') and bool(u.netloc) and u.netloc==self.headers.get('Host') and not (u.path or u.query or u.fragment)
     protocol_version='HTTP/1.1'
     server_version='WizardMessenger'
     def log_message(self,format,*args):
@@ -53,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(authorization.encode(),('Bearer '+self.service.token).encode()):
             raise EngineError('unauthorized','A Messenger API capability is required',401)
         origin=self.headers.get('Origin')
-        if origin is not None and origin not in self.service.origins:
+        if origin is not None and not self._origin_allowed(origin):
             raise EngineError('origin_forbidden','This browser origin is not allowed',403)
         if self.headers.get('Sec-Fetch-Site') == 'cross-site':
             raise EngineError('origin_forbidden','Cross-site requests are not permitted',403)
@@ -77,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get('jsonrpc') != '2.0':
             return 400,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32600,'message':'Invalid request'}}
         if method == 'initialize':
-            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.1'}}
+            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.10'}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
         elif method == 'tools/list': result={'tools':MCP_TOOLS}

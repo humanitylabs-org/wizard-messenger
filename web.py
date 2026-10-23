@@ -18,6 +18,10 @@ from engine import EngineError, MarmotEngine, vault_password
 from server import Handler, MessengerServer
 import messenger_addresses
 from unified import UnifiedInbox, Blob, UPLOAD_MAX
+from passkey import Passkeys, PasskeyError
+
+# A phone that opened Messenger stays signed in for 30 days (Lock signs out at once).
+SESSION_SECONDS=30*24*3600
 
 class BrowserAuth:
     def __init__(self,path=None):
@@ -60,7 +64,7 @@ class BrowserAuth:
                     raise EngineError('invalid_view_ticket','Open Messenger from Wizard again',401)
             if len(self.sessions)>=256: raise EngineError('session_limit','Please try again shortly',429)
             token=secrets.token_urlsafe(32)
-            session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+12*3600}
+            session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+SESSION_SECONDS}
             self.sessions[hashlib.sha256(token.encode()).hexdigest()]=session
             self._save()
             return token,session
@@ -87,6 +91,12 @@ class BrowserAuth:
             if not hmac.compare_digest(digest,self.credential['digest']):
                 raise EngineError('vault_unlock_failed','That passphrase is not right',401)
             if rate_limit: self.login_attempts=[]
+    def verify_rate(self):
+        with self.lock:
+            now=time.monotonic(); self.login_attempts=[t for t in self.login_attempts if now-t<60]
+            if len(self.login_attempts)>=6:
+                raise EngineError('login_rate_limited','Please wait a minute before trying again',429)
+            self.login_attempts.append(now)
     def remember_password(self,password):
         with self.lock:
             if self.credential: return
@@ -161,6 +171,7 @@ class ViewServer(MessengerServer):
         super().__init__(address,engine,token,origins)
         data=getattr(engine,'data',None)
         self.auth=BrowserAuth(Path(data)/'browser-auth.json' if data else None)
+        self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.agent_access=AgentAccess(data)
         # One transaction for provider proof, engine transition and verifier issuance.
         self.setup_lock=threading.Lock()
@@ -185,7 +196,7 @@ class ViewHandler(Handler):
         return cast(ViewServer,self.server)
     def _origin(self,required=False):
         origin=self.headers.get('Origin')
-        if (required and origin is None) or (origin is not None and origin not in self.service.origins) or self.headers.get('Sec-Fetch-Site')=='cross-site':
+        if (required and origin is None) or (origin is not None and not self._origin_allowed(origin)) or self.headers.get('Sec-Fetch-Site')=='cross-site':
             raise EngineError('origin_forbidden','This browser origin is not allowed',403)
     def _session(self):
         try:
@@ -211,7 +222,7 @@ class ViewHandler(Handler):
                 raise EngineError('csrf_forbidden','Reopen Messenger before trying again',403)
     def _cookie(self,token):
         secure='; Secure' if self.service.cookie_secure else ''
-        return 'wizard_messenger_session='+token+'; Path='+self.service.public_path+'; Max-Age=43200; HttpOnly; SameSite=Strict'+secure
+        return 'wizard_messenger_session='+token+'; Path='+self.service.public_path+'; Max-Age='+str(SESSION_SECONDS)+'; HttpOnly; SameSite=Strict'+secure
     def _headers(self,status,body,mime,csp=None):
         self.send_response(status)
         self.send_header('Content-Type',mime)
@@ -283,6 +294,34 @@ class ViewHandler(Handler):
             self.service.agent_access.record(method,route,'blocked')
             raise EngineError('agent_access_off','Agent access to messages is off. The owner can allow it for a limited time in Messenger → Connected accounts.',403)
         self.service.agent_access.record(method,route,'allowed')
+    def _passkey(self,method,path):
+        # Fingerprint/face unlock: opens a browser session only; never the encrypted vault.
+        if self.headers.get('Authorization'): raise EngineError('owner_only','Fingerprint unlock is set up from the Messenger screen',403)
+        self._origin(required=method!='GET')
+        origin=self.headers.get('Origin') or ''; rp=urlsplit(origin).hostname or ''
+        keys=self.service.passkeys
+        try:
+            if path=='/api/view/passkey' and method=='GET': return 200,{'ok':True,'result':keys.state()}
+            if path=='/api/view/passkey/unlock-options' and method=='POST': return 200,{'ok':True,'result':keys.unlock_options(rp)}
+            if path=='/api/view/passkey/unlock' and method=='POST':
+                with self.service.setup_lock:
+                    self.service.auth.verify_rate()
+                    keys.unlock(self._body(),rp,origin)
+                    if self.service.engine.status().get('state')!='ready':
+                        # Locked vault (restart or Lock): only the passphrase reopens it.
+                        raise EngineError('passkey_vault_locked','Type your passphrase once: Messenger restarted or was locked.',401)
+                token,session=self.service.auth.create(); self.pending_cookie=self._cookie(token)
+                return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf'],'status':self.service.engine.status()}}
+            self._authorize()
+            if self._session() is None: raise EngineError('owner_only','Fingerprint unlock is set up from the Messenger screen',403)
+            if path=='/api/view/passkey/register-options' and method=='POST': return 200,{'ok':True,'result':keys.register_options(rp)}
+            if path=='/api/view/passkey/register' and method=='POST':
+                body=self._body(); return 200,{'ok':True,'result':keys.register(body,rp,origin,body.get('label',''))}
+            if path=='/api/view/passkey/clear' and method=='POST': return 200,{'ok':True,'result':keys.clear()}
+        except PasskeyError as error:
+            code=str(error)
+            raise EngineError('passkey_'+code,{'none':'Fingerprint unlock is not set up','expired':'That took too long. Try again.'}.get(code,'Fingerprint unlock did not work. Use your passphrase.'),401 if path.endswith('/unlock') else 400) from None
+        raise EngineError('not_found','No such view route',404)
     def _dispatch(self,method):
         self.pending_cookie=None
         path=urlsplit(self.path).path
@@ -311,6 +350,8 @@ class ViewHandler(Handler):
             super()._authorize(); payload=self._body()
             bootstrap=payload.get('bootstrap') is True and not self.service.engine.status().get('account_configured',False)
             return 200,{'ok':True,'result':{'ticket':self.service.auth.ticket(bootstrap),'expires_in':7*24*3600 if bootstrap else 300}}
+        if path.startswith('/api/view/passkey'):
+            return self._passkey(method,path)
         if path=='/api/view/unlock' and method=='POST':
             self._origin(required=True); password=self._body().get('vault_password')
             with self.service.setup_lock:
