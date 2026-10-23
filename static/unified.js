@@ -288,9 +288,52 @@
   // ---------- conversation ----------
   const view = {};  // live DOM handles for the open thread
   const els = new Map(); // message key -> bubble element (keyed render)
-  const player = new Audio(); let playing = null;
-  player.onended = player.onpause = () => { playing?.classList.remove('playing'); if (player.ended) for (const i of playing?.querySelectorAll('.u-wave i') || []) i.classList.remove('on'); };
-  player.ontimeupdate = () => { if (playing) { const f = player.duration ? player.currentTime / player.duration : 0; for (const i of playing.querySelectorAll('.u-wave i')) i.classList.toggle('on', +i.dataset.at < f); } const t = playing?.querySelector('.u-dur'); if (t) t.textContent = fmtDur((player.duration - player.currentTime) * 1000); };
+  // Voice playback goes through Web Audio, not an <audio> element: media elements take the phone's audio focus
+  // and pause the owner's music; Web Audio plays alongside it, like a notification sound.
+  const localAudio = new Map(); // blob: URL -> Blob for notes recorded on this device
+  const player = (() => {
+    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
+    const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    const paint = () => {
+      if (!box || !buf) return; const at = src ? offset + ctx.currentTime - startedAt : offset, f = Math.min(1, at / buf.duration);
+      for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
+      const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
+    };
+    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); };
+    const load = url => {
+      if (!decoded.has(url)) {
+        // Notes recorded here decode from the Blob itself: the CSP keeps fetch() off blob: URLs.
+        const bytes = localAudio.has(url) ? localAudio.get(url).arrayBuffer() : fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); return r.arrayBuffer(); });
+        decoded.set(url, bytes.then(b => ctx.decodeAudioData(b)));
+        decoded.get(url).catch(() => decoded.delete(url));
+        while (decoded.size > 8) decoded.delete(decoded.keys().next().value);
+      }
+      return decoded.get(url);
+    };
+    const start = () => {
+      halt(); src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+      if (offset >= buf.duration - 0.05) offset = 0;
+      startedAt = ctx.currentTime; src.start(0, offset); box.classList.add('playing');
+      src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); };
+      timer = setInterval(paint, 100); paint();
+    };
+    return {
+      playing: b => b === box && !!src,
+      // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
+      adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
+      async toggle(b, url, k) {
+        ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        if (b === box && src) { offset += ctx.currentTime - startedAt; halt(); b.classList.remove('playing'); paint(); return; }
+        if (b !== box) { halt(); if (box) { box.classList.remove('playing'); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); } box = b; key = k; buf = null; offset = 0; }
+        b.classList.add('playing');
+        try { const got = await load(url); if (key !== k) return; buf = got; start(); }
+        catch { if (key === k) { box.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+      },
+      seek(b, f) { if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
+      stop() { halt(); box?.classList.remove('playing'); box = key = buf = null; offset = 0; },
+    };
+  })();
 
   async function openPerson(id, hint) {
     s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
@@ -466,14 +509,13 @@
     const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
     const play = iconButton('play', 'Play voice message', () => {
       if (m.pending && !m.local) return;
-      if (playing === box && !player.paused) { player.pause(); return; }
-      if (playing !== box) { playing?.classList.remove('playing'); playing = box; player.src = m.local || mediaURL(m.id); }
-      box.classList.add('playing'); player.play().catch(e => { box.classList.remove('playing'); error(new Error('Could not play this voice message')); });
+      player.toggle(box, m.local || mediaURL(m.id), m.client_id || m.id);
     }, 'u-vplay');
     const bars = node('div', 'u-wave'); const wave = m.media?.waveform?.length ? m.media.waveform : Array.from({length: 40}, (_, i) => 30 + 25 * Math.sin(i * 1.7 + (m.id.length % 5)));
     const n = Math.min(40, wave.length); for (let i = 0; i < n; i++) { const bar = node('i'); bar.style.height = Math.max(12, wave[Math.floor(i * wave.length / n)]) + '%'; bar.dataset.at = String(i / n); bars.append(bar); }
-    bars.onclick = e => { if (playing === box && player.duration) { const r = bars.getBoundingClientRect(); player.currentTime = player.duration * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); } };
+    bars.onclick = e => { const r = bars.getBoundingClientRect(); player.seek(box, Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))); };
     box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)));
+    player.adopt(box, m.client_id || m.id);
     if (!m.media?.voice && m.media?.filename) box.append(node('span', 'u-file-name', m.media.filename));
     return box;
   }
@@ -625,10 +667,10 @@
       rec.onstop = () => {
         stopAll(); const duration = Date.now() - started;
         if (cancelled || duration < 600) { if (!cancelled) toast('Hold on a little longer to record'); return; }
-        const blob = new Blob(chunks, {type: (rec.mimeType || type || 'audio/webm').split(';')[0]});
+        const blob = new Blob(chunks, {type: (rec.mimeType || type || 'audio/webm').split(';')[0]}), url = URL.createObjectURL(blob); localAudio.set(url, blob);
         const step = Math.max(1, levels.length / 64); const waveform = Array.from({length: Math.min(64, levels.length)}, (_, i) => levels[Math.floor(i * step)]);
         const reply = view.reply; view.reply = null; paintBar();
-        queueSend(id, {voice: {blob, duration, waveform, url: URL.createObjectURL(blob)}, reply, identity_id: channel.value});
+        queueSend(id, {voice: {blob, duration, waveform, url}, reply, identity_id: channel.value});
       };
       rec.start(250);
     }
@@ -636,6 +678,56 @@
     form.append(bar, channel, row); grow(); paintBar();
     return form;
   }
+  // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
+  function webmToOgg(b) {
+    let at = 0, head = null, channels = 1, codec = '';
+    const packets = [];
+    const vint = keep => { const f = b[at]; let n = 1; while (n <= 8 && !(f & (0x80 >> (n - 1)))) n++; if (n > 8 || at + n > b.length) throw new Error('bad vint');
+      let v = keep ? f : f & (0xff >> n), all = (f & (0xff >> n)) === (0xff >> n); for (let i = 1; i < n; i++) { v = v * 256 + b[at + i]; if (b[at + i] !== 0xff) all = false; } at += n; return keep ? v : (all ? -1 : v); };
+    const MASTER = new Set([0x18538067, 0x1654AE6B, 0xAE, 0xE1, 0x1F43B675, 0xA0]);
+    while (at < b.length) {
+      const id = vint(true), size = vint(false);
+      if (MASTER.has(id)) continue;
+      if (size < 0 || at + size > b.length) { if (id === 0xA3 || id === 0xA1) break; throw new Error('bad size'); }
+      const body = b.subarray(at, at + size); at += size;
+      if (id === 0x86) codec = new TextDecoder().decode(body);
+      else if (id === 0x63A2) head = body;
+      else if (id === 0x9F) channels = body[0] || 1;
+      else if (id === 0xA3 || id === 0xA1) {
+        let i = 0; const f = body[0]; let n = 1; while (n <= 8 && !(f & (0x80 >> (n - 1)))) n++; i = n + 2;
+        if ((body[i] >> 1) & 3) throw new Error('laced block'); packets.push(body.subarray(i + 1));
+      }
+    }
+    if (codec && codec !== 'A_OPUS') throw new Error('not opus'); if (!packets.length) throw new Error('empty');
+    const ascii = t => Uint8Array.from(t, c => c.charCodeAt(0));
+    if (!head || String.fromCharCode(...head.subarray(0, 8)) !== 'OpusHead') {
+      head = new Uint8Array(19); head.set(ascii('OpusHead')); const d = new DataView(head.buffer); head[8] = 1; head[9] = channels; d.setUint16(10, 312, true); d.setUint32(12, 48000, true);
+    }
+    const tags = new Uint8Array(8 + 4 + 6 + 4); tags.set(ascii('OpusTags')); new DataView(tags.buffer).setUint32(8, 6, true); tags.set(ascii('Wizard'), 12);
+    const samples = p => { const c = p[0] >> 3, fs = c < 12 ? [480, 960, 1920, 2880][c & 3] : c < 16 ? [480, 960][c & 1] : [120, 240, 480, 960][c & 3], k = p[0] & 3; return fs * (k === 0 ? 1 : k === 3 ? (p[1] & 63) : 2); };
+    const crcT = webmToOgg.crc ||= Array.from({length: 256}, (_, i) => { let r = i << 24; for (let k = 0; k < 8; k++) r = r & 0x80000000 ? (r << 1) ^ 0x04c11db7 : r << 1; return r >>> 0; });
+    const serial = (Math.random() * 2 ** 32) >>> 0, pages = []; let seq = 0;
+    const page = (list, granule, flag) => {
+      const lace = []; for (const p of list) { let n = p.length; while (n >= 255) { lace.push(255); n -= 255; } lace.push(n); }
+      const len = 27 + lace.length + list.reduce((a, p) => a + p.length, 0), out = new Uint8Array(len), d = new DataView(out.buffer);
+      out.set(ascii('OggS')); out[5] = flag; d.setUint32(6, granule % 2 ** 32, true); d.setUint32(10, Math.floor(granule / 2 ** 32), true);
+      d.setUint32(14, serial, true); d.setUint32(18, seq++, true); out[26] = lace.length; out.set(lace, 27);
+      let o = 27 + lace.length; for (const p of list) { out.set(p, o); o += p.length; }
+      let crc = 0; for (let i = 0; i < len; i++) crc = ((crc << 8) ^ crcT[((crc >>> 24) ^ out[i]) & 0xff]) >>> 0; d.setUint32(22, crc, true);
+      pages.push(out);
+    };
+    page([head], 0, 2); page([tags], 0, 0);
+    let granule = 0, batch = [], segs = 0;
+    packets.forEach((p, n) => {
+      const need = Math.floor(p.length / 255) + 1;
+      if (batch.length && segs + need > 255) { page(batch, granule, 0); batch = []; segs = 0; }
+      batch.push(p); segs += need; granule += samples(p);
+      if (n === packets.length - 1) page(batch, granule, 4); else if (batch.length >= 50) { page(batch, granule, 0); batch = []; segs = 0; }
+    });
+    const total = new Uint8Array(pages.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of pages) { total.set(p, o); o += p.length; }
+    return total;
+  }
+  window.MessengerUnified_webmToOgg = webmToOgg; // test hook
   function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
@@ -648,6 +740,8 @@
     return {blob, url: URL.createObjectURL(blob), w, h};
   }
   async function upload(id, kind, blob) {
+    // Telegram takes voice notes only as Ogg Opus; Chrome records Opus in WebM, so rewrap it (no re-encode). Retries too.
+    if (kind === 'voice' && blob.type === 'audio/webm') { try { blob = new Blob([webmToOgg(new Uint8Array(await blob.arrayBuffer()))], {type: 'audio/ogg'}); } catch { /* the bridge marks it not sent */ } }
     const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
       headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
     let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
