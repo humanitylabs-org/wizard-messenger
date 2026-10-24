@@ -131,10 +131,17 @@ class ViewServer(MessengerServer):
         else:
             self.RequestHandlerClass=ViewHandler
             self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        self.push = None
+        if os.environ.get('MESSENGER_PUSH_ENABLED') == '1':
+            from push_notifications.runtime import PushRuntime
+            self.push = PushRuntime(data, self.unified, self.public_path)
+            self.push.start()
         if self.unified:
             self.unified.start()
 
     def server_close(self):
+        if getattr(self, 'push', None):
+            self.push.close()
         if getattr(self, 'unified', None):
             self.unified.close()
         super().server_close()
@@ -182,6 +189,8 @@ class ViewHandler(Handler):
         self.send_header('Content-Type',mime)
         self.send_header('Content-Length',str(len(body)))
         self.send_header('Cache-Control','no-store')
+        if urlsplit(self.path).path == '/push-service-worker.js':
+            self.send_header('Service-Worker-Allowed', self.service.public_path)
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Referrer-Policy','no-referrer')
         self.send_header('Content-Security-Policy',csp or "default-src 'none'; frame-ancestors 'self'")
@@ -270,6 +279,33 @@ class ViewHandler(Handler):
         self.pending_cookie=None
         path=urlsplit(self.path).path
         self._agent_gate(method,path)
+        if path.startswith('/api/view/push'):
+            # Bearers (including Full access) never possess notification authority.
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Only the owner can manage notifications', 403)
+            self._authorize()
+            push = self.service.push
+            if method == 'GET' and path == '/api/view/push':
+                return 200, {'ok': True, 'result': push.config() if push else {'enabled': False}}
+            if push is None:
+                raise EngineError('not_configured', 'Notifications are not configured', 503)
+            if method == 'POST' and path in ('/api/view/push/subscribe', '/api/view/push/unsubscribe'):
+                if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                    raise EngineError('invalid_request', 'JSON required', 400)
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                except ValueError:
+                    length = 0
+                if not 0 < length <= 8192:
+                    raise EngineError('too_large', 'Invalid subscription size', 413)
+                from push_notifications import OwnerAPI
+                from push_notifications.runtime import OWNER
+                try:
+                    result = OwnerAPI(push.store, lambda _: OWNER).handle(self, path.rsplit('/', 1)[1], self._body())
+                except (ValueError, TypeError, PermissionError):
+                    raise EngineError('invalid_subscription', 'Invalid notification subscription', 400) from None
+                return 200, {'ok': True, 'result': result}
+            raise EngineError('not_found', 'No such notification route', 404)
         if path=='/api/view/agent-access':
             # Owner-only: a browser session with CSRF, never the machine key.
             if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can change agent access, from the Messenger view',403)
@@ -374,6 +410,11 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         path=urlsplit(self.path).path
+        if path == '/push-service-worker.js':
+            self.pending_cookie = None
+            if self.service.push is None:
+                return self._reply(404, {'ok': False})
+            return self._headers(200, self.service.push.script(), 'application/javascript; charset=utf-8')
         allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None

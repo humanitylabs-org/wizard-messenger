@@ -93,7 +93,7 @@ class ConnectorInbox(UnifiedInbox):
         self.rooms[room] = meta
         return meta
 
-    def ingest(self, identity, meta, event):
+    def ingest(self, identity, meta, event, *, live=False):
         etype, content = event.get('type'), event.get('content') or {}
         sender = event.get('sender', '')
         outgoing = self.is_me(sender)
@@ -129,7 +129,7 @@ class ConnectorInbox(UnifiedInbox):
             return
         msgtype, body, media, reply_to = parts
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to)
+                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, push_live=live)
 
     def ephemeral(self, identity, events):
         for event in events:
@@ -181,7 +181,7 @@ class ConnectorInbox(UnifiedInbox):
                     continue
                 identity = self.store.identity(meta['network'], room, meta['label'], meta['kind'])
                 for event in data.get('timeline', {}).get('events', []):
-                    self.ingest(identity, meta, event)
+                    self.ingest(identity, meta, event, live=bool(since))
                 self.ephemeral(identity, data.get('ephemeral', {}).get('events', []))
             self.store.put('sync_token', result['next_batch'])
             self.store.put('sync_error', '')

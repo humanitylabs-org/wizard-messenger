@@ -109,6 +109,7 @@ class PeopleStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = threading.RLock()
         self.on_change = None
+        self.push_enabled = False
         self._conn = None
         with self.db() as db:
             db.executescript('''
@@ -118,6 +119,7 @@ class PeopleStore:
             CREATE TABLE IF NOT EXISTS message(id TEXT PRIMARY KEY, identity_id TEXT NOT NULL REFERENCES identity(id), sender TEXT NOT NULL, outgoing INTEGER NOT NULL, original TEXT NOT NULL, translated TEXT, translation_error TEXT, timestamp INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS room_label(identity_id TEXT NOT NULL REFERENCES identity(id), label TEXT NOT NULL, PRIMARY KEY(identity_id,label));
             CREATE TABLE IF NOT EXISTS translation(cache_key TEXT PRIMARY KEY, translated TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS push_intent(message TEXT PRIMARY KEY, created REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS preview(id TEXT PRIMARY KEY, person_id TEXT NOT NULL, identity_id TEXT NOT NULL, original TEXT NOT NULL, translated TEXT NOT NULL, error TEXT, expires INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'preview', send_original INTEGER, event_id TEXT);
             ''')
@@ -378,7 +380,7 @@ class PeopleStore:
         return {'labels': labels}
 
     def add_message(self, event_id, identity, sender, outgoing, original, timestamp, translated=None,
-                    msgtype='m.text', media=None, reply_to=None, client_id=None):
+                    msgtype='m.text', media=None, reply_to=None, client_id=None, push_live=False):
         """Insert once; a later sighting with richer media upgrades a label-only row in place."""
         media_json = json.dumps(media, ensure_ascii=False) if media else None
         with self.db() as db:
@@ -390,6 +392,9 @@ class PeopleStore:
                              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                              (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id))
             inserted = cur.rowcount == 1
+            if inserted and not outgoing and push_live and self.push_enabled:
+                db.execute('INSERT OR IGNORE INTO push_intent(message,created) VALUES(?,?)',
+                           (event_id if event_id.startswith('messenger:') else 'matrix:' + event_id, time.time()))
             if not inserted and msgtype != 'm.text':
                 cur = db.execute("UPDATE message SET msgtype=?,media=?,original=?,reply_to=COALESCE(reply_to,?),seq=? WHERE id=? AND (msgtype='m.text' OR media IS NULL)",
                                  (msgtype, media_json, original, reply_to, seq, event_id))
@@ -807,7 +812,7 @@ class UnifiedInbox:
         self.rooms[room] = meta
         return meta
 
-    def ingest(self, identity, meta, event):
+    def ingest(self, identity, meta, event, *, live=False):
         etype, content = event.get('type'), event.get('content') or {}
         sender = event.get('sender', '')
         outgoing = self.is_me(sender)
@@ -847,7 +852,7 @@ class UnifiedInbox:
             return
         msgtype, body, media, reply_to = parts
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to)
+                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, push_live=live)
 
     def ephemeral(self, identity, events):
         for event in events:
@@ -920,7 +925,7 @@ class UnifiedInbox:
                     continue
                 identity = self.store.identity('telegram', room, meta['label'], meta['kind'])
                 for event in data.get('timeline', {}).get('events', []):
-                    self.ingest(identity, meta, event)
+                    self.ingest(identity, meta, event, live=bool(since))
                 self.ephemeral(identity, data.get('ephemeral', {}).get('events', []))
             self.store.put('sync_token', result['next_batch'])
             self.store.put('sync_error', '')
@@ -968,9 +973,13 @@ class UnifiedInbox:
             peer = next((m for m in dm.get('members', []) if not mine.intersection(m.get(k) for k in ('account_id', 'member_id', 'npub'))), {})
             label = peer.get('display_name') or dm.get('name') or 'Messenger contact'
             identity = self.store.identity('messenger', dm['group_id'], label)
-            self.import_marmot(identity, 50)
+            self.import_marmot(identity, 50, live=True)
 
-    def import_marmot(self, identity, limit=200):
+    def import_marmot(self, identity, limit=200, *, live=False):
+        watermark_key = 'push_marmot_watermark:' + identity['id']
+        prior = self.store.get(watermark_key)
+        watermark = int(prior) if prior else 0
+        newest = watermark
         for m in self.engine.messages(identity['address'], limit).get('messages', []):
             stamp = m.get('created_at', 0)
             if isinstance(stamp, str):
@@ -978,7 +987,11 @@ class UnifiedInbox:
                 stamp = datetime.fromisoformat(stamp.replace('Z', '+00:00')).timestamp() * 1000
             elif stamp < 1000000000000:
                 stamp *= 1000
-            self.store.add_message('messenger:' + m['message_id'], identity, m.get('author', ''), m.get('direction') == 'sent', m.get('text', ''), int(stamp))
+            newest = max(newest, int(stamp))
+            self.store.add_message('messenger:' + m['message_id'], identity, m.get('author', ''), m.get('direction') == 'sent', m.get('text', ''), int(stamp),
+                                   push_live=live and bool(prior) and int(stamp) >= watermark and m.get('direction') == 'received')
+        if live:
+            self.store.put(watermark_key, str(newest))
 
     # ---------- reading ----------
     def timeline(self, person_id, before=None, limit=2000):

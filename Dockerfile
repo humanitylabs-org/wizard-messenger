@@ -33,6 +33,13 @@ RUN test "$(wn --version)" = 'wn 0.12.0'
 COPY engine.py server.py web.py passkey.py messenger_addresses.py unified.py unified_setup.py translation.py history_cursor.py permissions.py drafts.py API-contract.json /app/
 COPY connector_setup.py connectors.py connector_inbox.py connector_web.py /app/
 COPY readiness/search.py readiness/__init__.py /app/readiness/
+COPY push_notifications /app/push_notifications
+ARG MESSENGER_BUILD_PUSH=0
+RUN if [ "$MESSENGER_BUILD_PUSH" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends python3-venv && \
+      python3 -m venv --system-site-packages /opt/push && /opt/push/bin/pip install --no-cache-dir -r /app/push_notifications/requirements.txt && \
+      rm -rf /var/lib/apt/lists/*; fi
+ENV PATH="/opt/push/bin:${PATH}"
 COPY plumbing /app/plumbing
 COPY vendor /app/vendor
 COPY static /app/static

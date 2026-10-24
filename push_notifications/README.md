@@ -1,3 +1,7 @@
+> Core integration now exists: see [INTEGRATION.md](INTEGRATION.md) for the shipping
+> routes, opt-in environment, durable ingestion and worker lifecycle. The injection
+> contract below documents the standalone module, not outstanding core wiring.
+
 # Messenger background Web Push foundation — LOCAL ONLY
 
 Nothing is mounted, scheduled, deployed, subscribed, or sent by importing this

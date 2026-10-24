@@ -15,7 +15,51 @@
     t.has_more = r.has_more; t.next_cursor = r.next_cursor;
     return true;
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder};
+  async function notificationSettings(sheet, api, env = window) {
+    const box = env.document.createElement('section'); sheet.append(box);
+    try {
+      const config = await api('api/view/push');
+      if (!config.enabled) return;
+      const button = env.document.createElement('button'); button.type = 'button';
+      const status = env.document.createElement('p'); status.setAttribute('role', 'status');
+      button.textContent = 'Enable notifications'; box.append(button, status);
+      if (!env.isSecureContext || !env.Notification || !env.navigator.serviceWorker || !env.PushManager) {
+        button.disabled = true; status.textContent = 'Notifications require a supported secure browser.'; return;
+      }
+      let subscription, identifier;
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          if (identifier) {
+            await api('api/view/push/unsubscribe', {method: 'POST', body: {id: identifier}});
+            if (!await subscription.unsubscribe()) throw new Error('Browser subscription removal incomplete.');
+            identifier = null; button.textContent = 'Enable notifications'; status.textContent = 'Notifications disabled.';
+            return;
+          }
+          // Permission is requested synchronously from this explicit click, not on mount.
+          const permission = await env.Notification.requestPermission();
+          if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+          const scope = new URL(config.scope, env.location.origin).href;
+          const existing = await env.navigator.serviceWorker.getRegistration(scope);
+          const script = new URL(config.worker, env.location.origin).href;
+          if (existing && (existing.scope !== scope || [existing.active, existing.waiting, existing.installing].filter(Boolean).some(w => w.scriptURL !== script)))
+            throw new Error('Another service worker owns this app scope.');
+          const registration = existing || await env.navigator.serviceWorker.register(script, {scope, updateViaCache: 'none'});
+          if (!registration.active) await new Promise((resolve, reject) => {
+            const worker = registration.installing || registration.waiting;
+            if (!worker) return reject(new Error('Notification worker unavailable.'));
+            worker.addEventListener('statechange', () => { if (worker.state === 'activated') resolve(); else if (worker.state === 'redundant') reject(new Error('Notification worker failed.')); });
+          });
+          const key = env.atob(config.public_key.replace(/-/g, '+').replace(/_/g, '/'));
+          subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: Uint8Array.from(key, c => c.charCodeAt(0))});
+          const result = await api('api/view/push/subscribe', {method: 'POST', body: subscription.toJSON()});
+          identifier = result.id; button.textContent = 'Disable notifications'; status.textContent = 'Notifications enabled for this browser. Real-device delivery still needs verification.';
+        } catch (e) { status.textContent = e.message || 'Notification setup failed.'; }
+        finally { button.disabled = false; }
+      };
+    } catch (_) { box.textContent = 'Notification settings unavailable.'; }
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
@@ -788,6 +832,7 @@
   }
   async function accounts() {
     const sheet = overlay('Settings');
+    notificationSettings(sheet, api);
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
       connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, body}));

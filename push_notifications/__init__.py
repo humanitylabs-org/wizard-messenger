@@ -33,13 +33,16 @@ class Store:
             db.executescript('''
             CREATE TABLE IF NOT EXISTS subscription (
               id TEXT PRIMARY KEY, owner TEXT NOT NULL, endpoint TEXT UNIQUE NOT NULL,
-              json TEXT NOT NULL, expires REAL NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+              json TEXT NOT NULL, created REAL NOT NULL DEFAULT 0, expires REAL NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS outbox (
               owner TEXT NOT NULL, message TEXT NOT NULL, subscription TEXT NOT NULL,
               state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
               due REAL NOT NULL, expires REAL NOT NULL, lease TEXT, lease_until REAL,
               error TEXT, PRIMARY KEY(owner,message,subscription));
             ''')
+
+            if 'created' not in {r[1] for r in db.execute('PRAGMA table_info(subscription)')}:
+                db.execute('ALTER TABLE subscription ADD COLUMN created REAL NOT NULL DEFAULT 0')
 
     @contextmanager
     def db(self):
@@ -70,9 +73,10 @@ class Store:
             old = db.execute('SELECT * FROM subscription WHERE id=?', (identifier,)).fetchone()
             if old and old['owner'] != owner:
                 raise PermissionError('Subscription belongs to another owner')
-            db.execute('''INSERT INTO subscription(id,owner,endpoint,json,expires) VALUES(?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET json=excluded.json,expires=excluded.expires,revoked=0''',
-                       (identifier, owner, subscription['endpoint'], json.dumps(subscription), expires))
+            db.execute('''INSERT INTO subscription(id,owner,endpoint,json,expires,created) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET json=excluded.json,expires=excluded.expires,
+                created=CASE WHEN subscription.revoked=1 OR subscription.expires<=? THEN excluded.created ELSE subscription.created END,revoked=0''',
+                       (identifier, owner, subscription['endpoint'], json.dumps(subscription), expires, now, now))
         return {'id': identifier, 'expires': expires}
 
     def revoke(self, owner, identifier):
@@ -81,19 +85,23 @@ class Store:
             db.execute("UPDATE outbox SET state='cancelled',lease=NULL WHERE owner=? AND subscription=? AND state IN ('pending','sending')", (owner, identifier))
         return {'ok': True}
 
-    def received(self, owner, message_id, *, outgoing, live, ttl=86400):
+    def received(self, owner, message_id, *, outgoing, live, ttl=86400, created=None):
         # Caller uses authoritative stored outgoing flag, not untrusted HTTP input.
         if outgoing is not False or live is not True:
             return 0
         if not isinstance(message_id, str) or not 0 < len(message_id) <= 1024:
             raise ValueError('Stable incoming message identifier required')
         now = self.clock()
+        created = now if created is None else created
+        expires = created + min(max(ttl, 1), 86400)
+        if expires <= now:
+            return 0
         with self.db() as db:
             before = db.total_changes
             db.execute('''INSERT OR IGNORE INTO outbox(owner,message,subscription,due,expires)
                 SELECT owner,?,id,?,? FROM subscription
-                WHERE owner=? AND revoked=0 AND expires>?''',
-                       (message_id, now, now + min(max(ttl, 1), 86400), owner, now))
+                WHERE owner=? AND revoked=0 AND expires>? AND created<=?''',
+                       (message_id, now, expires, owner, now, created))
             return db.total_changes - before
 
 
