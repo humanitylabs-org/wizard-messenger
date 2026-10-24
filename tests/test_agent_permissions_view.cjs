@@ -31,6 +31,8 @@ async function fixture({deferPreview = false, connectors = false, connectorsUnav
       return {providers: []};
     }
     if (path === 'api/unified/telegram/status') return {state:'not_configured',message:'Not configured',logins:[]};
+    if (path === 'api/view/authority') return {ready:false, reason:'Independent review has not been configured.'};
+    if (path === 'api/view/push') return {enabled:false};
     if (path === 'api/view/agent-access') { if (opts.method === 'POST') policy = {...policy,...opts.body}; return policy; }
     if (path === 'api/drafts') return {drafts:[{...draft}]};
     if (path === 'api/unified/directory') return {people:[{id:'p1',display_name:'Alice',identities:[{id:'i1',network:'telegram',label:'Alice'}]}],groups:[]};
@@ -64,7 +66,7 @@ test('connector settings retain agent controls; disabled connectors preserve Tel
     assert.equal(f.calls.some(c => c.path.endsWith('/send')), false);
   }
 });
-test('owner chooses one of four policies; draft review never automatically sends',async()=>{
+test('owner chooses four policies; unconfigured independent review has no local Send fallback',async()=>{
   const f = await fixture();
   const policy = f.find('select','Agent access level');
   assert.deepEqual(policy.children.map(e=>e.textContent),['No access','Read-only','Draft-only','Full access']);
@@ -72,21 +74,14 @@ test('owner chooses one of four policies; draft review never automatically sends
   policy.value = 'draft_only'; await f.click('Save agent access');
   assert.equal(f.calls.find(c=>c.path==='api/view/agent-access'&&c.method==='POST').body.mode,'draft_only');
   await f.click('Review agent drafts'); await f.click('Review draft');
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/send')).length,0);
-  await f.click('Save and review');
-  assert.ok(f.find('button','Send')); assert.equal(f.calls.filter(c=>c.path.endsWith('/send')).length,0);
-  const body = f.find('textarea','Draft message'); body.value = 'Owner edits'; body.oninput();
-  assert.equal(f.find('button','Send'),undefined,'editing invalidates visible approval');
-  await f.click('Save and review'); await f.click('Send');
-  const send = f.calls.filter(c=>c.path.endsWith('/send'));
-  assert.equal(send.length,1); assert.equal(send[0].body.revision,3);
-});
-test('an edit while preview is in flight cannot restore an old Send approval',async()=>{
-  const f = await fixture({deferPreview:true});
-  await f.click('Review agent drafts'); await f.click('Review draft');
-  const review = f.click('Save and review'); await f.flush();
-  const body = f.find('textarea','Draft message'); body.value = 'Newer text'; body.oninput();
-  f.release(); await review;
+  assert.ok(f.find('button','Review securely').disabled);
   assert.equal(f.find('button','Send'),undefined);
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/send')).length,0);
+  const body = f.find('textarea','Draft message'); body.value = 'Owner edits'; body.oninput();
+  assert.ok(f.find('button','Review securely').disabled);
+  assert.equal(f.calls.filter(c=>c.path.endsWith('/send') || c.path.endsWith('/preview') || c.path.endsWith('/export')).length,0);
+});
+test('secure-review export and edit races execute the shipping UI contract',()=>{
+  const {spawnSync} = require('node:child_process');
+  const result = spawnSync(process.execPath,['tests/remote_authority_ui.cjs'],{encoding:'utf8'});
+  assert.equal(result.status,0,result.stdout+result.stderr);
 });

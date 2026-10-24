@@ -83,7 +83,7 @@ def main():
                 page.get_by_role('button', name='Settings', exact=True).click()
                 page.get_by_label('Agent access level').select_option('draft_only')
                 page.get_by_role('button',name='Save agent access',exact=True).click()
-                page.get_by_text('Agents can read and save drafts. Only you can click Send.', exact=True).wait_for()
+                page.get_by_text('Agents can read and save drafts. Sending needs your independent approval.', exact=True).wait_for()
                 # Read back the exact configured policy; do not infer from the select.
                 assert server.agent_access.effective_mode() == 'draft_only'
                 body = json.dumps({'person_id':person['person_id'],'identity_id':person['id'],'text':'Draft from synthetic agent'}).encode()
@@ -91,9 +91,12 @@ def main():
                 created = json.load(urllib.request.urlopen(req))['result']['draft']
                 page.get_by_role('button',name='Review agent drafts',exact=True).click()
                 page.get_by_role('button',name='Review draft',exact=True).click()
-                page.get_by_role('button',name='Save and review',exact=True).click()
-                page.get_by_role('button',name='Send',exact=True).wait_for()
+                secure_review = page.get_by_role('button',name='Review securely',exact=True)
+                secure_review.wait_for()
+                assert secure_review.is_disabled(), 'Unconfigured authority must fail closed'
+                assert page.get_by_role('button',name='Send',exact=True).count() == 0
                 page.get_by_label('Draft message').fill('Owner changes the fixture draft')
+                assert secure_review.is_disabled()
                 assert page.get_by_role('button',name='Send',exact=True).count() == 0
                 assert server.drafts.get(created['id'])['state'] == 'draft'
                 for width,height in [(390,844),(320,700),(1280,900)]:
@@ -105,7 +108,7 @@ def main():
                 browser.close()
                 report = {'pass':True,'fixture_scope':'real Chromium + real loopback API + disposable SQLite; shell shim and synthetic contacts; no provider delivery',
                           'viewports':[390,320,1280],'owner_policy_readback':'draft_only','draft_state_readback':'draft',
-                          'edit_invalidates_send':True,'outbound_send_requests':0,'page_errors':errors}
+                          'secure_review_disabled_without_authority':True,'outbound_send_requests':0,'page_errors':errors}
                 (args.output/'browser-proof.json').write_text(json.dumps(report,indent=2)+'\n')
                 print(json.dumps(report))
         finally:

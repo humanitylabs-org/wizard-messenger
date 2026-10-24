@@ -863,7 +863,7 @@
     const box = node('section', 'u-agent-access'); sheet.append(box);
     const paint = st => {
       box.replaceChildren(node('h3', '', 'Agent access'));
-      const descriptions = {no_access: 'Status only. Agents cannot read your conversations.', read_only: 'Agents can read conversations, but cannot draft or change anything.', draft_only: 'Agents can read and save drafts. Only you can click Send.', full_access: 'Agents can read and send messages, react, edit and delete. Account linking and access settings stay owner-only.'};
+      const descriptions = {no_access: 'Status only. Agents cannot read your conversations.', read_only: 'Agents can read conversations, but cannot draft or change anything.', draft_only: 'Agents can read and save drafts. Sending needs your independent approval.', full_access: 'Agents can read and send messages, react, edit and delete. Account linking and access settings stay owner-only.'};
       box.append(node('p', 'u-status ' + (st.enabled ? 'warn' : 'on'), descriptions[st.mode] || descriptions.no_access));
       const choice = node('select', 'u-channel'); choice.setAttribute('aria-label', 'Agent access level');
       for (const [value, label] of [['no_access', 'No access'], ['read_only', 'Read-only'], ['draft_only', 'Draft-only'], ['full_access', 'Full access']]) { const opt = node('option', '', label); opt.value = value; choice.append(opt); }
