@@ -11,7 +11,7 @@
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
-  let api, timer, lastFocus, updateHold;
+  let api, timer, lastFocus, updateHold, connectorController;
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
   const foreignScript = t => /(?![\p{Script=Latin}])\p{L}/u.test(t || '');
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
@@ -55,6 +55,7 @@
   function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy || store.pending > 0 || !!view.recording; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
   function closeOverlay() {
+    connectorController?.close().catch(() => {}); connectorController = null;
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
   function back() {
@@ -507,7 +508,7 @@
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Message';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
     const panel = node('div', 'u-menu'); panel.setAttribute('role', 'menu');
-    const telegram = m.network === 'telegram';
+    const telegram = ['telegram', 'whatsapp', 'signal', 'slack'].includes(m.network);
     if (telegram) {
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
@@ -563,7 +564,7 @@
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
     for (const i of p.identities || []) { const opt = node('option', '', 'via ' + cap(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
-    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => i.network === 'telegram');
+    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => ['telegram', 'whatsapp', 'signal', 'slack'].includes(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
     const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.hidden = true;
     const attach = iconButton('plus', 'Attach photo', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
@@ -736,7 +737,23 @@
     }
   }
   async function accounts() {
-    const sheet = overlay('Settings'); sheet.append(node('h3', '', 'Telegram'));
+    const sheet = overlay('Settings');
+    if (window.MessengerConnectors) {
+      const networks = node('section', 'u-connected-networks'); sheet.append(networks);
+      connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, body}));
+      try {
+        await connectorController.show();
+        await agentAccess(sheet);
+        return;
+      } catch (e) {
+        // Older/dormant installations retain the existing Telegram settings.
+        networks.remove(); connectorController = null;
+        if (!['not_found', 'unified_not_found'].includes(e.code)) {
+          error(e); await agentAccess(sheet); return;
+        }
+      }
+    }
+    sheet.append(node('h3', '', 'Telegram'));
     try {
       const status = await call('telegram/status'); if (s.overlay !== 'Settings') return;
       if (status.pending_login) { localStorage.setItem(LOGIN_FLAG, '1'); return loginStep(status.pending_login, true); }

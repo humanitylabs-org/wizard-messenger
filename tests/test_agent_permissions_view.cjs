@@ -15,7 +15,7 @@ class Element {
   focus() {}
   querySelectorAll() { return []; }
 }
-async function fixture({deferPreview = false} = {}) {
+async function fixture({deferPreview = false, connectors = false, connectorsUnavailable = false} = {}) {
   const root = new Element('main'), tabs = new Element('nav'); root.id = 'messenger'; tabs.id = 'inbox-tabs';
   const all = () => { const result = []; const walk = e => {result.push(e); e.children.forEach(walk);}; walk(root); return result; };
   const document = {activeElement: null, documentElement: {dataset:{}}, addEventListener(){},
@@ -26,6 +26,10 @@ async function fixture({deferPreview = false} = {}) {
   let policy = {mode:'no_access',enabled:false,log:[]};
   const api = async (path, opts = {}) => {
     calls.push({path, ...opts});
+    if (path === 'api/unified/connectors') {
+      if (connectorsUnavailable) { const e = new Error('Not enabled'); e.code = 'not_found'; throw e; }
+      return {providers: []};
+    }
     if (path === 'api/unified/telegram/status') return {state:'not_configured',message:'Not configured',logins:[]};
     if (path === 'api/view/agent-access') { if (opts.method === 'POST') policy = {...policy,...opts.body}; return policy; }
     if (path === 'api/drafts') return {drafts:[{...draft}]};
@@ -42,6 +46,7 @@ async function fixture({deferPreview = false} = {}) {
   const context = {document,console,Audio:class {},navigator:{},localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}},confirm:()=>true,
     setTimeout,clearTimeout,requestAnimationFrame:fn=>fn(),WizardApp:{update:{hold:()=>({release(){}})}}};
   context.window = context;
+  if (connectors) vm.runInNewContext(fs.readFileSync('static/connectors.js','utf8'), context);
   vm.runInNewContext(fs.readFileSync('static/unified.js','utf8'), context);
   context.MessengerUnified.mount({api});
   const flush = async () => {for(let n=0;n<6;n++) await new Promise(r=>setImmediate(r));};
@@ -50,6 +55,15 @@ async function fixture({deferPreview = false} = {}) {
   await context.MessengerUnified.settings(); await flush();
   return {calls,find,click,flush,release:()=>releasePreview()};
 }
+test('connector settings retain agent controls; disabled connectors preserve Telegram', async () => {
+  for (const connectorsUnavailable of [false, true]) {
+    const f = await fixture({connectors:true, connectorsUnavailable});
+    assert.ok(f.find('select','Agent access level'));
+    assert.ok(f.find('button','Review agent drafts'));
+    assert.equal(f.calls.some(c => c.path === 'api/unified/telegram/status'), connectorsUnavailable);
+    assert.equal(f.calls.some(c => c.path.endsWith('/send')), false);
+  }
+});
 test('owner chooses one of four policies; draft review never automatically sends',async()=>{
   const f = await fixture();
   const policy = f.find('select','Agent access level');

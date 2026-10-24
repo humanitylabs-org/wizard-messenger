@@ -52,13 +52,14 @@ class ConnectorHTTP(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertFalse(self.inbox.connectors.health()['account_authentication_attempted'])
             self.assertFalse(self.inbox.worker)
-            self.server.agent_access.grant(60)
+            self.server.agent_access.configure({'mode': 'full_access', 'minutes': 60})
             for path in ('/api/unified/connectors', '/api/unified/connectors/signal/status', '/api/unified/telegram/status'):
                 status, _, body = self.request('GET', path, headers={'Authorization': 'Bearer ' + 'a' * 48})
                 self.assertEqual((status, body['error']['code']), (403, 'owner_required'))
-            _, _, data = self.request('POST', '/api/view/ticket', {}, {'Authorization': 'Bearer ' + 'a' * 48})
-            _, headers, data = self.request('POST', '/api/view/session', {'ticket': data['result']['ticket']}, {'Origin': 'https://wizard.example.com'})
-            cookie = headers['Set-Cookie'].split(';')[0]
+            # A bearer-issued ticket deliberately cannot establish owner authority.
+            # Set up a synthetic, independently authenticated owner session here.
+            token, owner_session = self.server.auth.create()
+            cookie = 'wizard_messenger_session=' + token
             status, headers, result = self.request('GET', '/api/unified/connectors', headers={'Cookie': cookie})
             self.assertEqual(status, 200)
             self.assertIn('no-store', headers.get('Cache-Control', ''))

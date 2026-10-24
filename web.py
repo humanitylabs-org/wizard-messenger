@@ -122,8 +122,15 @@ class ViewServer(MessengerServer):
             raise ValueError('MESSENGER_PUBLIC_PATH must be an app path ending in /')
         self.cookie_secure=os.environ.get('MESSENGER_COOKIE_SECURE','1')!='0'
         self.static_root=Path(__file__).parent/'static'
-        self.RequestHandlerClass=ViewHandler
-        self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        if os.environ.get('CONNECTORS_ENABLED') == '1':
+            from connector_inbox import ConnectorInbox
+            from connector_web import ConnectorViewHandler
+            self.RequestHandlerClass = ConnectorViewHandler
+            # Parent: inject the authorized isolated sender here, never raw http.
+            self.unified = ConnectorInbox(data, engine, sender=None) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        else:
+            self.RequestHandlerClass=ViewHandler
+            self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
         if self.unified:
             self.unified.start()
 
@@ -367,7 +374,7 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         path=urlsplit(self.path).path
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:
