@@ -29,6 +29,7 @@ async function assert(challenge) {
 async function refresh() {
   const result = await api('/owner/drafts');
   $('mode').textContent = 'Authoritative mode: ' + result.mode + ' | Backend: ' + result.backend;
+  $('backendWarning').textContent = result.backend === 'matrix' ? 'REAL MATRIX BACKEND — approvals can send real text and attachments. Matrix acceptance is not bridge/network delivery confirmation. A resumed draft may already be partially sent.' : 'TEST BACKEND ONLY — approvals record local test deliveries, not provider messages.';
   $('fullMode').hidden = !result.allow_full_access;
   $('drafts').replaceChildren();
   for (const draft of result.drafts) {
@@ -36,7 +37,7 @@ async function refresh() {
     const pre = document.createElement('pre');
     pre.textContent = ascii({id: draft.id, status: draft.status, hash: draft.hash, exact: JSON.parse(draft.payload)});
     article.append(pre);
-    if (draft.status === 'pending') {
+    if (['pending', 'matrix-queued'].includes(draft.status)) {
       const button = document.createElement('button');
       button.textContent = 'Review this exact draft';
       button.onclick = () => run(() => review({action: 'send', draft_id: draft.id}));
@@ -48,7 +49,7 @@ async function refresh() {
 let pending = null;
 async function review(action) {
   pending = await api('/owner/begin', action);
-  $('reviewTitle').textContent = pending.action === 'mode' ? 'Change sending authority' : 'Approve exact TEST delivery';
+  $('reviewTitle').textContent = pending.action === 'mode' ? 'Change sending authority' : (pending.binding.exact.destination ? 'Approve exact Matrix send / resume (partial delivery possible)' : 'Approve exact TEST delivery');
   $('binding').textContent = ascii(pending.binding);
   $('review').showModal();
 }

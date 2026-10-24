@@ -1,4 +1,4 @@
-"""Independent owner authority. No Wizard imports, tickets, proxy, or provider network calls."""
+"""Independent owner authority with test ledger and fixed Matrix sender."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +18,7 @@ from typing import NoReturn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from .matrix import MatrixAccount, MatrixSender, MatrixError
 from webauthn import (
     generate_authentication_options, generate_registration_options,
     options_to_json, verify_authentication_response, verify_registration_response,
@@ -49,6 +50,7 @@ class Config(BaseModel):
     agent_key_sha256: str
     accounts: list[str] = Field(min_length=1)
     backend: str = "test-ledger"
+    matrix_accounts: dict[str, MatrixAccount] = Field(default_factory=dict)
     allow_full_access: bool = False  # owner-only local file, not remotely writable
     independently_administered: bool = False
     challenge_seconds: int = Field(default=120, ge=15, le=300)
@@ -61,8 +63,15 @@ class Config(BaseModel):
             raise ValueError("exact dedicated HTTPS origin with matching rp_id required")
         if not self.independently_administered:
             raise ValueError("owner must configure an independently administered host; do not deploy on Wizard")
-        if self.backend != "test-ledger":
-            raise ValueError("only test-ledger is implemented; there is NO production send backend")
+        if self.backend not in ("test-ledger", "matrix"):
+            raise ValueError("unsupported send backend")
+        if self.backend == "matrix":
+            if set(self.matrix_accounts) != set(self.accounts):
+                raise ValueError("every configured account needs an exact Matrix mapping")
+            for account in self.matrix_accounts.values():
+                account.checked()
+        elif self.matrix_accounts:
+            raise ValueError("test ledger cannot hold Matrix configuration")
         if len(self.agent_key_sha256) != 64 or any(c not in "0123456789abcdef" for c in self.agent_key_sha256):
             raise ValueError("configure a SHA256 digest of a random draft-only key")
         if not Path(self.database).is_absolute():
@@ -129,12 +138,16 @@ CREATE TABLE IF NOT EXISTS challenges(id TEXT PRIMARY KEY, challenge BLOB NOT NU
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, expires REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS test_deliveries(draft_id TEXT PRIMARY KEY, payload TEXT NOT NULL,
  payload_hash TEXT NOT NULL, result TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS matrix_parts(draft_id TEXT NOT NULL, part INTEGER NOT NULL,
+ uri TEXT, event TEXT, PRIMARY KEY(draft_id,part));
+CREATE TABLE IF NOT EXISTS matrix_jobs(draft_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL);
 """
 
 
 class Authority:
     def __init__(self, config: Config):
         self.config = config.checked()
+        self.matrix = MatrixSender(config.matrix_accounts) if config.backend == 'matrix' else None
         with self.connect() as db:
             db.executescript(SCHEMA)
 
@@ -228,6 +241,77 @@ class Authority:
         db.execute("UPDATE drafts SET status='test-delivered' WHERE id=?", (draft_id,))
         return result
 
+    def authorize_delivery(self, db, draft_id):
+        if self.matrix is None:
+            return self.deliver_test(db, draft_id)
+        row = db.execute('SELECT * FROM drafts WHERE id=?', (draft_id,)).fetchone()
+        if not row or digest(row['payload']) != row['hash']:
+            deny('draft integrity failure')
+        try:
+            self.matrix.validate(json.loads(row['payload']))
+        except (MatrixError, ValueError):
+            deny('Matrix destination or exact attachment no longer valid; owner-local reconciliation required', 409)
+        if row['status'] != 'matrix-delivered':
+            db.execute('INSERT OR REPLACE INTO matrix_jobs VALUES(?,?)', (draft_id, self.state(db)['epoch']))
+            db.execute("UPDATE drafts SET status='matrix-queued' WHERE id=?", (draft_id,))
+        return None
+
+    def matrix_gate(self, db, draft_id):
+        job = db.execute('SELECT epoch FROM matrix_jobs WHERE draft_id=?', (draft_id,)).fetchone()
+        if not job or job['epoch'] != self.state(db)['epoch']:
+            raise MatrixError('authorization invalidated by mode change')
+
+    def dispatch(self, draft_id):
+        """Only called after authorization commits. Each upload commits BEFORE send.
+
+        Remote PUT ambiguity/crash reuses the same transaction and persisted URI.
+        No unauthenticated worker/retry API. Fresh approval resumes partial sends.
+        """
+        assert self.matrix is not None
+        try:
+            with self.transaction() as db:
+                row = db.execute('SELECT * FROM drafts WHERE id=?', (draft_id,)).fetchone()
+                if not row or row['status'] not in ('matrix-queued', 'matrix-delivered'):
+                    deny('draft not authorized')
+                payload = json.loads(row['payload'])
+                if digest(row['payload']) != row['hash']:
+                    deny('draft integrity failure')
+                self.matrix.validate(payload)
+                self.matrix_gate(db, draft_id)
+                self.matrix.identity(payload['account'])
+                self.matrix.unencrypted(payload['account'], payload['recipient'])
+            parts = ([(-1, None)] if payload['body'] else []) + list(enumerate(payload['attachments']))
+            for part, attachment in parts:
+                # Upload has no Matrix transaction ID. A crash can orphan an upload,
+                # but cannot duplicate a message; the chosen URI is durable before PUT.
+                with self.transaction() as db:
+                    self.matrix_gate(db, draft_id)
+                    db.execute('INSERT OR IGNORE INTO matrix_parts(draft_id,part) VALUES(?,?)', (draft_id, part))
+                    saved = db.execute('SELECT * FROM matrix_parts WHERE draft_id=? AND part=?', (draft_id, part)).fetchone()
+                    if attachment is not None and not saved['uri']:
+                        uri = self.matrix.upload(payload['account'], attachment)
+                        db.execute('UPDATE matrix_parts SET uri=? WHERE draft_id=? AND part=?', (uri, draft_id, part))
+                with self.transaction() as db:
+                    self.matrix_gate(db, draft_id)
+                    saved = db.execute('SELECT * FROM matrix_parts WHERE draft_id=? AND part=?', (draft_id, part)).fetchone()
+                    if saved['event']:
+                        continue
+                    self.matrix.unencrypted(payload['account'], payload['recipient'])
+                    content = ({'msgtype': 'm.text', 'body': payload['body']} if attachment is None else
+                               {'msgtype': 'm.file', 'body': attachment['name'], 'filename': attachment['name'],
+                                'url': saved['uri'], 'info': {'mimetype': attachment['media_type'], 'size': attachment['size']}})
+                    event = self.matrix.send(payload['account'], payload['recipient'],
+                                             self.matrix.txn(draft_id, row['hash'], part), content)
+                    db.execute('UPDATE matrix_parts SET event=? WHERE draft_id=? AND part=?', (event, draft_id, part))
+            with self.transaction() as db:
+                db.execute("UPDATE drafts SET status='matrix-delivered' WHERE id=?", (draft_id,))
+                events = [r['event'] for r in db.execute('SELECT event FROM matrix_parts WHERE draft_id=? ORDER BY part', (draft_id,))]
+            return {'backend': 'matrix', 'production_send': True, 'payload_hash': row['hash'],
+                    'event_ids': events, 'delivery_semantics': 'Matrix accepted, not bridge/network receipt'}
+        except MatrixError:
+            # Keep the committed approval and partial progress, never roll it back.
+            raise HTTPException(502, 'Matrix incomplete or ambiguous; fresh owner approval resumes the same draft') from None
+
 
 def create_app(config: Config):
     authority = Authority(config)
@@ -294,14 +378,23 @@ def create_app(config: Config):
     @app.get("/health")
     def health():
         return {"service": "independent-owner-authority", "backend": config.backend,
-                "production_send": False}
+                "production_send": config.backend == 'matrix'}
 
     @app.post("/agent/drafts")
     def draft(value: Draft, request: Request):
         agent(request)
         if value.account not in config.accounts:
             deny("account not configured")
-        payload = canonical(value.exact())
+        exact = value.exact()
+        if authority.matrix:
+            try:
+                exact['destination'] = authority.matrix.destination(exact)
+                authority.matrix.validate(exact)
+            except (ValueError, MatrixError):
+                deny('invalid Matrix account, room or attachment', 422)
+            if not exact['body'] and not exact['attachments']:
+                deny('empty Matrix send', 422)
+        payload = canonical(exact)
         with authority.transaction() as db:
             old = db.execute("SELECT * FROM drafts WHERE request_id=?", (value.request_id,)).fetchone()
             if old:
@@ -327,7 +420,8 @@ def create_app(config: Config):
         with authority.transaction() as db:
             if not config.allow_full_access or authority.state(db)["mode"] != "full-access":
                 deny("draft-only: owner approval required")
-            return authority.deliver_test(db, did)
+            result = authority.authorize_delivery(db, did)
+        return result if result is not None else authority.dispatch(did)
 
     @app.post("/owner/register/begin")
     def register_begin(request: Request):
@@ -376,7 +470,7 @@ def create_app(config: Config):
                 owner(db, request)
                 if value.action == "send" and value.draft_id and value.mode is None:
                     row = db.execute("SELECT * FROM drafts WHERE id=?", (value.draft_id,)).fetchone()
-                    if not row or row["status"] != "pending":
+                    if not row or row["status"] not in ("pending", "matrix-queued"):
                         deny("draft not pending", 409)
                     payload = {"draft_id": row["id"], "hash": row["hash"], "exact": json.loads(row["payload"])}
                 elif value.action == "mode" and value.mode in ("draft-only", "full-access") and value.draft_id is None:
@@ -416,10 +510,12 @@ def create_app(config: Config):
                 db.execute("UPDATE authority SET mode=?,epoch=epoch+1 WHERE id=1", (payload["mode"],))
                 return {"mode": payload["mode"]}
             current = db.execute("SELECT * FROM drafts WHERE id=?", (payload["draft_id"],)).fetchone()
-            if (not current or current["status"] != "pending" or current["hash"] != payload["hash"]
+            if (not current or current["status"] not in ("pending", "matrix-queued") or current["hash"] != payload["hash"]
                     or current["payload"] != canonical(payload["exact"])):
                 deny("approved draft changed", 409)
-            return authority.deliver_test(db, current["id"])
+            result = authority.authorize_delivery(db, current['id'])
+            did = current['id']
+        return result if result is not None else authority.dispatch(did)
 
     @app.get("/owner/drafts")
     def owner_drafts(request: Request):
@@ -458,7 +554,7 @@ def main():
     if args.command == "init-owner":
         print(Authority(config).bootstrap())  # Owner's independent physical/SSH console ONLY.
     elif args.command == "check":
-        print("Configuration valid; independence is an owner trust gate, NOT machine-verifiable. Test backend only.")
+        print("Configuration valid; backend=" + config.backend + "; independence is an owner trust gate, NOT machine-verifiable.")
     else:
         if not args.tls_cert or not args.tls_key:
             parser.error("direct trusted TLS certificate and private key required (no forwarded-header trust)")

@@ -36,10 +36,11 @@ def run(value, draft=None):
         health = client.get(endpoint + '/health')
         health.raise_for_status()
         status = health.json()
-        if status.get('service') != 'independent-owner-authority' or status.get('backend') != 'test-ledger' or status.get('production_send') is not False:
-            raise ValueError('unexpected authority; this client release supports test-ledger only')
+        backend = status.get('backend')
+        if status.get('service') != 'independent-owner-authority' or backend not in ('test-ledger', 'matrix') or status.get('production_send') is not (backend == 'matrix'):
+            raise ValueError('unexpected authority/backend')
         if draft is None:
-            return {'ready': True, 'production_send': False, 'trust_gate': 'owner-attested, not independently machine-proven'}
+            return {'ready': True, 'production_send': backend == 'matrix', 'trust_gate': 'owner-attested, not independently machine-proven'}
         key = Path(value['draft_key_file']).read_text().strip()
         if len(key) < 32:
             raise ValueError('draft key must contain at least 32 random characters')
