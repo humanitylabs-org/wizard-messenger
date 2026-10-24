@@ -355,9 +355,12 @@
   }
   // One small action menu under a held row; used by Chats/Groups rows here and the Messenger tab's rows (app.js).
   // A tap anywhere outside an open menu closes it (no Back needed); the tap is consumed so it never lands on the chat beneath.
+  // "Inside" is the visible boxes only (actions list, emoji strip, emoji grid), not the panel's empty width beside them.
+  // closest() also works for a control the tap itself just replaced (the emoji ＋ swaps the strip for the grid).
   function outsideCloses(layer, panel) {
-    layer.addEventListener('pointerdown', e => { if (panel.contains(e.target)) return; e.preventDefault(); swallowRelease(); closeOverlay(); });
-    layer.addEventListener('click', e => { if (!panel.contains(e.target)) closeOverlay(); });
+    const inside = t => !!t?.closest?.('.u-actions,.u-quick,.u-grid');
+    layer.addEventListener('pointerdown', e => { if (inside(e.target)) return; e.preventDefault(); swallowRelease(); closeOverlay(); });
+    layer.addEventListener('click', e => { if (!inside(e.target)) closeOverlay(); });
   }
   function actionMenu(card, title, actions) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
@@ -689,7 +692,9 @@
       if (!active || !e.target.closest('.u-row,.message') || window.getSelection()?.toString() || (holdAt && performance.now() - holdAt >= 450)) return;
       e.preventDefault(); e.stopImmediatePropagation(); if (sending) return;
       const found = entries().find(x => x.node?.contains(e.target)); if (!found || found.message.deleted || found.message.pending) return;
-      const id = found.message.id; if (ids.has(id)) ids.delete(id); else ids.add(id); queue = null; cursor = 0; paint();
+      const id = found.message.id; if (ids.has(id)) ids.delete(id); else ids.add(id); queue = null; cursor = 0;
+      if (!ids.size) return clear(); // unselecting the last message leaves selection, like Cancel
+      paint();
     }, true);
     const line = m => (m.outgoing ? 'You' : nameOf(m.sender) || 'Sender') + ' (' + new Date(m.timestamp).toLocaleString() + '): ' + (m.original || '') + (m.transcript ? '\nTranscript: ' + m.transcript : '');
     async function send() {

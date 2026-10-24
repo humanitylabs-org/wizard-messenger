@@ -72,6 +72,17 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await page.waitForTimeout(150);
   assert.equal(await page.getByRole('menu').count(), 0, 'tapping outside the menu closes it without Back');
   assert.equal(await page.locator('.u-selection:not([hidden])').count(), 0, 'outside tap is consumed, nothing beneath reacts');
+  // Beside the box (the panel's empty width) also closes; the emoji ＋ keeps the menu open on the full grid.
+  await page.locator('.u-message').first().tap({position:{x:12,y:12}});
+  { const box = await page.locator('.u-actions').boundingBox(); await page.touchscreen.tap(Math.round(box.x + box.width + 24), Math.round(box.y + box.height / 2)); }
+  await page.waitForTimeout(150);
+  assert.equal(await page.getByRole('menu').count(), 0, 'tapping right of the menu box closes it');
+  await page.locator('.u-message').first().tap({position:{x:12,y:12}});
+  await page.locator('.u-qr-btn.more').tap(); await page.waitForTimeout(150);
+  assert.equal(await page.locator('.u-grid').count(), 1, 'emoji ＋ opens the full grid and keeps the menu open');
+  await page.screenshot({path:ev+'/emoji-grid-dark.png'});
+  await page.touchscreen.tap(Math.round(page.viewportSize().width/2), 90); await page.waitForTimeout(150);
+  assert.equal(await page.getByRole('menu').count(), 0);
   await page.locator('.u-vplay').first().tap();
   assert.equal(await page.getByRole('menu').count(),0,'play is not a menu gesture');
   await page.locator('.u-vplay').first().tap();
@@ -93,6 +104,13 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await page.locator('.u-message', {hasText: 'What do you think'}).tap();
   assert.equal(await page.locator('.u-selection strong').textContent(), '2 selected');
   assert.equal(await page.locator('.u-row.u-selected').count(), 2);
+  // Unselecting everything leaves selection, like Cancel; then select both again for the rest of the proof.
+  await page.locator('.u-message', {hasText: 'What do you think'}).tap();
+  await page.locator('.u-row.u-selected .u-message').first().tap();
+  await page.locator('.u-selection').waitFor({state: 'hidden'});
+  assert.equal(await page.locator('.u-row.u-selecting').count(), 0, 'no selected messages = selection over');
+  await press(page.locator('.u-message').first()); await page.locator('.u-message', {hasText: 'What do you think'}).tap();
+  assert.equal(await page.locator('.u-selection strong').textContent(), '2 selected');
   // The next long-press is native: selectstart and contextmenu are no longer cancelled.
   await press(page.locator('.u-message', {hasText:'What do you think'}));
   const nativeSelection = await page.locator('.u-message', {hasText:'What do you think'}).evaluate(el => {
