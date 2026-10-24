@@ -11,9 +11,17 @@
     "browser_origins": "Exact comma-separated MESSENGER_ALLOWED_ORIGINS; no permissive CORS. Non-browser clients may omit Origin. Cross-site browser requests are rejected.",
     "secret_transport": "The owner passphrase travels only in an authenticated HTTPS JSON body and private provider stdin, never URLs, logs or browser storage. Private-key import is disabled.",
     "browser_session": "HttpOnly, Secure, SameSite=Strict app-path cookie; cookie writes also require exact Origin and X-Messenger-CSRF. Machine bearer never appears in the view.",
-    "initial_browser_access": "Trusted API caller issues a one-use ticket, exchanged via POST /api/view/session. Ticket belongs in the initial URL fragment only and is removed immediately. Empty-body exchanges never authenticate. Owner-bootstrap tickets can last seven days only before account setup.",
+    "initial_browser_access": "Machine-issued tickets are setup-only, never unlocked owner sessions. Exchanges are rejected after an account or owner verifier exists. Machine-issued launcher tickets cannot establish the first owner verifier. Initial enrollment requires an independently provisioned BrowserAuth.ticket(bootstrap=True); no machine-bearer HTTP route issues enrollment authority. Tickets belong only in the URL fragment. Existing accounts require owner passphrase/passkey proof. Bearer-authenticated HTML never sets an owner cookie. Pre-v2 sessions and tickets are invalidated on upgrade.",
     "existing_browser_access": "POST /api/view/unlock proves the dedicated passphrase against a salted scrypt verifier and unlocks the provider; it cannot create/import an account. Six failed guesses per minute are rate-limited. No anonymous initial-account creation.",
     "stored_browser_auth": "Only ticket/session hashes and a salted passphrase verifier are stored; no plaintext passphrase, cookie capability or message body. Atomic 0600 app-data file."
+  },
+  "agent_policy": {
+    "default": "no_access",
+    "modes": ["no_access", "read_only", "draft_only", "full_access"],
+    "authority": "Only an authenticated owner browser session with Origin and CSRF can change policy. Machine bearers cannot change policy, unlock sessions, or link/manage provider accounts in any mode.",
+    "compatibility": "Legacy until-only grants fail closed to no_access. Legacy minutes-only enabling requests are rejected; minutes:0 still revokes. Optional explicit-mode expiry is 1..1440 minutes; expiry returns to no_access.",
+    "semantics": "no_access permits health/status/public identity and setup-only launch tickets. read_only additionally permits explicitly allowlisted conversation reads. draft_only adds local draft create/update only, not previews, sends, reactions, read receipts, typing, edits, deletes, invites, logins, account links, translation calls, or provider writes. full_access enables explicitly allowlisted conversation mutations, never owner-control routes. Unknown routes fail closed.",
+    "boundary": "Application defense in depth only; not protection against host root. Independently administered sender enforcement is a separate integration."
   },
   "success": {
     "ok": true,
@@ -33,6 +41,15 @@
   ],
   "setup_semantics": "No identity is created automatically. A dedicated vault passphrase of at least 16 characters is needed to create/unlock. Keyring remains encrypted at rest. Restart always relocks. account_configured reports whether an identity exists; ready may have identity=null when a new vault has only been unlocked. The one messaging key is separate from Wizard root signing.",
   "routes": [
+    {"method":"GET","path":"/api/view/agent-access","auth":"owner cookie","result":"mode, enabled, until (milliseconds or null), content-free log, boundary"},
+    {"method":"POST","path":"/api/view/agent-access","auth":"owner cookie + Origin + CSRF","body":{"mode":"no_access|read_only|draft_only|full_access","minutes":"optional expiry 1..1440"},"result":"persisted policy state"},
+    {"method":"GET","path":"/api/drafts","auth":"owner or read_only/draft_only/full_access bearer","result":"drafts array"},
+    {"method":"POST","path":"/api/drafts","auth":"owner or draft_only/full_access bearer","body":{"person_id":"unified person ID","identity_id":"explicit unified channel ID","text":"nonempty text, at most 16384 characters"},"result":"draft with id, revision, state; never sends"},
+    {"method":"GET","path":"/api/drafts/{id}","auth":"owner or read_only/draft_only/full_access bearer","result":"draft"},
+    {"method":"POST","path":"/api/drafts/{id}","auth":"owner or draft_only/full_access bearer","body":{"revision":"required exact current integer","person_id":"recipient","identity_id":"channel","text":"body"},"result":"new revision; all previous previews invalidated"},
+    {"method":"POST","path":"/api/drafts/{id}/preview","auth":"owner cookie + Origin + CSRF only","body":{"revision":"exact current integer"},"result":"draft with server-bound original/translated preview"},
+    {"method":"POST","path":"/api/drafts/{id}/send","auth":"owner cookie + Origin + CSRF only","body":{"revision":"exact reviewed integer","send_original":"explicit true only for original fallback"},"result":"draft and delivery; idempotent server preview. Recipient/body overrides ignored. No send on create/update/preview. Ambiguous submissions retain sending state and cannot be edited."},
+    {"method":"DELETE","path":"/api/drafts/{id}","auth":"owner cookie + Origin + CSRF only","body":{"revision":"exact current integer"},"result":"deleted; in-flight drafts cannot be deleted"},
     {
       "method": "GET",
       "path": "/healthz",
@@ -237,7 +254,7 @@
       "path": "/api/view/ticket",
       "auth": "machine bearer only",
       "body": {
-        "bootstrap": "optional boolean; longer lifetime allowed only with no configured account"
+        "bootstrap": "ignored by machine HTTP issuance; returned tickets are launcher-only, not owner enrollment or unlock authority"
       },
       "result": {
         "ticket": "single-use opaque capability",

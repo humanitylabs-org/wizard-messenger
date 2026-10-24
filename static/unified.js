@@ -751,12 +751,20 @@
     const box = node('section', 'u-agent-access'); sheet.append(box);
     const paint = st => {
       box.replaceChildren(node('h3', '', 'Agent access'));
-      box.append(node('p', 'u-status ' + (st.enabled ? 'warn' : 'on'), st.enabled
-        ? 'Agents can read and send your messages until ' + new Date(st.until).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) + '.'
-        : 'Off. Agents see Messenger status only, never your messages.'));
-      const set = minutes => action(async () => paint(await api('api/view/agent-access', {method: 'POST', body: {minutes}})));
-      if (st.enabled) box.append(button('Turn off now', () => set(0), 'primary wide'));
-      else { const pair = node('div', 'u-pair'); pair.append(button('Allow 1 hour', () => set(60), 'secondary'), button('Allow 24 hours', () => set(1440), 'secondary')); box.append(pair); }
+      const descriptions = {no_access: 'Status only. Agents cannot read your conversations.', read_only: 'Agents can read conversations, but cannot draft or change anything.', draft_only: 'Agents can read and save drafts. Only you can click Send.', full_access: 'Agents can read and send messages, react, edit and delete. Account linking and access settings stay owner-only.'};
+      box.append(node('p', 'u-status ' + (st.enabled ? 'warn' : 'on'), descriptions[st.mode] || descriptions.no_access));
+      const choice = node('select', 'u-channel'); choice.setAttribute('aria-label', 'Agent access level');
+      for (const [value, label] of [['no_access', 'No access'], ['read_only', 'Read-only'], ['draft_only', 'Draft-only'], ['full_access', 'Full access']]) { const opt = node('option', '', label); opt.value = value; choice.append(opt); }
+      choice.value = st.mode || 'no_access';
+      const expiry = node('select', 'u-channel'); expiry.setAttribute('aria-label', 'Agent access duration');
+      for (const [value, label] of [['', 'Until I change it'], ['60', '1 hour'], ['1440', '24 hours']]) { const opt = node('option', '', label); opt.value = value; expiry.append(opt); }
+      box.append(choice, expiry, button('Save agent access', () => action(async () => {
+        if (choice.value === 'full_access' && !confirm('Allow agents to send, edit and delete messages without your review?')) return;
+        const body = {mode: choice.value}; if (expiry.value) body.minutes = Number(expiry.value);
+        paint(await api('api/view/agent-access', {method: 'POST', body}));
+      }), 'primary wide'));
+      if (st.until) box.append(node('p', 'helper', 'Expires ' + new Date(st.until).toLocaleString()));
+      box.append(node('p', 'helper', 'Application defense in depth, not protection against host root. Strong sender isolation requires a separately administered service.'), button('Review agent drafts', agentDrafts, 'secondary wide'));
       if (st.log.length) {
         const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
         const list = node('ul', 'u-access-log');
@@ -765,6 +773,65 @@
       }
     };
     try { const st = await api('api/view/agent-access'); if (s.overlay === 'Settings') paint(st); } catch (e) { error(e); }
+  }
+  async function agentDrafts() {
+    const sheet = overlay('Agent drafts');
+    try {
+      const result = await api('api/drafts');
+      if (s.overlay !== 'Agent drafts') return;
+      if (!result.drafts.length) sheet.append(node('p', 'helper', 'No agent drafts yet. Nothing has been sent.'));
+      for (const draft of result.drafts) {
+        const row = node('div', 'u-account');
+        row.append(node('p', '', draft.text), node('p', 'helper', draft.state + ' · revision ' + draft.revision), button('Review draft', () => reviewAgentDraft(draft), 'secondary'));
+        sheet.append(row);
+      }
+    } catch (e) { sheet.append(node('p', 'error', e.message)); }
+  }
+  async function reviewAgentDraft(initial) {
+    const sheet = overlay('Review agent draft'); let draft = initial;
+    const problem = node('p', 'error'); problem.setAttribute('role', 'status');
+    const recipient = node('select', 'u-channel'); recipient.setAttribute('aria-label', 'Draft recipient and channel');
+    const body = node('textarea'); body.rows = 5; body.maxLength = 16384; body.value = draft.text; body.setAttribute('aria-label', 'Draft message');
+    const preview = node('div', 'u-preview');
+    let generation = 0;
+    const invalidate = () => { generation++; preview.replaceChildren(); };
+    recipient.onchange = body.oninput = invalidate;
+    sheet.append(node('p', 'helper', 'Nothing is sent until you review this revision and click Send.'), recipient, body, problem, preview);
+    try {
+      const directory = await call('directory');
+      if (s.overlay !== 'Review agent draft') return;
+      for (const person of [...directory.people, ...directory.groups]) for (const identity of person.identities || []) {
+        const opt = node('option', '', person.display_name + ' · ' + cap(identity.network) + ' · ' + identity.label);
+        opt.value = JSON.stringify([person.id, identity.id]); recipient.append(opt);
+      }
+      recipient.value = JSON.stringify([draft.person_id, draft.identity_id]);
+      const review = button('Save and review', () => action(async () => {
+        problem.textContent = ''; invalidate(); const current = generation;
+        try {
+          const [person_id, identity_id] = JSON.parse(recipient.value);
+          draft = (await api('api/drafts/' + draft.id, {method: 'POST', body: {revision: draft.revision, person_id, identity_id, text: body.value}})).draft;
+          draft = (await api('api/drafts/' + draft.id + '/preview', {method: 'POST', body: {revision: draft.revision}})).draft;
+          if (generation !== current || s.overlay !== 'Review agent draft') return;
+          const reviewed = draft; const p = draft.preview;
+          preview.append(node('p', '', 'Original: ' + p.original), node('p', '', p.error ? 'Translation failed. You may explicitly send the original.' : 'To send: ' + p.translated));
+          const send = original => action(async () => {
+            if (!confirm('Send this reviewed draft now?')) return;
+            try { await api('api/drafts/' + reviewed.id + '/send', {method: 'POST', body: {revision: reviewed.revision, send_original: original}}); await agentDrafts(); }
+            catch (e) { problem.textContent = e.message; invalidate(); }
+          });
+          if (!p.error) preview.append(button('Send', () => send(false), 'primary wide'));
+          else preview.append(button('Send original', () => send(true), 'primary wide'));
+        } catch (e) { problem.textContent = e.message || 'Choose a valid recipient and try again.'; }
+      }), 'primary wide');
+      review.disabled = draft.state !== 'draft'; body.disabled = recipient.disabled = review.disabled;
+      if (draft.state === 'sending') sheet.append(node('p', 'helper', 'Delivery outcome is not yet confirmed. Check the conversation before taking any further action; do not create a replacement draft.'));
+      if (draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
+        if (!confirm('Delete this local draft?')) return;
+        try { await api('api/drafts/' + draft.id, {method: 'DELETE', body: {revision: draft.revision}}); await agentDrafts(); }
+        catch (e) { problem.textContent = e.message; }
+      }), 'secondary wide'));
+      sheet.append(review, button('Back to drafts', agentDrafts, 'secondary wide'));
+    } catch (e) { problem.textContent = e.message; }
   }
   const LOGIN_FLAG = 'messenger-telegram-login';
   // Region code, dialling code, name. Built from libphonenumber + ISO 3166 names.
@@ -866,6 +933,7 @@
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   window.MessengerUnified = {
+    settings: accounts,
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() { if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },
