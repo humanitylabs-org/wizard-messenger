@@ -5,14 +5,14 @@ from pathlib import Path
 import secrets
 from unified_setup import write
 
-EXTRA_NETWORKS = ('whatsapp', 'signal', 'slack')
+EXTRA_NETWORKS = ('whatsapp', 'signal', 'slack', 'line', 'instagram')
 
 
 def setup_connectors(root, enabled=()):
     root = Path(root)
     enabled = set(enabled)
     if not enabled <= set(EXTRA_NETWORKS):
-        raise ValueError('Only WhatsApp, Signal and Slack are supported here')
+        raise ValueError('Unknown optional connector')
     # Existing Telegram configuration/keys remain untouched.
     secret_path = root / 'unified' / 'connector-secrets.json'
     try:
@@ -44,6 +44,12 @@ def setup_connectors(root, enabled=()):
         config['homeserver'].update(address='http://matrix:8008', domain='messenger.internal')
         config['appservice'].update(address=url, public_address='', hostname='0.0.0.0', as_token=private['as_token'], hs_token=private['hs_token'])
         config['appservice']['bot']['avatar'] = ''
+        # Match generated registration and trusted-inviter namespaces exactly.
+        config['appservice']['id'] = name
+        config['appservice']['bot']['username'] = name + 'bot'
+        config['appservice']['username_template'] = name + '_{{.}}'
+        if name == 'line':
+            config['network']['qr_login'] = True
         config['database'].update(type='sqlite3-fk-wal', uri='file:/data/%s.db?_txlock=immediate' % name, max_open_conns=1, max_idle_conns=1)
         config['bridge']['permissions'] = {'*': 'block', '@owner:messenger.internal': 'admin'}
         config['matrix']['federate_rooms'] = False

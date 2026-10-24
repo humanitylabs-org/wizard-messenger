@@ -30,7 +30,7 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(providers.health()['providers']['signal'], 'not_configured')
         self.assertFalse(providers.health()['account_authentication_attempted'])
         statuses = providers.dispatch('GET', [], {})['providers']
-        self.assertEqual(len(statuses), 6)
+        self.assertEqual(len(statuses), 7)
         self.assertEqual({s['state'] for s in statuses}, {'not_configured', 'unsupported'})
         self.reader.assert_not_called()
         for name in ('whatsapp', 'signal', 'slack'):
@@ -63,7 +63,7 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse((self.root / 'signal' / 'configured').exists())
 
     def test_invalid_network_rejected(self):
-        with self.assertRaises(ValueError): setup_connectors(self.root, ('line',))
+        with self.assertRaises(ValueError): setup_connectors(self.root, ('unknown',))
 
     def test_missing_writer_never_attempts_login(self):
         setup_connectors(self.root, ('signal',))
@@ -111,17 +111,17 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse(status['capabilities']['live_parity_verified'])
         self.assertEqual(status['flows'], [{'id': 'qr', 'name': 'qr'}])
 
-    def test_slack_only_maintained_app_flow(self):
+    def test_slack_personal_flow_not_bot_app(self):
         setup_connectors(self.root, ('slack',))
         writer = Mock()
         p = Connectors(self.root / 'unified', writer=writer)
-        for flow in ('email', 'token', 'qr'):
+        for flow in ('app', 'token', 'qr'):
             with self.assertRaises(EngineError): p.dispatch('POST', ['slack', 'start'], {'flow': flow})
         writer.assert_not_called()
 
     def test_unsupported_honest(self):
         p = Connectors(self.root / 'unified')
-        for name in ('line', 'kakaotalk'):
+        for name in ('kakaotalk',):
             self.assertEqual(p.status(name)['state'], 'unsupported')
             with self.assertRaises(EngineError) as exc: p.dispatch('POST', [name, 'start'], {'flow': 'qr'})
             self.assertEqual(exc.exception.code, 'unsupported_network')
@@ -129,7 +129,7 @@ class ConnectorTests(unittest.TestCase):
     def test_metadata_allowlist_and_ambiguous_rejection(self):
         event = lambda network: {'type': 'm.bridge', 'content': {'protocol': {'id': network}}}
         for name in MATRIX_NETWORKS: self.assertEqual(room_network([event(name)]), name)
-        self.assertIsNone(room_network([event('line')]))
+        self.assertIsNone(room_network([event('unknown')]))
         self.assertIsNone(room_network([event('signal'), event('telegram')]))
 
     def inbox(self, sender=None):
@@ -230,8 +230,12 @@ class ConnectorTests(unittest.TestCase):
         for name, evidence in proof.items():
             raw = (root / 'plumbing' / (name + '-template.json')).read_bytes()
             self.assertEqual(hashlib.sha256(raw).hexdigest(), evidence['template_sha256'])
-            self.assertIn('@sha256:', evidence['image'])
-            self.assertEqual({m['platform']['architecture'] for m in evidence['manifest']['manifests']}, {'amd64', 'arm64'})
+            if name == 'line':
+                self.assertEqual(len(evidence['source_commit']), 40)
+                self.assertEqual(evidence['license'], 'MIT')
+            else:
+                self.assertIn('@sha256:', evidence['image'])
+                self.assertEqual({m['platform']['architecture'] for m in evidence['manifest']['manifests']}, {'amd64', 'arm64'})
 
 
 if __name__ == '__main__': unittest.main()

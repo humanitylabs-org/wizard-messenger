@@ -1,0 +1,157 @@
+{
+  "isolation": "internal Docker network; no provider egress or published ports",
+  "carrier_image": "python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+  "owner_account_login_attempted": false,
+  "messages_sent": 0,
+  "telegram_api_configuration": "non-account syntax fixture, not usable account credentials",
+  "services": {
+    "whatsapp": {
+      "image": "dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391",
+      "liveness_http": 200,
+      "state": "disconnected",
+      "account_connected": false,
+      "authenticated_whoami_http": 200,
+      "unauthenticated_provisioning_http": 401,
+      "advertised_owner_flows": [
+        {
+          "id": "qr",
+          "name": "QR"
+        },
+        {
+          "id": "phone",
+          "name": "Pairing code"
+        }
+      ]
+    },
+    "signal": {
+      "image": "dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a",
+      "liveness_http": 200,
+      "state": "disconnected",
+      "account_connected": false,
+      "authenticated_whoami_http": 200,
+      "unauthenticated_provisioning_http": 401,
+      "advertised_owner_flows": [
+        {
+          "id": "qr",
+          "name": "QR"
+        }
+      ]
+    },
+    "slack": {
+      "image": "dock.mau.dev/mautrix/slack@sha256:0de822d47926b7077322a4fa9f349cd024af13107ab4bc63a0962dc53ef72a63",
+      "liveness_http": 200,
+      "state": "disconnected",
+      "account_connected": false,
+      "authenticated_whoami_http": 200,
+      "unauthenticated_provisioning_http": 401,
+      "advertised_owner_flows": [
+        {
+          "id": "email",
+          "name": "Email"
+        }
+      ],
+      "owner_login_start": {
+        "http": 200,
+        "type": "user_input",
+        "field_ids": [
+          "email"
+        ]
+      },
+      "cancel_http": 200
+    },
+    "instagram": {
+      "image": "dock.mau.dev/mautrix/meta@sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26",
+      "liveness_http": 200,
+      "state": "disconnected",
+      "account_connected": false,
+      "authenticated_whoami_http": 200,
+      "unauthenticated_provisioning_http": 401,
+      "advertised_owner_flows": [
+        {
+          "id": "android",
+          "name": "Native Android"
+        },
+        {
+          "id": "instagram-password",
+          "name": "Native Web"
+        }
+      ],
+      "owner_login_start": {
+        "http": 200,
+        "type": "user_input",
+        "field_ids": [
+          "username",
+          "password"
+        ]
+      },
+      "cancel_http": 200
+    },
+    "line": {
+      "image": "sha256:9a47f439a7e634017cc7a0a3f743a670ccef3d93b49d445a786742baa42997e4",
+      "liveness_http": 200,
+      "state": "disconnected",
+      "account_connected": false,
+      "authenticated_whoami_http": 200,
+      "unauthenticated_provisioning_http": 401,
+      "advertised_owner_flows": [
+        {
+          "id": "dev.highest.matrix.line.qr_login",
+          "name": "QR Code"
+        },
+        {
+          "id": "dev.highest.matrix.line.email_login",
+          "name": "Login"
+        }
+      ],
+      "owner_login_start": {
+        "http": 200,
+        "type": "user_input",
+        "field_ids": [
+          "email",
+          "password"
+        ]
+      },
+      "cancel_http": 200
+    },
+    "telegram": {
+      "image": "dock.mau.dev/mautrix/telegram@sha256:ed3f3b39289fae425a875311d8875729271c24f88ba03209bd1bfbaf31e6c78f",
+      "liveness_http": 200,
+      "state": "disconnected",
+      "account_connected": false,
+      "authenticated_whoami_http": 200,
+      "unauthenticated_provisioning_http": 401,
+      "advertised_owner_flows": [
+        {
+          "id": "phone",
+          "name": "Phone Number"
+        },
+        {
+          "id": "qr",
+          "name": "QR Code"
+        }
+      ]
+    }
+  },
+  "synapse": {
+    "image": "ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6",
+    "versions_http": 200
+  },
+  "owner_bootstrap": {
+    "registered_local_test_owner": true,
+    "matrix_whoami": true
+  },
+  "matrix_empty_sync_http": 200,
+  "dormant_readback": {
+    "state": "ok",
+    "account_authentication_attempted": false,
+    "providers": {
+      "telegram": "configured_unprobed",
+      "whatsapp": "not_configured",
+      "signal": "not_configured",
+      "slack": "not_configured",
+      "line": "not_configured",
+      "instagram": "not_configured",
+      "kakaotalk": "unsupported"
+    }
+  }
+}

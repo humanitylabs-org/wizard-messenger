@@ -32,6 +32,8 @@ class ConnectorInbox(UnifiedInbox):
         # Register/login is also a write; do not bypass the isolated sender.
         token = self.store.get('matrix_token')
         if not token:
+            if self.sender is not None and hasattr(self.sender, 'bootstrap'):
+                return self.sender.bootstrap(self)
             fail('owner_bootstrap_required', 'Initialize Matrix on the owner-controlled sender and provision its read capability separately', 409)
         return token
 

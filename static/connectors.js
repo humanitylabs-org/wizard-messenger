@@ -30,15 +30,17 @@
           const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
           for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + 4) * 5, (r + 4) * 5, 5, 5);
           canvas.setAttribute('aria-label', 'Scan with the linked devices screen on your phone'); root.append(canvas);
-        } else if (params.type === 'code') root.append(element('pre', params.data));
-        else throw new Error('Unsupported login display type');
+        } else if (params.type === 'code' || params.type === 'emoji') root.append(element('pre', params.data));
+        else if (params.type !== 'nothing') throw new Error('Unsupported login display type');
         // Explicit polling only while this owner screen is open.
         button(root, 'I scanned / entered the code — Continue', async () => step(network, await request(network, 'step', {...payload(), fields: {}}), mine));
       } else if (result.type === 'user_input') {
         const form = element('form'), inputs = {};
         for (const field of (result.user_input || {}).fields || []) {
-          const label = element('label', field.name || field.id), input = element('input'); input.name = field.id;
-          input.type = ['password', 'token'].includes(field.type) ? 'password' : 'text'; input.autocomplete = 'off'; input.required = true;
+          const label = element('label', field.name || field.id), input = element(field.type === 'select' ? 'select' : 'input'); input.name = field.id;
+          if (field.type === 'select') for (const value of field.options || []) { const option = element('option', value); option.value = value; input.append(option); }
+          // Mask all owner login fields, including email codes and MFA OTPs.
+          if (field.type !== 'select') input.type = 'password'; input.autocomplete = 'off'; input.required = true;
           label.append(input); form.append(label); inputs[field.id] = input;
         }
         const submit = element('button', 'Continue'); submit.type = 'submit'; form.append(submit); root.append(form);

@@ -31,9 +31,10 @@ PROVIDERS = {p.id: p for p in (
     Provider('telegram', 'Telegram', 29317, ('qr', 'phone')),
     Provider('whatsapp', 'WhatsApp', 29318, ('qr', 'phone')),
     Provider('signal', 'Signal', 29328, ('qr',)),
-    # Only the documented Slack app flow: no browser-cookie scraping in Messenger.
-    Provider('slack', 'Slack', 29335, ('app',)),
-    Provider('line', 'LINE', reason='No maintained compatible bridge selected; LINE Messaging API is for business bots, not a personal inbox.'),
+    # Personal email/code/workspace flow from the pinned upstream; app is bot-only.
+    Provider('slack', 'Slack', 29335, ('email',)),
+    Provider('line', 'LINE', 29322, ('dev.highest.matrix.line.qr_login', 'dev.highest.matrix.line.email_login')),
+    Provider('instagram', 'Instagram DMs', 29330, ('android', 'instagram-password')),
     Provider('kakaotalk', 'KakaoTalk', reason='No maintained compatible bridge selected; personal-account bridge support is unverified.'),
 )}
 MATRIX_NETWORKS = frozenset(k for k, p in PROVIDERS.items() if p.supported)
@@ -95,6 +96,9 @@ class Connectors:
                 'message': p.reason, 'flows': [], 'logins': [],
                 'capabilities': {'transport': 'matrix' if p.supported else None,
                                  'login_adapter': p.supported,
+                                 'writer_configured': self.writer is not None,
+                                 'bridge_live': False,
+                                 'account_connected': False,
                                  'live_parity_verified': False,
                                  'external_sender_required_for_strong_mode': True}}
         if not p.supported:
@@ -105,6 +109,7 @@ class Connectors:
             logins = result.get('logins') or []
             # Existing credentials aren't proof the remote account is connected.
             connected = any((l.get('state') or {}).get('state_event', l.get('state_event')) == 'CONNECTED' for l in logins)
+            base['capabilities'].update(bridge_live=True, account_connected=connected)
             base.update(state='connected' if connected else ('degraded' if logins else 'disconnected'),
                         flows=[{'id': f['id'], 'name': f.get('name', f['id'])} for f in result.get('login_flows', []) if f.get('id') in p.flows],
                         logins=[{'id': l.get('id'), 'name': l.get('name'), 'state': (l.get('state') or {}).get('state_event', l.get('state_event'))} for l in logins])
