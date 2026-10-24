@@ -68,10 +68,23 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   assert.equal(await page.getByRole('menuitem', {name:'Select',exact:true}).count(),0);
   await page.getByRole('menuitem', {name:'Forward to Wizard',exact:true}).waitFor();
   await page.screenshot({path:ev+'/tap-menu-dark.png'});
-  await page.evaluate(() => window.__backHandler.back());
+  { const vp = page.viewportSize(); await page.touchscreen.tap(Math.round(vp.width/2), 90); }
+  await page.waitForTimeout(150);
+  assert.equal(await page.getByRole('menu').count(), 0, 'tapping outside the menu closes it without Back');
+  assert.equal(await page.locator('.u-selection:not([hidden])').count(), 0, 'outside tap is consumed, nothing beneath reacts');
   await page.locator('.u-vplay').first().tap();
   assert.equal(await page.getByRole('menu').count(),0,'play is not a menu gesture');
   await page.locator('.u-vplay').first().tap();
+  const vpFull = page.viewportSize(); await page.setViewportSize({width: vpFull.width, height: 380}); await page.waitForTimeout(300);
+  const target = page.locator('.u-message').nth(1); await target.evaluate(el => el.scrollIntoView({block: 'center'})); await page.waitForTimeout(200);
+  const overflow = await page.evaluate(() => { const s = document.querySelector('.u-scroll,#u-scroll,.u-thread-scroll') || [...document.querySelectorAll('*')].find(n => ['auto','scroll'].includes(getComputedStyle(n).overflowY) && n.querySelector('.u-row')); return s ? s.scrollHeight - s.clientHeight : -1; });
+  const y0 = (await target.boundingBox()).y;
+  await press(target);
+  const y1 = (await target.boundingBox()).y;
+  console.log('anchor', {overflow, y0, y1});
+  assert.ok(overflow > 0, 'thread scrolls in the anchor check'); assert.ok(Math.abs(y1 - y0) < 4, 'long-press selection keeps the pressed message in place (' + y0 + ' -> ' + y1 + ')');
+  await page.setViewportSize(vpFull); await page.waitForTimeout(300);
+  await page.getByRole('button', {name: 'Cancel', exact: true}).click(); await page.locator('.u-selection').waitFor({state: 'hidden'});
   await press(page.locator('.u-message').first());
   assert.equal(await page.evaluate(() => window.getSelection().toString()),'','initial touch hold never highlights text');
   assert.equal(await page.getByRole('menu').count(),0);

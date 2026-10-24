@@ -354,6 +354,11 @@
     el.addEventListener('contextmenu', e => { e.preventDefault(); if (el.dataset.held) return; cancel(); open(); });
   }
   // One small action menu under a held row; used by Chats/Groups rows here and the Messenger tab's rows (app.js).
+  // A tap anywhere outside an open menu closes it (no Back needed); the tap is consumed so it never lands on the chat beneath.
+  function outsideCloses(layer, panel) {
+    layer.addEventListener('pointerdown', e => { if (panel.contains(e.target)) return; e.preventDefault(); swallowRelease(); closeOverlay(); });
+    layer.addEventListener('click', e => { if (!panel.contains(e.target)) closeOverlay(); });
+  }
   function actionMenu(card, title, actions) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
@@ -361,7 +366,7 @@
     const list = node('div', 'u-actions');
     for (const a of actions) { const it = button('', () => { closeOverlay(); a.run(); }, 'u-act'); it.setAttribute('role', 'menuitem'); it.append(icon(a.icon), node('span', '', a.label)); list.append(it); }
     panel.append(list); layer.append(panel);
-    layer.onclick = e => { if (e.target === layer) closeOverlay(); };
+    outsideCloses(layer, panel);
     $('messenger').append(layer);
     const r = card.getBoundingClientRect(), H = $('messenger').clientHeight;
     panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 40 - 50 * actions.length)) + 'px';
@@ -656,7 +661,17 @@
     const count = node('strong', '', '0 selected'), cancel = button('Cancel', () => clear(), 'secondary');
     const forward = button('Forward to Wizard', () => send(), 'primary'); bar.append(cancel, count, forward); head.after(bar);
     let active = false, sending = false, holdAt = 0, queue = null, cursor = 0;
-    function paint() {
+    // Entering/leaving selection adds a check column that reflows every bubble (and swaps the header for the bar);
+    // keep the touched message (or the one mid-screen) at the same place on screen, like Telegram.
+    const scrollerOf = el => { for (let n = el?.parentElement; n; n = n.parentElement) { const o = getComputedStyle(n).overflowY; if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight) return n; } return null; };
+    function middleRow() { let best = null, d = Infinity; const mid = innerHeight / 2; for (const {node: row} of entries()) if (row?.isConnected) { const r = row.getBoundingClientRect(); const k = Math.abs((r.top + r.bottom) / 2 - mid); if (r.bottom > 0 && r.top < innerHeight && k < d) { d = k; best = row; } } return best; }
+    function paint(anchor) {
+      anchor = anchor || (bar.hidden === active ? middleRow() : null);
+      const sc = anchor && scrollerOf(anchor), top0 = anchor?.getBoundingClientRect().top;
+      paintRows();
+      if (sc) sc.scrollTop += anchor.getBoundingClientRect().top - top0;
+    }
+    function paintRows() {
       bar.hidden = !active; head.hidden = active; count.textContent = ids.size + ' selected';
       forward.disabled = !ids.size || sending; cancel.disabled = sending;
       forward.textContent = sending ? 'Forwarding…' : 'Forward to Wizard';
@@ -713,7 +728,7 @@
       } catch (e) { toast((e.message || 'Could not forward') + ' · Try Forward again', 4500); }
       finally { sending = false; paint(); }
     }
-    return {get active() { return active; }, forward(selected) { if (sending) return; ids.clear(); for (const id of selected) ids.add(id); active = true; queue = null; cursor = 0; return send(); }, begin(id) { active = true; ids.add(id); queue = null; cursor = 0; paint(); }, paint, clear};
+    return {get active() { return active; }, forward(selected) { if (sending) return; ids.clear(); for (const id of selected) ids.add(id); active = true; queue = null; cursor = 0; return send(); }, begin(id) { const anchor = entries().find(x => x.message.id === id)?.node; active = true; ids.add(id); queue = null; cursor = 0; paint(anchor); }, paint, clear};
   }
 
   function toneOf(name) { let h = 0; for (const ch of name || '?') h = (h * 31 + ch.codePointAt(0)) >>> 0; return h % TONES; }
@@ -859,7 +874,7 @@
     item('Delete for me', 'trash', () => del(m, false), 'danger');
     if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
     panel.append(list); layer.append(panel);
-    layer.onclick = e => { if (e.target === layer) closeOverlay(); };
+    outsideCloses(layer, panel);
     $('messenger').append(layer);
     const r = b.getBoundingClientRect(), H = $('messenger').clientHeight;
     panel.style.top = Math.max(12, Math.min(r.bottom + 8, H - 16 - (telegram ? 380 : 320))) + 'px';
