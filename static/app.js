@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.6'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.7'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -202,7 +202,9 @@
       const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
-    const envelope = await response.json();
+    // A restarting release answers through the gateway with an empty or HTML body: say so, never surface a parser error.
+    let envelope;
+    try { envelope = await response.json(); } catch { signal?.throwIfAborted(); throw new APIError('server_restarting', response.status); }
     signal?.throwIfAborted();
     if (!response.ok || envelope.ok !== true) throw new APIError(envelope.error?.code || 'request_failed', response.status, envelope.error?.message);
     return envelope.result;
@@ -217,6 +219,7 @@
       invalid_nip05: "That address doesn't look right.", nip05_unverified: 'This address could not be verified. Ask for their Messenger address.', nip05_not_found: 'This address could not be found. Ask for their Messenger address.',
       key_package_not_found: 'This address is not ready for chats yet.', no_key_package: 'This address is not ready for chats yet.',
       locked: 'Unlock Messenger to continue.', vault_locked: 'Unlock Messenger to continue.', request_id_conflict: 'This draft could not be retried safely.',
+      server_restarting: 'Messenger is restarting. Try again in a moment.',
       send_outcome_unknown: 'Checking delivery. Your message will not be sent again automatically.',
       invalid_input: 'Check the text and try again.', csrf_invalid: 'Open Messenger from Wizard to reconnect.'
     };
