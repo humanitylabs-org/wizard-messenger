@@ -128,20 +128,23 @@
     if (now - d < 6 * 864e5) return d.toLocaleDateString([], {weekday: 'long'});
     return d.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? {year: 'numeric'} : {})});
   }
-  async function newChat() {
-    // The full A-Z contact list lives only here.
-    const sheet = overlay('New chat'); sheet.classList.add('tall');
+  async function newChat(shareText) {
+    // The full A-Z contact list lives only here. From Wizard's share sheet it picks who gets the shared text.
+    const title = shareText ? 'Send to…' : 'New chat';
+    const sheet = overlay(title); sheet.classList.add('tall');
+    // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
+    const settled = shareText ? new Promise(resolve => { s.answer = () => resolve(true); }) : null;
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
-      const d = await call('directory'); if (s.overlay !== 'New chat') return;
+      const d = await call('directory'); if (s.overlay !== title) return settled;
       const all = [...d.people, ...d.groups.map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
       const draw = () => {
         const q = search.value.trim().toLowerCase(); list.replaceChildren(); let letter = '';
         for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 200)) {
           const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
           if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
-          const row = button('', () => { closeOverlay(); openPerson(p.id); }, 'u-directory-row');
+          const row = button('', () => { if (shareText) placeShared(p.id, shareText); closeOverlay(); openPerson(p.id); }, 'u-directory-row');
           const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', p.group ? 'Group' : networksOf(p).map(cap).join(' · ')));
           row.append(avatar(p.display_name, 'small'), text); list.append(row);
         }
@@ -149,6 +152,7 @@
       };
       search.oninput = draw; draw(); requestAnimationFrame(() => search.focus());
     } catch (e) { error(e); }
+    return settled;
   }
   // ---------- live store: lists and open threads stay in memory and follow the change feed ----------
   const store = {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}, pending: 0};
@@ -165,7 +169,7 @@
   const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
   let saveTimer = null, savedOrder = [];
   function persist() {
-    syncBadge(); clearTimeout(saveTimer);
+    syncBadge(); shareTargets(); clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const threads = {};
       for (const id of savedOrder.slice(0, THREADS_KEPT)) { const t = store.threads[id]; if (t) threads[id] = {person: t.person, has_more: true, messages: t.messages.filter(m => !m.pending && !m.failed).slice(-MESSAGES_KEPT).map(({retry, local, ...m}) => m)}; }
@@ -1257,11 +1261,43 @@
     switchTab(['groups', 'messenger'].includes(at?.tab) ? at.tab : 'people');
     if (at?.person && at.tab !== 'messenger') openPerson(at.person);
   }
+  // ---------- Wizard share sheet: recent chats are direct targets; a share lands in the composer, never auto-sent ----------
+  const SHARE_TARGETS = 12;
+  let sharedTargetsKey = '';
+  function shareTargetRows() {
+    return [...(store.lists.people || []), ...(store.lists.groups || []).map(g => ({...g, group: true}))]
+      .filter(p => p.id && p.display_name).sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, SHARE_TARGETS)
+      .map(p => ({id: p.id, name: p.display_name, detail: p.group || listKey(p) === 'groups' ? 'Group' : networksOf(p).map(cap).join(' · ')}));
+  }
+  function shareTargets() {
+    const share = window.WizardApp?.share; if (!share?.targets) return;
+    const rows = shareTargetRows();
+    const key = JSON.stringify(rows); if (key === sharedTargetsKey) return; sharedTargetsKey = key;
+    Promise.resolve(share.targets(rows)).catch(() => {});
+  }
+  function sharedText(item) { return [item.text, item.url].filter(Boolean).join('\n').slice(0, 16000); }
+  function placeShared(id, text) {
+    const had = (s.drafts[id] || '').trim();
+    s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
+  }
+  function receiveShare(item) {
+    const text = sharedText(item);
+    if (!s.ready || !text) return false; // stays pending in Wizard; check() runs again once unlocked
+    if (s.overlay) closeOverlay();
+    if (s.tab === 'messenger' || s.search != null) switchTab('people');
+    if (item.target) { placeShared(item.target, text); openPerson(item.target); return true; }
+    if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
+    return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
+  }
+  function listenForShares() {
+    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
+  }
   window.MessengerUnified = {
+    receiveShare, shareTargetRows,
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageSelection,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
+    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() {
       if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
@@ -1273,10 +1309,11 @@
       if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed();
+      shareTargets(); Promise.resolve(window.WizardApp?.share?.check?.()).catch(() => {}); // a share that waited for unlock
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();
