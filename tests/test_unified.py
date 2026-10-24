@@ -29,6 +29,22 @@ class PeopleTests(unittest.TestCase):
         self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'me', 'timestamp': 200})
         self.assertEqual([p['display_name'] for p in self.store.people(chats=False)], ['Amy', 'Bob', 'Zed'])
 
+    def test_all_deleted_chats_disappear_and_new_messages_restore_them(self):
+        for kind in ('person', 'group'):
+            a = self.store.identity('telegram', '!' + kind, kind, kind)
+            self.store.add_message('$old-' + kind, a, 'sender', False, 'keep', 100)
+            self.store.add_message('$new-' + kind, a, 'sender', False, 'delete', 200)
+            self.store.redact('$new-' + kind)
+            self.assertEqual(self.store.people(kind)[0]['last']['text'], 'keep')
+            self.store.redact('$old-' + kind)
+            self.assertEqual(self.store.people(kind), [])
+            self.assertEqual(sum(p.get('unread', 0) for p in self.store.people(kind)), 0)
+            self.assertEqual(len(self.store.people(kind, chats=False)), 1)
+            self.assertEqual(len(self.store.messages(a['person_id'])), 2)
+            self.store.add_message('$restore-' + kind, a, 'sender', False, 'back', 300)
+            self.assertEqual(self.store.people(kind)[0]['last']['text'], 'back')
+            self.assertEqual(self.store.people(kind)[0]['unread'], 1)
+
     def test_mute_persists_and_keeps_unread(self):
         a = self.store.identity('telegram', '!mute', 'Mia')
         self.store.add_message('$m1', a, 'mia', False, 'hi', 100)
@@ -92,6 +108,21 @@ class UnifiedTests(unittest.TestCase):
         self.engine.status.return_value = {'state': 'locked'}
         self.inbox = UnifiedInbox(self.tmp.name, self.engine)
         self.a = self.inbox.store.identity('telegram', '!a', 'Alice')
+
+    def test_all_deleted_removal_is_carried_by_change_feed(self):
+        self.inbox.store.add_message('$gone', self.a, 'alice', False, 'spam', 100)
+        before = self.inbox.store.seq
+        self.inbox.store.redact('$gone')
+        result = self.inbox.updates(before, 0)
+        self.assertEqual(result['removed'], [self.a['person_id']])
+        self.assertEqual(result['people'], [])
+        self.assertTrue(result['messages'][self.a['person_id']][0]['deleted'])
+        self.assertGreater(result['seq'], before)
+        before = result['seq']
+        self.inbox.store.add_message('$back', self.a, 'alice', False, 'hello again', 200)
+        result = self.inbox.updates(before, 0)
+        self.assertEqual(result['removed'], [])
+        self.assertEqual(result['people'][0]['unread'], 1)
 
     def test_transcript_persists_and_is_carried_by_change_feed(self):
         self.inbox.store.add_message('$voice', self.a, 'alice', False, '', 100, msgtype='m.audio', media={'voice': True, 'mime': 'audio/ogg'})

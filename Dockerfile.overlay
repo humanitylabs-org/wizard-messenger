@@ -1,0 +1,9 @@
+# Static/Python-only overlay over the audited 11.9 binary carrier.
+# Build from the repository root; no owner data or credentials enter this image.
+FROM wizard-messenger:0.2.0-unified.11.9
+ARG REVISION
+LABEL org.opencontainers.image.revision=$REVISION \
+      org.opencontainers.image.version="0.2.0-unified.11.10" \
+      org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
+COPY server.py unified.py /app/
+COPY static/app.js static/unified.js static/unified.css /app/static/

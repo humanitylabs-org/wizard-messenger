@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.9'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.10'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -460,13 +460,13 @@
       node.className = 'message' + (outgoing ? ' sent' : '') + (delivery === 'failed' ? ' not-sent' : '');
       if (!node.dataset.selectionBound && item.message.message_id) {
         node.dataset.selectionBound = '1'; const messageId = item.message.message_id;
-        window.MessengerUnified?.holdToMenu?.(node.children[0], () => {
+        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => state.selection, id: messageId, menu: () => {
           if (state.selection?.active) return;
           window.MessengerUnified.actionMenu(node, 'Message', [
-            {label: 'Select', icon: 'copy', run: () => state.selection.begin(messageId)},
+            {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection.forward([messageId])},
             {label: 'Copy', icon: 'copy', run: () => navigator.clipboard?.writeText(cacheFor(state.group).messages.find(m => m.message_id === messageId)?.text || '').catch(() => {})}
           ]);
-        });
+        }});
       }
       node.dataset.messageId = item.message.message_id || ''; node.dataset.requestId = item.attempt?.request_id || '';
       const bubble = node.children[0]; if (bubble.textContent !== item.message.text) bubble.textContent = item.message.text;
