@@ -1,0 +1,95 @@
+FIXTURE ONLY; no live providers or whole-Hermes isolation claim
+IMAGE sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+RESOURCES messenger-same-host-df80e4587e4e
+PASS Docker config network=none, read-only, nonprivileged, drop ALL
+PASS worker only code + agent socket mounts, both read-only
+PASS owner and agent socket volumes distinct; owner lacks agent/state mounts
+PASS worker no host PID/IPC, no devices, no extra hosts
+PASS default policy no-access and ledger empty
+PASS default denies read
+PASS default denies create
+PASS owner sets read-only
+PASS owner policy readback read-only
+PASS read-only permits fixture read
+PASS read-only denies create
+PASS owner sets draft-only
+PASS owner policy readback draft-only
+PASS draft-only permits read
+PASS create draft readback
+PASS update draft readback
+PASS stale update denied
+PASS owner sets read-only
+PASS owner policy readback read-only
+PASS read-only denies update existing draft
+PASS owner sets draft-only
+PASS owner policy readback draft-only
+PASS worker denied send
+PASS worker denied approve
+PASS worker denied freeze
+PASS worker denied policy
+PASS worker denied inspect
+PASS worker denied exec
+PASS worker denied upload
+PASS worker denied proxy
+PASS worker cannot schema-smuggle owner flag
+PASS worker cannot read /state/fixture-provider-key
+PASS worker cannot read /state/fixture.json
+PASS worker cannot read /owner/control.sock
+PASS worker cannot read /var/run/docker.sock
+PASS worker cannot read /run/docker.sock
+PASS worker cannot read /run/user/1000/docker.sock
+PASS worker cannot read /home/oscar/.hermes/.env
+PASS worker cannot read /home/oscar/runtipi
+PASS worker cannot read /root/.ssh/id_rsa
+PASS worker cannot read /host
+PASS worker cannot read /proc/1/root/state/fixture-provider-key
+PASS worker cannot connect /owner/control.sock
+PASS worker cannot connect /agent/../owner/control.sock
+PASS worker cannot connect /var/run/docker.sock
+PASS worker cannot connect /run/user/1000/docker.sock
+PASS worker no provider/owner credential env
+PASS worker zero effective caps
+PASS worker no-new-privileges
+PASS worker seccomp filter active
+PASS worker unprivileged UID
+PASS worker has no sudo executable
+PASS worker has no Docker executable
+PASS worker immutable mount /code/broker.py
+PASS worker immutable mount /agent/injected
+PASS worker only loopback interface
+PASS worker blocked network 172.17.0.1:2375
+PASS worker blocked network 172.17.0.1:80
+PASS worker blocked network 169.254.169.254:80
+PASS worker blocked network 1.1.1.1:443
+PASS worker blocked network 127.0.0.1:2375
+PASS worker no host gateway alias
+PASS worker cannot mount
+ADVERSARIAL WORKER COMPLETE
+PASS valid-shape worker authority attempt denied: policy
+PASS valid-shape worker authority attempt denied: approve
+PASS valid-shape worker authority attempt denied: send
+PASS actual ledger has ZERO worker-caused sends
+PASS owner cannot approve unfrozen draft
+PASS owner stale freeze denied
+PASS owner independent review of exact recipient/body/revision
+PASS independently computed owner digest matches
+PASS owner freezes exact revision+digest
+PASS frozen draft exact readback
+PASS worker cannot alter frozen draft
+PASS owner wrong digest denied
+PASS owner approves exact frozen draft
+PASS approval readback exact sent draft
+PASS owner approval retry idempotent
+PASS ledger exactly ONE owner-authorized frozen send
+FIXTURE LEDGER [{"authority": "owner-socket", "body": "exact owner-reviewed text", "digest": "4ff531a8c1a35b23f2e339179ebadc0e16f213351f9db4cbb78a16a5f23aede6", "id": "1", "recipient": "fixture:bob", "revision": 2}]
+PASS unsupported Full access rejected
+PASS owner sets no-access
+PASS owner policy readback no-access
+PASS restored policy denies read
+PASS owner sets draft-only
+PASS owner policy readback draft-only
+PASS restart fails closed to no-access with ledger durable
+PASS restart denies worker read
+PROOF PASS: restricted worker, fixture-only read/draft; owner-only exact frozen approval
+PASS final no-access restoration read-back verified
+PASS test resources removed and read-back verified
