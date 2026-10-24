@@ -229,6 +229,27 @@ button { touch-action: manipulation; }
 .u-dur { font-size: 12px; opacity: .8; min-width: 32px; }
 .u-speed { display: none; flex: 0 0 auto; white-space: nowrap; min-width: 0; min-height: 0; height: 22px; padding: 0 7px; border-radius: 11px; background: rgba(255,255,255,.18); color: inherit; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .u-voice.playing .u-speed { display: inline-block; }
+/* Wizard skin roles, with the existing dark standalone palette as fallback. */
+:root[data-wz-hosted] {
+  --bg: var(--wz-base); --surface: var(--wz-surface); --raised: var(--wz-surface-raised); --raised-2: var(--wz-chrome);
+  --ink: var(--wz-text); --ink-2: var(--wz-text-secondary); --ink-3: var(--wz-text-muted);
+  --line: var(--wz-border); --line-2: var(--wz-border); --accent: var(--wz-accent); --accent-press: var(--wz-accent);
+  --accent-soft: var(--wz-accent-soft); --on-accent: var(--wz-on-accent); --bubble-in: var(--wz-surface-raised); --bubble-out: var(--wz-accent);
+}
+:root[data-wz-hosted] .u-day { background: var(--wz-chrome); }
+/* Transcript and selection extend existing message bubbles, not a second message renderer. */
+.u-voice-note { min-width: 0; max-width: 100%; }
+.u-message .u-transcript { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; color: inherit; }
+.u-transcribe { display: block; margin-top: 2px; padding: 4px 0; min-height: 32px; min-width: 0; font-size: 13px; color: var(--wz-accent, var(--accent)); }
+.outgoing .u-transcribe { color: inherit; text-decoration: underline; }
+.u-selection { display: flex; align-items: center; flex: 0 0 auto; gap: 8px; padding: 8px 10px; background: var(--wz-chrome, var(--surface)); color: var(--wz-text, var(--ink)); border-bottom: 1px solid var(--wz-border, var(--line)); }
+.u-selection strong { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; }
+.u-selection button { min-height: 44px; padding: 0 10px; font-size: 13px; white-space: nowrap; }
+.u-selection .primary { background: var(--wz-accent, var(--accent)); color: var(--wz-on-accent, var(--on-accent)); }
+.u-selecting { position: relative; padding-left: 28px; }
+.u-selection-check { position: absolute; left: 3px; top: 12px; font-size: 19px; color: var(--wz-accent, var(--accent)); pointer-events: none; }
+.u-selected > .u-message, .u-selected > .bubble { outline: 2px solid var(--wz-accent, var(--accent)); outline-offset: 2px; }
+.u-selecting .u-message, .u-selecting .bubble { cursor: pointer; }
 /* reactions */
 .u-reactions { display: flex; gap: 4px; margin: -6px 8px 0; position: relative; z-index: 1; flex-wrap: wrap; }
 .u-react { min-height: 26px; min-width: 0; padding: 0 8px; border-radius: 13px; font-size: 14px; background: var(--raised-2); border: 2px solid var(--bg); color: var(--ink); }
@@ -270,7 +291,7 @@ button { touch-action: manipulation; }
 .u-act { display: flex; align-items: center; gap: 14px; min-height: 46px; padding: 0 18px; border-radius: 0; justify-content: flex-start; background: none; color: var(--ink); font-size: 15px; }
 .u-act svg { width: 20px; height: 20px; }
 .u-act.danger { color: #ff8a8a; }
-.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: #3a3a40; color: var(--ink); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: var(--wz-surface-raised, #3a3a40); color: var(--wz-text, var(--ink)); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
 /* photo viewer */
 .u-viewer { background: #000; flex-direction: column; align-items: stretch; justify-content: center; animation: none; }
 .u-viewer header { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; background: linear-gradient(rgba(0,0,0,.6), transparent); z-index: 2; color: #fff; }

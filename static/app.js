@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.7'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.8'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -458,6 +458,16 @@
       if (!node) { node = element('article', 'message'); node.append(element('div', 'bubble'), element('time', 'message-time'), element('div', 'message-status')); state.nodes.set(item.key, node); }
       live.add(item.key); const outgoing = item.message.direction === 'sent', delivery = item.attempt?.state;
       node.className = 'message' + (outgoing ? ' sent' : '') + (delivery === 'failed' ? ' not-sent' : '');
+      if (!node.dataset.selectionBound && item.message.message_id) {
+        node.dataset.selectionBound = '1'; const messageId = item.message.message_id;
+        window.MessengerUnified?.holdToMenu?.(node.children[0], () => {
+          if (state.selection?.active) return;
+          window.MessengerUnified.actionMenu(node, 'Message', [
+            {label: 'Select', icon: 'copy', run: () => state.selection.begin(messageId)},
+            {label: 'Copy', icon: 'copy', run: () => navigator.clipboard?.writeText(cacheFor(state.group).messages.find(m => m.message_id === messageId)?.text || '').catch(() => {})}
+          ]);
+        });
+      }
       node.dataset.messageId = item.message.message_id || ''; node.dataset.requestId = item.attempt?.request_id || '';
       const bubble = node.children[0]; if (bubble.textContent !== item.message.text) bubble.textContent = item.message.text;
       node.children[1].textContent = timeLabel(item.message.created_at); if (ms) node.children[1].dateTime = new Date(ms).toISOString();
@@ -483,6 +493,7 @@
       else scroll.scrollTop = oldTop;
       if (!older && state.nodes.size > oldCount) $('new-messages').hidden = false;
     }
+    state.selection?.paint();
     markSeen();
   }
   function resizeDraft() {
@@ -492,14 +503,17 @@
   }
   function openChat(group) {
     if (state.group === group) { closeSheet(); return; }
+    state.selection?.clear();
     cancel(); if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
     state.group = group; state.chatOpening = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
     $('chat-error').textContent = ''; $('composer-error').textContent = ''; $('new-messages').hidden = true;
     $('draft').value = readRecord(group).draft; $('no-selection').hidden = true; $('chat').hidden = false;
     $('workspace').classList.add('has-chat'); renderHeader(); renderList(); renderMessages(); resizeDraft(); updateComposer();
+    if (!state.selection) state.selection = window.MessengerUnified?.messageSelection?.($('chat'), () => cacheFor(state.group).messages.map(m => ({message: {id: m.message_id, original: m.text || '', sender: peerName(dmById(state.group)) || 'Sender', outgoing: m.direction === 'sent', timestamp: stamp(m.created_at)}, node: [...state.nodes.values()].find(n => n.dataset.messageId === m.message_id)})));
     run(snapshot);
   }
   function leaveChat() {
+    state.selection?.clear();
     if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
     state.group = null; state.chatOpening = null; $('chat').hidden = true; $('no-selection').hidden = false;
     $('workspace').classList.remove('has-chat'); $('draft').value = ''; state.nodes.clear(); $('messages').replaceChildren();
@@ -602,6 +616,7 @@
   // Domain-only Back: the shared client owns platform/root behavior.
   function backStep() {
     if (window.MessengerUnified?.active()) return window.MessengerUnified.back();
+    if (!state.sheet && state.selection?.active) { state.selection.clear(); return true; }
     const next = backLayer(state);
     if (!next.handled) return false;
     cancel();

@@ -67,6 +67,7 @@
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
   function back() {
+    if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
@@ -414,6 +415,7 @@
     const pos = () => src ? offset + (ctx.currentTime - startedAt) * rate : offset;
     const rateLabel = () => (rate === 1.5 ? '1.5' : String(rate)) + '×';
     const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    const noteTypes = new Map();
     const fetched = new Map(); // url -> Promise<ArrayBuffer>: voice notes downloaded ahead, before anyone taps Play
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
     // so pause/seek/next note doesn't pump the volume.
@@ -431,7 +433,7 @@
     const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
     const fetchNote = url => {
       if (!fetched.has(url)) {
-        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); return r.arrayBuffer(); }));
+        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); noteTypes.set(url, r.headers.get('Content-Type')); return r.arrayBuffer(); }));
         fetched.get(url).catch(() => fetched.delete(url));
         while (fetched.size > 16) fetched.delete(fetched.keys().next().value);
       }
@@ -456,6 +458,7 @@
     };
     return {
       rateLabel,
+      async blob(url, type) { if (localAudio.has(url)) return localAudio.get(url); const bytes = await fetchNote(url); return new Blob([bytes], {type: type || noteTypes.get(url) || 'application/octet-stream'}); },
       // Tap the speed pill: 1x -> 1.5x -> 2x -> 1x, applied mid-note from the same spot.
       cycleRate() {
         const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
@@ -483,7 +486,7 @@
   })();
 
   async function openPerson(id, hint) {
-    s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
+    view.selection?.clear(); s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
     const cached = store.threads[id];
     buildThread(id, cached?.person || hint || {display_name: '', identities: []});
     savedOrder = [id, ...savedOrder.filter(x => x !== id)];
@@ -522,6 +525,7 @@
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
     root.append(composer(id, p));
+    view.selection = messageSelection(root, () => (store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
   }
   function nearBottom() { const sc = view.scroll; return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
   function paintThread(toBottom = false) {
@@ -540,7 +544,7 @@
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([m.id, m.original, m.translated, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
+      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -554,6 +558,7 @@
     if (follow) scroll.scrollTop = scroll.scrollHeight;
     else if (view.anchor) { scroll.scrollTop = scroll.scrollHeight - before; }
     view.anchor = false;
+    view.selection?.paint();
     if (follow) markRead();
   }
   async function older() {
@@ -625,6 +630,70 @@
     if (!m.pending && !m.deleted) gestures(row, b, m);
     return row;
   }
+  // One selection/forward controller for unified media threads and the text-only Marmot tab.
+  // Selection is disposable UI, never an update hold. Sharing is OUT through Wizard's existing share service:
+  // on Android choose Wizard in the OS sheet, then its existing new-chat/recent-thread picker.
+  function messageSelection(root, entries) {
+    const ids = new Set(), head = root.querySelector('.u-thread-head,.chat-header');
+    const bar = node('header', 'u-selection'); bar.hidden = true; bar.setAttribute('aria-label', 'Selected messages');
+    const count = node('strong', '', '0 selected'), cancel = button('Cancel', () => clear(), 'secondary');
+    const forward = button('Forward to Wizard', () => send(), 'primary'); bar.append(cancel, count, forward); head.after(bar);
+    let active = false, sending = false, queue = null, cursor = 0;
+    function paint() {
+      bar.hidden = !active; head.hidden = active; count.textContent = ids.size + ' selected';
+      forward.disabled = !ids.size || sending; cancel.disabled = sending;
+      forward.textContent = sending ? 'Forwarding…' : 'Forward to Wizard';
+      for (const {message: m, node: row} of entries()) if (row) {
+        row.classList.toggle('u-selecting', active); row.classList.toggle('u-selected', ids.has(m.id));
+        row.setAttribute('aria-selected', String(ids.has(m.id)));
+        let check = row.querySelector(':scope > .u-selection-check');
+        if (active && !check) { check = node('span', 'u-selection-check'); check.setAttribute('aria-hidden', 'true'); row.append(check); }
+        if (check) { check.hidden = !active; check.textContent = ids.has(m.id) ? '✓' : '○'; }
+      }
+    }
+    function clear() { if (sending) return; active = false; ids.clear(); queue = null; cursor = 0; paint(); }
+    root.addEventListener('click', e => {
+      if (!active || !e.target.closest('.u-row,.message')) return;
+      e.preventDefault(); e.stopImmediatePropagation(); if (sending) return;
+      const found = entries().find(x => x.node?.contains(e.target)); if (!found || found.message.deleted || found.message.pending) return;
+      const id = found.message.id; if (ids.has(id)) ids.delete(id); else ids.add(id); queue = null; cursor = 0; paint();
+    }, true);
+    const line = m => (m.outgoing ? 'You' : nameOf(m.sender) || 'Sender') + ' (' + new Date(m.timestamp).toLocaleString() + '): ' + (m.original || '') + (m.transcript ? '\nTranscript: ' + m.transcript : '');
+    async function send() {
+      if (sending || !ids.size) return; sending = true; paint();
+      try {
+        if (!queue) {
+          queue = []; let texts = [];
+          const flush = () => { if (texts.length) queue.push({text: texts.join('\n\n')}); texts = []; };
+          for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) { flush(); queue.push({message: m}); if (m.original || m.transcript) texts.push(line(m)); }
+            else texts.push(line(m));
+          }
+          flush(); cursor = 0;
+        }
+        const receipts = [];
+        while (cursor < queue.length) {
+          const op = queue[cursor]; let receipt;
+          if (op.message) {
+            const m = op.message, blob = m.msgtype === 'm.audio' ? await player.blob(m.local || mediaURL(m.id), m.media?.mime || m.media?.mimetype) : await fetch(m.local || mediaURL(m.id), {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('Could not download attachment'); return r.blob(); });
+            const sender = (m.outgoing ? 'You' : nameOf(m.sender) || 'Sender').replace(/[\/:*?"<>|\x00-\x1f]/g, '_');
+            const d = new Date(m.timestamp), pad = n => String(n).padStart(2, '0');
+            const date = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + '-' + pad(d.getMinutes());
+            const type = blob.type.split(';')[0], ext = {'audio/ogg':'ogg','audio/wav':'wav','audio/webm':'webm','audio/mp4':'m4a','audio/mpeg':'mp3','image/jpeg':'jpg','image/png':'png','image/webp':'webp','video/mp4':'mp4'}[type] || 'bin';
+            const filename = (m.media.filename || sender + (m.msgtype === 'm.audio' ? ' voice note ' : ' attachment ') + date + '.' + ext).replace(/[\/:*?"<>|\x00-\x1f]/g, '_');
+            receipt = await WizardApp.share.file(new File([blob], filename, {type: blob.type}), {title: 'Forwarded from ' + sender});
+          } else receipt = await WizardApp.share.text({text: op.text, title: 'Forwarded from Messenger'});
+          if (receipt !== 'shared' && receipt !== 'copied') { toast(receipt === 'cancelled' ? 'Share cancelled · selection kept; retry resumes' : 'Sharing unavailable · selection kept; retry resumes', 4500); return; }
+          receipts.push(receipt); cursor++;
+        }
+        toast('Share result: ' + [...new Set(receipts)].join(', ') + ' · choose Wizard in the share sheet', 4500);
+        sending = false; clear();
+      } catch (e) { toast((e.message || 'Could not forward') + ' · Try Forward again', 4500); }
+      finally { sending = false; paint(); }
+    }
+    return {get active() { return active; }, begin(id) { active = true; ids.add(id); queue = null; cursor = 0; paint(); }, paint, clear};
+  }
+
   function toneOf(name) { let h = 0; for (const ch of name || '?') h = (h * 31 + ch.codePointAt(0)) >>> 0; return h % TONES; }
   function visualMedia(m) {
     const box = node('button', 'u-media'); box.type = 'button'; box.setAttribute('aria-label', m.msgtype === 'm.video' ? 'Play video' : 'Open photo');
@@ -668,8 +737,30 @@
     box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)), speed);
     player.adopt(box, m.client_id || m.id);
     if (!m.media?.voice && m.media?.filename) box.append(node('span', 'u-file-name', m.media.filename));
-    return box;
+    const wrap = node('div', 'u-voice-note'); wrap.append(box);
+    const transcript = node('p', 'u-transcript', m.transcript || ''); transcript.hidden = !m.transcript; wrap.append(transcript);
+    if (!m.transcript && !m.pending && window.WizardApp?.voice?.transcribe) {
+      const transcribe = button('Transcribe', async () => {
+        if (transcribe.disabled) return; transcribe.disabled = true; transcribe.textContent = 'Transcribing…';
+        try {
+          let text = transcriptionText.get(m.id);
+          if (!text) {
+            const blob = await player.blob(m.local || mediaURL(m.id), m.media?.mime || m.media?.mimetype);
+            if (blob.size > 25 * 1048576) throw new Error('Voice note is larger than 25 MB');
+            const result = await WizardApp.voice.transcribe(blob);
+            if (result.unavailable) throw new Error('Transcription is not set up on this Wizard');
+            text = String(result.text || '').trim(); if (!text) throw new Error('No speech found');
+            transcriptionText.set(m.id, text);
+          }
+          const saved = await call('messages/' + encodeURIComponent(m.id) + '/transcript', {text});
+          m.transcript = saved.text; transcriptionText.delete(m.id); persist();
+          transcript.textContent = m.transcript; transcript.hidden = false; transcribe.remove();
+        } catch (e) { transcribe.disabled = false; transcribe.textContent = 'Retry transcription'; toast((e.message || 'Could not transcribe') + ' · Tap Retry transcription', 4500); }
+      }, 'u-transcribe link'); wrap.append(transcribe);
+    }
+    return wrap;
   }
+  const transcriptionText = new Map(); // retain a successful result if saving failed: Retry only saves, never bills twice
   function jumpTo(id) { const el = view.scroll?.querySelector('[data-id="' + CSS.escape(id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
   function translate(m) {
     action(async () => {
@@ -682,9 +773,10 @@
   function gestures(row, b, m) {
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false;
     b.addEventListener('pointerdown', e => {
-      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate,.u-speed')) return;
+      if (view.selection?.active || e.button > 0 || e.target.closest('a,.u-vplay,.u-translate,.u-speed,.u-transcribe,.u-transcript')) return;
+      delete b.dataset.held;
       x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
-      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); swallowRelease(); menu(m, b); }, 450);
+      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); b.dataset.held = '1'; swallowRelease(); menu(m, b); }, 450);
     });
     b.addEventListener('pointermove', e => {
       const mx = e.clientX - x0, my = e.clientY - y0;
@@ -693,7 +785,7 @@
     });
     const end = () => { if (timer) { clearTimeout(timer); timer = null; } if (swiping) { row.style.transform = ''; row.classList.remove('arm'); if (dx > 56) startReply(m); swiping = false; } };
     b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end); b.addEventListener('pointerleave', end);
-    b.addEventListener('contextmenu', e => { e.preventDefault(); if (timer) clearTimeout(timer); timer = null; menu(m, b); });
+    b.addEventListener('contextmenu', e => { e.preventDefault(); if (b.dataset.held || view.selection?.active) return; if (timer) clearTimeout(timer); timer = null; menu(m, b); });
   }
   function menu(m, b) {
     const t = store.threads[view.id]; if (!t) return;
@@ -710,8 +802,9 @@
     }
     const list = node('div', 'u-actions');
     const item = (label, ic, fn, cls = '') => { const it = button('', () => { closeOverlay(); fn(); }, 'u-act ' + cls); it.setAttribute('role', 'menuitem'); it.append(icon(ic), node('span', '', label)); list.append(it); };
+    if (!m.deleted) item('Select', 'copy', () => view.selection.begin(m.id));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
-    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original).then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
+    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item('Save', 'download', () => { const a = node('a'); a.href = mediaURL(m.id); a.download = m.media.filename || ''; a.click(); });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     item('Delete for me', 'trash', () => del(m, false), 'danger');
@@ -1149,7 +1242,7 @@
       closeOverlay();
     }), 'secondary wide'));
   }
-  function switchTab(tab) { if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
+  function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
   // Keyboard open/close: keep the newest message glued above the composer.
@@ -1163,7 +1256,7 @@
     if (at?.person && at.tab !== 'messenger') openPerson(at.person);
   }
   window.MessengerUnified = {
-    ask, toast, holdToMenu, actionMenu, muteAction, icon,
+    ask, toast, holdToMenu, actionMenu, muteAction, icon, messageSelection,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },

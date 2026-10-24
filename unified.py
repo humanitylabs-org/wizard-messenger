@@ -91,6 +91,7 @@ MIGRATIONS = [
     ('message', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'msgtype', "TEXT NOT NULL DEFAULT 'm.text'"),
     ('message', 'media', 'TEXT'),
+    ('message', 'transcript', 'TEXT'),
     ('message', 'reply_to', 'TEXT'),
     ('message', 'edited', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'deleted', 'INTEGER NOT NULL DEFAULT 0'),
@@ -376,6 +377,17 @@ class PeopleStore:
             fail('not_found', 'That message is no longer here', 404)
         return dict(row)
 
+    def transcript(self, message_id, payload):
+        value = text(payload.get('text'), 100000)
+        with self.db() as db:
+            m = self.message(message_id)
+            if m['deleted'] or m['msgtype'] != 'm.audio':
+                fail('invalid_message', 'Only audio messages can have a transcript')
+            # First successful transcript wins across devices; seq notifies every open view.
+            if not m.get('transcript'):
+                self.bump(message_id, ',transcript=?', (value,))
+        return {'id': message_id, 'text': self.message(message_id)['transcript']}
+
     def react(self, event_id, message_id, sender, key, outgoing):
         with self.db() as db:
             if not db.execute('SELECT 1 FROM message WHERE id=?', (message_id,)).fetchone():
@@ -393,7 +405,7 @@ class PeopleStore:
             if row:
                 db.execute('DELETE FROM reaction WHERE event_id=?', (event_id,))
                 return self.bump(row[0])
-        return self.bump(event_id, ",deleted=1,original='',translated=NULL,media=NULL")
+        return self.bump(event_id, ",deleted=1,original='',translated=NULL,media=NULL,transcript=NULL")
 
     def decorate(self, rows):
         """Public message rows: media without mxc URIs, aggregated reactions, reply excerpts."""
@@ -1387,6 +1399,7 @@ class UnifiedInbox:
                 if action == 'typing': return self.set_typing(person_id, payload)
         if len(suffix) == 3 and suffix[0] == 'messages' and method == 'POST':
             message_id = text(suffix[1], 300)
+            if suffix[2] == 'transcript': return self.store.transcript(message_id, payload)
             if suffix[2] == 'translate': return self.translate_message(message_id)
             if suffix[2] == 'react': return self.react(message_id, payload)
             if suffix[2] == 'edit': return self.edit(message_id, payload)
