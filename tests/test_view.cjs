@@ -310,7 +310,7 @@ test('DOM fixture: one-use ticket is removed and exchanged without token persist
 });
 test('DOM fixture: HTTP 401 presents Wizard reconnect, never a capability field',async()=>{
   const f=await fixture({respond:(url,opts,base)=>url==='api/view/session'?{httpError:401,code:'unauthorized'}:base(url,opts)});
-  assert.equal(f.e('gate-description').textContent,'Open Messenger from Wizard to reconnect.');assert.equal(f.e('workspace').hidden,true);assert.equal(f.e('setup-form').hidden,true);
+  assert.equal(f.e('gate-description').textContent,"Couldn't reach Messenger. Tap Try again.");assert.equal(f.e('workspace').hidden,true);assert.equal(f.e('setup-form').hidden,true);
 });
 test('DOM fixture: setup match/minimum, CSRF body-only secret and first address sheet',async()=>{
   let created=false;

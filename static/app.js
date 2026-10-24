@@ -211,7 +211,7 @@
   }
   function friendly(error) {
     const messages = {
-      unauthorized: 'Open Messenger from Wizard to reconnect.',
+      unauthorized: "You were signed out of Messenger. Tap Try again.",
       vault_unlock_failed: "That passphrase isn't right.", invalid_public_key: "That address doesn't look right.",
       login_rate_limited: 'Too many tries. Wait a minute and try again.',
       invalid_vault_password: state.mode === 'locked' ? "That passphrase isn't right." : 'Needs at least 16 characters.',
@@ -221,7 +221,7 @@
       locked: 'Unlock Messenger to continue.', vault_locked: 'Unlock Messenger to continue.', request_id_conflict: 'This draft could not be retried safely.',
       server_restarting: 'Messenger is restarting. Try again in a moment.',
       send_outcome_unknown: 'Checking delivery. Your message will not be sent again automatically.',
-      invalid_input: 'Check the text and try again.', csrf_invalid: 'Open Messenger from Wizard to reconnect.'
+      invalid_input: 'Check the text and try again.', csrf_invalid: "You were signed out of Messenger. Tap Try again."
     };
     return messages[error.code || error.message] || "Couldn't connect. Try again when your Wizard is reachable.";
   }
@@ -246,7 +246,7 @@
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
     const create = mode === 'setup_required', locked = mode === 'locked';
     $('gate-title').textContent = locked ? 'Unlock Messenger' : 'Messenger';
-    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : mode === 'reconnect' ? 'Open Messenger from Wizard to reconnect.' : mode === 'first_open' ? 'Ask your Wizard for your Messenger setup link. It opens here once so you can create your address.' : 'Opening your messages…';
+    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Ask your Wizard for your Messenger setup link. It opens here once so you can create your address.' : 'Opening your messages…';
     $('setup-form').hidden = !(create || locked); $('reconnect').hidden = mode !== 'reconnect' && mode !== 'first_open';
     $('name-label').hidden = !create; $('confirm-label').hidden = !create; $('confirm-passphrase').required = create;
     $('passphrase-help').hidden = !create; $('passphrase').minLength = locked ? 1 : 16;
@@ -903,12 +903,22 @@
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated(); await snapshot(signal);
+        bootTries = 0;
       } catch (error) {
         if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
-        disconnect(); if (error.code === 'setup_link_required') gate('first_open');
+        // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
+        // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
+        if (transient(error) && bootTries < 40) {
+          bootTries++; gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…';
+          clearTimeout(bootTimer); bootTimer = setTimeout(boot, Math.min(1000 * bootTries, 5000)); return;
+        }
+        bootTries = 0; disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
     }, false, true);
   }
+  let bootTries = 0, bootTimer = null;
+  const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
+  addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = boot;
