@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "baseline": "490abc8",
+  "status_vocabulary": [
+    "proven",
+    "implemented-unverified",
+    "unsupported",
+    "owner-login-required"
+  ],
+  "status_semantics": {
+    "proven": "Only named scope exercised with linked executable evidence; never implies provider parity.",
+    "implemented-unverified": "Source exists, stated end-to-end scope not verified.",
+    "unsupported": "Not implemented or not wired in the inspected baseline.",
+    "owner-login-required": "Provider test requires voluntary owner account setup; not a passed test."
+  },
+  "migration_ready": false,
+  "keep_beeper": true,
+  "networks": {
+    "whatsapp": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "telegram": {
+      "status": "owner-login-required",
+      "source": "unified.py:UnifiedInbox",
+      "features": {
+        "text": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "photos": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "voice_notes": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "replies": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "reactions": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "history": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        }
+      }
+    },
+    "signal": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "line": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "kakao": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "slack": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    }
+  },
+  "components": {
+    "search_module": {
+      "status": "implemented-unverified",
+      "scope": "Standalone FTS5 normalized mirror, not integrated UI/API",
+      "source": "readiness/search.py"
+    },
+    "sync_cursor_recovery": {
+      "status": "implemented-unverified",
+      "scope": "Production UnifiedInbox.sync via disposable loopback fixture; retry and restart, not provider reconnect",
+      "source": "readiness/tests/test_transport.py"
+    },
+    "history_pagination": {
+      "status": "implemented-unverified",
+      "scope": "Timestamp-only cursor drops equal-timestamp rows; explicit expected-failing regression",
+      "source": "readiness/tests/test_transport.py"
+    }
+  },
+  "owner_gates": [
+    "Set up owner Messenger identity and unlock privately.",
+    "Configure and connect each supported network only with owner approval.",
+    "Verify inbound/outbound text and real photo/voice playback, replies and reactions on each account.",
+    "Verify full required history, message search, reconnect after restart/outage, and alerts with browser closed/phone locked.",
+    "Exercise daily use alongside Beeper before retirement; local fixture success is insufficient."
+  ],
+  "known_gaps": [
+    "Only Telegram is bridged in baseline; Signal MVP means Signal-style UI, not Signal network.",
+    "No server-side message-content search in baseline; directory/name filtering is not message search.",
+    "No background phone push/OS notifications found.",
+    "Initial Telegram import is 50 chats \u00d7 50 messages; backward bridge backfill disabled; media revisit at most three pages of 100.",
+    "Timestamp-only history pagination loses ties; expected-failing regression included.",
+    "History is plaintext on disk; new search index also plaintext.",
+    "Provider reconnect/login expiry and phone codec behavior not exercised by local fixtures."
+  ]
+}

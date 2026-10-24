@@ -1,0 +1,10 @@
+test_reply_reaction_edit_redaction_ingest (test_unified.SignalMvpTests.test_reply_reaction_edit_redaction_ingest) ... ok
+test_media_rows_hide_mxc_and_upgrade_label_rows (test_unified.SignalMvpTests.test_media_rows_hide_mxc_and_upgrade_label_rows) ... ok
+test_voice_note_ingest (test_unified.SignalMvpTests.test_voice_note_ingest) ... ok
+test_media_proxy_caches_and_serves_safe_types_only (test_unified.SignalMvpTests.test_media_proxy_caches_and_serves_safe_types_only) ... ok
+test_updates_feed_returns_new_rows_and_wakes_waiters (test_unified.SignalMvpTests.test_updates_feed_returns_new_rows_and_wakes_waiters) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.249s
+
+OK

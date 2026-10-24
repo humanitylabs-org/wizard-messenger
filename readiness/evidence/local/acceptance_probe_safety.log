@@ -1,0 +1,10 @@
+test_real_get_semantics_size_bounds_no_redirects_and_no_saved_body (readiness.tests.test_checker.ProbeTests.test_real_get_semantics_size_bounds_no_redirects_and_no_saved_body) ... ok
+test_rejects_nonlocal_ambiguous_or_non_disposable_before_network (readiness.tests.test_checker.ProbeTests.test_rejects_nonlocal_ambiguous_or_non_disposable_before_network) ... ok
+test_loader_errors_are_failures_not_empty_success (readiness.tests.test_runner.RunnerTests.test_loader_errors_are_failures_not_empty_success) ... ok
+test_no_tests_never_proves_a_component (readiness.tests.test_runner.RunnerTests.test_no_tests_never_proves_a_component) ... ok
+test_passes_emit_actual_named_outcomes (readiness.tests.test_runner.RunnerTests.test_passes_emit_actual_named_outcomes) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.791s
+
+OK
