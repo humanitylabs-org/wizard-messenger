@@ -172,12 +172,25 @@
     } catch { return false; }
   }
   // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
-  const unreadById = {};
+  const unreadById = {}, kindById = {}; let nativeUnread = 0;
   let badgeShown = -1;
-  function noteUnread(rows) { for (const p of rows || []) unreadById[p.id] = Math.max(0, p.unread | 0); }
+  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); } }
+  // Each bottom tab carries its own unread count (Chats, Groups, Messenger), like Signal's tab badges.
+  function paintTabBadges(counts) {
+    for (const [tab, n] of Object.entries(counts)) {
+      const b = document.querySelector(`#inbox-tabs [data-tab="${tab}"]`); if (!b) continue;
+      let dot = b.querySelector('.tab-badge');
+      if (!n) { dot?.remove(); b.setAttribute('aria-label', b.textContent.trim()); continue; }
+      if (!dot) { dot = node('b', 'tab-badge'); b.append(dot); }
+      dot.textContent = n > 99 ? '99+' : String(n); b.setAttribute('aria-label', `${b.querySelector('span')?.textContent || tab}, ${n} unread`);
+    }
+  }
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
-    const n = Object.values(unreadById).reduce((a, b) => a + b, 0);
+    const counts = {people: 0, groups: 0, messenger: nativeUnread};
+    for (const [id, n] of Object.entries(unreadById)) counts[kindById[id] === 'groups' ? 'groups' : 'people'] += n;
+    paintTabBadges(counts);
+    const n = counts.people + counts.groups + counts.messenger;
     if (n === badgeShown) return; badgeShown = n;
     try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
@@ -1018,6 +1031,8 @@
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   window.MessengerUnified = {
     ask, toast,
+    // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
+    setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() { if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },
@@ -1031,6 +1046,6 @@
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

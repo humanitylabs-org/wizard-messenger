@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.1'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.2'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -369,6 +369,7 @@
     if (state.mode !== 'ready') return;
     const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
+    window.MessengerUnified?.setNativeUnread?.(state.invites.length + state.dms.filter(dm => { if (isIncoming(dm)) return false; const last = cacheFor(dm.group_id).messages.at(-1); return last?.direction === 'received' && readRecord(dm.group_id).seen !== last.message_id; }).length);
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();
     if (state.invites.length) {
       fragment.append(element('h2', 'section-label', 'Invites'));
