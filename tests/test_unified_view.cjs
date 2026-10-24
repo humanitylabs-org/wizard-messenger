@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {backState} = require('../static/unified.js');
+require('./share-receive-fixture.cjs');
 test('Unified Back closes overlay, then thread, then delegates guarded root', () => {
   const initial = {tab:'people',person:'p1',overlay:'preview'};
   const first = backState(initial);

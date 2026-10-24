@@ -128,12 +128,12 @@
     if (now - d < 6 * 864e5) return d.toLocaleDateString([], {weekday: 'long'});
     return d.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? {year: 'numeric'} : {})});
   }
-  async function newChat(shareText) {
+  async function newChat(shareText, placeShare) {
     // The full A-Z contact list lives only here. From Wizard's share sheet it picks who gets the shared text.
-    const title = shareText ? 'Send to…' : 'New chat';
+    const title = shareText || placeShare ? 'Send to…' : 'New chat';
     const sheet = overlay(title); sheet.classList.add('tall');
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
-    const settled = shareText ? new Promise(resolve => { s.answer = () => resolve(true); }) : null;
+    const settled = shareText || placeShare ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
@@ -144,7 +144,12 @@
         for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 200)) {
           const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
           if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
-          const row = button('', () => { if (shareText) placeShared(p.id, shareText); closeOverlay(); openPerson(p.id); }, 'u-directory-row');
+          const row = button('', () => {
+            if (placeShare) {
+              const answer = s.answer; s.answer = null; closeOverlay();
+              Promise.resolve(placeShare(p.id)).then(answer, e => { error(e); answer(false); });
+            } else { if (shareText) placeShared(p.id, shareText); closeOverlay(); openPerson(p.id); }
+          }, 'u-directory-row');
           const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', p.group ? 'Group' : networksOf(p).map(cap).join(' · ')));
           row.append(avatar(p.display_name, 'small'), text); list.append(row);
         }
@@ -934,7 +939,20 @@
     };
     draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
     // Several photos at once, like Wizard chats (up to 10, Telegram's album size); each goes as its own photo, the caption on the first.
-    file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
+    async function stagePhotos(picked) {
+      if (!telegramOnly || !picked.length || view.edit || view.id !== id || !s.ready) return false;
+      const epoch = s.epoch, ready = [], room = 10 - (view.attach?.length || 0);
+      if (picked.length > room) { toast('Up to 10 photos at a time'); return false; }
+      try {
+        for (const f of picked) ready.push(await preparePhoto(f));
+        if (!s.ready || s.epoch !== epoch || view.id !== id || !draft.isConnected || (view.attach?.length || 0) + ready.length > 10) {
+          for (const ph of ready) URL.revokeObjectURL(ph.url); return false;
+        }
+        view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus();
+        return bar.querySelectorAll('.u-attach-chip').length === view.attach.length;
+      } catch (e) { for (const ph of ready) URL.revokeObjectURL(ph.url); error(e); return false; }
+    }
+    file.onchange = () => { const picked = [...file.files]; file.value = ''; return stagePhotos(picked); };
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
       const text = draft.value.trim(), a = view.attach || [];
@@ -976,7 +994,7 @@
       panel.append(iconButton('trash', 'Cancel recording', cancel, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', finish, 'u-send'));
       row.hidden = true; form.append(panel); view.recording = {stop: finish, cancel}; hold();
     }
-    Object.assign(view, {draft, grow, paintBar});
+    Object.assign(view, {draft, grow, paintBar, stagePhotos});
     form.append(bar, channel, row); grow(); paintBar();
     return form;
   }
@@ -1325,17 +1343,26 @@
     const had = (s.drafts[id] || '').trim();
     s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
   }
-  function receiveShare(item) {
-    const text = sharedText(item);
-    if (!s.ready || !text) return false; // stays pending in Wizard; check() runs again once unlocked
+  async function receiveShare(item) {
+    const text = sharedText(item), image = item.kind === 'image' && item.file && item.file.type?.startsWith('image/');
+    if (!s.ready || (!text && !image) || item.kind === 'file') return false; // stays pending in Wizard; check() runs again once unlocked
     if (s.overlay) closeOverlay();
     if (s.tab === 'messenger' || s.search != null) switchTab('people');
-    if (item.target) { placeShared(item.target, text); openPerson(item.target); return true; }
+    if (image) {
+      const place = async id => {
+        if (s.person !== id || view.id !== id || !store.threads[id]) await openPerson(id);
+        if (!s.ready || s.person !== id || view.id !== id || !await view.stagePhotos?.([item.file])) return false;
+        if (text) { placeShared(id, text); view.draft.value = s.drafts[id]; view.grow(); }
+        return true; // stagePhotos painted the existing multi-photo tray; never sends
+      };
+      return item.target ? place(item.target) : newChat('', place);
+    }
+    if (item.target) { placeShared(item.target, text); await openPerson(item.target); return true; }
     if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
     return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
   }
   function listenForShares() {
-    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
+    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url', 'image'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
   window.MessengerUnified = {
     receiveShare, shareTargetRows,
