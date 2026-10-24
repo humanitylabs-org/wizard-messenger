@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Independent Messenger Owner</title><link rel="stylesheet" href="/owner.css"><script src="/owner.js" defer></script></head>
+<body><main><h1>Independent Messenger Owner</h1>
+<p class="warning">TEST BACKEND ONLY — approvals record a local test delivery, not a real provider message. Use this site only on your independently administered device/host. Check the bookmarked HTTPS address before each approval.</p>
+<p id="origin"></p><p id="status" role="status"></p>
+<section><h2>Owner setup</h2><label>One-time token from your independent host console <input id="bootstrap" type="password" autocomplete="off"></label><button id="enroll">Enroll verifying passkey</button></section>
+<section><h2>Owner access</h2><button id="login">Sign in with passkey</button><button id="refresh">Refresh drafts</button><button id="logout">Sign out</button><p id="mode"></p><button id="draftMode">Require owner approval (Draft-only)</button><button id="fullMode" hidden>Enable Full access — agent may test-send without approval</button></section>
+<section><h2>Drafts</h2><p>Account and recipient are exact identifiers. Body is displayed as ASCII JSON so control characters, bidi controls, Unicode and whitespace cannot silently change the review. Attachment bytes are fixed, hashed and included in the approval. Nothing here is an external attachment URL.</p><div id="drafts"></div></section>
+<dialog id="review"><h2 id="reviewTitle">Review exact approval</h2><pre id="binding"></pre><p>Verify every account, recipient, body character and attachment hash. Do not approve unfamiliar requests. Your passkey authenticates this site's challenge; it is not a trusted-display signature of human-readable text.</p><button id="confirm">Approve this exact action with verifying passkey</button><button id="cancel">Cancel</button></dialog>
+</main></body></html>
