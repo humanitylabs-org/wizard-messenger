@@ -1,5 +1,5 @@
 // Fresh disposable preview: (1) voice-note speed pill 1x -> 1.5x -> 2x, remembered; (2) a new Messenger release
-// reloads the open window by itself, waits while text is typed, and comes back on the same chat.
+// a typed draft no longer holds Wizard's update reload; a reload returns to the same chat with the draft.
 const {chromium} = require('playwright');
 const fs = require('node:fs');
 const {execSync} = require('node:child_process');
@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
   const browser = await chromium.launch({headless: true});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, hasTouch: true, isMobile: true});
   await ctx.addInitScript(() => {
-    let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: v.update, capture: v.capture, vault: {has: async () => ({available: false, saved: false})}, badge: {set: n => { window.__badges = (window.__badges || []).concat(n); return Promise.resolve(true); }}}); }});
+    let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: {...v.update, hold(reason) { const h = {reason, released: false, at: new Error().stack.split('\n').slice(2, 5).join(' | ')}; (window.__holds ||= []).push(h); return {release() { h.released = true; }}; }}, capture: v.capture, vault: {has: async () => ({available: false, saved: false})}, badge: {set: n => { window.__badges = (window.__badges || []).concat(n); return Promise.resolve(true); }}}); }});
   });
   const now = Date.now() / 1000;
   const person = (id, name, unread, group) => ({id, display_name: name, unread, identities: [{kind: group ? 'group' : 'telegram', id}], last: {text: 'hello', timestamp: now}, labels: []});
@@ -31,8 +31,6 @@ const assert = require('node:assert/strict');
   await ctx.route(/api\/unified\/people\/p1\?limit=60$/, route => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result: {person: fake.people[0], messages: [note], has_more: false, seq: 1}})}));
   await ctx.route(/api\/unified\/people\/p1\/read$/, route => route.fulfill({status: 200, contentType: 'application/json', body: '{"ok":true,"result":{}}'}));
   await ctx.route(/api\/unified\/media\/%24v1/, route => route.fulfill({status: 200, contentType: 'audio/wav', body: wav}));
-  let liveVersion = null;
-  await ctx.route(/\/healthz$/, async route => { if (!liveVersion) return route.continue(); route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, service: 'wizard-messenger', version: liveVersion})}); });
   const page = await ctx.newPage(); const errors = []; page.on('pageerror', e => errors.push(e.message));
   const ticket = JSON.parse(execSync(`curl -s -X POST -H "Authorization: Bearer ${process.env.MESSENGER_API_TOKEN}" -H 'Content-Type: application/json' -d '{"bootstrap":true}' http://127.0.0.1:19252/api/view/ticket`)).result.ticket;
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000);
@@ -59,24 +57,17 @@ const assert = require('node:assert/strict');
   // 4 s at 2x ends in ~2 s.
   await page.waitForFunction(() => !document.querySelector('.u-voice.playing'), null, {timeout: 4500});
 
-  // (2) Release while a draft is typed: no reload. Clear it: reloads by itself, back on Ana's chat.
-  await page.evaluate(() => { window.__before = 1; });
+  // (2) A draft left in a chat no longer holds a Wizard update; reloading comes back on the same chat with the draft.
   await page.locator('.u-composer textarea').fill('half a thought');
-  liveVersion = '0.2.0-unified.99'; await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await page.waitForTimeout(7000);
-  assert.equal(await page.evaluate(() => window.__before), 1, 'no reload while typing');
-  await page.locator('.u-composer textarea').fill('');
-  // A fresh account shows its address sheet late, and an open sheet on screen also defers the reload: close it when seen.
-  let reloaded = false;
-  for (let i = 0; i < 50 && !reloaded; i++) {
-    await page.waitForTimeout(500);
-    reloaded = await page.evaluate(() => !window.__before).catch(() => false);
-    if (!reloaded && await page.locator('#sheet-layer:not([hidden])').count().catch(() => 0)) await page.click('#close-sheet').catch(() => {});
-  }
-  assert.ok(reloaded, 'reloaded by itself once nothing was typed');
+  await page.waitForTimeout(500);
+  const open = await page.evaluate(() => (window.__holds || []).filter(h => !h.released).map(h => h.reason)); 
+  assert.ok(!open.some(r => /unified|sending|saving|recording/i.test(r)), 'a chat draft holds no update: ' + open); // (a half-typed account setup on the locked Messenger tab still may)
+  await page.evaluate(() => { window.__before = 1; }); await page.reload();
+  await page.waitForFunction(() => !window.__before, null, {timeout: 15000});
   await page.locator('.u-voice').first().waitFor({timeout: 20000});
   assert.equal(await page.locator('#inbox-tabs [data-tab="people"]').getAttribute('aria-selected'), 'true');
   assert.equal(await page.locator('.u-speed').first().textContent(), '2×', 'speed choice survives the reload');
+  assert.equal(await page.locator('.u-composer textarea').inputValue(), 'half a thought', 'draft survives the reload');
   await page.screenshot({path: ev + '/after-reload.png'});
   console.log(JSON.stringify({errors})); assert.deepEqual(errors, []);
   await browser.close(); console.log('pass');

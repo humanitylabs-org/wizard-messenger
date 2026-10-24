@@ -109,28 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.5'});
-  // A new Messenger release reloads this window by itself, back on the same chat, as soon as nothing would be lost
-  // (no typed text, open sheet, recording or playing note). The owner never has to close and reopen it.
-  (() => {
-    const LOADED = '0.2.0-unified.11.5'; let waiting = false, lastCheck = 0;
-    const typing = () => [...document.querySelectorAll('textarea, input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file])')].some(e => e.value.trim() && e.offsetParent !== null);
-    const sheetOpen = () => !document.getElementById('sheet-layer')?.hidden;
-    const tryReload = () => {
-      const U = window.MessengerUnified;
-      if (typing() || (sheetOpen() && !document.hidden) || (U?.idle && !U.idle())) { setTimeout(tryReload, 3000); return; }
-      U?.saveResume?.(); location.reload();
-    };
-    const check = async () => {
-      if (waiting || Date.now() - lastCheck < 10000) return; lastCheck = Date.now();
-      try {
-        const r = await fetch('healthz', {cache: 'no-store', credentials: 'same-origin'}); const j = await r.json();
-        if (j.version && j.version !== LOADED) { waiting = true; tryReload(); }
-      } catch { /* offline: next tick */ }
-    };
-    setInterval(check, 30000); document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
-    window.addEventListener('focus', check); setTimeout(check, 5000);
-  })();
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.6'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -143,8 +122,9 @@
   let updateHold = null;
   function syncUpdateHold() {
     const setupPending = ['locked', 'setup_required'].includes(state.mode) && ['display-name', 'passphrase', 'confirm-passphrase'].some(id => $(id).value);
-    const pending = state.operation?.action || [...state.records.values()].some(record => record.draft || record.attempts.some(a => ['sending', 'checking', 'failed'].includes(a.state))) ||
-      ['draft', 'contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
+    // Drafts and failed sends are saved on this device and survive a reload, so only work in flight holds an update.
+    const pending = state.operation?.action || [...state.records.values()].some(record => record.attempts.some(a => ['sending', 'checking'].includes(a.state))) ||
+      ['contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
     if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
     else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
   }
@@ -299,6 +279,8 @@
   }
   function ready(identity) {
     state.identity = identity; state.mode = 'ready'; $('gate').hidden = true; $('workspace').hidden = false;
+    for (const id of ['passphrase', 'confirm-passphrase']) $(id).value = ''; // unlocked: nothing typed is pending any more
+    syncUpdateHold();
     $('own-initial').textContent = (identity.display_name || 'M').slice(0, 1).toUpperCase(); renderActivity();
   }
   function dmById(group) { return state.invites.find(dm => dm.group_id === group) || state.dms.find(dm => dm.group_id === group); }

@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.5}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.6}
     pull_policy: never
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
@@ -16,7 +16,7 @@ services:
       - ${APP_DATA_DIR}/data:/data
     restart: "no"
   messenger:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.5}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.6}
     pull_policy: never
     read_only: true
     cap_drop: [ALL]
@@ -99,7 +99,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.5}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.6}
     pull_policy: never
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"

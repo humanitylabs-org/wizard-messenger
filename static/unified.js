@@ -54,7 +54,13 @@
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
-  function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy || store.pending > 0 || !!view.recording; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
+  // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
+  // Drafts are kept in sessionStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
+  function hold() {
+    const reason = view.recording ? 'Recording' : store.pending > 0 ? 'Sending' : s.busy ? 'Saving' : '';
+    if (updateHold && updateHold.reason !== reason) { updateHold.h.release(); updateHold = null; }
+    if (reason && !updateHold) updateHold = {reason, h: window.WizardApp.update.hold(reason)};
+  }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
   function closeOverlay() {
     const answered = s.answer; s.answer = null; answered?.(false);
@@ -949,8 +955,8 @@
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
       } catch (e) {
-        m.pending = false; m.failed = e.message && e.message.length < 80 ? e.message : true; m.retry = () => { queues[id] = (queues[id] || Promise.resolve()).then(run); };
-        // still owed: the update hold stays until it is sent
+        m.pending = false; m.failed = e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
+        store.pending--; hold(); // failed: shown with Retry; no longer blocks updates
       }
       if (s.person === id) paintThread();
     };
@@ -1138,7 +1144,9 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
-  // After an update reload, come back to the same tab and chat (saved by saveResume just before reloading).
+  // After a reload, come back to the same tab and chat (saved on pagehide).
+  // Any reload (a Wizard update, the Reload strip) comes back on the same tab and chat.
+  window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person})); } catch { /* fresh start */ } });
   function resume() {
     let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
     switchTab(['groups', 'messenger'].includes(at?.tab) ? at.tab : 'people');
@@ -1154,9 +1162,6 @@
       if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
       resume(); return true;
     },
-    // Nothing the owner is doing would be lost by reloading now: no draft, sheet, send in flight, recording or playing note.
-    idle: () => !(Object.values(s.drafts).some(Boolean) || s.overlay || s.busy || store.pending > 0 || view.recording || player.busy()),
-    saveResume() { try { sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person})); } catch { /* fresh start */ } },
     authenticated() {
       if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false;
       const painted = document.documentElement.dataset.inboxTab;
