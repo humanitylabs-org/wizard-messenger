@@ -415,6 +415,17 @@ class SignalMvpTests(unittest.TestCase):
         self.assertEqual(row['media']['waveform'], [0, 50, 100, 25])
         self.assertEqual(self.inbox.store.people()[0]['last']['voice'], True)
 
+    def test_incoming_voice_notes_are_prefetched(self):
+        voice = {'msgtype': 'm.audio', 'body': 'Voice message', 'url': 'mxc://messenger.internal/v', 'info': {'mimetype': 'audio/ogg'}, 'org.matrix.msc3245.voice': {}}
+        now = int(time.time() * 1000)
+        self.ingest(self.event('$new', voice, ts=now))
+        self.ingest(self.event('$old', voice, ts=now - 10 * 86400 * 1000))  # backlog replay: on demand only
+        self.ingest(self.event('$pic', {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}, ts=now))
+        queued = []
+        while not self.inbox.warm_queue.empty():
+            queued.append(self.inbox.warm_queue.get_nowait())
+        self.assertEqual(queued, ['$new'])
+
     def test_media_proxy_caches_and_serves_safe_types_only(self):
         self.ingest(self.event('$svg', {'msgtype': 'm.file', 'body': 'x.svg', 'url': 'mxc://messenger.internal/svg', 'info': {'mimetype': 'image/svg+xml'}}))
         self.ingest(self.event('$jpg', {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/jpg', 'info': {'mimetype': 'image/jpeg'}}))

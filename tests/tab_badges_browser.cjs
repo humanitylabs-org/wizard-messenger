@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const pw = 'preview-only-passphrase-' + Date.now();
   const browser = await chromium.launch({headless: true});
-  const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true});
+  const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, hasTouch: true, isMobile: true});
   await ctx.addInitScript(() => {
     let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: v.update, capture: v.capture, vault: {has: async () => ({available: false, saved: false})}, badge: {set: n => { window.__badges = (window.__badges || []).concat(n); return Promise.resolve(true); }}}); }});
   });
@@ -47,7 +47,11 @@ const assert = require('node:assert/strict');
   // Long-press Ana -> Mute: her 3 leave the Chats tab and desk counts, her own badge turns gray.
   const ana = page.locator('.u-person', {hasText: 'Ana'});
   const box = await ana.boundingBox();
-  await page.mouse.move(box.x + 40, box.y + 30); await page.mouse.down(); await page.waitForTimeout(700); await page.mouse.up();
+  // A real finger: CDP touch events, held still for 800 ms, like a phone long-press.
+  const cdp = await ctx.newCDPSession(page); const pt = [{x: box.x + 120, y: box.y + 30}];
+  await cdp.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: pt}); await page.waitForTimeout(800);
+  await cdp.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+  assert.equal(await page.evaluate(() => String(getSelection())), '', 'long-press selects no text');
   await page.locator('.u-menu[aria-label="Ana"]').waitFor({timeout: 5000});
   assert.equal(await page.locator('.u-timeline').count(), 0, 'long-press does not open the chat');
   await page.screenshot({path: ev + '/mute-menu.png'});

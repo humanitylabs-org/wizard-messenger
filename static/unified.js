@@ -318,30 +318,41 @@
   }
 
   // Long-press (or right-click) a chat row: Mute / Unmute. A held press never also opens the chat.
+  // A phone turns the finger lifting off a long-press into a click, which lands on the menu's backdrop and closes
+  // it at once. Swallow exactly that click.
+  function swallowRelease() {
+    const eat = e => { e.stopPropagation(); e.preventDefault(); window.removeEventListener('click', eat, true); };
+    window.addEventListener('click', eat, true);
+    const off = () => setTimeout(() => window.removeEventListener('click', eat, true), 400);
+    window.addEventListener('pointerup', off, {once: true, capture: true}); window.addEventListener('pointercancel', off, {once: true, capture: true});
+  }
   function holdToMenu(el, open) {
     let timer = null, x0 = 0, y0 = 0;
     const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
     el.addEventListener('pointerdown', e => { if (e.button > 0) return; delete el.dataset.held; x0 = e.clientX; y0 = e.clientY; cancel();
-      timer = setTimeout(() => { timer = null; el.dataset.held = '1'; navigator.vibrate?.(10); open(); }, 450); });
+      timer = setTimeout(() => { timer = null; el.dataset.held = '1'; navigator.vibrate?.(10); swallowRelease(); open(); }, 450); });
+    el.addEventListener('selectstart', e => e.preventDefault());
     el.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 8) cancel(); });
     el.addEventListener('pointerup', cancel); el.addEventListener('pointercancel', cancel); el.addEventListener('pointerleave', cancel);
     // Android fires contextmenu during a touch long-press too: the timer has already opened the menu then.
     el.addEventListener('contextmenu', e => { e.preventDefault(); if (el.dataset.held) return; cancel(); open(); });
   }
-  function chatMenu(p, card) {
+  // One small action menu under a held row; used by Chats/Groups rows here and the Messenger tab's rows (app.js).
+  function actionMenu(card, title, actions) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
-    const panel = node('div', 'u-menu left'); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', p.display_name);
+    const panel = node('div', 'u-menu left'); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
     const list = node('div', 'u-actions');
-    const it = button('', () => { closeOverlay(); setMuted(p, !p.muted); }, 'u-act'); it.setAttribute('role', 'menuitem');
-    it.append(icon(p.muted ? 'bell' : 'belloff'), node('span', '', p.muted ? 'Unmute' : 'Mute'));
-    list.append(it); panel.append(list); layer.append(panel);
+    for (const a of actions) { const it = button('', () => { closeOverlay(); a.run(); }, 'u-act'); it.setAttribute('role', 'menuitem'); it.append(icon(a.icon), node('span', '', a.label)); list.append(it); }
+    panel.append(list); layer.append(panel);
     layer.onclick = e => { if (e.target === layer) closeOverlay(); };
     $('messenger').append(layer);
     const r = card.getBoundingClientRect(), H = $('messenger').clientHeight;
-    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 90)) + 'px';
-    it.focus(); hold();
+    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 40 - 50 * actions.length)) + 'px';
+    list.firstChild?.focus(); hold();
   }
+  const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
+  function chatMenu(p, card) { actionMenu(card, p.display_name, [muteAction(p.muted, () => setMuted(p, !p.muted))]); }
   async function setMuted(p, muted) {
     const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
     flip(muted);
@@ -358,6 +369,7 @@
   const player = (() => {
     let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
     const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    const fetched = new Map(); // url -> Promise<ArrayBuffer>: voice notes downloaded ahead, before anyone taps Play
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
     // so pause/seek/next note doesn't pump the volume.
     let ducked = false, undock = 0;
@@ -372,10 +384,18 @@
       const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
     };
     const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
+    const fetchNote = url => {
+      if (!fetched.has(url)) {
+        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); return r.arrayBuffer(); }));
+        fetched.get(url).catch(() => fetched.delete(url));
+        while (fetched.size > 16) fetched.delete(fetched.keys().next().value);
+      }
+      return fetched.get(url);
+    };
     const load = url => {
       if (!decoded.has(url)) {
         // Notes recorded here decode from the Blob itself: the CSP keeps fetch() off blob: URLs.
-        const bytes = localAudio.has(url) ? localAudio.get(url).arrayBuffer() : fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); return r.arrayBuffer(); });
+        const bytes = localAudio.has(url) ? localAudio.get(url).arrayBuffer() : fetchNote(url).then(b => b.slice(0));
         decoded.set(url, bytes.then(b => ctx.decodeAudioData(b)));
         decoded.get(url).catch(() => decoded.delete(url));
         while (decoded.size > 8) decoded.delete(decoded.keys().next().value);
@@ -390,6 +410,7 @@
       timer = setInterval(paint, 100); paint();
     };
     return {
+      preload(url) { if (!localAudio.has(url)) fetchNote(url).catch(() => {}); },
       playing: b => b === box && !!src,
       // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
       adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
@@ -471,6 +492,8 @@
       kids.push(el);
     });
     if (!t.messages.length) kids.push(node('p', 'u-empty', 'No messages yet. Say hi 👋'));
+    // Download the newest few voice notes from others now, so Play starts at once.
+    t.messages.filter(m => m.media?.voice && !m.outgoing && !m.deleted && !m.local).slice(-6).forEach(m => player.preload(mediaURL(m.id)));
     const before = scroll.scrollHeight - scroll.scrollTop;
     const same = kids.length === scroll.children.length && kids.every((k, i) => k === scroll.children[i] || (i === 0 && scroll.children[0].className === 'u-spacer') || (k.className === 'u-day' && scroll.children[i].className === 'u-day' && k.textContent === scroll.children[i].textContent) || (k.className === 'u-older' && scroll.children[i].className === 'u-older'));
     if (!same) scroll.replaceChildren(...kids);
@@ -606,7 +629,7 @@
     b.addEventListener('pointerdown', e => {
       if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate')) return;
       x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
-      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); menu(m, b); }, 450);
+      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); swallowRelease(); menu(m, b); }, 450);
     });
     b.addEventListener('pointermove', e => {
       const mx = e.clientX - x0, my = e.clientY - y0;
@@ -1067,7 +1090,7 @@
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   window.MessengerUnified = {
-    ask, toast,
+    ask, toast, holdToMenu, actionMenu, muteAction, icon,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },

@@ -128,7 +128,9 @@ button { touch-action: manipulation; }
 /* list */
 .u-person { position: relative; transition: background-color .08s; }
 .u-person:active { background: var(--surface); }
-.u-person { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.u-person, .conversation-row, .u-list, .u-menu-layer { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.row-meta .row-dot { display: block; width: 10px; height: 10px; margin: 6px 0 0 auto; border-radius: 50%; background: var(--accent); }
+.row-meta .row-dot.muted { background: var(--ink-3, #76777d); }
 .u-badge.muted { background: var(--ink-3, #76777d); color: var(--bg, #111); }
 .u-muted-mark { width: 14px; height: 14px; margin-left: 6px; vertical-align: -2px; opacity: .6; }
 .u-chat-bottom { display: flex; align-items: center; gap: 8px; min-width: 0; }

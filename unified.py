@@ -558,6 +558,7 @@ class UnifiedInbox:
         self.translator = Translator(self.store, self.root)
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
+        self.warm_queue = queue.Queue(maxsize=200)
         self.owner = '@owner:messenger.internal'
         # The owner's own Telegram account appears as a ghost (@telegram_<id>) for anything
         # done in the Telegram app before double puppeting existed: that is still "me".
@@ -618,6 +619,20 @@ class UnifiedInbox:
         self.worker.start()
         threading.Thread(target=translate, name='translate', daemon=True).start()
         threading.Thread(target=mirror, name='marmot-mirror', daemon=True).start()
+
+        def warm():
+            # Voice notes from other people are fetched into the media cache as they arrive, so Play starts at once
+            # instead of waiting on Telegram -> homeserver -> here.
+            while not self.stop.is_set():
+                try:
+                    message_id = self.warm_queue.get(timeout=5)
+                except queue.Empty:
+                    continue
+                try:
+                    self.media(message_id, None)
+                except Exception:
+                    pass
+        threading.Thread(target=warm, name='voice-warm', daemon=True).start()
 
     def close(self):
         self.stop.set()
@@ -765,6 +780,19 @@ class UnifiedInbox:
         msgtype, body, media, reply_to = parts
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
                                event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to)
+        self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
+
+    WARM_DAYS = 3
+
+    def warm_voice(self, message_id, msgtype, outgoing, media, stamp):
+        if msgtype != 'm.audio' or outgoing or not media or not media.get('mxc'):
+            return
+        if stamp < (time.time() - self.WARM_DAYS * 86400) * 1000:
+            return  # backlog replay on start: older notes load on demand
+        try:
+            self.warm_queue.put_nowait(message_id)
+        except queue.Full:
+            pass
 
     def ephemeral(self, identity, events):
         for event in events:

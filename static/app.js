@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.3'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.4'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -131,7 +131,7 @@
     if (!state.records.has(group)) {
       let saved = {};
       try { saved = JSON.parse(localStorage.getItem(storagePrefix() + group) || '{}'); } catch { /* A draft failure never permits an untracked send. */ }
-      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null};
+      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null, muted: saved?.muted === true};
       for (const attempt of record.attempts) if (attempt.state === 'sending') attempt.state = 'checking';
       state.records.set(group, record);
       syncUpdateHold();
@@ -359,17 +359,23 @@
   function row(dm, invite = false) {
     const name = peerName(dm), messages = cacheFor(dm.group_id).messages, last = messages.at(-1), record = readRecord(dm.group_id);
     const unread = !invite && last?.direction === 'received' && record.seen !== last.message_id;
-    const el = button('', 'conversation-row' + (unread ? ' unread' : ''), () => openChat(dm.group_id));
+    const U = window.MessengerUnified;
+    const el = button('', 'conversation-row' + (unread ? ' unread' : '') + (record.muted ? ' muted' : ''), () => { if (el.dataset.held) { delete el.dataset.held; return; } openChat(dm.group_id); });
+    if (!invite && U?.holdToMenu) U.holdToMenu(el, () => U.actionMenu(el, name, [U.muteAction(record.muted, () => { record.muted = !record.muted; persist(dm.group_id); state.listSignature = ''; renderList(); U.toast(record.muted ? 'Muted' : 'Unmuted'); })]));
     el.dataset.group = dm.group_id; el.setAttribute('aria-current', String(state.group === dm.group_id));
     el.append(element('span', 'avatar', name.slice(0, 1).toUpperCase()));
-    const body = element('span', 'row-body'); body.append(element('span', 'row-name', name), element('span', 'row-preview', invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet')));
-    el.append(body, element('span', 'row-meta', invite ? '' : timeLabel(last?.created_at))); return el;
+    const rowName = element('span', 'row-name', name);
+    if (record.muted && U?.icon) { const m = U.icon('belloff'); m.classList.add('u-muted-mark'); rowName.append(m); }
+    const body = element('span', 'row-body'); body.append(rowName, element('span', 'row-preview', invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet')));
+    const meta = element('span', 'row-meta', invite ? '' : timeLabel(last?.created_at));
+    if (unread) meta.append(element('span', 'row-dot' + (record.muted ? ' muted' : '')));
+    el.append(body, meta); return el;
   }
   function renderList() {
     if (state.mode !== 'ready') return;
-    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent])]);
+    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
-    window.MessengerUnified?.setNativeUnread?.(state.invites.length + state.dms.filter(dm => { if (isIncoming(dm)) return false; const last = cacheFor(dm.group_id).messages.at(-1); return last?.direction === 'received' && readRecord(dm.group_id).seen !== last.message_id; }).length);
+    window.MessengerUnified?.setNativeUnread?.(state.invites.length + state.dms.filter(dm => { if (isIncoming(dm)) return false; if (readRecord(dm.group_id).muted) return false; const last = cacheFor(dm.group_id).messages.at(-1); return last?.direction === 'received' && readRecord(dm.group_id).seen !== last.message_id; }).length);
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();
     if (state.invites.length) {
       fragment.append(element('h2', 'section-label', 'Invites'));

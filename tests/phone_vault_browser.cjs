@@ -24,10 +24,10 @@ const assert = require('node:assert/strict');
     };
     let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: v.update, capture: v.capture, vault: fake, badge: {set: n => { window.__badges = (window.__badges || []).concat(n); return Promise.resolve(true); }}}); }});
   });
-  const page = await ctx.newPage(); const errors = [];
+  const page = await ctx.newPage(); globalThis.__page = page; const errors = [];
   page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (/dbg|vault|seal/i.test(m.text())) console.log('console', m.text()); });
   const ticket = JSON.parse(execSync(`curl -s -X POST -H "Authorization: Bearer ${process.env.MESSENGER_API_TOKEN}" -H 'Content-Type: application/json' -d '{"bootstrap":true}' http://127.0.0.1:19252/api/view/ticket`)).result.ticket;
-  const messengerTab = async () => { if (!(await page.locator('#setup-form').isVisible())) await page.click('#inbox-tabs [data-tab="messenger"]'); };
+  const messengerTab = async () => { if (await page.locator('#sheet-layer:not([hidden])').isVisible().catch(() => false)) await page.click('#close-sheet').catch(() => {}); if (!(await page.locator('#setup-form').isVisible())) await page.click('#inbox-tabs [data-tab="messenger"]'); };
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000); await messengerTab();
   await page.locator('#confirm-passphrase').waitFor({state: 'visible', timeout: 30000});
   await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
@@ -60,7 +60,7 @@ const assert = require('node:assert/strict');
   assert.equal(status0.state, 'locked', 'restart locks the server vault');
   await page.evaluate(() => localStorage.setItem('__fakeVaultLog', '[]'));
   const t0 = Date.now();
-  await page.reload(); await page.waitForTimeout(1500); await messengerTab();
+  await page.reload(); await page.waitForTimeout(1500); await messengerTab().catch(() => {}); // the reopen may already be underway
   let status;
   for (let i = 0; i < 40; i++) { status = JSON.parse(execSync(`curl -s -H "Authorization: Bearer ${process.env.MESSENGER_API_TOKEN}" http://127.0.0.1:19252/api/status`)).result; if (status.state === 'ready') break; await page.waitForTimeout(500); }
   assert.equal(status.state, 'ready', 'fingerprint alone reopened Messenger after the restart');
@@ -84,4 +84,8 @@ const assert = require('node:assert/strict');
   console.log(JSON.stringify({badges, reopen_ms: Date.now() - t0, errors}));
   assert.deepEqual(errors, []);
   console.log('pass'); await browser.close();
-})().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+})().catch(async e => {
+  console.error('FAIL', e.message, (e.stack.match(/phone_vault_browser.cjs:\d+/g) || []).join(' '));
+  try { await globalThis.__page.screenshot({path: (process.env.EVIDENCE_DIR || '.') + '/fail.png'}); console.error(JSON.stringify(await globalThis.__page.evaluate(() => [document.getElementById('sheet-title')?.textContent, location.hash, JSON.stringify(history.state)]))); } catch { /* page gone */ }
+  process.exit(1);
+});
