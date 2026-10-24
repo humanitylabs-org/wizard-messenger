@@ -289,7 +289,7 @@ class ViewHandler(Handler):
     def _dispatch(self,method):
         self.pending_cookie=None
         path=urlsplit(self.path).path
-        if self.service.remote_required:
+        if self.service.remote_required or bool(self.service.remote_authority.endpoint):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         self._agent_gate(method,path)
@@ -325,7 +325,9 @@ class ViewHandler(Handler):
                 raise EngineError('owner_only', 'Independent review configuration is owner-only', 403)
             self._authorize()
             if method != 'GET': raise EngineError('not_found', 'No such authority route', 404)
-            return 200, {'ok': True, 'result': self.service.remote_authority.state()}
+            state = self.service.remote_authority.state()
+            state['required'] = self.service.remote_required or bool(self.service.remote_authority.endpoint)
+            return 200, {'ok': True, 'result': state}
         if path=='/api/view/agent-access':
             # Owner-only: a browser session with CSRF, never the machine key.
             if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can change agent access, from the Messenger view',403)
@@ -340,7 +342,9 @@ class ViewHandler(Handler):
             suffix = path.split('/')[3:]
             result = self.service.drafts.dispatch(method, suffix, self._body() if method in ('POST', 'DELETE') else {},
                 self.service.unified, owner=not bool(self.headers.get('Authorization')),
-                authority=self.service.remote_authority, remote_required=self.service.remote_required)
+                authority=self.service.remote_authority,
+                remote_required=self.service.remote_required or bool(self.service.remote_authority.endpoint),
+                can_send=bool(self.headers.get('Authorization')) and self.service.agent_access.effective_mode() == 'draft_and_send')
             return 200, {'ok': True, 'result': result}
         if path.startswith('/api/unified/'):
             self._authorize()

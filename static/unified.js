@@ -1152,20 +1152,20 @@
     const box = node('section', 'u-agent-access'); sheet.append(box);
     const paint = st => {
       box.replaceChildren(node('h3', '', 'Agent access'));
-      const descriptions = {no_access: 'Status only. Agents cannot read your conversations.', read_only: 'Agents can read conversations, but cannot draft or change anything.', draft_only: 'Agents can read and save drafts. Sending needs your independent approval.', full_access: 'Agents can read and send messages, react, edit and delete. Account linking and access settings stay owner-only.'};
+      const descriptions = {no_access: 'Status only. Agents cannot read your conversations.', read_only: 'Agents can read conversations, but cannot draft or change anything.', draft_only: 'Agents can read and save drafts. You review and click Send.', draft_and_send: 'Agents can read and send messages, react, edit and delete. Account linking and access settings stay owner-only.'};
       box.append(node('p', 'u-status ' + (st.enabled ? 'warn' : 'on'), descriptions[st.mode] || descriptions.no_access));
       const choice = node('select', 'u-channel'); choice.setAttribute('aria-label', 'Agent access level');
-      for (const [value, label] of [['no_access', 'No access'], ['read_only', 'Read-only'], ['draft_only', 'Draft-only'], ['full_access', 'Full access']]) { const opt = node('option', '', label); opt.value = value; choice.append(opt); }
+      for (const [value, label] of [['no_access', 'No access'], ['read_only', 'Read-only'], ['draft_only', 'Draft-only'], ['draft_and_send', 'Draft-and-send']]) { const opt = node('option', '', label); opt.value = value; choice.append(opt); }
       choice.value = st.mode || 'no_access';
       const expiry = node('select', 'u-channel'); expiry.setAttribute('aria-label', 'Agent access duration');
       for (const [value, label] of [['', 'Until I change it'], ['60', '1 hour'], ['1440', '24 hours']]) { const opt = node('option', '', label); opt.value = value; expiry.append(opt); }
       box.append(choice, expiry, button('Save agent access', () => action(async () => {
-        if (choice.value === 'full_access' && !confirm('Allow agents to send, edit and delete messages without your review?')) return;
+        if (choice.value === 'draft_and_send' && !confirm('Allow agents to send, edit and delete messages without your review?')) return;
         const body = {mode: choice.value}; if (expiry.value) body.minutes = Number(expiry.value);
         paint(await api('api/view/agent-access', {method: 'POST', body}));
       }), 'primary wide'));
       if (st.until) box.append(node('p', 'helper', 'Expires ' + new Date(st.until).toLocaleString()));
-      box.append(node('p', 'helper', 'Application defense in depth, not protection against host root. Strong sender isolation requires a separately administered service.'), button('Review agent drafts', agentDrafts, 'secondary wide'));
+      box.append(node('p', 'helper', 'App permissions only unless the entire agent runs in the restricted worker. Host administrators can bypass these controls. Same-server isolation is supported.'), button('Review agent drafts', agentDrafts, 'secondary wide'));
       if (st.log.length) {
         const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
         const list = node('ul', 'u-access-log');
@@ -1196,7 +1196,7 @@
     const preview = node('div', 'u-preview');
     const invalidate = () => { preview.replaceChildren(); };
     recipient.onchange = body.oninput = invalidate;
-    sheet.append(node('p', 'helper', 'Save this exact text and recipient for independent passkey review. This app cannot approve the export.'), recipient, body, problem, preview);
+    sheet.append(node('p', 'helper', 'Check the recipient, channel and exact message before sending.'), recipient, body, problem, preview);
     try {
       const directory = await call('directory');
       if (s.overlay !== 'Review agent draft') return;
@@ -1206,6 +1206,41 @@
       }
       recipient.value = JSON.stringify([draft.person_id, draft.identity_id]);
       const authority = await api('api/view/authority');
+      // Missing/old metadata fails closed. Local review is explicitly advertised by the server.
+      if (authority.required === false && !draft.export && !draft.authority_receipt) {
+        const review = button('Review message', () => action(async () => {
+          problem.textContent = ''; review.disabled = body.disabled = recipient.disabled = true;
+          try {
+            const [person_id, identity_id] = JSON.parse(recipient.value);
+            draft = (await api('api/drafts/' + draft.id, {method:'POST', body:{revision:draft.revision, person_id, identity_id, text:body.value}})).draft;
+            draft = (await api('api/drafts/' + draft.id + '/preview', {method:'POST', body:{revision:draft.revision}})).draft;
+            if (s.overlay !== 'Review agent draft') return;
+            const exact = draft.preview;
+            const send = button(exact.error ? 'Send original' : 'Send', () => action(async () => {
+              send.disabled = true;
+              try {
+                await api('api/drafts/' + draft.id + '/send', {method:'POST', body:{revision:draft.revision, send_original:!!exact.error}});
+                await agentDrafts();
+              } catch (e) { problem.textContent = e.message; }
+            }), 'primary wide');
+            preview.replaceChildren(node('p', 'helper', 'Revision ' + draft.revision + ' · ' + Array.from(recipient.children).find(o => o.value === recipient.value)?.textContent),
+              node('p', '', exact.error ? exact.original : exact.translated),
+              node('p', 'helper', exact.error ? 'Translation unavailable. Send original only if this exact text is what you want.' : ''), send);
+            body.oninput = recipient.onchange = () => { send.disabled = true; invalidate(); };
+          } catch (e) { problem.textContent = e.message; }
+          finally { review.disabled = body.disabled = recipient.disabled = draft.state !== 'draft'; }
+        }), 'secondary wide');
+        review.disabled = body.disabled = recipient.disabled = draft.state !== 'draft';
+        if (draft.state === 'sending') sheet.append(node('p', 'helper', 'Delivery is uncertain. Check the conversation before creating a replacement. Editing is locked.'));
+        if (draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
+          if (!confirm('Delete this local draft?')) return;
+          try { await api('api/drafts/' + draft.id, {method:'DELETE', body:{revision:draft.revision}}); await agentDrafts(); }
+          catch (e) { problem.textContent = e.message; }
+        }), 'secondary wide'));
+        sheet.append(node('p', 'helper', 'Review the recipient and text, then click Send. Nothing is sent by reviewing.'), review,
+          button('Back to drafts', agentDrafts, 'secondary wide'));
+        return;
+      }
       const reason = node('p', 'helper', authority.reason); sheet.append(reason);
       const link = origin => {
         const a = node('a', 'primary wide', 'Open independent review');
