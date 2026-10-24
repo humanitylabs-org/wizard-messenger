@@ -1,0 +1,56 @@
+name: messenger-scoped-runtime
+services:
+  socket-init:
+    image: ${MESSENGER_SCOPED_IMAGE:-messenger-scoped-runtime:local}
+    user: '0:0'
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes: [agent-socket:/agent]
+    command: ['-c', "import os; os.chmod('/agent',0o755); os.chown('/agent',10001,10001)"]
+    restart: 'no'
+  broker:
+    image: ${MESSENGER_SCOPED_IMAGE:-messenger-scoped-runtime:local}
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    depends_on:
+      socket-init: {condition: service_completed_successfully}
+    networks: [messenger-control]
+    volumes:
+      - agent-socket:/agent
+      - ${MESSENGER_BROKER_CONFIG:?owner config required}:/config/broker.json:ro
+    secrets: [messenger-agent-token]
+    command: ['/code/broker.py', '/config/broker.json', '/agent/broker.sock']
+    restart: unless-stopped
+  worker:
+    image: ${MESSENGER_SCOPED_IMAGE:-messenger-scoped-runtime:local}
+    user: '10002:10002'
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    volumes: [agent-socket:/agent:ro]
+    tmpfs: ['/tmp:rw,noexec,nosuid,nodev,size=8m']
+    depends_on: [broker]
+    stdin_open: true
+    command: ['/code/mcp.py', '/agent/broker.sock']
+    restart: 'no'
+volumes:
+  agent-socket: {}
+secrets:
+  messenger-agent-token:
+    file: ${MESSENGER_BROKER_TOKEN_FILE:?owner token file required}
+networks:
+  messenger-control:
+    external: true
+    name: ${MESSENGER_CONTROL_NETWORK:?existing private app network required}

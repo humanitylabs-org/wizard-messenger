@@ -31,7 +31,7 @@ class Drafts:
     def check(self, row, payload):
         if type(payload.get('revision')) is not int or payload['revision'] != row['revision']:
             raise EngineError('draft_changed', 'Draft changed. Review it again before sending.', 409)
-    def dispatch(self, method, suffix, payload, unified, owner=False, authority=None, remote_required=False):
+    def dispatch(self, method, suffix, payload, unified, owner=False, authority=None, remote_required=False, can_send=False):
         with self.lock:
             if not suffix and method == 'GET': return {'drafts': copy.deepcopy(list(self.rows.values()))}
             if not suffix and method == 'POST':
@@ -60,7 +60,7 @@ class Drafts:
                     # No client supplied approval, preview, status, upload or send fields are ever retained.
                     row = {**fields, 'id': ident, 'revision': row['revision'] + 1, 'state': 'draft'}
                     self.rows[ident] = row; self.save(); return {'draft': copy.deepcopy(row)}
-            if len(suffix) == 2 and method == 'POST' and owner:
+            if len(suffix) == 2 and method == 'POST' and (owner or (can_send and suffix[1] in ('preview', 'send'))):
                 self.check(row, payload)
                 if suffix[1] in ('export', 'authority-status'):
                     if authority is None:

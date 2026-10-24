@@ -8,18 +8,18 @@ import threading
 import time
 from engine import EngineError
 
-MODES = ('no_access', 'read_only', 'draft_only', 'full_access')
+MODES = ('no_access', 'read_only', 'draft_only', 'draft_and_send')
+LABELS = dict(zip(MODES, ('No access', 'Read-only', 'Draft-only', 'Draft-and-send')))
 PUBLIC = {('GET', '/healthz'), ('GET', '/api/status'), ('GET', '/api/identity'),
           ('POST', '/api/view/ticket'), ('POST', '/mcp')}
 READS = [r'/api/(?:setup|contacts|invites|dms)', r'/api/dms/[^/]+/messages',
          r'/api/unified/(?:people|groups|directory|updates)',
          r'/api/unified/people/[^/]+', r'/api/unified/media/[^/]+',
          r'/api/drafts(?:/[^/]+)?']
-WRITES = [r'/api/(?:contacts|dms)', r'/api/dms/[^/]+/(?:messages|retry)',
-          r'/api/invites/[^/]+/(?:accept|decline)',
-          r'/api/unified/people/[^/]+(?:/(?:merge|unmerge|preview|send|read|typing))?',
+WRITES = [r'/api/dms/[^/]+/(?:messages|retry)',
+          r'/api/unified/people/[^/]+/(?:preview|send|read|typing)',
           r'/api/unified/messages/[^/]+/(?:translate|react|edit|delete)',
-          r'/api/unified/groups/[^/]+/labels', r'/api/unified/sync']
+          r'/api/drafts/[^/]+/(?:preview|send)']
 WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts preview send read typing merge unmerge translate react edit delete labels sync view session ticket agent-access'.split())
 def route_shape(path):
     return '/' + '/'.join(p if p in WORDS else ':id' for p in path.split('/') if p)
@@ -49,14 +49,16 @@ class AgentAccess:
     def state(self, limit=50):
         return {'mode': self.effective_mode(), 'enabled': self.active(),
                 'until': int(self.until * 1000) if self.until and self.active() else None,
-                'log': self.recent(limit), 'boundary': 'Application defense in depth; not protection against host root.'}
+                'log': self.recent(limit), 'label': LABELS[self.effective_mode()], 'boundary': 'Application defense in depth; not protection against host root.'}
     def configure(self, payload):
         mode = payload.get('mode')
+        # Compatibility spelling narrows to messaging, never administrative access.
+        if mode == 'full_access': mode = 'draft_and_send'
         # Legacy clients may revoke, never enable a broad time-limited grant.
         if mode is None and type(payload.get('minutes')) is int and payload['minutes'] == 0:
             mode = 'no_access'
         if mode not in MODES:
-            raise EngineError('invalid_policy', 'Choose No access, Read-only, Draft-only or Full access', 400)
+            raise EngineError('invalid_policy', 'Choose No access, Read-only, Draft-only or Draft-and-send', 400)
         minutes = payload.get('minutes')
         if minutes is not None and (type(minutes) is not int or not 1 <= minutes <= 1440):
             if not (mode == 'no_access' and minutes == 0):
@@ -80,11 +82,9 @@ class AgentAccess:
         mode = self.effective_mode()
         if mode == 'no_access': return False
         if method == 'GET' and matches(path, READS): return True
-        if mode in ('draft_only', 'full_access') and method == 'POST' and re.fullmatch(r'/api/drafts(?:/[^/]+)?', path): return True
-        if mode == 'full_access':
+        if mode in ('draft_only', 'draft_and_send') and method == 'POST' and re.fullmatch(r'/api/drafts(?:/[^/]+)?', path): return True
+        if mode == 'draft_and_send':
             if method == 'POST' and matches(path, WRITES): return True
-            if method == 'DELETE' and re.fullmatch(r'/api/contacts/[^/]+', path): return True
-            if method == 'PUT' and re.fullmatch(r'/api/unified/people/[^/]+/upload', path): return True
         return False
     def record(self, method, route, outcome):
         entry = {'t': int(time.time()*1000), 'method': method, 'route': route, 'outcome': outcome}

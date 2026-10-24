@@ -1,0 +1,5 @@
+{
+  "origin": "http://wizard-messenger:8765",
+  "token_file": "/run/secrets/messenger-agent-token",
+  "mode": "no_access"
+}
