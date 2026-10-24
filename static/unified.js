@@ -67,6 +67,7 @@
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
   function back() {
+    if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
@@ -127,20 +128,23 @@
     if (now - d < 6 * 864e5) return d.toLocaleDateString([], {weekday: 'long'});
     return d.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? {year: 'numeric'} : {})});
   }
-  async function newChat() {
-    // The full A-Z contact list lives only here.
-    const sheet = overlay('New chat'); sheet.classList.add('tall');
+  async function newChat(shareText) {
+    // The full A-Z contact list lives only here. From Wizard's share sheet it picks who gets the shared text.
+    const title = shareText ? 'Send to…' : 'New chat';
+    const sheet = overlay(title); sheet.classList.add('tall');
+    // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
+    const settled = shareText ? new Promise(resolve => { s.answer = () => resolve(true); }) : null;
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
-      const d = await call('directory'); if (s.overlay !== 'New chat') return;
+      const d = await call('directory'); if (s.overlay !== title) return settled;
       const all = [...d.people, ...d.groups.map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
       const draw = () => {
         const q = search.value.trim().toLowerCase(); list.replaceChildren(); let letter = '';
         for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 200)) {
           const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
           if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
-          const row = button('', () => { closeOverlay(); openPerson(p.id); }, 'u-directory-row');
+          const row = button('', () => { if (shareText) placeShared(p.id, shareText); closeOverlay(); openPerson(p.id); }, 'u-directory-row');
           const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', p.group ? 'Group' : networksOf(p).map(cap).join(' · ')));
           row.append(avatar(p.display_name, 'small'), text); list.append(row);
         }
@@ -148,6 +152,7 @@
       };
       search.oninput = draw; draw(); requestAnimationFrame(() => search.focus());
     } catch (e) { error(e); }
+    return settled;
   }
   // ---------- live store: lists and open threads stay in memory and follow the change feed ----------
   const store = {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}, pending: 0};
@@ -164,7 +169,7 @@
   const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
   let saveTimer = null, savedOrder = [];
   function persist() {
-    syncBadge(); clearTimeout(saveTimer);
+    syncBadge(); shareTargets(); clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const threads = {};
       for (const id of savedOrder.slice(0, THREADS_KEPT)) { const t = store.threads[id]; if (t) threads[id] = {person: t.person, has_more: true, messages: t.messages.filter(m => !m.pending && !m.failed).slice(-MESSAGES_KEPT).map(({retry, local, ...m}) => m)}; }
@@ -414,6 +419,7 @@
     const pos = () => src ? offset + (ctx.currentTime - startedAt) * rate : offset;
     const rateLabel = () => (rate === 1.5 ? '1.5' : String(rate)) + '×';
     const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    const noteTypes = new Map();
     const fetched = new Map(); // url -> Promise<ArrayBuffer>: voice notes downloaded ahead, before anyone taps Play
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
     // so pause/seek/next note doesn't pump the volume.
@@ -431,7 +437,7 @@
     const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
     const fetchNote = url => {
       if (!fetched.has(url)) {
-        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); return r.arrayBuffer(); }));
+        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); noteTypes.set(url, r.headers.get('Content-Type')); return r.arrayBuffer(); }));
         fetched.get(url).catch(() => fetched.delete(url));
         while (fetched.size > 16) fetched.delete(fetched.keys().next().value);
       }
@@ -456,6 +462,7 @@
     };
     return {
       rateLabel,
+      async blob(url, type) { if (localAudio.has(url)) return localAudio.get(url); const bytes = await fetchNote(url); return new Blob([bytes], {type: type || noteTypes.get(url) || 'application/octet-stream'}); },
       // Tap the speed pill: 1x -> 1.5x -> 2x -> 1x, applied mid-note from the same spot.
       cycleRate() {
         const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
@@ -483,7 +490,7 @@
   })();
 
   async function openPerson(id, hint) {
-    s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
+    view.selection?.clear(); s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
     const cached = store.threads[id];
     buildThread(id, cached?.person || hint || {display_name: '', identities: []});
     savedOrder = [id, ...savedOrder.filter(x => x !== id)];
@@ -522,6 +529,7 @@
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
     root.append(composer(id, p));
+    view.selection = messageSelection(root, () => (store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
   }
   function nearBottom() { const sc = view.scroll; return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
   function paintThread(toBottom = false) {
@@ -540,7 +548,7 @@
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([m.id, m.original, m.translated, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
+      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -554,6 +562,7 @@
     if (follow) scroll.scrollTop = scroll.scrollHeight;
     else if (view.anchor) { scroll.scrollTop = scroll.scrollHeight - before; }
     view.anchor = false;
+    view.selection?.paint();
     if (follow) markRead();
   }
   async function older() {
@@ -625,6 +634,70 @@
     if (!m.pending && !m.deleted) gestures(row, b, m);
     return row;
   }
+  // One selection/forward controller for unified media threads and the text-only Marmot tab.
+  // Selection is disposable UI, never an update hold. Sharing is OUT through Wizard's existing share service:
+  // on Android choose Wizard in the OS sheet, then its existing new-chat/recent-thread picker.
+  function messageSelection(root, entries) {
+    const ids = new Set(), head = root.querySelector('.u-thread-head,.chat-header');
+    const bar = node('header', 'u-selection'); bar.hidden = true; bar.setAttribute('aria-label', 'Selected messages');
+    const count = node('strong', '', '0 selected'), cancel = button('Cancel', () => clear(), 'secondary');
+    const forward = button('Forward to Wizard', () => send(), 'primary'); bar.append(cancel, count, forward); head.after(bar);
+    let active = false, sending = false, queue = null, cursor = 0;
+    function paint() {
+      bar.hidden = !active; head.hidden = active; count.textContent = ids.size + ' selected';
+      forward.disabled = !ids.size || sending; cancel.disabled = sending;
+      forward.textContent = sending ? 'Forwarding…' : 'Forward to Wizard';
+      for (const {message: m, node: row} of entries()) if (row) {
+        row.classList.toggle('u-selecting', active); row.classList.toggle('u-selected', ids.has(m.id));
+        row.setAttribute('aria-selected', String(ids.has(m.id)));
+        let check = row.querySelector(':scope > .u-selection-check');
+        if (active && !check) { check = node('span', 'u-selection-check'); check.setAttribute('aria-hidden', 'true'); row.append(check); }
+        if (check) { check.hidden = !active; check.textContent = ids.has(m.id) ? '✓' : '○'; }
+      }
+    }
+    function clear() { if (sending) return; active = false; ids.clear(); queue = null; cursor = 0; paint(); }
+    root.addEventListener('click', e => {
+      if (!active || !e.target.closest('.u-row,.message')) return;
+      e.preventDefault(); e.stopImmediatePropagation(); if (sending) return;
+      const found = entries().find(x => x.node?.contains(e.target)); if (!found || found.message.deleted || found.message.pending) return;
+      const id = found.message.id; if (ids.has(id)) ids.delete(id); else ids.add(id); queue = null; cursor = 0; paint();
+    }, true);
+    const line = m => (m.outgoing ? 'You' : nameOf(m.sender) || 'Sender') + ' (' + new Date(m.timestamp).toLocaleString() + '): ' + (m.original || '') + (m.transcript ? '\nTranscript: ' + m.transcript : '');
+    async function send() {
+      if (sending || !ids.size) return; sending = true; paint();
+      try {
+        if (!queue) {
+          queue = []; let texts = [];
+          const flush = () => { if (texts.length) queue.push({text: texts.join('\n\n')}); texts = []; };
+          for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) { flush(); queue.push({message: m}); if (m.original || m.transcript) texts.push(line(m)); }
+            else texts.push(line(m));
+          }
+          flush(); cursor = 0;
+        }
+        const receipts = [];
+        while (cursor < queue.length) {
+          const op = queue[cursor]; let receipt;
+          if (op.message) {
+            const m = op.message, blob = m.msgtype === 'm.audio' ? await player.blob(m.local || mediaURL(m.id), m.media?.mime || m.media?.mimetype) : await fetch(m.local || mediaURL(m.id), {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('Could not download attachment'); return r.blob(); });
+            const sender = (m.outgoing ? 'You' : nameOf(m.sender) || 'Sender').replace(/[\/:*?"<>|\x00-\x1f]/g, '_');
+            const d = new Date(m.timestamp), pad = n => String(n).padStart(2, '0');
+            const date = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + '-' + pad(d.getMinutes());
+            const type = blob.type.split(';')[0], ext = {'audio/ogg':'ogg','audio/wav':'wav','audio/webm':'webm','audio/mp4':'m4a','audio/mpeg':'mp3','image/jpeg':'jpg','image/png':'png','image/webp':'webp','video/mp4':'mp4'}[type] || 'bin';
+            const filename = (m.media.filename || sender + (m.msgtype === 'm.audio' ? ' voice note ' : ' attachment ') + date + '.' + ext).replace(/[\/:*?"<>|\x00-\x1f]/g, '_');
+            receipt = await WizardApp.share.file(new File([blob], filename, {type: blob.type}), {title: 'Forwarded from ' + sender});
+          } else receipt = await WizardApp.share.text({text: op.text, title: 'Forwarded from Messenger'});
+          if (receipt !== 'shared' && receipt !== 'copied') { toast(receipt === 'cancelled' ? 'Share cancelled · selection kept; retry resumes' : 'Sharing unavailable · selection kept; retry resumes', 4500); return; }
+          receipts.push(receipt); cursor++;
+        }
+        toast('Share result: ' + [...new Set(receipts)].join(', ') + ' · choose Wizard in the share sheet', 4500);
+        sending = false; clear();
+      } catch (e) { toast((e.message || 'Could not forward') + ' · Try Forward again', 4500); }
+      finally { sending = false; paint(); }
+    }
+    return {get active() { return active; }, begin(id) { active = true; ids.add(id); queue = null; cursor = 0; paint(); }, paint, clear};
+  }
+
   function toneOf(name) { let h = 0; for (const ch of name || '?') h = (h * 31 + ch.codePointAt(0)) >>> 0; return h % TONES; }
   function visualMedia(m) {
     const box = node('button', 'u-media'); box.type = 'button'; box.setAttribute('aria-label', m.msgtype === 'm.video' ? 'Play video' : 'Open photo');
@@ -668,8 +741,30 @@
     box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)), speed);
     player.adopt(box, m.client_id || m.id);
     if (!m.media?.voice && m.media?.filename) box.append(node('span', 'u-file-name', m.media.filename));
-    return box;
+    const wrap = node('div', 'u-voice-note'); wrap.append(box);
+    const transcript = node('p', 'u-transcript', m.transcript || ''); transcript.hidden = !m.transcript; wrap.append(transcript);
+    if (!m.transcript && !m.pending && window.WizardApp?.voice?.transcribe) {
+      const transcribe = button('Transcribe', async () => {
+        if (transcribe.disabled) return; transcribe.disabled = true; transcribe.textContent = 'Transcribing…';
+        try {
+          let text = transcriptionText.get(m.id);
+          if (!text) {
+            const blob = await player.blob(m.local || mediaURL(m.id), m.media?.mime || m.media?.mimetype);
+            if (blob.size > 25 * 1048576) throw new Error('Voice note is larger than 25 MB');
+            const result = await WizardApp.voice.transcribe(blob);
+            if (result.unavailable) throw new Error('Transcription is not set up on this Wizard');
+            text = String(result.text || '').trim(); if (!text) throw new Error('No speech found');
+            transcriptionText.set(m.id, text);
+          }
+          const saved = await call('messages/' + encodeURIComponent(m.id) + '/transcript', {text});
+          m.transcript = saved.text; transcriptionText.delete(m.id); persist();
+          transcript.textContent = m.transcript; transcript.hidden = false; transcribe.remove();
+        } catch (e) { transcribe.disabled = false; transcribe.textContent = 'Retry transcription'; toast((e.message || 'Could not transcribe') + ' · Tap Retry transcription', 4500); }
+      }, 'u-transcribe link'); wrap.append(transcribe);
+    }
+    return wrap;
   }
+  const transcriptionText = new Map(); // retain a successful result if saving failed: Retry only saves, never bills twice
   function jumpTo(id) { const el = view.scroll?.querySelector('[data-id="' + CSS.escape(id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
   function translate(m) {
     action(async () => {
@@ -682,9 +777,10 @@
   function gestures(row, b, m) {
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false;
     b.addEventListener('pointerdown', e => {
-      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate,.u-speed')) return;
+      if (view.selection?.active || e.button > 0 || e.target.closest('a,.u-vplay,.u-translate,.u-speed,.u-transcribe,.u-transcript')) return;
+      delete b.dataset.held;
       x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
-      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); swallowRelease(); menu(m, b); }, 450);
+      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); b.dataset.held = '1'; swallowRelease(); menu(m, b); }, 450);
     });
     b.addEventListener('pointermove', e => {
       const mx = e.clientX - x0, my = e.clientY - y0;
@@ -693,7 +789,7 @@
     });
     const end = () => { if (timer) { clearTimeout(timer); timer = null; } if (swiping) { row.style.transform = ''; row.classList.remove('arm'); if (dx > 56) startReply(m); swiping = false; } };
     b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end); b.addEventListener('pointerleave', end);
-    b.addEventListener('contextmenu', e => { e.preventDefault(); if (timer) clearTimeout(timer); timer = null; menu(m, b); });
+    b.addEventListener('contextmenu', e => { e.preventDefault(); if (b.dataset.held || view.selection?.active) return; if (timer) clearTimeout(timer); timer = null; menu(m, b); });
   }
   function menu(m, b) {
     const t = store.threads[view.id]; if (!t) return;
@@ -710,8 +806,9 @@
     }
     const list = node('div', 'u-actions');
     const item = (label, ic, fn, cls = '') => { const it = button('', () => { closeOverlay(); fn(); }, 'u-act ' + cls); it.setAttribute('role', 'menuitem'); it.append(icon(ic), node('span', '', label)); list.append(it); };
+    if (!m.deleted) item('Select', 'copy', () => view.selection.begin(m.id));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
-    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original).then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
+    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item('Save', 'download', () => { const a = node('a'); a.href = mediaURL(m.id); a.download = m.media.filename || ''; a.click(); });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     item('Delete for me', 'trash', () => del(m, false), 'danger');
@@ -767,22 +864,22 @@
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => i.network === 'telegram');
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
-    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.hidden = true;
-    const attach = iconButton('plus', 'Attach photo', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
+    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.multiple = true; file.hidden = true;
+    const attach = iconButton('plus', 'Attach photos', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
     const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
     const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
     const field = node('div', 'u-field'); field.append(draft);
     const row = node('div', 'u-compose-row'); row.append(attach, field, send, mic, file);
     const paintBar = () => {
-      bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach;
-      bar.hidden = !target && !a;
+      bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach || [];
+      bar.hidden = !target && !a.length;
       if (target) {
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
-      if (a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = a.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(a.url); view.attach = null; paintBar(); grow(); })); bar.append(chip); }
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const ph of a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = ph.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(ph.url); view.attach = a.filter(x => x !== ph); if (!view.attach.length) view.attach = null; paintBar(); grow(); })); strip.append(chip); } bar.append(strip); }
     };
-    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
+    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
     let typingAt = 0, idle = null;
     const typing = on => { if (!telegramOnly) return; call('people/' + id + '/typing', {typing: on}).catch(() => {}); };
     draft.oninput = () => {
@@ -791,16 +888,18 @@
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
     draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
-    file.onchange = async () => { const f = file.files[0]; file.value = ''; if (!f) return; try { view.attach = await preparePhoto(f); paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
+    // Several photos at once, like Wizard chats (up to 10, Telegram's album size); each goes as its own photo, the caption on the first.
+    file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
-      const text = draft.value.trim(), a = view.attach;
-      if (!text && !a) return;
+      const text = draft.value.trim(), a = view.attach || [];
+      if (!text && !a.length) return;
       if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }
-      if (reviewed && !a) return reviewSend(id, p, text, channel.value);
+      if (reviewed && !a.length) return reviewSend(id, p, text, channel.value);
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
-      queueSend(id, {text, photo: a, reply, identity_id: channel.value});
+      if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
+      else a.forEach((ph, i) => queueSend(id, {text: i ? '' : text, photo: ph, reply: i ? null : reply, identity_id: channel.value}));
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -1149,7 +1248,7 @@
       closeOverlay();
     }), 'secondary wide'));
   }
-  function switchTab(tab) { if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
+  function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
   // Keyboard open/close: keep the newest message glued above the composer.
@@ -1162,11 +1261,43 @@
     switchTab(['groups', 'messenger'].includes(at?.tab) ? at.tab : 'people');
     if (at?.person && at.tab !== 'messenger') openPerson(at.person);
   }
+  // ---------- Wizard share sheet: recent chats are direct targets; a share lands in the composer, never auto-sent ----------
+  const SHARE_TARGETS = 12;
+  let sharedTargetsKey = '';
+  function shareTargetRows() {
+    return [...(store.lists.people || []), ...(store.lists.groups || []).map(g => ({...g, group: true}))]
+      .filter(p => p.id && p.display_name).sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, SHARE_TARGETS)
+      .map(p => ({id: p.id, name: p.display_name, detail: p.group || listKey(p) === 'groups' ? 'Group' : networksOf(p).map(cap).join(' · ')}));
+  }
+  function shareTargets() {
+    const share = window.WizardApp?.share; if (!share?.targets) return;
+    const rows = shareTargetRows();
+    const key = JSON.stringify(rows); if (key === sharedTargetsKey) return; sharedTargetsKey = key;
+    Promise.resolve(share.targets(rows)).catch(() => {});
+  }
+  function sharedText(item) { return [item.text, item.url].filter(Boolean).join('\n').slice(0, 16000); }
+  function placeShared(id, text) {
+    const had = (s.drafts[id] || '').trim();
+    s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
+  }
+  function receiveShare(item) {
+    const text = sharedText(item);
+    if (!s.ready || !text) return false; // stays pending in Wizard; check() runs again once unlocked
+    if (s.overlay) closeOverlay();
+    if (s.tab === 'messenger' || s.search != null) switchTab('people');
+    if (item.target) { placeShared(item.target, text); openPerson(item.target); return true; }
+    if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
+    return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
+  }
+  function listenForShares() {
+    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
+  }
   window.MessengerUnified = {
-    ask, toast, holdToMenu, actionMenu, muteAction, icon,
+    receiveShare, shareTargetRows,
+    ask, toast, holdToMenu, actionMenu, muteAction, icon, messageSelection,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
+    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() {
       if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
@@ -1178,10 +1309,11 @@
       if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed();
+      shareTargets(); Promise.resolve(window.WizardApp?.share?.check?.()).catch(() => {}); // a share that waited for unlock
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

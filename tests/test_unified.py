@@ -93,6 +93,26 @@ class UnifiedTests(unittest.TestCase):
         self.inbox = UnifiedInbox(self.tmp.name, self.engine)
         self.a = self.inbox.store.identity('telegram', '!a', 'Alice')
 
+    def test_transcript_persists_and_is_carried_by_change_feed(self):
+        self.inbox.store.add_message('$voice', self.a, 'alice', False, '', 100, msgtype='m.audio', media={'voice': True, 'mime': 'audio/ogg'})
+        before = self.inbox.store.seq
+        path = '/api/unified/messages/%24voice/transcript'
+        self.assertEqual(self.inbox.dispatch('POST', path, {'text': '  Hello from Miguel  '}), {'id': '$voice', 'text': 'Hello from Miguel'})
+        self.assertGreater(self.inbox.store.seq, before)
+        self.assertEqual(self.inbox.store.since(before)[0][0]['transcript'], 'Hello from Miguel')
+        again = PeopleStore(self.inbox.store.path)
+        self.assertEqual(again.messages(self.a['person_id'])[0]['transcript'], 'Hello from Miguel')
+        self.assertEqual(self.inbox.dispatch('POST', path, {'text': 'race from another device'})['text'], 'Hello from Miguel')
+        self.inbox.store.redact('$voice')
+        self.assertIsNone(self.inbox.store.message('$voice')['transcript'])
+        with self.assertRaises(EngineError): self.inbox.dispatch('POST', path, {'text': 'resurrect'})
+
+    def test_transcript_rejects_missing_non_audio_empty_and_oversized(self):
+        self.inbox.store.add_message('$text', self.a, 'alice', False, 'hello', 100)
+        self.inbox.store.add_message('$voice', self.a, 'alice', False, '', 101, msgtype='m.audio', media={'voice': True})
+        for ident, value in [('$missing', 'x'), ('$text', 'x'), ('$voice', ''), ('$voice', 'x' * 100001), ('$voice', None)]:
+            with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/messages/' + ident + '/transcript', {'text': value})
+
     def test_dormant_status_does_not_contact_telegram(self):
         with patch('unified.http') as request:
             self.assertEqual(self.inbox.telegram_status()['state'], 'not_configured')
