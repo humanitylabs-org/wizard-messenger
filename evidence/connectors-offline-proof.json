@@ -1,0 +1,35 @@
+{
+  "whatsapp": {
+    "release": "v0.2610.0",
+    "source_commit": "1067291a89f4949887b328104005abe4f7163ddf",
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "account_authentication_attempted": false
+  },
+  "signal": {
+    "release": "v0.2610.0",
+    "source_commit": "d129f0ecc6bd29cfb5e54b18e025bd0c8a20a4bf",
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "account_authentication_attempted": false
+  },
+  "slack": {
+    "release": "v0.2610.0",
+    "source_commit": "78742470614d455d4fb9081962e757f6afd6f3ea",
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "account_authentication_attempted": false
+  },
+  "dormant": {
+    "state": "ok",
+    "account_authentication_attempted": false,
+    "providers": {
+      "telegram": "not_configured",
+      "whatsapp": "not_configured",
+      "signal": "not_configured",
+      "slack": "not_configured",
+      "line": "unsupported",
+      "kakaotalk": "unsupported"
+    }
+  }
+}

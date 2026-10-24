@@ -31,6 +31,7 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
 COPY engine.py server.py web.py passkey.py messenger_addresses.py unified.py unified_setup.py translation.py API-contract.json /app/
+COPY connector_setup.py connectors.py connector_inbox.py connector_web.py /app/
 COPY plumbing /app/plumbing
 COPY vendor /app/vendor
 COPY static /app/static

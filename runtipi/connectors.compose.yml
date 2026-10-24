@@ -1,0 +1,155 @@
+services:
+  connector-init:
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.10}
+    pull_policy: never
+    user: 0:0
+    entrypoint:
+    - python3
+    - /app/connector_setup.py
+    network_mode: none
+    read_only: true
+    cap_drop:
+    - ALL
+    cap_add:
+    - CHOWN
+    - DAC_OVERRIDE
+    - FOWNER
+    security_opt:
+    - no-new-privileges:true
+    environment:
+      MESSENGER_CONNECTORS: ${MESSENGER_CONNECTORS:-}
+    volumes:
+    - ${APP_DATA_DIR}/data:/data
+    depends_on:
+      unified-init:
+        condition: service_completed_successfully
+    restart: 'no'
+  matrix:
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+  messenger:
+    environment:
+      CONNECTORS_ENABLED: '1'
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+  whatsapp:
+    image: dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391
+    profiles:
+    - connectors
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-whatsapp -c /data/config.yaml;
+      else printf "%s\n" "whatsapp disabled"; exec sleep infinity; fi
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/whatsapp:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29318/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  signal:
+    image: dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a
+    profiles:
+    - connectors
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-signal -c /data/config.yaml;
+      else printf "%s\n" "signal disabled"; exec sleep infinity; fi
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/signal:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29328/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  slack:
+    image: dock.mau.dev/mautrix/slack@sha256:0de822d47926b7077322a4fa9f349cd024af13107ab4bc63a0962dc53ef72a63
+    profiles:
+    - connectors
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-slack -c /data/config.yaml;
+      else printf "%s\n" "slack disabled"; exec sleep infinity; fi
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/slack:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29335/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+networks:
+  connector-egress: {}
