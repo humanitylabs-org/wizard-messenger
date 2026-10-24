@@ -30,6 +30,8 @@
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
+    bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
+    belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
@@ -172,9 +174,9 @@
     } catch { return false; }
   }
   // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
-  const unreadById = {}, kindById = {}; let nativeUnread = 0;
+  const unreadById = {}, kindById = {}, mutedById = {}; let nativeUnread = 0;
   let badgeShown = -1;
-  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); } }
+  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; } }
   // Each bottom tab carries its own unread count (Chats, Groups, Messenger), like Signal's tab badges.
   function paintTabBadges(counts) {
     for (const [tab, n] of Object.entries(counts)) {
@@ -188,7 +190,7 @@
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
     const counts = {people: 0, groups: 0, messenger: nativeUnread};
-    for (const [id, n] of Object.entries(unreadById)) counts[kindById[id] === 'groups' ? 'groups' : 'people'] += n;
+    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id]) counts[kindById[id] === 'groups' ? 'groups' : 'people'] += n;
     paintTabBadges(counts);
     const n = counts.people + counts.groups + counts.messenger;
     if (n === badgeShown) return; badgeShown = n;
@@ -289,10 +291,13 @@
     }
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
     for (const p of people.filter(p => (!label || (p.labels || []).includes(label)) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
-      const card = button('', () => openPerson(p.id, p), 'u-person' + (p.unread ? ' unread' : ''));
+      const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
+      holdToMenu(card, () => chatMenu(p, card));
       card.append(avatar(p.display_name));
       const info = node('span', 'u-person-info');
-      const top = node('span', 'u-chat-top'); top.append(node('strong', '', p.display_name));
+      const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
+      if (p.muted) { const m = icon('belloff'); m.classList.add('u-muted-mark'); m.setAttribute('aria-label', 'Muted'); m.removeAttribute('aria-hidden'); name.append(m); }
+      top.append(name);
       if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
       const bottom = node('span', 'u-chat-bottom');
       const typing = (store.typing[p.id] || []).length;
@@ -301,7 +306,7 @@
         const who = p.last.outgoing ? 'You: ' : groups && p.last.sender ? nameOf(p.last.sender).split(' ')[0] + ': ' : '';
         bottom.append(node('span', 'u-snippet', who + snippet(p.last)));
       }
-      if (p.unread) bottom.append(node('span', 'u-badge', p.unread > 99 ? '99+' : String(p.unread)));
+      if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
       else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
       info.append(top, bottom);
       const extra = [...(networksOf(p).length > 1 ? networksOf(p).map(cap) : []), ...(p.labels || [])];
@@ -310,6 +315,38 @@
     }
     if (!frag.children.length) frag.append(node('p', 'u-empty', q ? 'No matches' : label ? 'No groups with this label' : groups ? 'Group chats appear here once an account is connected.' : 'No chats yet. Connect Telegram in Settings, or start a new chat.'));
     list.replaceChildren(frag);
+  }
+
+  // Long-press (or right-click) a chat row: Mute / Unmute. A held press never also opens the chat.
+  function holdToMenu(el, open) {
+    let timer = null, x0 = 0, y0 = 0;
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    el.addEventListener('pointerdown', e => { if (e.button > 0) return; delete el.dataset.held; x0 = e.clientX; y0 = e.clientY; cancel();
+      timer = setTimeout(() => { timer = null; el.dataset.held = '1'; navigator.vibrate?.(10); open(); }, 450); });
+    el.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 8) cancel(); });
+    el.addEventListener('pointerup', cancel); el.addEventListener('pointercancel', cancel); el.addEventListener('pointerleave', cancel);
+    // Android fires contextmenu during a touch long-press too: the timer has already opened the menu then.
+    el.addEventListener('contextmenu', e => { e.preventDefault(); if (el.dataset.held) return; cancel(); open(); });
+  }
+  function chatMenu(p, card) {
+    closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
+    const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
+    const panel = node('div', 'u-menu left'); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', p.display_name);
+    const list = node('div', 'u-actions');
+    const it = button('', () => { closeOverlay(); setMuted(p, !p.muted); }, 'u-act'); it.setAttribute('role', 'menuitem');
+    it.append(icon(p.muted ? 'bell' : 'belloff'), node('span', '', p.muted ? 'Unmute' : 'Mute'));
+    list.append(it); panel.append(list); layer.append(panel);
+    layer.onclick = e => { if (e.target === layer) closeOverlay(); };
+    $('messenger').append(layer);
+    const r = card.getBoundingClientRect(), H = $('messenger').clientHeight;
+    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 90)) + 'px';
+    it.focus(); hold();
+  }
+  async function setMuted(p, muted) {
+    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
+    flip(muted);
+    try { await call('people/' + encodeURIComponent(p.id), {muted}); toast(muted ? 'Muted' : 'Unmuted'); persist(); }
+    catch (e) { flip(!muted); toast(e.message || 'Could not change mute', 3000); }
   }
 
   // ---------- conversation ----------

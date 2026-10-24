@@ -128,6 +128,9 @@ button { touch-action: manipulation; }
 /* list */
 .u-person { position: relative; transition: background-color .08s; }
 .u-person:active { background: var(--surface); }
+.u-person { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.u-badge.muted { background: var(--ink-3, #76777d); color: var(--bg, #111); }
+.u-muted-mark { width: 14px; height: 14px; margin-left: 6px; vertical-align: -2px; opacity: .6; }
 .u-chat-bottom { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .u-chat-bottom .u-snippet { flex: 1; min-width: 0; }
 .u-snippet.typing { color: #9dbbff; font-style: italic; }

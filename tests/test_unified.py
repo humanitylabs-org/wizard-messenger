@@ -29,6 +29,19 @@ class PeopleTests(unittest.TestCase):
         self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'me', 'timestamp': 200})
         self.assertEqual([p['display_name'] for p in self.store.people(chats=False)], ['Amy', 'Bob', 'Zed'])
 
+    def test_mute_persists_and_keeps_unread(self):
+        a = self.store.identity('telegram', '!mute', 'Mia')
+        self.store.add_message('$m1', a, 'mia', False, 'hi', 100)
+        before = self.store.seq
+        self.store.update(a['person_id'], {'muted': True})
+        self.assertGreater(self.store.seq, before)  # the change feed carries it to every open view
+        p = self.store.people()[0]
+        self.assertEqual((p['muted'], p['unread']), (1, 1))
+        self.store.update(a['person_id'], {'muted': False})
+        self.assertEqual(self.store.people()[0]['muted'], 0)
+        with self.assertRaises(Exception):
+            self.store.update(a['person_id'], {'muted': 'yes'})
+
     def test_auto_create_deduplicates_and_preserves_rename(self):
         a = self.store.identity('telegram', '!one', 'Alice')
         self.store.update(a['person_id'], {'display_name': 'Alice Thai', 'language': 'th'})

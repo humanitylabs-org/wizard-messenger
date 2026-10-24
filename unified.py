@@ -87,6 +87,7 @@ def sniff(data):
 
 
 MIGRATIONS = [
+    ('person', 'muted', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'msgtype', "TEXT NOT NULL DEFAULT 'm.text'"),
     ('message', 'media', 'TEXT'),
@@ -127,7 +128,7 @@ class PeopleStore:
 
     def migrate(self):
         with self.db() as db:
-            have = {t: {r[1] for r in db.execute('PRAGMA table_info(' + t + ')')} for t in ('message', 'identity')}
+            have = {t: {r[1] for r in db.execute('PRAGMA table_info(' + t + ')')} for t in ('message', 'identity', 'person')}
             missing = [m for m in MIGRATIONS if m[1] not in have[m[0]]]
             if missing and db.execute('SELECT COUNT(*) FROM message').fetchone()[0]:
                 # Additive only, but keep a copy of the pre-migration history anyway.
@@ -264,7 +265,7 @@ class PeopleStore:
     def update(self, person_id, payload):
         self.person(person_id)
         with self.db() as db:
-            for key in ('display_name', 'language', 'preferred_identity'):
+            for key in ('display_name', 'language', 'preferred_identity', 'muted'):
                 if key not in payload:
                     continue
                 value = payload[key]
@@ -272,6 +273,10 @@ class PeopleStore:
                     if value and not db.execute('SELECT 1 FROM identity WHERE id=? AND person_id=?', (value, person_id)).fetchone():
                         fail('invalid_identity', 'Choose an identity belonging to this person')
                     value = value or None
+                elif key == 'muted':
+                    if not isinstance(value, bool):
+                        fail('invalid_input', 'muted is true or false')
+                    value = int(value)
                 elif key == 'language':
                     if value not in ('', 'en', 'th', 'ja', 'zh', 'es', 'fr', 'de'):
                         fail('invalid_language', 'Choose a supported language')
