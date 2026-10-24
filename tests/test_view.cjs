@@ -359,8 +359,9 @@ test('DOM fixture: nested Back closes sheet then chat then returns false; still 
 test('shared domain Back is honest and holds drafts beyond nested close',async()=>{
   const f=await fixture();assert.equal(f.context.sharedBack.canGoBack(),false);
   f.e('conversation-list').children[0].fire('click');await f.flush();assert.equal(f.context.sharedBack.canGoBack(),true);
-  f.e('draft').value='Fixture held draft';f.e('draft').fire('input');assert.equal(f.context.sharedHolds.size,1);
-  assert.equal(f.context.sharedBack.back(),true);assert.equal(f.context.sharedBack.canGoBack(),false);assert.equal(f.context.sharedHolds.size,1);
+  // 11.6: a chat draft survives reloads, so it no longer holds updates; unsaved contact sheets still do.
+  f.e('draft').value='Fixture held draft';f.e('draft').fire('input');assert.equal(f.context.sharedHolds.size,0);
+  assert.equal(f.context.sharedBack.back(),true);assert.equal(f.context.sharedBack.canGoBack(),false);assert.equal(f.context.sharedHolds.size,0);
   f.e('conversation-list').children[0].fire('click');await f.flush();f.e('draft').value='';f.e('draft').fire('input');assert.equal(f.context.sharedHolds.size,0);
   f.e('add-contact').fire('click');f.e('contact-address').value=peer.npub;f.e('contact-address').fire('input');
   f.context.sharedBack.back();assert.equal(f.context.sharedHolds.size,1,'closing a contact sheet is not discarding its draft');

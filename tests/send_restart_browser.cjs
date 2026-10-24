@@ -29,7 +29,7 @@ async function exhaustedBudget() {
   assert.equal(thread.messages[0].pending, false);
   assert.equal(thread.messages[0].failed, 'Messenger was restarting');
   assert.equal(typeof thread.messages[0].retry, 'function');
-  assert.equal(store.pending, 1, 'failed message still protects unsent work');
+  assert.equal(store.pending, 0, 'failed send releases the update hold (11.6: failed sends survive reloads)');
   assert.ok(paintCount > 0);
   assert.ok(source.includes("'Not sent · ' + m.failed + ' · Retry'"), 'friendly retry label uses failure reason');
   return {attempts: requests.length, waits: delays.length, friendlyText: 'Not sent · ' + thread.messages[0].failed + ' · Retry'};
