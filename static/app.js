@@ -109,7 +109,28 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.4'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.5'});
+  // A new Messenger release reloads this window by itself, back on the same chat, as soon as nothing would be lost
+  // (no typed text, open sheet, recording or playing note). The owner never has to close and reopen it.
+  (() => {
+    const LOADED = '0.2.0-unified.11.5'; let waiting = false, lastCheck = 0;
+    const typing = () => [...document.querySelectorAll('textarea, input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file])')].some(e => e.value.trim() && e.offsetParent !== null);
+    const sheetOpen = () => !document.getElementById('sheet-layer')?.hidden;
+    const tryReload = () => {
+      const U = window.MessengerUnified;
+      if (typing() || (sheetOpen() && !document.hidden) || (U?.idle && !U.idle())) { setTimeout(tryReload, 3000); return; }
+      U?.saveResume?.(); location.reload();
+    };
+    const check = async () => {
+      if (waiting || Date.now() - lastCheck < 10000) return; lastCheck = Date.now();
+      try {
+        const r = await fetch('healthz', {cache: 'no-store', credentials: 'same-origin'}); const j = await r.json();
+        if (j.version && j.version !== LOADED) { waiting = true; tryReload(); }
+      } catch { /* offline: next tick */ }
+    };
+    setInterval(check, 30000); document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+    window.addEventListener('focus', check); setTimeout(check, 5000);
+  })();
 
   const $ = id => document.getElementById(id);
   const state = {

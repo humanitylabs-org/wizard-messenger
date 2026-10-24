@@ -366,8 +366,47 @@
   // Voice playback goes through Web Audio, not an <audio> element: media elements take the phone's audio focus
   // and pause the owner's music; Web Audio plays alongside it, like a notification sound.
   const localAudio = new Map(); // blob: URL -> Blob for notes recorded on this device
+  // Pitch-preserving speed-up for voice notes (WSOLA): overlap-add 40 ms Hann frames read RATE times faster,
+  // each nudged up to ±6 ms to line up with the previous one, so 1.5x/2x sound like faster talking, not chipmunks.
+  function stretchChannels(chs, sr, rate) {
+    const x = chs[0], len = x.length, N = Math.max(64, Math.round(sr * 0.04) & ~1), Hs = N >> 1, Ha = Hs * rate, tol = Math.round(sr * 0.006);
+    if (rate === 1 || len < N * 2) return chs;
+    const frames = Math.max(1, Math.floor((len - N) / Ha) + 1), outLen = (frames - 1) * Hs + N;
+    const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    const out = chs.map(() => new Float32Array(outLen));
+    let prev = 0;
+    for (let k = 0; k < frames; k++) {
+      const nominal = Math.round(k * Ha); let best = Math.min(nominal, len - N);
+      if (k > 0) {
+        const target = prev + Hs; let score = -Infinity;
+        for (let d = -tol; d <= tol; d += 2) {
+          const p = nominal + d; if (p < 0 || p + N > len) continue;
+          let s = 0; for (let i = 0; i < Hs; i += 4) s += x[p + i] * x[target + i];
+          if (s > score) { score = s; best = p; }
+        }
+      }
+      const o = k * Hs;
+      for (let c = 0; c < chs.length; c++) { const src = chs[c], dst = out[c]; for (let i = 0; i < N; i++) dst[o + i] += src[best + i] * win[i]; }
+      prev = best;
+    }
+    return out;
+  }
   const player = (() => {
     let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
+    // Speed, like Telegram's 1x / 1.5x / 2x: one choice for every note, remembered on this device.
+    const RATES = [1, 1.5, 2]; let rate = RATES.includes(+localStorage.getItem('messenger.voice.rate')) ? +localStorage.getItem('messenger.voice.rate') : 1;
+    const fast = new WeakMap(); // AudioBuffer -> Map(rate -> stretched AudioBuffer)
+    const playable = () => {
+      if (rate === 1) return buf;
+      let m = fast.get(buf); if (!m) fast.set(buf, m = new Map());
+      if (!m.has(rate)) {
+        const chs = Array.from({length: buf.numberOfChannels}, (_, c) => buf.getChannelData(c)), out = stretchChannels(chs, buf.sampleRate, rate);
+        const b = ctx.createBuffer(out.length, out[0].length, buf.sampleRate); out.forEach((d, c) => b.copyToChannel(d, c)); m.set(rate, b);
+      }
+      return m.get(rate);
+    };
+    const pos = () => src ? offset + (ctx.currentTime - startedAt) * rate : offset;
+    const rateLabel = () => (rate === 1.5 ? '1.5' : String(rate)) + '×';
     const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
     const fetched = new Map(); // url -> Promise<ArrayBuffer>: voice notes downloaded ahead, before anyone taps Play
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
@@ -379,7 +418,7 @@
       undock = setTimeout(() => { if (ducked && !src) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
     };
     const paint = () => {
-      if (!box || !buf) return; const at = src ? offset + ctx.currentTime - startedAt : offset, f = Math.min(1, at / buf.duration);
+      if (!box || !buf) return; const at = pos(), f = Math.min(1, at / buf.duration);
       for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
       const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
     };
@@ -403,21 +442,30 @@
       return decoded.get(url);
     };
     const start = () => {
-      halt(); src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+      halt(); src = ctx.createBufferSource(); src.buffer = playable(); src.connect(ctx.destination);
       if (offset >= buf.duration - 0.05) offset = 0;
-      startedAt = ctx.currentTime; src.start(0, offset); box.classList.add('playing'); music(true);
+      startedAt = ctx.currentTime; src.start(0, Math.min(offset / rate, src.buffer.duration)); box.classList.add('playing'); music(true);
       src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); music(false); };
       timer = setInterval(paint, 100); paint();
     };
     return {
+      rateLabel,
+      // Tap the speed pill: 1x -> 1.5x -> 2x -> 1x, applied mid-note from the same spot.
+      cycleRate() {
+        const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
+        try { localStorage.setItem('messenger.voice.rate', String(rate)); } catch { /* private mode */ }
+        for (const el of document.querySelectorAll('.u-speed')) el.textContent = rateLabel();
+        if (src) { offset = at; start(); }
+      },
       preload(url) { if (!localAudio.has(url)) fetchNote(url).catch(() => {}); },
       playing: b => b === box && !!src,
+      busy: () => !!src || !!view.recording,
       // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
       adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
       async toggle(b, url, k) {
         ctx ||= new (window.AudioContext || window.webkitAudioContext)();
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-        if (b === box && src) { offset += ctx.currentTime - startedAt; halt(); b.classList.remove('playing'); paint(); return; }
+        if (b === box && src) { offset = pos(); halt(); b.classList.remove('playing'); paint(); return; }
         if (b !== box) { halt(); if (box) { box.classList.remove('playing'); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); } box = b; key = k; buf = null; offset = 0; }
         b.classList.add('playing');
         try { const got = await load(url); if (key !== k) return; buf = got; start(); }
@@ -610,7 +658,8 @@
     const bars = node('div', 'u-wave'); const wave = m.media?.waveform?.length ? m.media.waveform : Array.from({length: 40}, (_, i) => 30 + 25 * Math.sin(i * 1.7 + (m.id.length % 5)));
     const n = Math.min(40, wave.length); for (let i = 0; i < n; i++) { const bar = node('i'); bar.style.height = Math.max(12, wave[Math.floor(i * wave.length / n)]) + '%'; bar.dataset.at = String(i / n); bars.append(bar); }
     bars.onclick = e => { const r = bars.getBoundingClientRect(); player.seek(box, Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))); };
-    box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)));
+    const speed = button(player.rateLabel(), () => player.cycleRate(), 'u-speed'); speed.setAttribute('aria-label', 'Playback speed');
+    box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)), speed);
     player.adopt(box, m.client_id || m.id);
     if (!m.media?.voice && m.media?.filename) box.append(node('span', 'u-file-name', m.media.filename));
     return box;
@@ -627,7 +676,7 @@
   function gestures(row, b, m) {
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false;
     b.addEventListener('pointerdown', e => {
-      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate')) return;
+      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate,.u-speed')) return;
       x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
       timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); swallowRelease(); menu(m, b); }, 450);
     });
@@ -1089,17 +1138,29 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
+  // After an update reload, come back to the same tab and chat (saved by saveResume just before reloading).
+  function resume() {
+    let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
+    switchTab(['groups', 'messenger'].includes(at?.tab) ? at.tab : 'people');
+    if (at?.person && at.tab !== 'messenger') openPerson(at.person);
+  }
   window.MessengerUnified = {
     ask, toast, holdToMenu, actionMenu, muteAction, icon,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
-    paintSaved() { if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },
+    paintSaved() {
+      if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
+      resume(); return true;
+    },
+    // Nothing the owner is doing would be lost by reloading now: no draft, sheet, send in flight, recording or playing note.
+    idle: () => !(Object.values(s.drafts).some(Boolean) || s.overlay || s.busy || store.pending > 0 || view.recording || player.busy()),
+    saveResume() { try { sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person})); } catch { /* fresh start */ } },
     authenticated() {
       if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false;
       const painted = document.documentElement.dataset.inboxTab;
-      if (!painted) switchTab('people');
+      if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed();
       // Groups count toward the badge before the Groups tab is ever opened.
