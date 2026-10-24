@@ -933,6 +933,7 @@
     return env.result;
   }
   const queues = {};
+  const offline = e => e?.code === 'server_restarting' || (e instanceof TypeError && /fetch|network|load failed/i.test(e.message || ''));
   function queueSend(id, job) {
     const t = store.threads[id]; if (!t) return;
     const client_id = 'w' + uid();
@@ -955,7 +956,16 @@
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
       } catch (e) {
-        m.pending = false; m.failed = e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
+        // Messenger restarting (release, update) or the network dropped: the send is idempotent on client_id,
+        // so wait for the app to answer again and resend once per tick, for up to two minutes, before showing Retry.
+        // The update hold stays on while waiting: the send is still in flight.
+        if (offline(e) && (m.waited || 0) < 24) {
+          m.waited = (m.waited || 0) + 1;
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          return run();
+        }
+        m.waited = 0;
+        m.pending = false; m.failed = offline(e) ? 'Messenger was restarting' : e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
         store.pending--; hold(); // failed: shown with Retry; no longer blocks updates
       }
       if (s.person === id) paintThread();
