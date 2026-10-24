@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10.5'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.1'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -656,9 +656,9 @@
       try {
         if (!(await unlockWith(password, signal, creating, name))) return;
         phone.typed = password;
-        if (phone.available && !phone.saved && !localStorage.getItem('messenger.fingerprint.declined')) savePhoneFingerprint(password);
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
         window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
+        if (!creating) offerPhoneFingerprint(password);
         if (!phone.available && !creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
       } catch (error) {
         $('passphrase').value = ''; $('confirm-passphrase').value = '';
@@ -689,12 +689,21 @@
   async function refreshPhoneVault() {
     try { Object.assign(phone, await vault()?.has() || {}); } catch { phone.available = false; }
     renderPasskey();
-    if (phone.saved && state.mode === 'locked' && !phone.tried && !isBusy()) { phone.tried = true; $('fingerprint-unlock').click(); }
+    if (phone.saved && state.mode === 'locked' && !phone.tried) { if (isBusy()) setTimeout(refreshPhoneVault, 400); else { phone.tried = true; $('fingerprint-unlock').click(); } }
   }
   async function savePhoneFingerprint(password) {
     try { await vault().seal(password, 'Unlock Messenger with your fingerprint'); phone.saved = true; localStorage.removeItem('messenger.fingerprint.declined'); return true; }
     catch (error) { if (error.code === 'cancelled') localStorage.setItem('messenger.fingerprint.declined', '1'); return false; }
     finally { renderPasskey(); }
+  }
+  // First time only: ask, never spring the fingerprint prompt on someone. "Not now" is remembered on this phone.
+  async function offerPhoneFingerprint(password) {
+    if (!phone.available || phone.saved || localStorage.getItem('messenger.fingerprint.declined')) return;
+    const U = window.MessengerUnified, later = 'Not now. You can turn it on anytime from the Messenger tab.';
+    const yes = await U?.ask?.({title: 'Unlock with your fingerprint?', body: 'Next time Messenger asks for your password, a fingerprint touch opens it instead. Your password stays on this phone.', yes: 'Use fingerprint', no: 'Not now'});
+    if (!yes) { localStorage.setItem('messenger.fingerprint.declined', '1'); U?.toast?.(later, 4000); return; }
+    if (await savePhoneFingerprint(password)) U?.toast?.('Fingerprint unlock is on', 2500);
+    else U?.toast?.(later, 4000);
   }
   function renderPasskey() {
     const usePhone = phone.available;

@@ -55,6 +55,7 @@
   function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy || store.pending > 0 || !!view.recording; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
   function closeOverlay() {
+    const answered = s.answer; s.answer = null; answered?.(false);
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
   function back() {
@@ -222,7 +223,10 @@
   async function feed() {
     feedCtl?.abort(); const ctl = feedCtl = new AbortController();
     while (s.ready && !ctl.signal.aborted) {
-      if (document.hidden) { await sleep(800); continue; }
+      // Hidden (another desk in front, or the phone asleep) still listens, just less often: the unread badge on
+      // Messenger's desk mark must move while you are elsewhere. markRead never runs while hidden.
+      if (document.hidden) await sleep(4000);
+      if (!s.ready || ctl.signal.aborted) return;
       try {
         // Long-poll: answers the moment anything changes; jitter keeps two views from syncing up.
         apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: ctl.signal}));
@@ -598,7 +602,16 @@
     for (const k of [...QUICK, ...MORE]) box.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn'));
     return box;
   }
-  function toast(text) { const el = node('p', 'u-toast', text); $('messenger').append(el); setTimeout(() => el.remove(), 1600); }
+  function toast(text, ms = 1600) { const el = node('p', 'u-toast', text); $('messenger').append(el); setTimeout(() => el.remove(), ms); }
+  // A yes/no question in the usual bottom sheet; closing it any other way (X, backdrop, Back) counts as no.
+  function ask({title, body, yes, no}) {
+    return new Promise(resolve => {
+      const panel = overlay(title); s.answer = resolve;
+      const pick = v => { s.answer = null; resolve(v); closeOverlay(); };
+      const pair = node('div', 'u-pair'); pair.append(button(no, () => pick(false), 'secondary'), button(yes, () => pick(true), 'primary'));
+      panel.append(node('p', 'helper', body), pair); pair.lastChild.focus();
+    });
+  }
   async function react(m, key) {
     recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
     const t = store.threads[view.id]; const before = m.reactions;
@@ -1004,6 +1017,7 @@
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   window.MessengerUnified = {
+    ask, toast,
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() { if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },

@@ -258,7 +258,7 @@ button { touch-action: manipulation; }
 .u-act { display: flex; align-items: center; gap: 14px; min-height: 46px; padding: 0 18px; border-radius: 0; justify-content: flex-start; background: none; color: var(--ink); font-size: 15px; }
 .u-act svg { width: 20px; height: 20px; }
 .u-act.danger { color: #ff8a8a; }
-.u-toast { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: #3a3a40; color: var(--ink); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: #3a3a40; color: var(--ink); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
 /* photo viewer */
 .u-viewer { background: #000; flex-direction: column; align-items: stretch; justify-content: center; animation: none; }
 .u-viewer header { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; background: linear-gradient(rgba(0,0,0,.6), transparent); z-index: 2; color: #fff; }

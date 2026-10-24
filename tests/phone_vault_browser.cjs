@@ -22,7 +22,7 @@ const assert = require('node:assert/strict');
       open: async title => { log('open:' + title); const s = db().secret; if (!s) throw Object.assign(new Error('not_saved'), {code: 'not_saved'}); return s; },
       forget: async () => { log('forget'); put({}); return {saved: false}; },
     };
-    let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: v.update, capture: v.capture, vault: fake}); }});
+    let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: v.update, capture: v.capture, vault: fake, badge: {set: n => { window.__badges = (window.__badges || []).concat(n); return Promise.resolve(true); }}}); }});
   });
   const page = await ctx.newPage(); const errors = [];
   page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (/dbg|vault|seal/i.test(m.text())) console.log('console', m.text()); });
@@ -31,7 +31,25 @@ const assert = require('node:assert/strict');
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000); await messengerTab();
   await page.locator('#confirm-passphrase').waitFor({state: 'visible', timeout: 30000});
   await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
-  await page.waitForFunction(() => !!JSON.parse(localStorage.getItem('__fakeVault') || '{}').secret, null, {timeout: 90000}).catch(() => {});
+  // Creating never springs a question. Lock, type the password: Messenger ASKS first.
+  const relock = async () => { if (!(await page.locator('#lock').isVisible())) { await messengerTab(); await page.click('#my-address'); } await page.locator('#lock').waitFor({state: 'visible', timeout: 90000}); await page.click('#lock'); await page.waitForTimeout(1500); await messengerTab();
+    await page.locator('#passphrase').waitFor({state: 'visible', timeout: 30000}); await page.fill('#passphrase', pw); await page.click('#setup-submit'); };
+  await relock();
+  const sheet = page.locator('.u-sheet[aria-label="Unlock with your fingerprint?"]');
+  await sheet.waitFor({state: 'visible', timeout: 30000});
+  await page.screenshot({path: ev + '/vault-ask.png'});
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('__fakeVaultLog') || '[]')), [], 'no fingerprint prompt before the answer');
+  await sheet.getByRole('button', {name: 'Not now'}).click();
+  await page.locator('.u-toast', {hasText: 'turn it on anytime'}).waitFor({timeout: 5000});
+  await page.screenshot({path: ev + '/vault-later.png'});
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('__fakeVaultLog') || '[]')), [], 'Not now never prompts');
+  // Not asked again on the next unlock; turning it on from the address panel still works.
+  await page.evaluate(() => localStorage.removeItem('messenger.fingerprint.declined'));
+  await relock();
+  await sheet.waitFor({state: 'visible', timeout: 30000});
+  await sheet.getByRole('button', {name: 'Use fingerprint'}).click();
+  await page.locator('.u-toast', {hasText: 'Fingerprint unlock is on'}).waitFor({timeout: 5000});
+  await page.waitForFunction(() => !!JSON.parse(localStorage.getItem('__fakeVault') || '{}').secret, null, {timeout: 20000}).catch(() => {});
   let vault = await page.evaluate(() => JSON.parse(localStorage.getItem('__fakeVault') || '{}'));
   if (!vault.secret) console.log('dbg', await page.evaluate(() => ({fake: !!window.WizardApp?.vault?.has, log: localStorage.getItem('__fakeVaultLog'), toggle: document.getElementById('fingerprint-toggle')?.textContent, hidden: document.getElementById('fingerprint-toggle')?.hidden, err: document.getElementById('setup-error')?.textContent})));
   assert.equal(vault.secret, pw, 'first typed password is saved behind the fingerprint');
@@ -56,7 +74,14 @@ const assert = require('node:assert/strict');
   assert.ok(!vault.secret, 'turning it off forgets the phone copy');
   const pk = execSync(`docker exec ${container} sh -c 'cat /data/passkeys.json 2>/dev/null || true'`).toString();
   assert.ok(!pk.includes(pw), 'server never holds the password');
-  console.log(JSON.stringify({reopen_ms: Date.now() - t0, errors}));
+  // Another desk in front: the change feed keeps listening so the desk badge can move.
+  const polls = []; page.on('request', r => { if (r.url().includes('api/unified/updates')) polls.push(Date.now()); });
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => true}); document.dispatchEvent(new Event('visibilitychange')); });
+  const hid = Date.now(); await page.waitForTimeout(32000);
+  assert.ok(polls.some(x => x > hid + 1000), 'hidden Messenger still polls for changes: ' + JSON.stringify(polls.map(x => x - hid)));
+  const badges = await page.evaluate(() => window.__badges || []);
+  assert.ok(badges.length && badges.at(-1) === 0, 'Messenger reports its unread count to the desk badge');
+  console.log(JSON.stringify({badges, reopen_ms: Date.now() - t0, errors}));
   assert.deepEqual(errors, []);
   console.log('pass'); await browser.close();
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });
