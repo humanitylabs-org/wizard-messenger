@@ -245,10 +245,12 @@
   function gate(mode) {
     const changed = state.mode !== mode;
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
-    const create = mode === 'setup_required', locked = mode === 'locked';
+    if (['first_open', 'enrollment_ready', 'setup_required', 'locked'].includes(mode)) window.MessengerUnified?.signout();
+    const create = mode === 'setup_required', locked = mode === 'locked', enrollment = mode === 'enrollment_ready';
     $('gate-title').textContent = locked ? 'Unlock Messenger' : 'Messenger';
-    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Ask your Wizard for your Messenger setup link. It opens here once so you can create your address.' : 'Opening your messages…';
-    $('setup-form').hidden = !(create || locked); $('reconnect').hidden = mode !== 'reconnect' && mode !== 'first_open';
+    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : enrollment ? 'Your private setup link is ready. Continue here to create your Messenger address.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Finish setup using the private Messenger setup link in your Wizard chat.' : 'Opening your messages…';
+    $('setup-form').hidden = !(create || locked); $('reconnect').hidden = !enrollment && mode !== 'reconnect' && mode !== 'first_open';
+    $('reconnect').textContent = enrollment ? 'Continue setup' : 'Try again';
     $('name-label').hidden = !create; $('confirm-label').hidden = !create; $('confirm-passphrase').required = create;
     $('passphrase-help').hidden = !create; $('passphrase').minLength = locked ? 1 : 16;
     if (changed) {
@@ -309,6 +311,8 @@
     const {identity} = await api('api/identity', {signal});
     if (!identity) { if (state.mode === 'ready') eraseView(); gate('setup_required'); return; }
     ready(identity);
+    // A setup-only browser session is not a configured messaging account.
+    window.MessengerUnified?.authenticated();
     state.contacts = (await api('api/contacts', {signal})).contacts || [];
     state.invites = (await api('api/invites', {signal})).invites || [];
     state.dms = (await api('api/dms', {signal})).dms || [];
@@ -671,7 +675,7 @@
         if (!(await unlockWith(password, signal, creating, name))) return;
         phone.typed = password;
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
-        window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
+        await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
         if (!creating) offerPhoneFingerprint(password);
         if (!phone.available && !creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
       } catch (error) {
@@ -684,7 +688,7 @@
     if (state.sessionLocked) {
       const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
-      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
+      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
     } else {
       await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
       // Launcher tickets are setup-only; passphrase proof opens the owner view,
@@ -768,7 +772,7 @@
       if (phone.available && phone.saved) {
         try {
           const password = await vault().open('Unlock Messenger');
-          if (await unlockWith(password, signal)) { phone.typed = password; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+          if (await unlockWith(password, signal)) { phone.typed = password; await snapshot(signal); }
         } catch (error) {
           if (error.name === 'AbortError') return;
           if (error.code === 'vault_unlock_failed' || error.code === 'invalidated' || error.code === 'not_saved') { await vault().forget(); phone.saved = false; renderPasskey(); }
@@ -785,7 +789,7 @@
           let password = null; try { password = await openSealed(prf, wrap); } catch { /* resealed on next passphrase */ }
           if (password) {
             try {
-              if (await unlockWith(password, signal)) { state.passkeyWrapped = true; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+              if (await unlockWith(password, signal)) { state.passkeyWrapped = true; await snapshot(signal); }
               return;
             } catch (error) {
               if (error.code === 'vault_unlock_failed') { api('api/view/passkey/wrap', {method: 'POST', body: {id: credential.id, wrap: null}}).catch(() => {}); }
@@ -797,7 +801,7 @@
         const session = await api('api/view/passkey/unlock', {method: 'POST', session: true, signal, body: {id: credential.id, clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature)}});
         if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
-        window.MessengerUnified?.authenticated(); await snapshot(signal);
+        await snapshot(signal);
       } catch (error) {
         if (error.name === 'AbortError') return;
         $('setup-error').textContent = error.name === 'NotAllowedError' ? 'Fingerprint cancelled. Use your passphrase.' : error.code === 'passkey_vault_locked' ? 'Type your passphrase once: Messenger restarted or was locked.' : error.code?.startsWith('passkey_') ? "Fingerprint unlock didn't work. Use your passphrase." : friendly(error);
@@ -893,7 +897,12 @@
     if (state.authenticated) { launchTicket = null; run(snapshot); }
     else boot();
   });
-  async function boot() {
+  async function boot(redeemTicket = false) {
+    // Bound views may preload in a different browser context. A preview must not
+    // consume the owner's one-use enrollment before they act in this window.
+    if (launchTicket && redeemTicket !== true && document.querySelector?.('meta[name="messenger-enrollment"]')?.content === 'manual') {
+      gate('enrollment_ready'); return;
+    }
     gate('opening');
     await run(async signal => {
       try {
@@ -908,7 +917,7 @@
           session = await api('api/view/session', {session: true});
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated(); await snapshot(signal);
+        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
         bootTries = 0;
       } catch (error) {
         if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
@@ -927,7 +936,7 @@
   addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf});
   window.MessengerUnified?.paintSaved();
-  $('reconnect').onclick = boot;
+  $('reconnect').onclick = () => boot(true);
   refreshPasskey(); refreshPhoneVault();
   boot();
 })();
