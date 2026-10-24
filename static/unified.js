@@ -30,6 +30,8 @@
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
+    bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
+    belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
@@ -52,9 +54,16 @@
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
-  function hold() { const pending = Object.values(s.drafts).some(Boolean) || !!s.overlay || s.busy || store.pending > 0 || !!view.recording; if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Unified inbox unsent work'); else if (!pending && updateHold) { updateHold.release(); updateHold = null; } }
+  // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
+  // Drafts are kept in sessionStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
+  function hold() {
+    const reason = view.recording ? 'Recording' : store.pending > 0 ? 'Sending' : s.busy ? 'Saving' : '';
+    if (updateHold && updateHold.reason !== reason) { updateHold.h.release(); updateHold = null; }
+    if (reason && !updateHold) updateHold = {reason, h: window.WizardApp.update.hold(reason)};
+  }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
   function closeOverlay() {
+    const answered = s.answer; s.answer = null; answered?.(false);
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
   function back() {
@@ -155,7 +164,7 @@
   const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
   let saveTimer = null, savedOrder = [];
   function persist() {
-    clearTimeout(saveTimer);
+    syncBadge(); clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const threads = {};
       for (const id of savedOrder.slice(0, THREADS_KEPT)) { const t = store.threads[id]; if (t) threads[id] = {person: t.person, has_more: true, messages: t.messages.filter(m => !m.pending && !m.failed).slice(-MESSAGES_KEPT).map(({retry, local, ...m}) => m)}; }
@@ -169,6 +178,29 @@
       for (const [id, t] of Object.entries(c.threads || {})) store.threads[id] = {...t, stale: true};
       return true;
     } catch { return false; }
+  }
+  // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
+  const unreadById = {}, kindById = {}, mutedById = {}; let nativeUnread = 0;
+  let badgeShown = -1;
+  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; } }
+  // Each bottom tab carries its own unread count (Chats, Groups, Messenger), like Signal's tab badges.
+  function paintTabBadges(counts) {
+    for (const [tab, n] of Object.entries(counts)) {
+      const b = document.querySelector(`#inbox-tabs [data-tab="${tab}"]`); if (!b) continue;
+      let dot = b.querySelector('.tab-badge');
+      if (!n) { dot?.remove(); b.setAttribute('aria-label', b.textContent.trim()); continue; }
+      if (!dot) { dot = node('b', 'tab-badge'); b.append(dot); }
+      dot.textContent = n > 99 ? '99+' : String(n); b.setAttribute('aria-label', `${b.querySelector('span')?.textContent || tab}, ${n} unread`);
+    }
+  }
+  function syncBadge() {
+    noteUnread(store.lists.people); noteUnread(store.lists.groups);
+    const counts = {people: 0, groups: 0, messenger: nativeUnread};
+    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id]) counts[kindById[id] === 'groups' ? 'groups' : 'people'] += n;
+    paintTabBadges(counts);
+    const n = counts.people + counts.groups + counts.messenger;
+    if (n === badgeShown) return; badgeShown = n;
+    try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
   function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
   let recent = [];
@@ -200,9 +232,9 @@
     t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || (a.id < b.id ? -1 : 1));
   }
   function apply(r) {
-    if (r.reset) { store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
+    if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
     store.seq = Math.max(store.seq, r.seq);
-    if (r.people?.length) mergeList(r.people);
+    if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
     for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
     if (s.person && store.threads[s.person]) { paintHead(); paintThread(); }
@@ -212,7 +244,10 @@
   async function feed() {
     feedCtl?.abort(); const ctl = feedCtl = new AbortController();
     while (s.ready && !ctl.signal.aborted) {
-      if (document.hidden) { await sleep(800); continue; }
+      // Hidden (another desk in front, or the phone asleep) still listens, just less often: the unread badge on
+      // Messenger's desk mark must move while you are elsewhere. markRead never runs while hidden.
+      if (document.hidden) await sleep(4000);
+      if (!s.ready || ctl.signal.aborted) return;
       try {
         // Long-poll: answers the moment anything changes; jitter keeps two views from syncing up.
         apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: ctl.signal}));
@@ -262,10 +297,13 @@
     }
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
     for (const p of people.filter(p => (!label || (p.labels || []).includes(label)) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
-      const card = button('', () => openPerson(p.id, p), 'u-person' + (p.unread ? ' unread' : ''));
+      const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
+      holdToMenu(card, () => chatMenu(p, card));
       card.append(avatar(p.display_name));
       const info = node('span', 'u-person-info');
-      const top = node('span', 'u-chat-top'); top.append(node('strong', '', p.display_name));
+      const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
+      if (p.muted) { const m = icon('belloff'); m.classList.add('u-muted-mark'); m.setAttribute('aria-label', 'Muted'); m.removeAttribute('aria-hidden'); name.append(m); }
+      top.append(name);
       if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
       const bottom = node('span', 'u-chat-bottom');
       const typing = (store.typing[p.id] || []).length;
@@ -274,7 +312,7 @@
         const who = p.last.outgoing ? 'You: ' : groups && p.last.sender ? nameOf(p.last.sender).split(' ')[0] + ': ' : '';
         bottom.append(node('span', 'u-snippet', who + snippet(p.last)));
       }
-      if (p.unread) bottom.append(node('span', 'u-badge', p.unread > 99 ? '99+' : String(p.unread)));
+      if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
       else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
       info.append(top, bottom);
       const extra = [...(networksOf(p).length > 1 ? networksOf(p).map(cap) : []), ...(p.labels || [])];
@@ -285,12 +323,164 @@
     list.replaceChildren(frag);
   }
 
+  // Long-press (or right-click) a chat row: Mute / Unmute. A held press never also opens the chat.
+  // A phone turns the finger lifting off a long-press into a click, which lands on the menu's backdrop and closes
+  // it at once. Swallow exactly that click.
+  function swallowRelease() {
+    const eat = e => { e.stopPropagation(); e.preventDefault(); window.removeEventListener('click', eat, true); };
+    window.addEventListener('click', eat, true);
+    const off = () => setTimeout(() => window.removeEventListener('click', eat, true), 400);
+    window.addEventListener('pointerup', off, {once: true, capture: true}); window.addEventListener('pointercancel', off, {once: true, capture: true});
+  }
+  function holdToMenu(el, open) {
+    let timer = null, x0 = 0, y0 = 0;
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    el.addEventListener('pointerdown', e => { if (e.button > 0) return; delete el.dataset.held; x0 = e.clientX; y0 = e.clientY; cancel();
+      timer = setTimeout(() => { timer = null; el.dataset.held = '1'; navigator.vibrate?.(10); swallowRelease(); open(); }, 450); });
+    el.addEventListener('selectstart', e => e.preventDefault());
+    el.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 8) cancel(); });
+    el.addEventListener('pointerup', cancel); el.addEventListener('pointercancel', cancel); el.addEventListener('pointerleave', cancel);
+    // Android fires contextmenu during a touch long-press too: the timer has already opened the menu then.
+    el.addEventListener('contextmenu', e => { e.preventDefault(); if (el.dataset.held) return; cancel(); open(); });
+  }
+  // One small action menu under a held row; used by Chats/Groups rows here and the Messenger tab's rows (app.js).
+  function actionMenu(card, title, actions) {
+    closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
+    const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
+    const panel = node('div', 'u-menu left'); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
+    const list = node('div', 'u-actions');
+    for (const a of actions) { const it = button('', () => { closeOverlay(); a.run(); }, 'u-act'); it.setAttribute('role', 'menuitem'); it.append(icon(a.icon), node('span', '', a.label)); list.append(it); }
+    panel.append(list); layer.append(panel);
+    layer.onclick = e => { if (e.target === layer) closeOverlay(); };
+    $('messenger').append(layer);
+    const r = card.getBoundingClientRect(), H = $('messenger').clientHeight;
+    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 40 - 50 * actions.length)) + 'px';
+    list.firstChild?.focus(); hold();
+  }
+  const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
+  function chatMenu(p, card) { actionMenu(card, p.display_name, [muteAction(p.muted, () => setMuted(p, !p.muted))]); }
+  async function setMuted(p, muted) {
+    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
+    flip(muted);
+    try { await call('people/' + encodeURIComponent(p.id), {muted}); toast(muted ? 'Muted' : 'Unmuted'); persist(); }
+    catch (e) { flip(!muted); toast(e.message || 'Could not change mute', 3000); }
+  }
+
   // ---------- conversation ----------
   const view = {};  // live DOM handles for the open thread
   const els = new Map(); // message key -> bubble element (keyed render)
-  const player = new Audio(); let playing = null;
-  player.onended = player.onpause = () => { playing?.classList.remove('playing'); if (player.ended) for (const i of playing?.querySelectorAll('.u-wave i') || []) i.classList.remove('on'); };
-  player.ontimeupdate = () => { if (playing) { const f = player.duration ? player.currentTime / player.duration : 0; for (const i of playing.querySelectorAll('.u-wave i')) i.classList.toggle('on', +i.dataset.at < f); } const t = playing?.querySelector('.u-dur'); if (t) t.textContent = fmtDur((player.duration - player.currentTime) * 1000); };
+  // Voice playback goes through Web Audio, not an <audio> element: media elements take the phone's audio focus
+  // and pause the owner's music; Web Audio plays alongside it, like a notification sound.
+  const localAudio = new Map(); // blob: URL -> Blob for notes recorded on this device
+  // Pitch-preserving speed-up for voice notes (WSOLA): overlap-add 40 ms Hann frames read RATE times faster,
+  // each nudged up to ±6 ms to line up with the previous one, so 1.5x/2x sound like faster talking, not chipmunks.
+  function stretchChannels(chs, sr, rate) {
+    const x = chs[0], len = x.length, N = Math.max(64, Math.round(sr * 0.04) & ~1), Hs = N >> 1, Ha = Hs * rate, tol = Math.round(sr * 0.006);
+    if (rate === 1 || len < N * 2) return chs;
+    const frames = Math.max(1, Math.floor((len - N) / Ha) + 1), outLen = (frames - 1) * Hs + N;
+    const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    const out = chs.map(() => new Float32Array(outLen));
+    let prev = 0;
+    for (let k = 0; k < frames; k++) {
+      const nominal = Math.round(k * Ha); let best = Math.min(nominal, len - N);
+      if (k > 0) {
+        const target = prev + Hs; let score = -Infinity;
+        for (let d = -tol; d <= tol; d += 2) {
+          const p = nominal + d; if (p < 0 || p + N > len) continue;
+          let s = 0; for (let i = 0; i < Hs; i += 4) s += x[p + i] * x[target + i];
+          if (s > score) { score = s; best = p; }
+        }
+      }
+      const o = k * Hs;
+      for (let c = 0; c < chs.length; c++) { const src = chs[c], dst = out[c]; for (let i = 0; i < N; i++) dst[o + i] += src[best + i] * win[i]; }
+      prev = best;
+    }
+    return out;
+  }
+  const player = (() => {
+    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
+    // Speed, like Telegram's 1x / 1.5x / 2x: one choice for every note, remembered on this device.
+    const RATES = [1, 1.5, 2]; let rate = RATES.includes(+localStorage.getItem('messenger.voice.rate')) ? +localStorage.getItem('messenger.voice.rate') : 1;
+    const fast = new WeakMap(); // AudioBuffer -> Map(rate -> stretched AudioBuffer)
+    const playable = () => {
+      if (rate === 1) return buf;
+      let m = fast.get(buf); if (!m) fast.set(buf, m = new Map());
+      if (!m.has(rate)) {
+        const chs = Array.from({length: buf.numberOfChannels}, (_, c) => buf.getChannelData(c)), out = stretchChannels(chs, buf.sampleRate, rate);
+        const b = ctx.createBuffer(out.length, out[0].length, buf.sampleRate); out.forEach((d, c) => b.copyToChannel(d, c)); m.set(rate, b);
+      }
+      return m.get(rate);
+    };
+    const pos = () => src ? offset + (ctx.currentTime - startedAt) * rate : offset;
+    const rateLabel = () => (rate === 1.5 ? '1.5' : String(rate)) + '×';
+    const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    const fetched = new Map(); // url -> Promise<ArrayBuffer>: voice notes downloaded ahead, before anyone taps Play
+    // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
+    // so pause/seek/next note doesn't pump the volume.
+    let ducked = false, undock = 0;
+    const music = on => {
+      clearTimeout(undock);
+      if (on) { if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
+      undock = setTimeout(() => { if (ducked && !src) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
+    };
+    const paint = () => {
+      if (!box || !buf) return; const at = pos(), f = Math.min(1, at / buf.duration);
+      for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
+      const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
+    };
+    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
+    const fetchNote = url => {
+      if (!fetched.has(url)) {
+        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); return r.arrayBuffer(); }));
+        fetched.get(url).catch(() => fetched.delete(url));
+        while (fetched.size > 16) fetched.delete(fetched.keys().next().value);
+      }
+      return fetched.get(url);
+    };
+    const load = url => {
+      if (!decoded.has(url)) {
+        // Notes recorded here decode from the Blob itself: the CSP keeps fetch() off blob: URLs.
+        const bytes = localAudio.has(url) ? localAudio.get(url).arrayBuffer() : fetchNote(url).then(b => b.slice(0));
+        decoded.set(url, bytes.then(b => ctx.decodeAudioData(b)));
+        decoded.get(url).catch(() => decoded.delete(url));
+        while (decoded.size > 8) decoded.delete(decoded.keys().next().value);
+      }
+      return decoded.get(url);
+    };
+    const start = () => {
+      halt(); src = ctx.createBufferSource(); src.buffer = playable(); src.connect(ctx.destination);
+      if (offset >= buf.duration - 0.05) offset = 0;
+      startedAt = ctx.currentTime; src.start(0, Math.min(offset / rate, src.buffer.duration)); box.classList.add('playing'); music(true);
+      src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); music(false); };
+      timer = setInterval(paint, 100); paint();
+    };
+    return {
+      rateLabel,
+      // Tap the speed pill: 1x -> 1.5x -> 2x -> 1x, applied mid-note from the same spot.
+      cycleRate() {
+        const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
+        try { localStorage.setItem('messenger.voice.rate', String(rate)); } catch { /* private mode */ }
+        for (const el of document.querySelectorAll('.u-speed')) el.textContent = rateLabel();
+        if (src) { offset = at; start(); }
+      },
+      preload(url) { if (!localAudio.has(url)) fetchNote(url).catch(() => {}); },
+      playing: b => b === box && !!src,
+      busy: () => !!src || !!view.recording,
+      // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
+      adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
+      async toggle(b, url, k) {
+        ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        if (b === box && src) { offset = pos(); halt(); b.classList.remove('playing'); paint(); return; }
+        if (b !== box) { halt(); if (box) { box.classList.remove('playing'); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); } box = b; key = k; buf = null; offset = 0; }
+        b.classList.add('playing');
+        try { const got = await load(url); if (key !== k) return; buf = got; start(); }
+        catch { if (key === k) { box.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+      },
+      seek(b, f) { if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
+      stop() { halt(); box?.classList.remove('playing'); box = key = buf = null; offset = 0; },
+    };
+  })();
 
   async function openPerson(id, hint) {
     s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
@@ -356,6 +546,8 @@
       kids.push(el);
     });
     if (!t.messages.length) kids.push(node('p', 'u-empty', 'No messages yet. Say hi 👋'));
+    // Download the newest few voice notes from others now, so Play starts at once.
+    t.messages.filter(m => m.media?.voice && !m.outgoing && !m.deleted && !m.local).slice(-6).forEach(m => player.preload(mediaURL(m.id)));
     const before = scroll.scrollHeight - scroll.scrollTop;
     const same = kids.length === scroll.children.length && kids.every((k, i) => k === scroll.children[i] || (i === 0 && scroll.children[0].className === 'u-spacer') || (k.className === 'u-day' && scroll.children[i].className === 'u-day' && k.textContent === scroll.children[i].textContent) || (k.className === 'u-older' && scroll.children[i].className === 'u-older'));
     if (!same) scroll.replaceChildren(...kids);
@@ -381,6 +573,7 @@
     if (!last || last.timestamp <= (t.person.last_read_ts || 0) || view.reading === last.timestamp) return;
     view.reading = last.timestamp; t.person.last_read_ts = last.timestamp;
     const row = store.lists[listKey(t.person)]?.find(x => x.id === view.id); if (row) row.unread = 0;
+    unreadById[view.id] = 0; syncBadge();
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
   }
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
@@ -466,14 +659,14 @@
     const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
     const play = iconButton('play', 'Play voice message', () => {
       if (m.pending && !m.local) return;
-      if (playing === box && !player.paused) { player.pause(); return; }
-      if (playing !== box) { playing?.classList.remove('playing'); playing = box; player.src = m.local || mediaURL(m.id); }
-      box.classList.add('playing'); player.play().catch(e => { box.classList.remove('playing'); error(new Error('Could not play this voice message')); });
+      player.toggle(box, m.local || mediaURL(m.id), m.client_id || m.id);
     }, 'u-vplay');
     const bars = node('div', 'u-wave'); const wave = m.media?.waveform?.length ? m.media.waveform : Array.from({length: 40}, (_, i) => 30 + 25 * Math.sin(i * 1.7 + (m.id.length % 5)));
     const n = Math.min(40, wave.length); for (let i = 0; i < n; i++) { const bar = node('i'); bar.style.height = Math.max(12, wave[Math.floor(i * wave.length / n)]) + '%'; bar.dataset.at = String(i / n); bars.append(bar); }
-    bars.onclick = e => { if (playing === box && player.duration) { const r = bars.getBoundingClientRect(); player.currentTime = player.duration * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); } };
-    box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)));
+    bars.onclick = e => { const r = bars.getBoundingClientRect(); player.seek(box, Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))); };
+    const speed = button(player.rateLabel(), () => player.cycleRate(), 'u-speed'); speed.setAttribute('aria-label', 'Playback speed');
+    box.append(play, bars, node('span', 'u-dur', fmtDur(m.media?.duration)), speed);
+    player.adopt(box, m.client_id || m.id);
     if (!m.media?.voice && m.media?.filename) box.append(node('span', 'u-file-name', m.media.filename));
     return box;
   }
@@ -489,9 +682,9 @@
   function gestures(row, b, m) {
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false;
     b.addEventListener('pointerdown', e => {
-      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate')) return;
+      if (e.button > 0 || e.target.closest('a,.u-vplay,.u-wave,.u-translate,.u-speed')) return;
       x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
-      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); menu(m, b); }, 450);
+      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); swallowRelease(); menu(m, b); }, 450);
     });
     b.addEventListener('pointermove', e => {
       const mx = e.clientX - x0, my = e.clientY - y0;
@@ -537,7 +730,16 @@
     for (const k of [...QUICK, ...MORE]) box.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn'));
     return box;
   }
-  function toast(text) { const el = node('p', 'u-toast', text); $('messenger').append(el); setTimeout(() => el.remove(), 1600); }
+  function toast(text, ms = 1600) { const el = node('p', 'u-toast', text); $('messenger').append(el); setTimeout(() => el.remove(), ms); }
+  // A yes/no question in the usual bottom sheet; closing it any other way (X, backdrop, Back) counts as no.
+  function ask({title, body, yes, no}) {
+    return new Promise(resolve => {
+      const panel = overlay(title); s.answer = resolve;
+      const pick = v => { s.answer = null; resolve(v); closeOverlay(); };
+      const pair = node('div', 'u-pair'); pair.append(button(no, () => pick(false), 'secondary'), button(yes, () => pick(true), 'primary'));
+      panel.append(node('p', 'helper', body), pair); pair.lastChild.focus();
+    });
+  }
   async function react(m, key) {
     recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
     const t = store.threads[view.id]; const before = m.reactions;
@@ -600,41 +802,115 @@
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
       queueSend(id, {text, photo: a, reply, identity_id: channel.value});
     }
+    // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
+    // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
+    // elsewhere it is the shared browser recorder with the same external-mic guard. Messenger never opens the mic itself.
     async function record() {
-      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return error(new Error('Voice recording is not available in this browser.'));
-      let stream;
-      try { stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}}); }
-      catch { return error(new Error('Microphone access was blocked. Allow the microphone for Wizard and try again.')); }
-      const type = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-      const rec = new MediaRecorder(stream, type ? {mimeType: type, audioBitsPerSecond: 32000} : {});
-      const chunks = [], levels = []; const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const an = ctx.createAnalyser(); an.fftSize = 512; ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
-      const started = Date.now(); let cancelled = false;
+      if (!window.WizardApp?.capture) return error(new Error('Voice notes need Wizard. Open Messenger from Wizard and try again.'));
+      let session;
+      try { session = await WizardApp.capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576}); }
+      catch (e) { return error(new Error(e?.code === 'busy' ? 'The microphone is busy with another Wizard recording.' : e?.message || 'Could not start recording.')); }
+      const levels = [], started = Date.now(); let done = false;
       const panel = node('div', 'u-recording'); const clock = node('span', 'u-rec-time', '0:00'); const live = node('div', 'u-wave live');
-      const stopAll = () => { clearInterval(tick); stream.getTracks().forEach(t => t.stop()); ctx.close().catch(() => {}); panel.remove(); row.hidden = false; view.recording = null; hold(); };
-      panel.append(iconButton('trash', 'Cancel recording', () => { cancelled = true; rec.stop(); }, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', () => rec.stop(), 'u-send'));
-      row.hidden = true; form.append(panel); view.recording = rec; hold();
+      const close = () => { done = true; clearInterval(tick); offLevel?.(); panel.remove(); row.hidden = false; view.recording = null; hold(); };
+      let last = 0; const offLevel = session.onLevel?.(v => { last = v; });
       const tick = setInterval(() => {
-        an.getByteTimeDomainData(buf); let sum = 0; for (const v of buf) sum += (v - 128) ** 2;
-        const level = Math.min(1024, Math.round(Math.sqrt(sum / buf.length) * 40)); levels.push(level);
-        clock.textContent = fmtDur(Date.now() - started);
+        const level = Math.round(Math.min(1, last * 1.6) * 1024); levels.push(level); clock.textContent = fmtDur(Date.now() - started);
         const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); while (live.children.length > 40) live.firstChild.remove();
-        if (Date.now() - started > 15 * 60e3) rec.stop();
       }, 100);
-      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-      rec.onstop = () => {
-        stopAll(); const duration = Date.now() - started;
-        if (cancelled || duration < 600) { if (!cancelled) toast('Hold on a little longer to record'); return; }
-        const blob = new Blob(chunks, {type: (rec.mimeType || type || 'audio/webm').split(';')[0]});
+      const cancel = async () => { if (done) return; close(); try { await session.cancel(); } catch (e) { error(new Error('Could not discard the recording: ' + (e.message || e))); } };
+      const finish = async () => {
+        if (done) return; close();
+        let take; try { take = await session.stop(); } catch (e) { return error(new Error('Recording kept on this device; try again. ' + (e.message || ''))); }
+        const duration = take.durationMs || Date.now() - started;
+        if (duration < 600 || !take.blob?.size) { toast('Hold on a little longer to record'); WizardApp.capture.ack(take.id).catch(() => {}); return; }
         const step = Math.max(1, levels.length / 64); const waveform = Array.from({length: Math.min(64, levels.length)}, (_, i) => levels[Math.floor(i * step)]);
+        const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
         const reply = view.reply; view.reply = null; paintBar();
-        queueSend(id, {voice: {blob, duration, waveform, url: URL.createObjectURL(blob)}, reply, identity_id: channel.value});
+        queueSend(id, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply, identity_id: channel.value});
       };
-      rec.start(250);
+      panel.append(iconButton('trash', 'Cancel recording', cancel, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', finish, 'u-send'));
+      row.hidden = true; form.append(panel); view.recording = {stop: finish, cancel}; hold();
     }
     Object.assign(view, {draft, grow, paintBar});
     form.append(bar, channel, row); grow(); paintBar();
     return form;
+  }
+  // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
+  function webmToOgg(b) {
+    let at = 0, head = null, channels = 1, codec = '';
+    const packets = [];
+    const vint = keep => { const f = b[at]; let n = 1; while (n <= 8 && !(f & (0x80 >> (n - 1)))) n++; if (n > 8 || at + n > b.length) throw new Error('bad vint');
+      let v = keep ? f : f & (0xff >> n), all = (f & (0xff >> n)) === (0xff >> n); for (let i = 1; i < n; i++) { v = v * 256 + b[at + i]; if (b[at + i] !== 0xff) all = false; } at += n; return keep ? v : (all ? -1 : v); };
+    const MASTER = new Set([0x18538067, 0x1654AE6B, 0xAE, 0xE1, 0x1F43B675, 0xA0]);
+    while (at < b.length) {
+      const id = vint(true), size = vint(false);
+      if (MASTER.has(id)) continue;
+      if (size < 0 || at + size > b.length) { if (id === 0xA3 || id === 0xA1) break; throw new Error('bad size'); }
+      const body = b.subarray(at, at + size); at += size;
+      if (id === 0x86) codec = new TextDecoder().decode(body);
+      else if (id === 0x63A2) head = body;
+      else if (id === 0x9F) channels = body[0] || 1;
+      else if (id === 0xA3 || id === 0xA1) {
+        let i = 0; const f = body[0]; let n = 1; while (n <= 8 && !(f & (0x80 >> (n - 1)))) n++; i = n + 2;
+        if ((body[i] >> 1) & 3) throw new Error('laced block'); packets.push(body.subarray(i + 1));
+      }
+    }
+    if (codec && codec !== 'A_OPUS') throw new Error('not opus'); if (!packets.length) throw new Error('empty');
+    return oggFromOpus(packets, channels, head);
+  }
+  // Opus packets -> Ogg Opus file (RFC 7845).
+  function oggFromOpus(packets, channels, head) {
+    const ascii = t => Uint8Array.from(t, c => c.charCodeAt(0));
+    if (!head || String.fromCharCode(...head.subarray(0, 8)) !== 'OpusHead') {
+      head = new Uint8Array(19); head.set(ascii('OpusHead')); const d = new DataView(head.buffer); head[8] = 1; head[9] = channels; d.setUint16(10, 312, true); d.setUint32(12, 48000, true);
+    }
+    const tags = new Uint8Array(8 + 4 + 6 + 4); tags.set(ascii('OpusTags')); new DataView(tags.buffer).setUint32(8, 6, true); tags.set(ascii('Wizard'), 12);
+    const samples = p => { const c = p[0] >> 3, fs = c < 12 ? [480, 960, 1920, 2880][c & 3] : c < 16 ? [480, 960][c & 1] : [120, 240, 480, 960][c & 3], k = p[0] & 3; return fs * (k === 0 ? 1 : k === 3 ? (p[1] & 63) : 2); };
+    const crcT = webmToOgg.crc ||= Array.from({length: 256}, (_, i) => { let r = i << 24; for (let k = 0; k < 8; k++) r = r & 0x80000000 ? (r << 1) ^ 0x04c11db7 : r << 1; return r >>> 0; });
+    const serial = (Math.random() * 2 ** 32) >>> 0, pages = []; let seq = 0;
+    const page = (list, granule, flag) => {
+      const lace = []; for (const p of list) { let n = p.length; while (n >= 255) { lace.push(255); n -= 255; } lace.push(n); }
+      const len = 27 + lace.length + list.reduce((a, p) => a + p.length, 0), out = new Uint8Array(len), d = new DataView(out.buffer);
+      out.set(ascii('OggS')); out[5] = flag; d.setUint32(6, granule % 2 ** 32, true); d.setUint32(10, Math.floor(granule / 2 ** 32), true);
+      d.setUint32(14, serial, true); d.setUint32(18, seq++, true); out[26] = lace.length; out.set(lace, 27);
+      let o = 27 + lace.length; for (const p of list) { out.set(p, o); o += p.length; }
+      let crc = 0; for (let i = 0; i < len; i++) crc = ((crc << 8) ^ crcT[((crc >>> 24) ^ out[i]) & 0xff]) >>> 0; d.setUint32(22, crc, true);
+      pages.push(out);
+    };
+    page([head], 0, 2); page([tags], 0, 0);
+    let granule = 0, batch = [], segs = 0;
+    packets.forEach((p, n) => {
+      const need = Math.floor(p.length / 255) + 1;
+      if (batch.length && segs + need > 255) { page(batch, granule, 0); batch = []; segs = 0; }
+      batch.push(p); segs += need; granule += samples(p);
+      if (n === packets.length - 1) page(batch, granule, 4); else if (batch.length >= 50) { page(batch, granule, 0); batch = []; segs = 0; }
+    });
+    const total = new Uint8Array(pages.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of pages) { total.set(p, o); o += p.length; }
+    return total;
+  }
+  window.MessengerUnified_webmToOgg = webmToOgg; window.MessengerUnified_toOggOpus = b => toOggOpus(b); // test hooks
+  // Any recording -> Ogg Opus. WebM Opus (shared browser recorder) is rewrapped as is; anything else (the Android
+  // recorder's AAC) is decoded and re-encoded with WebCodecs at 32 kbit/s mono, like Telegram's own voice notes.
+  async function toOggOpus(blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return new Blob([bytes], {type: 'audio/ogg'});
+    if (bytes[0] === 0x1a && bytes[1] === 0x45) { try { return new Blob([webmToOgg(bytes)], {type: 'audio/ogg'}); } catch { /* re-encode below */ } }
+    if (!window.AudioEncoder) throw new Error('This device cannot prepare voice notes for Telegram yet');
+    const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const decoded = await new AC(1, 48000, 48000).decodeAudioData(bytes.buffer.slice(0));
+    // Mix to mono at 48 kHz.
+    const off = new AC(1, Math.max(1, Math.ceil(decoded.duration * 48000)), 48000), src = off.createBufferSource();
+    src.buffer = decoded; src.connect(off.destination); src.start(); const pcm = (await off.startRendering()).getChannelData(0);
+    const packets = []; let err = null;
+    const enc = new AudioEncoder({output: c => { const p = new Uint8Array(c.byteLength); c.copyTo(p); packets.push(p); }, error: e => { err = e; }});
+    enc.configure({codec: 'opus', sampleRate: 48000, numberOfChannels: 1, bitrate: 32000});
+    for (let at = 0; at < pcm.length; at += 960) {
+      const frame = pcm.slice(at, at + 960);
+      enc.encode(new AudioData({format: 'f32', sampleRate: 48000, numberOfFrames: frame.length, numberOfChannels: 1, timestamp: Math.round(at / 48), data: frame}));
+    }
+    await enc.flush(); enc.close(); if (err) throw err; if (!packets.length) throw new Error('Voice note was empty');
+    return new Blob([oggFromOpus(packets, 1)], {type: 'audio/ogg'});
   }
   function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
   async function preparePhoto(f) {
@@ -648,6 +924,8 @@
     return {blob, url: URL.createObjectURL(blob), w, h};
   }
   async function upload(id, kind, blob) {
+    // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
+    if (kind === 'voice') blob = await toOggOpus(blob);
     const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
       headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
     let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
@@ -673,11 +951,12 @@
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
         const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, media});
         if (r.message) mergeMessages(id, [r.message]);
+        if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
       } catch (e) {
-        m.pending = false; m.failed = e.message && e.message.length < 80 ? e.message : true; m.retry = () => { queues[id] = (queues[id] || Promise.resolve()).then(run); };
-        // still owed: the update hold stays until it is sent
+        m.pending = false; m.failed = e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
+        store.pending--; hold(); // failed: shown with Retry; no longer blocks updates
       }
       if (s.person === id) paintThread();
     };
@@ -865,18 +1144,34 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
+  // After a reload, come back to the same tab and chat (saved on pagehide).
+  // Any reload (a Wizard update, the Reload strip) comes back on the same tab and chat.
+  window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person})); } catch { /* fresh start */ } });
+  function resume() {
+    let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
+    switchTab(['groups', 'messenger'].includes(at?.tab) ? at.tab : 'people');
+    if (at?.person && at.tab !== 'messenger') openPerson(at.person);
+  }
   window.MessengerUnified = {
+    ask, toast, holdToMenu, actionMenu, muteAction, icon,
+    // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
+    setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
-    paintSaved() { if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false; switchTab('people'); return true; },
+    paintSaved() {
+      if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
+      resume(); return true;
+    },
     authenticated() {
       if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false;
       const painted = document.documentElement.dataset.inboxTab;
-      if (!painted) switchTab('people');
+      if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed();
+      // Groups count toward the badge before the Groups tab is ever opened.
+      if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

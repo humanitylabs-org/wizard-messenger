@@ -87,6 +87,7 @@ def sniff(data):
 
 
 MIGRATIONS = [
+    ('person', 'muted', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'msgtype', "TEXT NOT NULL DEFAULT 'm.text'"),
     ('message', 'media', 'TEXT'),
@@ -127,7 +128,7 @@ class PeopleStore:
 
     def migrate(self):
         with self.db() as db:
-            have = {t: {r[1] for r in db.execute('PRAGMA table_info(' + t + ')')} for t in ('message', 'identity')}
+            have = {t: {r[1] for r in db.execute('PRAGMA table_info(' + t + ')')} for t in ('message', 'identity', 'person')}
             missing = [m for m in MIGRATIONS if m[1] not in have[m[0]]]
             if missing and db.execute('SELECT COUNT(*) FROM message').fetchone()[0]:
                 # Additive only, but keep a copy of the pre-migration history anyway.
@@ -264,7 +265,7 @@ class PeopleStore:
     def update(self, person_id, payload):
         self.person(person_id)
         with self.db() as db:
-            for key in ('display_name', 'language', 'preferred_identity'):
+            for key in ('display_name', 'language', 'preferred_identity', 'muted'):
                 if key not in payload:
                     continue
                 value = payload[key]
@@ -272,6 +273,10 @@ class PeopleStore:
                     if value and not db.execute('SELECT 1 FROM identity WHERE id=? AND person_id=?', (value, person_id)).fetchone():
                         fail('invalid_identity', 'Choose an identity belonging to this person')
                     value = value or None
+                elif key == 'muted':
+                    if not isinstance(value, bool):
+                        fail('invalid_input', 'muted is true or false')
+                    value = int(value)
                 elif key == 'language':
                     if value not in ('', 'en', 'th', 'ja', 'zh', 'es', 'fr', 'de'):
                         fail('invalid_language', 'Choose a supported language')
@@ -553,6 +558,7 @@ class UnifiedInbox:
         self.translator = Translator(self.store, self.root)
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
+        self.warm_queue = queue.Queue(maxsize=200)
         self.owner = '@owner:messenger.internal'
         # The owner's own Telegram account appears as a ghost (@telegram_<id>) for anything
         # done in the Telegram app before double puppeting existed: that is still "me".
@@ -613,6 +619,20 @@ class UnifiedInbox:
         self.worker.start()
         threading.Thread(target=translate, name='translate', daemon=True).start()
         threading.Thread(target=mirror, name='marmot-mirror', daemon=True).start()
+
+        def warm():
+            # Voice notes from other people are fetched into the media cache as they arrive, so Play starts at once
+            # instead of waiting on Telegram -> homeserver -> here.
+            while not self.stop.is_set():
+                try:
+                    message_id = self.warm_queue.get(timeout=5)
+                except queue.Empty:
+                    continue
+                try:
+                    self.media(message_id, None)
+                except Exception:
+                    pass
+        threading.Thread(target=warm, name='voice-warm', daemon=True).start()
 
     def close(self):
         self.stop.set()
@@ -760,6 +780,19 @@ class UnifiedInbox:
         msgtype, body, media, reply_to = parts
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
                                event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to)
+        self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
+
+    WARM_DAYS = 3
+
+    def warm_voice(self, message_id, msgtype, outgoing, media, stamp):
+        if msgtype != 'm.audio' or outgoing or not media or not media.get('mxc'):
+            return
+        if stamp < (time.time() - self.WARM_DAYS * 86400) * 1000:
+            return  # backlog replay on start: older notes load on demand
+        try:
+            self.warm_queue.put_nowait(message_id)
+        except queue.Full:
+            pass
 
     def ephemeral(self, identity, events):
         for event in events:

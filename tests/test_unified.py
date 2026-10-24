@@ -29,6 +29,19 @@ class PeopleTests(unittest.TestCase):
         self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'me', 'timestamp': 200})
         self.assertEqual([p['display_name'] for p in self.store.people(chats=False)], ['Amy', 'Bob', 'Zed'])
 
+    def test_mute_persists_and_keeps_unread(self):
+        a = self.store.identity('telegram', '!mute', 'Mia')
+        self.store.add_message('$m1', a, 'mia', False, 'hi', 100)
+        before = self.store.seq
+        self.store.update(a['person_id'], {'muted': True})
+        self.assertGreater(self.store.seq, before)  # the change feed carries it to every open view
+        p = self.store.people()[0]
+        self.assertEqual((p['muted'], p['unread']), (1, 1))
+        self.store.update(a['person_id'], {'muted': False})
+        self.assertEqual(self.store.people()[0]['muted'], 0)
+        with self.assertRaises(Exception):
+            self.store.update(a['person_id'], {'muted': 'yes'})
+
     def test_auto_create_deduplicates_and_preserves_rename(self):
         a = self.store.identity('telegram', '!one', 'Alice')
         self.store.update(a['person_id'], {'display_name': 'Alice Thai', 'language': 'th'})
@@ -401,6 +414,17 @@ class SignalMvpTests(unittest.TestCase):
         self.assertTrue(row['media']['voice'])
         self.assertEqual(row['media']['waveform'], [0, 50, 100, 25])
         self.assertEqual(self.inbox.store.people()[0]['last']['voice'], True)
+
+    def test_incoming_voice_notes_are_prefetched(self):
+        voice = {'msgtype': 'm.audio', 'body': 'Voice message', 'url': 'mxc://messenger.internal/v', 'info': {'mimetype': 'audio/ogg'}, 'org.matrix.msc3245.voice': {}}
+        now = int(time.time() * 1000)
+        self.ingest(self.event('$new', voice, ts=now))
+        self.ingest(self.event('$old', voice, ts=now - 10 * 86400 * 1000))  # backlog replay: on demand only
+        self.ingest(self.event('$pic', {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}, ts=now))
+        queued = []
+        while not self.inbox.warm_queue.empty():
+            queued.append(self.inbox.warm_queue.get_nowait())
+        self.assertEqual(queued, ['$new'])
 
     def test_media_proxy_caches_and_serves_safe_types_only(self):
         self.ingest(self.event('$svg', {'msgtype': 'm.file', 'body': 'x.svg', 'url': 'mxc://messenger.internal/svg', 'info': {'mimetype': 'image/svg+xml'}}))
