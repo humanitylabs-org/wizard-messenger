@@ -87,8 +87,8 @@
           "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
         },
         "search": {
-          "status": "unsupported",
-          "scope": "No integrated implementation in baseline."
+          "status": "implemented-unverified",
+          "scope": "Stored-history FTS wired to authenticated owner API and UI; local SQLite/HTTP/JS tests only, no Telegram account or phone proof."
         },
         "notifications": {
           "status": "unsupported",
@@ -272,8 +272,13 @@
   "components": {
     "search_module": {
       "status": "implemented-unverified",
-      "scope": "Standalone FTS5 normalized mirror, not integrated UI/API",
+      "scope": "FTS5 mirror transactionally integrated with unified SQLite store and authenticated owner API/UI; local tests, not provider proof",
       "source": "readiness/search.py"
+    },
+    "history_search_integration": {
+      "status": "implemented-unverified",
+      "scope": "Local production SQLite/loopback HTTP and synthetic DOM/API JS contracts only; no real account or rendered browser verification",
+      "source": "tests/test_history_search.py"
     },
     "sync_cursor_recovery": {
       "status": "implemented-unverified",
@@ -282,7 +287,7 @@
     },
     "history_pagination": {
       "status": "implemented-unverified",
-      "scope": "Timestamp-only cursor drops equal-timestamp rows; explicit expected-failing regression",
+      "scope": "Timestamp+id scoped cursors preserve equal-millisecond rows; regression required to pass normally. Local tests only, not full bridge backfill.",
       "source": "readiness/tests/test_transport.py"
     }
   },
@@ -295,10 +300,10 @@
   ],
   "known_gaps": [
     "Only Telegram is bridged in baseline; Signal MVP means Signal-style UI, not Signal network.",
-    "No server-side message-content search in baseline; directory/name filtering is not message search.",
+    "Message search covers stored original/translated text only; remote unimported history is not searchable.",
     "No background phone push/OS notifications found.",
     "Initial Telegram import is 50 chats \u00d7 50 messages; backward bridge backfill disabled; media revisit at most three pages of 100.",
-    "Timestamp-only history pagination loses ties; expected-failing regression included.",
+    "Legacy before=timestamp remains an explicit cutoff; clients must page using next_cursor to preserve timestamp ties.",
     "History is plaintext on disk; new search index also plaintext.",
     "Provider reconnect/login expiry and phone codec behavior not exercised by local fixtures."
   ]

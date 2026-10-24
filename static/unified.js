@@ -7,7 +7,15 @@
     if (state.search != null) return {...state, search: null, handled: true};
     return {...state, handled: false}; // Shared WizardApp owns the root guard.
   }
-  if (typeof module !== 'undefined') module.exports = {backState};
+  async function fetchOlder(t, id, call) {
+    if (!t.has_more || !t.next_cursor) return false;
+    const r = await call('people/' + encodeURIComponent(id) + '?limit=60&cursor=' + encodeURIComponent(t.next_cursor));
+    const known = new Set(t.messages.map(m => m.id));
+    t.messages = [...r.messages.filter(m => !known.has(m.id)), ...t.messages];
+    t.has_more = r.has_more; t.next_cursor = r.next_cursor;
+    return true;
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
@@ -88,7 +96,7 @@
     const head = node('header', 'u-header');
     if (s.search != null) {
       const field = node('input', 'u-search'); field.type = 'search'; field.placeholder = 'Search'; field.setAttribute('aria-label', 'Search ' + title.toLowerCase()); field.value = s.search;
-      field.oninput = () => { s.search = field.value; root.querySelector('.u-list')?.dispatchEvent(new Event('filter')); };
+      field.oninput = () => { s.search = field.value; scheduleSearch(); };
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
@@ -248,7 +256,52 @@
       persist();
     } catch (e) { error(e); }
   }
+  let searchTimer, searchGeneration = 0;
+  const searchView = {query: null, rows: [], cursor: null, loading: false};
+  function scheduleSearch() {
+    clearTimeout(searchTimer); const generation = ++searchGeneration;
+    Object.assign(searchView, {query: s.search, rows: [], cursor: null, loading: !!s.search.trim()});
+    drawSearch();
+    if (s.search.trim()) searchTimer = setTimeout(() => loadSearch(generation), 200);
+  }
+  async function loadSearch(generation = searchGeneration, cursor = null) {
+    const query = s.search, epoch = s.epoch;
+    if (!s.ready || s.person || query == null || !query.trim() || generation !== searchGeneration) return;
+    try {
+      const r = await call('search?' + new URLSearchParams({q: query, limit: '50', ...(cursor ? {cursor} : {})}));
+      if (generation !== searchGeneration || epoch !== s.epoch || s.person || query !== s.search || !s.ready) return;
+      searchView.rows.push(...r.messages); searchView.cursor = r.next_cursor; searchView.loading = false; drawSearch();
+    } catch (e) {
+      if (generation !== searchGeneration || epoch !== s.epoch || query !== s.search) return;
+      searchView.loading = false; drawSearch(); error(e);
+    }
+  }
+  function drawSearch() {
+    const list = $('unified-inbox').querySelector('.u-list'); if (!list || s.person || s.search == null) return;
+    list.replaceChildren();
+    for (const m of searchView.rows) {
+      const row = button('', () => action(async () => {
+        await openPerson(m.person_id);
+        const t = store.threads[m.person_id];
+        while (s.person === m.person_id && t && !t.messages.some(x => x.id === m.message_id) && t.has_more && t.next_cursor) await fetchOlder(t, m.person_id, call);
+        if (s.person === m.person_id) { paintThread(); jumpTo(m.message_id); }
+      }), 'u-person');
+      const info = node('span', 'u-person-info');
+      info.append(node('strong', '', m.display_name + ' · ' + cap(m.network)), node('span', 'u-snippet', m.original), node('time', 'u-when', when(m.timestamp)));
+      if (m.translated && m.translated !== m.original) info.append(node('span', 'u-snippet', m.translated));
+      row.append(info); list.append(row);
+    }
+    if (searchView.loading) list.append(node('p', 'u-empty', 'Searching stored messages…'));
+    else if (!searchView.rows.length) list.append(node('p', 'u-empty', s.search.trim() ? 'No stored messages match' : 'Search all stored message text'));
+    if (searchView.cursor) {
+      const more = button('More results', () => { more.disabled = true; loadSearch(searchGeneration, searchView.cursor); }); list.append(more);
+    }
+  }
   function drawList() {
+    if (s.search != null) {
+      if (searchView.query !== s.search) scheduleSearch(); else drawSearch();
+      return;
+    }
     const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
     const groups = s.tab === 'groups', people = store.lists[groups ? 'groups' : 'people']; if (!people) return;
     let label = root.dataset.label || '';
@@ -303,7 +356,7 @@
     if (!s.ready) return;
     try {
       const r = await call('people/' + id + '?limit=60');
-      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, warning: r.history_warning};
+      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, next_cursor: r.next_cursor, warning: r.history_warning};
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
       persist();
@@ -367,12 +420,9 @@
   }
   async function older() {
     const t = store.threads[view.id]; if (!t || !t.has_more || view.loadingOlder) return;
-    const first = t.messages.find(m => !m.pending); if (!first) return;
     view.loadingOlder = true; const id = view.id;
     try {
-      const r = await call('people/' + id + '?limit=60&before=' + first.timestamp);
-      const known = new Set(t.messages.map(m => m.id));
-      t.messages = [...r.messages.filter(m => !known.has(m.id)), ...t.messages]; t.has_more = r.has_more;
+      await fetchOlder(t, id, call);
       if (view.id === id) { view.anchor = true; paintThread(); }
     } catch (e) { error(e); } finally { view.loadingOlder = false; }
   }
@@ -962,6 +1012,6 @@
       resumeLogin(); if (store.seq) feed();
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

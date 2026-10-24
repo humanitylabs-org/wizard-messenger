@@ -25,6 +25,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
 from engine import EngineError
+from readiness.search import SearchStore
+import history_cursor
 from typing import NoReturn
 
 
@@ -120,10 +122,65 @@ class PeopleStore:
             CREATE TABLE IF NOT EXISTS preview(id TEXT PRIMARY KEY, person_id TEXT NOT NULL, identity_id TEXT NOT NULL, original TEXT NOT NULL, translated TEXT NOT NULL, error TEXT, expires INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'preview', send_original INTEGER, event_id TEXT);
             ''')
         self.migrate()
+        self.search_index = SearchStore(self.path, connection=self._conn, lock=self.lock)
+        self.install_search()
         os.chmod(self.path, 0o600)
         with self.db() as db:
             self.seq = max(db.execute('SELECT COALESCE(MAX(seq),0) FROM message').fetchone()[0],
                            db.execute('SELECT COALESCE(MAX(seq),0) FROM identity').fetchone()[0])
+
+    def install_search(self):
+        # Same connection/transaction as history: edits, translations, tombstones and
+        # forget cannot leave a stale plaintext mirror after a crash. One owner per DB;
+        # network + immutable identity id keep merged people from collapsing threads.
+        with self.db() as db:
+            db.executescript('''
+            CREATE TRIGGER IF NOT EXISTS message_search_insert AFTER INSERT ON message BEGIN
+                INSERT INTO normalized_message(account,network,thread,message_id,timestamp,original,translated)
+                SELECT 'owner',i.network,i.id,new.id,new.timestamp,new.original,COALESCE(new.translated,'')
+                FROM identity i WHERE i.id=new.identity_id AND new.deleted=0;
+            END;
+            CREATE TRIGGER IF NOT EXISTS message_search_delete AFTER DELETE ON message BEGIN
+                DELETE FROM normalized_message WHERE account='owner' AND message_id=old.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS message_search_update AFTER UPDATE ON message BEGIN
+                DELETE FROM normalized_message WHERE account='owner' AND message_id=old.id AND new.deleted!=0;
+                INSERT INTO normalized_message(account,network,thread,message_id,timestamp,original,translated)
+                SELECT 'owner',i.network,i.id,new.id,new.timestamp,new.original,COALESCE(new.translated,'')
+                FROM identity i WHERE i.id=new.identity_id AND new.deleted=0
+                ON CONFLICT(account,network,thread,message_id) DO UPDATE SET
+                timestamp=excluded.timestamp,original=excluded.original,translated=excluded.translated;
+            END;
+            ''')
+        self.rebuild_search()
+
+    def rebuild_search(self):
+        # Reconcile authoritative rows, including messages removed while upgrading.
+        with self.db() as db:
+            db.execute('''DELETE FROM normalized_message AS n WHERE n.account!='owner' OR NOT EXISTS
+                (SELECT 1 FROM message m JOIN identity i ON i.id=m.identity_id
+                 WHERE m.deleted=0 AND m.id=n.message_id AND i.network=n.network AND i.id=n.thread)''')
+            db.execute('''INSERT INTO normalized_message(account,network,thread,message_id,timestamp,original,translated)
+                SELECT 'owner',i.network,i.id,m.id,m.timestamp,m.original,COALESCE(m.translated,'')
+                FROM message m JOIN identity i ON i.id=m.identity_id WHERE m.deleted=0
+                ON CONFLICT(account,network,thread,message_id) DO UPDATE SET
+                timestamp=excluded.timestamp,original=excluded.original,translated=excluded.translated''')
+            db.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')")
+
+    def search(self, query, *, network=None, thread=None, limit=50, cursor=None):
+        # Account is server-derived, never an HTTP-supplied identifier.
+        if thread is not None:
+            with self.db() as db:
+                if not db.execute('SELECT 1 FROM identity WHERE id=? AND (? IS NULL OR network=?)',
+                                  (thread, network, network)).fetchone():
+                    fail('not_found', 'That conversation is no longer here', 404)
+        with self.db() as db:
+            result = self.search_index.search(account='owner', query=query, network=network,
+                                              thread=thread, limit=limit, cursor=cursor)
+            for message in result['messages']:
+                identity = db.execute('SELECT i.person_id,p.display_name FROM identity i JOIN person p ON p.id=i.person_id WHERE i.id=?', (message['thread'],)).fetchone()
+                message.update(person_id=identity[0], display_name=identity[1])
+        return result
 
     def migrate(self):
         with self.db() as db:
@@ -142,6 +199,7 @@ class PeopleStore:
             CREATE TABLE IF NOT EXISTS reaction(event_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, sender TEXT NOT NULL, key TEXT NOT NULL, outgoing INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS room_meta(room TEXT PRIMARY KEY, json TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS redacted(event_id TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS scoped_redaction(identity_id TEXT NOT NULL, event_id TEXT NOT NULL, PRIMARY KEY(identity_id,event_id));
             CREATE INDEX IF NOT EXISTS message_identity_ts ON message(identity_id, timestamp);
             CREATE INDEX IF NOT EXISTS message_seq ON message(seq);
             CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
@@ -206,6 +264,7 @@ class PeopleStore:
             db.execute('DELETE FROM reaction WHERE message_id IN (SELECT id FROM message WHERE identity_id=?)', (row[0],))
             db.execute('DELETE FROM message WHERE identity_id=?', (row[0],))
             db.execute('DELETE FROM room_label WHERE identity_id=?', (row[0],))
+            db.execute('DELETE FROM scoped_redaction WHERE identity_id=?', (row[0],))
             db.execute('DELETE FROM identity WHERE id=?', (row[0],))
             if not db.execute('SELECT 1 FROM identity WHERE person_id=?', (row[1],)).fetchone():
                 db.execute('DELETE FROM person WHERE id=?', (row[1],))
@@ -323,6 +382,9 @@ class PeopleStore:
         """Insert once; a later sighting with richer media upgrades a label-only row in place."""
         media_json = json.dumps(media, ensure_ascii=False) if media else None
         with self.db() as db:
+            if db.execute('SELECT 1 FROM redacted WHERE event_id=? UNION ALL SELECT 1 FROM scoped_redaction WHERE identity_id=? AND event_id=?',
+                          (event_id, identity['id'], event_id)).fetchone():
+                return False  # Late history/sync must not resurrect a redaction.
             seq = self.next_seq()
             cur = db.execute('INSERT OR IGNORE INTO message(id,identity_id,sender,outgoing,original,translated,timestamp,seq,msgtype,media,reply_to,client_id) '
                              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -380,6 +442,16 @@ class PeopleStore:
             db.execute('INSERT OR IGNORE INTO reaction VALUES (?,?,?,?,?)', (event_id, message_id, sender, key, int(outgoing)))
         return self.bump(message_id)
 
+    def redact_scoped(self, identity_id, event_id):
+        with self.db() as db:
+            db.execute('INSERT OR IGNORE INTO scoped_redaction VALUES (?,?)', (identity_id, event_id))
+            row = db.execute('SELECT identity_id FROM message WHERE id=? UNION ALL '
+                             'SELECT m.identity_id FROM reaction r JOIN message m ON m.id=r.message_id WHERE r.event_id=?',
+                             (event_id, event_id)).fetchone()
+            if row and row[0] == identity_id:
+                return self.redact(event_id)
+        return False
+
     def redact(self, event_id):
         """A redaction removes a reaction or blanks a message ("This message was deleted")."""
         with self.db() as db:
@@ -427,10 +499,22 @@ class PeopleStore:
 
     def messages(self, person_id, before=None, limit=2000):
         self.person(person_id)
+        where, args = '', [person_id]
+        if isinstance(before, str):
+            try:
+                stamp, message_id = history_cursor.decode(before, person_id)
+            except ValueError:
+                fail('invalid_cursor', 'Invalid message cursor')
+            where = ' AND (m.timestamp,m.id)<(?,?)'
+            args.extend((stamp, message_id))
+        elif before is not None:
+            # Legacy explicit timestamp cutoffs remain supported, not used for paging.
+            where = ' AND m.timestamp<?'
+            args.append(before)
         with self.db() as db:
             rows = db.execute('SELECT * FROM (SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
-                              'WHERE i.person_id=? AND (? IS NULL OR m.timestamp<?) ORDER BY m.timestamp DESC,m.id DESC LIMIT ?) ORDER BY timestamp,id',
-                              (person_id, before, before, limit)).fetchall()
+                              'WHERE i.person_id=?' + where + ' ORDER BY m.timestamp DESC,m.id DESC LIMIT ?) ORDER BY timestamp,id',
+                              (*args, limit)).fetchall()
         return self.decorate(rows)
 
     def since(self, seq, limit=400):
@@ -731,16 +815,20 @@ class UnifiedInbox:
         if etype == 'm.room.redaction':
             target = event.get('redacts') or content.get('redacts')
             if target:
-                self.store.redact(target)
+                self.store.redact_scoped(identity['id'], target)
             return
         if etype == 'm.reaction' and relates.get('rel_type') == 'm.annotation' and isinstance(relates.get('key'), str):
-            self.store.react(event['event_id'], relates.get('event_id', ''), sender, relates['key'][:32], outgoing)
+            with self.store.db() as db:
+                target = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=?', (relates.get('event_id', ''), identity['id'])).fetchone()
+                redacted = db.execute('SELECT 1 FROM scoped_redaction WHERE identity_id=? AND event_id=?', (identity['id'], event['event_id'])).fetchone()
+                if target and not redacted:
+                    self.store.react(event['event_id'], relates.get('event_id', ''), sender, relates['key'][:32], outgoing)
             return
         if etype == 'm.room.message' and relates.get('rel_type') == 'm.replace':
             new = content.get('m.new_content') or {}
             if isinstance(new.get('body'), str) and new.get('msgtype') in ('m.text', 'm.notice', 'm.emote'):
                 with self.store.db() as db:
-                    ok = db.execute('SELECT 1 FROM message WHERE id=? AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
+                    ok = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=? AND deleted=0 AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), identity['id'], meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
                 if ok:
                     self.store.bump(relates.get('event_id'), ',original=?,translated=NULL,translation_error=NULL,edited=1', (new['body'],))
             return
@@ -921,7 +1009,9 @@ class UnifiedInbox:
                 self.backfill_media(next(i for i in person['identities'] if i['id'] == message['identity_id']))
         gaps = [self.store.get('history_gap:' + i['address']) for i in person['identities']]
         typing = self.typing.get(person_id)
-        return {'person': person, 'messages': messages, 'has_more': has_more, 'translating': pending, 'seq': self.store.seq,
+        return {'person': person, 'messages': messages, 'has_more': has_more,
+                'next_cursor': history_cursor.encode(person_id, messages[0]['timestamp'], messages[0]['id']) if has_more else None,
+                'translating': pending, 'seq': self.store.seq,
                 'typing': typing['names'] if typing and typing['until'] > time.time() else [],
                 'history_warning': next((g for g in gaps if g), None)}
 
@@ -1326,6 +1416,14 @@ class UnifiedInbox:
         if suffix in (['people'], ['groups']) and method == 'GET':
             kind = 'group' if suffix[0] == 'groups' else 'person'
             return {suffix[0]: self.store.people(kind), 'seq': self.store.seq}
+        if suffix == ['search'] and method == 'GET':
+            if set(query) - {'q', 'network', 'thread', 'limit', 'cursor'} or any(len(v) != 1 for v in query.values()):
+                fail('invalid_search', 'Invalid search scope')
+            try:
+                return self.store.search(q('q', ''), network=q('network'), thread=q('thread'),
+                                         limit=int(q('limit', '50')), cursor=q('cursor'))
+            except ValueError:
+                fail('invalid_search', 'Invalid search query or cursor')
         if suffix == ['directory'] and method == 'GET':
             return {'people': self.store.people('person', chats=False), 'groups': self.store.people('group', chats=False)}
         if len(suffix) == 2 and suffix[0] == 'media' and method == 'GET':
@@ -1335,7 +1433,7 @@ class UnifiedInbox:
             if len(suffix) == 2:
                 if method == 'GET':
                     try:
-                        before = int(q('before')) if q('before') else None
+                        before = q('cursor') or (int(q('before')) if q('before') else None)
                         limit = max(1, min(int(q('limit', '2000')), 2000))
                     except ValueError:
                         fail('invalid_cursor', 'Invalid message query')

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKS = {
     'acceptance_probe_safety': ['readiness.tests.test_checker', 'readiness.tests.test_runner'],
     'search_module': ['readiness.tests.test_search'],
+    'history_search_integration': ['test_history_search'],
     'sync_recovery_and_history_limit': ['readiness.tests.test_transport'],
     'existing_media_relations_changefeed': [
         'test_unified.SignalMvpTests.test_reply_reaction_edit_redaction_ingest',
@@ -87,7 +88,8 @@ def run_checks(output, endpoints=()):
     report = deepcopy(manifest)
     report.update(generated_at=datetime.now(timezone.utc).isoformat(), checks=[], probes=[])
     report['source'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    paths = ['unified.py', 'engine.py', 'unified_setup.py', 'translation.py', 'tests/test_unified.py', 'readiness/manifest.json'] + [str(p.relative_to(ROOT)) for p in sorted((ROOT/'readiness').rglob('*.py'))]
+    report['source_dirty'] = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
+    paths = ['unified.py', 'history_cursor.py', 'web.py', 'static/unified.js', 'tests/test_history_search.py', 'tests/test_history_search_view.cjs', 'engine.py', 'unified_setup.py', 'translation.py', 'tests/test_unified.py', 'readiness/manifest.json'] + [str(p.relative_to(ROOT)) for p in sorted((ROOT/'readiness').rglob('*.py'))]
     report['source_files'] = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in paths}
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     for name, targets in CHECKS.items():
@@ -108,7 +110,12 @@ def run_checks(output, endpoints=()):
         if name == 'search_module' and code == 0:
             report['components']['search_module']['status'] = 'proven'
             report['components']['search_module']['evidence'] = log
+        if name == 'history_search_integration' and code == 0:
+            report['components']['history_search_integration']['status'] = 'proven'
+            report['components']['history_search_integration']['evidence'] = log
         if name == 'sync_recovery_and_history_limit' and code == 0:
+            report['components']['history_pagination']['status'] = 'proven'
+            report['components']['history_pagination']['evidence'] = log
             report['components']['sync_cursor_recovery']['status'] = 'proven'
             report['components']['sync_cursor_recovery']['evidence'] = log
     report['probes'] = [probe(item) for item in endpoints]

@@ -90,15 +90,13 @@ class TransportTests(unittest.TestCase):
         pid = self.inbox.store.people()[0]['id']
         self.assertIn('incomplete', self.inbox.timeline(pid)['history_warning'])
 
-    @unittest.expectedFailure
-    def test_known_gap_timestamp_only_history_cursor_skips_ties(self):
-        # Regression spec: baseline's before=timestamp drops messages sharing that millisecond.
-        # Keep visibly expected-failing until parent changes core to composite cursor.
+    def test_composite_history_cursor_preserves_ties(self):
+        # Former timestamp-only regression, now required to pass normally.
         identity = self.inbox.store.identity('telegram', '!ties', 'Ties')
         for mid in ('$a', '$b', '$c'):
             self.inbox.store.add_message(mid, identity, 'fixture', False, 'text', 100)
         first = self.inbox.timeline(identity['person_id'], limit=2)
-        second = self.inbox.timeline(identity['person_id'], before=first['messages'][0]['timestamp'], limit=2)
+        second = self.inbox.timeline(identity['person_id'], before=first['next_cursor'], limit=2)
         self.assertEqual(len(first['messages']) + len(second['messages']), 3)
 
 

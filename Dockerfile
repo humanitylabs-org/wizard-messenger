@@ -30,8 +30,9 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
     mkdir -p /app /data /run/messenger && chown 1000:1000 /data /run/messenger
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
-COPY engine.py server.py web.py passkey.py messenger_addresses.py unified.py unified_setup.py translation.py permissions.py drafts.py API-contract.json /app/
+COPY engine.py server.py web.py passkey.py messenger_addresses.py unified.py unified_setup.py translation.py history_cursor.py permissions.py drafts.py API-contract.json /app/
 COPY connector_setup.py connectors.py connector_inbox.py connector_web.py /app/
+COPY readiness/search.py readiness/__init__.py /app/readiness/
 COPY plumbing /app/plumbing
 COPY vendor /app/vendor
 COPY static /app/static

@@ -23,11 +23,11 @@ def identifier(value):
 class SearchStore:
     MAX_PAGE = 100
 
-    def __init__(self, path):
+    def __init__(self, path, *, connection=None, lock=None):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.lock = threading.RLock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.lock = lock if lock is not None else threading.RLock()
+        self.db = connection if connection is not None else sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         os.chmod(path, 0o600)
         self.db.executescript('''

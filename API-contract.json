@@ -353,7 +353,15 @@
       "method": "GET",
       "path": "/api/unified/people/{id}",
       "auth": true,
-      "result": "person, messages (original/translated/network), history_warning"
+      "result": "person, messages (original/translated/network), history_warning, has_more, next_cursor (person-bound timestamp+id position; send as cursor for older pages)",
+      "query": {"limit":"1..2000", "cursor":"optional opaque next_cursor", "before":"optional legacy timestamp cutoff, not tie-safe paging"}
+    },
+    {
+      "method": "GET",
+      "path": "/api/unified/search",
+      "auth": "authenticated owner browser; bearer access remains denied by current policy allowlist",
+      "query": {"q":"1..512 characters, 1..32 literal AND words", "network":"optional exact network", "thread":"optional exact identity ID", "limit":"1..100, default 50", "cursor":"optional scoped next_cursor"},
+      "result": "messages (account, network, thread, message_id, timestamp, original, translated, person_id, display_name), has_more, next_cursor; server-derived owner account; plaintext stored-history only"
     },
     {
       "method": "POST",
