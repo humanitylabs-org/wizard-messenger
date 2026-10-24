@@ -7,7 +7,7 @@ description: Use when opening Messenger or checking its account and connection s
 
 Messenger is an installed Wizard container app. Its view opens through its `view.url` from the app registry; its APIs and MCP stay behind the box's authenticated app route. Do not install it as a host daemon or create a separate ad-hoc web service.
 
-The unified preview additionally offers People, Groups and Telegram under the same authenticated owner UI; see UNIFIED-INBOX.md. Translation is off unless the owner taps Translate on a foreign-script message or sets a person's auto-translate language; it uses only configured Tinfoil. The machine key cannot read or send messages: those routes return `agent_access_off` unless the owner grants time-limited agent access in Connected accounts, and every attempt is logged for the owner. Do not try to work around that boundary. Unified history is plaintext on the box; Telegram cloud chats are not end-to-end encrypted. Never drive an owner login, send, merge or disconnect without authorization.
+The integrated inbox supports personal Slack, Telegram, WhatsApp, LINE and Instagram using maintained open-source bridges, plus optional Signal and original Marmot DMs. Owner Settings offers No access (default), Read-only, Draft-only and Draft-and-send. Draft-only allows reads and local draft create/update, never provider writes or owner/admin changes; owner review/edit/click-send is separate. Login, passwords, codes and QR/PIN/MFA stay in the private UI, never chat. Stop on provider challenges. Configured/required independent authority never falls back locally. Account pairing and real delivery are not proven by bridge health. Unified history is plaintext on the box; provider privacy differs from native apps. Current host-admin Oscar is not confined just by installing the app: whole-agent restriction must remove alternate admin/tool/provider paths. The tested same-server scoped MCP runtime is in permission_runtime/; no separate physical server is inherently required. Never work around owner restrictions.
 
 The original release is encrypted text DMs with dedicated Messenger accounts, public `npub`/`nprofile` contact codes and explicit invitations. The protected root Wizard ID is separate. Existing NIP-05 handles can be resolved when adding a contact if they point to a Marmot-enabled account.
 
@@ -18,15 +18,10 @@ The original release is encrypted text DMs with dedicated Messenger accounts, pu
 - Sent means relay publication, not peer read. Preserve original request/event IDs on retry. An ambiguous send must be reconciled, not blindly resent.
 - Source/API/view files and build provenance ship together. The published API contract is `API-contract.json`; screen source is `static/`.
 
-## First open: the setup link
+## First open: trusted owner enrollment
 
-Before an account exists, the view opened from the launcher says "Ask your Wizard for your Messenger setup link." When the owner asks for it:
+Bearer `/api/view/ticket` is launcher-only in this candidate. It cannot create an owner account or open an existing owner session. Do not use the legacy bearer-bootstrap recipe.
 
-1. `POST <host api>/api/view/ticket` with `Authorization: Bearer <MESSENGER_API_TOKEN>` (from the App Manager's secrets file for `messenger`) and body `{"bootstrap": true}`.
-2. Give the owner `<Wizard origin><view.url>#ticket=<ticket>` (for example `https://wizard.example.ts.net/messenger/#ticket=…`). It works once, for up to seven days, and only before an account exists.
+The trusted installing operator may explicitly set `MESSENGER_PROVISION_OWNER_ENROLLMENT=1` before first setup. The app writes a mode-0600 `/data/owner-enrollment.json` with a single-use enrollment ticket. Give only the owner `<view.url>#ticket=<ticket>`; never log or publish it or place it in a URL query. The owner creates a passphrase of at least 16 characters and then proves it to unlock. Enrollment cannot reset an existing identity. After setup use the normal view and owner unlock.
 
-Do not paste the API token anywhere, and never put the ticket in a URL query. After setup the owner just opens Messenger; restarts ask for the passphrase.
-
-For installation, populate the exact Wizard HTTPS origin from its current network settings and generate an application-only integration capability of at least 32 characters through the normal app-secret mechanism. Preserve app-data on updates. Owner bootstrap is a single-use capability issued by the authenticated local app API; it belongs only in the initial view fragment, never in logs or a public URL query. Existing-account sign-in uses the owner's passphrase and a scoped HttpOnly session, not an API-token field.
-
-The MCP has no message-read/send, agent participation or root-signing tools. Groups, media, phone push and independent phone-held messaging accounts are later work. Publication/index discovery is a separate release step for this local candidate.
+Preserve app-data, source/API/view provenance and exact same-origin routing on updates. Keep Beeper until real owner-account/device workflows are verified. Account passwords and messaging keys never belong in chat.

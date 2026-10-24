@@ -100,22 +100,10 @@ class ConnectorInbox(UnifiedInbox):
         sender = event.get('sender', '')
         outgoing = self.is_me(sender)
         relates = content.get('m.relates_to') or {}
-        if etype == 'm.room.redaction':
-            target = event.get('redacts') or content.get('redacts')
-            if target:
-                self.store.redact(target)
-            return
-        if etype == 'm.reaction' and relates.get('rel_type') == 'm.annotation' and isinstance(relates.get('key'), str):
-            self.store.react(event['event_id'], relates.get('event_id', ''), sender, relates['key'][:32], outgoing)
-            return
-        if etype == 'm.room.message' and relates.get('rel_type') == 'm.replace':
-            new = content.get('m.new_content') or {}
-            if isinstance(new.get('body'), str) and new.get('msgtype') in ('m.text', 'm.notice', 'm.emote'):
-                with self.store.db() as db:
-                    ok = db.execute('SELECT 1 FROM message WHERE id=? AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
-                if ok:
-                    self.store.bump(relates.get('event_id'), ',original=?,translated=NULL,translation_error=NULL,edited=1', (new['body'],))
-            return
+        if etype == 'm.room.redaction' or etype == 'm.reaction' or (etype == 'm.room.message' and relates.get('rel_type') == 'm.replace'):
+            # Share the authoritative thread-scoped mutation/tombstone rules.
+            # A connector must not reintroduce cross-thread edits or redactions.
+            return super().ingest(identity, meta, event, live=live)
         if sender == '@' + identity['network'] + 'bot:messenger.internal':
             # Bridge error notices are not chat lines: mark our newest recent outgoing message as failed.
             if content.get('msgtype') == 'm.notice':
@@ -132,6 +120,7 @@ class ConnectorInbox(UnifiedInbox):
         msgtype, body, media, reply_to = parts
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
                                event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, push_live=live)
+        self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
 
     def ephemeral(self, identity, events):
         for event in events:

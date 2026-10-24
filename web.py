@@ -135,8 +135,11 @@ class ViewServer(MessengerServer):
             from connector_inbox import ConnectorInbox
             from connector_web import ConnectorViewHandler
             self.RequestHandlerClass = ConnectorViewHandler
-            # Parent: inject the authorized isolated sender here, never raw http.
-            self.unified = ConnectorInbox(data, engine, sender=None) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+            from connector_sender import LocalOwnerSender
+            # Normal app only. Parent must authorize actor BEFORE this callback.
+            # remote_required above takes precedence; never inject in strong mode.
+            sender = LocalOwnerSender(matrix=os.environ.get('MATRIX_URL', 'http://matrix:8008')) if os.environ.get('MESSENGER_CONNECTOR_SENDER_MODE') == 'local-owner' else None
+            self.unified = ConnectorInbox(data, engine, sender=sender) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
         else:
             self.RequestHandlerClass=ViewHandler
             self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None

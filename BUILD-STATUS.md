@@ -1,37 +1,42 @@
-# Messenger replacement candidate — not migration-ready
+# Messenger five-network release candidate
 
-This branch is a private development candidate alongside Beeper. Nothing here proves a complete Beeper replacement or deployed root-resistant sending. The installed owner application has not been changed by this build.
+This local candidate extends James's merged 97cb0a5 Messenger (unified.11.7/restart recovery). Keep Beeper until owner-account acceptance is complete; dependency health is not message delivery.
 
-## Implemented and exercised
+## Integrated behavior
 
-- No access, Read-only, Draft-only and Full access agent permissions, default off; explicit owner configuration, bearer/session separation, and persistent local drafts.
-- Maintained WhatsApp and Signal bridge adapters plus existing Telegram. Disposable Synapse, WhatsApp and Signal bridge liveness was exercised from the staged app network without linking an account. Slack adapter is bot/app-only, not personal-inbox parity. LINE and KakaoTalk remain unsupported.
-- Lossless timestamp/ID history paging and transactional SQLite message-content search, including edits and redactions.
-- Optional owner-only Web Push subscription UI/API, service worker, durable incoming-message intents and bounded retries. No real device subscription or push delivery is claimed.
-- An independent HTTPS/passkey owner authority with a fixed Matrix sender, per-message user verification, durable retry IDs, exact account/room/text/attachment binding, and a narrow draft-only main-app client.
-- Frozen draft export and independent review, with no local Send fallback in the secure-review UI. Explicit remote-required mode disables local providers and rejects credential-bearing data.
+- Personal Slack email/code/workspace/MFA login, Telegram, WhatsApp, LINE and Instagram adapters, private owner login UI, pinned upstream images/templates. LINE reuses public MIT beeper/line source 72c7a51a44f344966b916bd2f42a734381061186. Optional Signal remains available.
+- Reviewed fixed-origin, fixed-route LocalOwnerSender enables normal owner operations. It is never selected in explicitly required independent-authority mode.
+- Owner settings: No access, Read-only, Draft-only, Draft-and-send. Default No access. Draft-only reads/saves drafts but cannot send, react, type, mark read, edit/delete messages, link accounts, change policy or obtain owner authority. Draft-and-send is explicit and still cannot administer accounts or policy.
+- Normal owner draft edit → review → separate click Send works through cookie/Origin/CSRF. Configured/required independent authority uses secure export instead and never silently falls back locally.
+- James's phone vault, voice capture/playback speed, badges/mute, boot/restart recovery are retained. Shared transactional FTS/history paging, incoming-notification intents and optional Web Push remain integrated. Web Push dependencies and owner subscription remain opt-in.
+- New connectors share base thread-scoped edit/reaction/redaction/tombstone rules and voice-note warming; cross-thread mutations cannot bypass search/history isolation.
+- Trusted local install provisioning can issue an initial owner enrollment file; ordinary bearer tickets remain launch-only and cannot mint a configured-account owner session.
 
-Parent verification after integration: 261 Python tests and 288 subtests passed, plus 59 Node tests. Chromium exercised real loopback APIs and disposable SQLite at 320/390/1280 widths; no browser send request occurred, and unconfigured independent review stayed disabled. Crypto, HTTPS and Matrix protocol fixtures are synthetic test evidence, not hardware or remote-network delivery.
+## Evidence boundaries
 
-## Unresolved acceptance gates
+Parent combined Python tests and Node tests pass; exact final totals belong to the release receipt, not this evolving file. The five-network lane exercised real no-egress Synapse + required bridge processes: liveness 200, authenticated provisioning 200, unauthenticated provisioning 401, and Slack/Instagram/LINE input-descriptor login-start/cancel 200. No real owner account was authenticated or message sent.
 
-The strong mode does not yet have a live restricted read facade: its recipient directory is offline, so it is not a live inbox. The authority, Matrix homeserver and bridges need trusted owner administration outside the agent's authority; a separate physical server is not required. The tested same-host reference in same_host_isolation/ confines an adversarial worker to read/draft operations and a separate owner approval channel. It does not yet confine current Oscar or integrate real Messenger delivery. All alternative agent-accessible send credentials/sessions must be removed/revoked. Pending exported drafts have no terminal cancellation endpoint and remain frozen until independently completed. Public exposure quotas/rate controls and independent-host operational hardening are not certified.
+The same-server permission runtime exercised a built-image worker → Unix socket broker → real normal Messenger HTTP API → synthetic provider callbacks. Worker filesystem/network/admin attacks were denied, Draft-only rejected writes, and only an owner click or explicitly permitted agent send reached the fixture callback. The worker is an actual MCP runtime, not a running full Hermes model conversation.
 
-No owner accounts have been linked. Actual per-network send/receive, media/history completeness, reconnect behavior, phone notifications, hardware passkeys and daily parallel use require owner-attended verification. A healthy connector or passing test does not satisfy those gates. Keep Beeper; do not recommend switching.
+## Remaining owner/production gates
 
-The ordinary single-host mode is application defense-in-depth, not protection against an agent that administers its host. A second local container or a configuration attestation does not establish independence. Review securely is disabled until a trusted independent Matrix authority is configured; it does not silently fall back to a local draft-send flow.
+- Owner must create/unlock Messenger and connect the five accounts. Telegram needs the owner's application API ID/hash in private app settings. Passwords, session values, QR/PIN/code/MFA stay in the private UI, not chat. CAPTCHA/SSO/browser-only challenges stop explicitly.
+- Real send/receive, account-history completeness, phone media/notifications and reconnect behavior must be checked per account before switching away from Beeper.
+- API permission enforcement is not a sandbox against current host-admin Oscar. Current Oscar retains Docker/file/cloud/tool authority. Whole-agent restriction requires confining all actual tool/delegation runtimes and removing alternate provider/admin/browser channels; the tested MCP worker alone does not apply that cutover. No second physical server is inherently required.
+- Optional remote-required mode still lacks live restricted reading; do not select it expecting a working live inbox. Pending independent exports remain frozen until independently completed (terminal cancellation not implemented).
+- KakaoTalk is not in this release. Personal Slack may be constrained by workspace policy. LINE and Instagram authentication can require phone approval and provider security challenges. Open-source bridges are not endorsed by those networks.
+
+No source has been publicly pushed by this task. This branch/image can be installed locally with supported per-app WAM user configuration while retaining the live app data and a rollback override.
 
 ## Reproduce
 
-Use a disposable Python environment with isolated_sender/requirements-ui.txt, push_notifications/requirements.txt and PyYAML installed; no owner credentials are needed for local fixtures.
+Use the combined disposable test environment (isolated_sender/requirements-ui.txt, push_notifications/requirements.txt, PyYAML and MCP SDK for the broker proof). No owner credentials are needed for fixtures.
 
 ```
-python -m pytest tests readiness/tests isolated_sender/tests push_notifications/tests -q
-node --test tests/test*.cjs
-node tests/remote_authority_ui.cjs
-node push_notifications/tests/test_service_worker.cjs
-python tools/verify_candidate_browser.py --output <new-disposable-directory>
+python -m pytest -q
+node --test tests/test*.cjs tests/*.test.cjs tests/remote_authority_ui.cjs push_notifications/tests/*.cjs
+python permission_runtime/proof.py
 python -m readiness.check --require-migration-ready --output <new-disposable-directory>
 ```
 
-The final readiness command must continue returning exit 3 while real migration gates remain unproven. See REMOTE_AUTHORITY.md, CONNECTORS.md, push_notifications/INTEGRATION.md and isolated_sender/README.md for the exact security and capability boundaries.
+The migration command remains a fail-closed gate, not a target to turn green without real owner acceptance. See CONNECTORS.md, AGENT-PERMISSIONS.md, permission_runtime/README.md and INTEGRATION-RELEASE.md.
