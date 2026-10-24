@@ -73,6 +73,19 @@ class PasskeyTests(unittest.TestCase):
         self.keys.clear()
         self.assertFalse(Passkeys(self.path).state()['enabled'])
         with self.assertRaises(PasskeyError): self.keys.unlock_options(RP)
+    def test_sealed_passphrase_is_stored_opaque_and_cleared(self):
+        options = self.keys.unlock_options(RP)
+        self.assertTrue(options['prf']['salt']); self.assertEqual(options['prf']['wraps'], {})
+        cred = b64u(self.phone.cred); wrap = b64u(secrets.token_bytes(48))
+        self.keys.set_wrap(cred, wrap)
+        again = Passkeys(self.path)
+        self.assertEqual(again.unlock_options(RP)['prf'], {'salt': options['prf']['salt'], 'wraps': {cred: wrap}})
+        for bad in ('short', 'x' * 40 + '!', 5):
+            with self.assertRaises(PasskeyError): again.set_wrap(cred, bad)
+        with self.assertRaises(PasskeyError): again.set_wrap(b64u(b'other'), wrap)
+        again.set_wrap(cred, None); self.assertEqual(again.unlock_options(RP)['prf']['wraps'], {})
+        again.set_wrap(cred, wrap); again.clear()
+        self.assertNotEqual(Passkeys(self.path).prf_salt, options['prf']['salt'])
     def test_rs256_padding_check(self):
         self.assertFalse(pk.verify_rs256((1 << 2047) + 1, 65537, b'm', b'\x00' * 256))
 

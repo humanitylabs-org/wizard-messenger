@@ -280,6 +280,8 @@ class ViewHandler(Handler):
             if path=='/api/view/passkey/register' and method=='POST':
                 body=self._body(); return 200,{'ok':True,'result':keys.register(body,rp,origin,body.get('label',''))}
             if path=='/api/view/passkey/clear' and method=='POST': return 200,{'ok':True,'result':keys.clear()}
+            if path=='/api/view/passkey/wrap' and method=='POST':
+                body=self._body(); return 200,{'ok':True,'result':keys.set_wrap(body.get('id'),body.get('wrap'))}
         except PasskeyError as error:
             code=str(error)
             raise EngineError('passkey_'+code,{'none':'Fingerprint unlock is not set up','expired':'That took too long. Try again.'}.get(code,'Fingerprint unlock did not work. Use your passphrase.'),401 if path.endswith('/unlock') else 400) from None
@@ -454,11 +456,36 @@ class ViewHandler(Handler):
         except (BrokenPipeError,ConnectionResetError): pass
         except OSError: self._reply(500,{'ok':False,'error':{'code':'view_unavailable','message':'Could not load Messenger'}})
 
+def provision_owner_enrollment(service):
+    """Trusted local operator hook, deliberately not reachable through HTTP/MCP.
+
+    Enable only for first-run startup. The link is a secret: retrieve it through
+    owner-controlled local provisioning, never through the agent bearer API.
+    """
+    if service.auth.credential or service.engine.status().get('account_configured', False):
+        raise ValueError('Owner enrollment is only available before account setup')
+    if service.auth.path is None:
+        raise ValueError('Owner enrollment requires persistent private data')
+    ticket = service.auth.ticket(bootstrap=True)
+    target = service.auth.path.parent / 'owner-enrollment.json'
+    # Exclusive creation prevents overwriting an owner-provisioned link or symlink.
+    with open(target, 'x', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        json.dump({'fragment': '#ticket=' + ticket, 'expires_in': 7*24*3600}, output)
+        output.flush(); os.fsync(output.fileno())
+    return target
+
+
 if __name__=='__main__':
     os.umask(0o077)
     from remote_authority import OfflineEngine
     engine=(OfflineEngine if os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1' else MarmotEngine)(os.environ.get('MESSENGER_DATA','/data'))
     server=ViewServer(('0.0.0.0',int(os.environ.get('MESSENGER_PORT','8765'))),engine,os.environ.get('MESSENGER_API_TOKEN',''),[x for x in os.environ.get('MESSENGER_ALLOWED_ORIGINS','').split(',') if x])
+    if (os.environ.get('MESSENGER_PROVISION_OWNER_ENROLLMENT') == '1'
+            and not server.auth.credential
+            and not server.engine.status().get('account_configured', False)
+            and server.auth.path is not None
+            and not (server.auth.path.parent / 'owner-enrollment.json').exists()):
+        provision_owner_enrollment(server)
     def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop); signal.signal(signal.SIGINT,stop)
     try: server.serve_forever()

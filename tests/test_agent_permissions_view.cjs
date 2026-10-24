@@ -45,7 +45,7 @@ async function fixture({deferPreview = false, connectors = false, connectorsUnav
     if (path === 'api/drafts/d1/send') {draft.state = 'sent'; return {draft};}
     throw new Error('Unexpected API: '+path);
   };
-  const context = {document,console,Audio:class {},navigator:{},localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}},confirm:()=>true,
+  const context = {addEventListener(){},document,console,Audio:class {},navigator:{},localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}},confirm:()=>true,
     setTimeout,clearTimeout,requestAnimationFrame:fn=>fn(),WizardApp:{update:{hold:()=>({release(){}})}}};
   context.window = context;
   if (connectors) vm.runInNewContext(fs.readFileSync('static/connectors.js','utf8'), context);

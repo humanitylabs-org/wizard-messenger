@@ -130,4 +130,4 @@ const assert = require('node:assert/strict');
   fs.writeFileSync(ev + '/proof.json', JSON.stringify(out, null, 2));
   console.log(JSON.stringify(out));
   await browser.close();
-})().catch(async e => { console.error('FAIL', e.message); process.exit(1); });
+})().catch(async e => { console.error('FAIL', e.message, e.stack.split('\n').find(l => l.includes('signal_mvp_browser'))); process.exit(1); });

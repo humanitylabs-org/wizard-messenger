@@ -37,7 +37,7 @@ test('message search calls authenticated API, pages text results and ignores sta
   const root=new Element('main');root.id='messenger';const inbox=new Element('section');inbox.id='unified-inbox';root.append(inbox);
   const tabs=new Element('nav');tabs.id='inbox-tabs';
   const all=()=>{const out=[];const walk=e=>{out.push(e);e.children.forEach(walk);};walk(root);return out;};
-  const document={hidden:true,activeElement:null,documentElement:{dataset:{}},addEventListener(){},getElementById:id=>id==='inbox-tabs'?tabs:all().find(e=>e.id===id),createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
+  const document={querySelector(){return null;},hidden:true,activeElement:null,documentElement:{dataset:{}},addEventListener(){},getElementById:id=>id==='inbox-tabs'?tabs:all().find(e=>e.id===id),createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
   const calls=[], pending=[];
   const api=async path=>{
     calls.push(path);
@@ -47,7 +47,7 @@ test('message search calls authenticated API, pages text results and ignores sta
     throw Error('Unexpected '+path);
   };
   const timers=[];
-  const ctx={document,AbortController,Audio:class{},navigator:{},URLSearchParams,console,setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout(){},requestAnimationFrame:fn=>fn(),localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}}};ctx.window=ctx;
+  const ctx={addEventListener(){},document,AbortController,Audio:class{},navigator:{},URLSearchParams,console,setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout(){},requestAnimationFrame:fn=>fn(),localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}}};ctx.window=ctx;
   vm.runInNewContext(fs.readFileSync('static/unified.js','utf8'),ctx);
   ctx.MessengerUnified.mount({api});ctx.MessengerUnified.authenticated();
   const flush=async()=>{for(let n=0;n<5;n++)await new Promise(r=>setImmediate(r));};await flush();

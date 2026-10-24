@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.10'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.11.7'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -122,8 +122,9 @@
   let updateHold = null;
   function syncUpdateHold() {
     const setupPending = ['locked', 'setup_required'].includes(state.mode) && ['display-name', 'passphrase', 'confirm-passphrase'].some(id => $(id).value);
-    const pending = state.operation?.action || [...state.records.values()].some(record => record.draft || record.attempts.some(a => ['sending', 'checking', 'failed'].includes(a.state))) ||
-      ['draft', 'contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
+    // Drafts and failed sends are saved on this device and survive a reload, so only work in flight holds an update.
+    const pending = state.operation?.action || [...state.records.values()].some(record => record.attempts.some(a => ['sending', 'checking'].includes(a.state))) ||
+      ['contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
     if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
     else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
   }
@@ -131,7 +132,7 @@
     if (!state.records.has(group)) {
       let saved = {};
       try { saved = JSON.parse(localStorage.getItem(storagePrefix() + group) || '{}'); } catch { /* A draft failure never permits an untracked send. */ }
-      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null};
+      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null, muted: saved?.muted === true};
       for (const attempt of record.attempts) if (attempt.state === 'sending') attempt.state = 'checking';
       state.records.set(group, record);
       syncUpdateHold();
@@ -201,14 +202,16 @@
       const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
-    const envelope = await response.json();
+    // A restarting release answers through the gateway with an empty or HTML body: say so, never surface a parser error.
+    let envelope;
+    try { envelope = await response.json(); } catch { signal?.throwIfAborted(); throw new APIError('server_restarting', response.status); }
     signal?.throwIfAborted();
     if (!response.ok || envelope.ok !== true) throw new APIError(envelope.error?.code || 'request_failed', response.status, envelope.error?.message);
     return envelope.result;
   }
   function friendly(error) {
     const messages = {
-      unauthorized: 'Open Messenger from Wizard to reconnect.',
+      unauthorized: "You were signed out of Messenger. Tap Try again.",
       owner_unlock_required: 'Use your independently issued owner enrollment link, or unlock with your existing passphrase.',
       vault_unlock_failed: "That passphrase isn't right.", invalid_public_key: "That address doesn't look right.",
       login_rate_limited: 'Too many tries. Wait a minute and try again.',
@@ -217,8 +220,9 @@
       invalid_nip05: "That address doesn't look right.", nip05_unverified: 'This address could not be verified. Ask for their Messenger address.', nip05_not_found: 'This address could not be found. Ask for their Messenger address.',
       key_package_not_found: 'This address is not ready for chats yet.', no_key_package: 'This address is not ready for chats yet.',
       locked: 'Unlock Messenger to continue.', vault_locked: 'Unlock Messenger to continue.', request_id_conflict: 'This draft could not be retried safely.',
+      server_restarting: 'Messenger is restarting. Try again in a moment.',
       send_outcome_unknown: 'Checking delivery. Your message will not be sent again automatically.',
-      invalid_input: 'Check the text and try again.', csrf_invalid: 'Open Messenger from Wizard to reconnect.'
+      invalid_input: 'Check the text and try again.', csrf_invalid: "You were signed out of Messenger. Tap Try again."
     };
     return messages[error.code || error.message] || "Couldn't connect. Try again when your Wizard is reachable.";
   }
@@ -243,7 +247,7 @@
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
     const create = mode === 'setup_required', locked = mode === 'locked';
     $('gate-title').textContent = locked ? 'Unlock Messenger' : 'Messenger';
-    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : mode === 'reconnect' ? 'Open Messenger from Wizard to reconnect.' : mode === 'first_open' ? 'Ask your Wizard for your Messenger setup link. It opens here once so you can create your address.' : 'Opening your messages…';
+    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Ask your Wizard for your Messenger setup link. It opens here once so you can create your address.' : 'Opening your messages…';
     $('setup-form').hidden = !(create || locked); $('reconnect').hidden = mode !== 'reconnect' && mode !== 'first_open';
     $('name-label').hidden = !create; $('confirm-label').hidden = !create; $('confirm-passphrase').required = create;
     $('passphrase-help').hidden = !create; $('passphrase').minLength = locked ? 1 : 16;
@@ -252,7 +256,7 @@
       $('passphrase').type = 'password'; $('show-password').textContent = 'Show';
       $('show-password').setAttribute('aria-label', 'Show passphrase'); $('show-password').setAttribute('aria-pressed', 'false');
     }
-    if (changed && locked) refreshPasskey();
+    if (changed && locked) { refreshPasskey(); refreshPhoneVault(); }
     updateSetup(); renderActivity(); renderPasskey();
   }
   function renderActivity() {
@@ -279,6 +283,8 @@
   }
   function ready(identity) {
     state.identity = identity; state.mode = 'ready'; $('gate').hidden = true; $('workspace').hidden = false;
+    for (const id of ['passphrase', 'confirm-passphrase']) $(id).value = ''; // unlocked: nothing typed is pending any more
+    syncUpdateHold();
     $('own-initial').textContent = (identity.display_name || 'M').slice(0, 1).toUpperCase(); renderActivity();
   }
   function dmById(group) { return state.invites.find(dm => dm.group_id === group) || state.dms.find(dm => dm.group_id === group); }
@@ -360,16 +366,23 @@
   function row(dm, invite = false) {
     const name = peerName(dm), messages = cacheFor(dm.group_id).messages, last = messages.at(-1), record = readRecord(dm.group_id);
     const unread = !invite && last?.direction === 'received' && record.seen !== last.message_id;
-    const el = button('', 'conversation-row' + (unread ? ' unread' : ''), () => openChat(dm.group_id));
+    const U = window.MessengerUnified;
+    const el = button('', 'conversation-row' + (unread ? ' unread' : '') + (record.muted ? ' muted' : ''), () => { if (el.dataset.held) { delete el.dataset.held; return; } openChat(dm.group_id); });
+    if (!invite && U?.holdToMenu) U.holdToMenu(el, () => U.actionMenu(el, name, [U.muteAction(record.muted, () => { record.muted = !record.muted; persist(dm.group_id); state.listSignature = ''; renderList(); U.toast(record.muted ? 'Muted' : 'Unmuted'); })]));
     el.dataset.group = dm.group_id; el.setAttribute('aria-current', String(state.group === dm.group_id));
     el.append(element('span', 'avatar', name.slice(0, 1).toUpperCase()));
-    const body = element('span', 'row-body'); body.append(element('span', 'row-name', name), element('span', 'row-preview', invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet')));
-    el.append(body, element('span', 'row-meta', invite ? '' : timeLabel(last?.created_at))); return el;
+    const rowName = element('span', 'row-name', name);
+    if (record.muted && U?.icon) { const m = U.icon('belloff'); m.classList.add('u-muted-mark'); rowName.append(m); }
+    const body = element('span', 'row-body'); body.append(rowName, element('span', 'row-preview', invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet')));
+    const meta = element('span', 'row-meta', invite ? '' : timeLabel(last?.created_at));
+    if (unread) meta.append(element('span', 'row-dot' + (record.muted ? ' muted' : '')));
+    el.append(body, meta); return el;
   }
   function renderList() {
     if (state.mode !== 'ready') return;
-    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent])]);
+    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
+    window.MessengerUnified?.setNativeUnread?.(state.invites.length + state.dms.filter(dm => { if (isIncoming(dm)) return false; if (readRecord(dm.group_id).muted) return false; const last = cacheFor(dm.group_id).messages.at(-1); return last?.direction === 'received' && readRecord(dm.group_id).seen !== last.message_id; }).length);
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();
     if (state.invites.length) {
       fragment.append(element('h2', 'section-label', 'Invites'));
@@ -655,46 +668,131 @@
     $('setup-submit').disabled = true;
     act(async signal => {
       try {
-        if (state.sessionLocked) {
-          const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
-          if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-          state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
-        } else {
-          await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
-          // Launcher tickets are setup-only; only passphrase proof opens the owner view.
-          const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
-          state.csrf = session.csrf_token; state.authenticated = true;
-        }
+        if (!(await unlockWith(password, signal, creating, name))) return;
+        phone.typed = password;
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
         window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
+        if (!creating) offerPhoneFingerprint(password);
+        if (!phone.available && !creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
       } catch (error) {
         $('passphrase').value = ''; $('confirm-passphrase').value = '';
         if (error.name !== 'AbortError') { state.setupFailed = creating; $('setup-error').textContent = friendly(error); $('passphrase').focus(); }
       } finally { updateSetup(); }
     });
   };
-  // Fingerprint / face unlock (passkey on this device). Opens the view only;
-  // after a server restart the passphrase is still needed once.
+  async function unlockWith(password, signal, creating = false, name = '') {
+    if (state.sessionLocked) {
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
+      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
+    } else {
+      await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
+      // Launcher tickets are setup-only; passphrase proof opens the owner view,
+      // including when a phone-vault or PRF unlock calls this shared helper.
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
+      state.csrf = session.csrf_token; state.authenticated = true;
+    }
+    return true;
+  }
+  // Fingerprint / face unlock (passkey on this device). With the WebAuthn PRF extension the phone's fingerprint
+  // key also seals the passphrase (AES-GCM under a key only the phone can derive), so a fingerprint reopens
+  // Messenger after a restart or Lock too. The server stores only the sealed copy and can never open it.
   const passkeySupported = !!(window.PublicKeyCredential && navigator.credentials?.get);
   const b64u = buffer => btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const unb64u = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((text.length + 3) % 4)), c => c.charCodeAt(0));
+  // In the Wizard OS Android app the phone itself keeps the passphrase behind your fingerprint (WizardApp.vault:
+  // Android Keystore + fingerprint prompt). Nothing about it is stored on the server, and it survives restarts.
+  const phone = {available: false, saved: false, typed: null, tried: false};
+  const vault = () => window.WizardApp?.vault;
+  async function refreshPhoneVault() {
+    try { Object.assign(phone, await vault()?.has() || {}); } catch { phone.available = false; }
+    renderPasskey();
+    if (phone.saved && state.mode === 'locked' && !phone.tried) { if (isBusy()) setTimeout(refreshPhoneVault, 400); else { phone.tried = true; $('fingerprint-unlock').click(); } }
+  }
+  async function savePhoneFingerprint(password) {
+    try { await vault().seal(password, 'Unlock Messenger with your fingerprint'); phone.saved = true; localStorage.removeItem('messenger.fingerprint.declined'); return true; }
+    catch (error) { if (error.code === 'cancelled') localStorage.setItem('messenger.fingerprint.declined', '1'); return false; }
+    finally { renderPasskey(); }
+  }
+  // First time only: ask, never spring the fingerprint prompt on someone. "Not now" is remembered on this phone.
+  async function offerPhoneFingerprint(password) {
+    if (!phone.available || phone.saved || localStorage.getItem('messenger.fingerprint.declined')) return;
+    const U = window.MessengerUnified, later = 'Not now. You can turn it on anytime from the Messenger tab.';
+    const yes = await U?.ask?.({title: 'Unlock with your fingerprint?', body: 'Next time Messenger asks for your password, a fingerprint touch opens it instead. Your password stays on this phone.', yes: 'Use fingerprint', no: 'Not now'});
+    if (!yes) { localStorage.setItem('messenger.fingerprint.declined', '1'); U?.toast?.(later, 4000); return; }
+    if (await savePhoneFingerprint(password)) U?.toast?.('Fingerprint unlock is on', 2500);
+    else U?.toast?.(later, 4000);
+  }
   function renderPasskey() {
-    $('fingerprint-unlock').hidden = !(passkeySupported && state.passkey && state.mode === 'locked' && state.sessionLocked);
-    $('fingerprint-toggle').hidden = !passkeySupported;
-    $('fingerprint-toggle').textContent = state.passkey ? 'Turn off fingerprint unlock' : 'Unlock with fingerprint next time';
+    const usePhone = phone.available;
+    $('fingerprint-unlock').hidden = !(state.mode === 'locked' && (usePhone ? phone.saved : passkeySupported && state.passkey));
+    $('fingerprint-toggle').hidden = !(usePhone || passkeySupported);
+    $('fingerprint-toggle').textContent = (usePhone ? phone.saved : state.passkey) ? 'Turn off fingerprint unlock' : usePhone ? 'Unlock with fingerprint' : 'Unlock with fingerprint next time';
   }
   async function refreshPasskey() {
     if (!passkeySupported) return;
     try { state.passkey = !!(await api('api/view/passkey', {session: true}))?.enabled; } catch { state.passkey = false; }
     renderPasskey();
   }
+  const sealKey = async (prf, use) => crypto.subtle.deriveKey({name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode('wizard-messenger passphrase v1')},
+    await crypto.subtle.importKey('raw', prf, 'HKDF', false, ['deriveKey']), {name: 'AES-GCM', length: 256}, false, [use]);
+  async function fingerprint(options, signal) {
+    const salt = options.prf?.salt ? unb64u(options.prf.salt) : null;
+    const credential = await navigator.credentials.get({signal, publicKey: {...options, prf: undefined, challenge: unb64u(options.challenge),
+      allowCredentials: options.allowCredentials.map(c => ({...c, id: unb64u(c.id)})), ...(salt ? {extensions: {prf: {eval: {first: salt}}}} : {})}});
+    const prf = credential.getClientExtensionResults?.().prf?.results?.first;
+    return {credential, prf: prf ? new Uint8Array(prf) : null};
+  }
+  async function openSealed(prf, wrap) {
+    const raw = unb64u(wrap);
+    const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: raw.subarray(0, 12)}, await sealKey(prf, 'decrypt'), raw.subarray(12));
+    return new TextDecoder().decode(plain);
+  }
+  // After the owner types the passphrase, one fingerprint touch seals it so restarts need only the fingerprint.
+  async function rememberOnFingerprint(password) {
+    const options = await api('api/view/passkey/unlock-options', {method: 'POST', body: {}, session: true});
+    if (!options.prf?.salt) return;
+    const {credential, prf} = await fingerprint(options);
+    if (!prf) { state.passkeyWrapped = true; console.warn('fingerprint seal: this passkey has no PRF; it opens the view only'); return; }
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({name: 'AES-GCM', iv}, await sealKey(prf, 'encrypt'), new TextEncoder().encode(password)));
+    const wrap = new Uint8Array(12 + ct.length); wrap.set(iv); wrap.set(ct, 12);
+    await api('api/view/passkey/wrap', {method: 'POST', body: {id: credential.id, wrap: b64u(wrap)}});
+    state.passkeyWrapped = true; $('setup-error').textContent = '';
+  }
   $('fingerprint-unlock').onclick = () => {
     if (isBusy()) return;
     $('setup-error').textContent = '';
     act(async signal => {
+      if (phone.available && phone.saved) {
+        try {
+          const password = await vault().open('Unlock Messenger');
+          if (await unlockWith(password, signal)) { phone.typed = password; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+        } catch (error) {
+          if (error.name === 'AbortError') return;
+          if (error.code === 'vault_unlock_failed' || error.code === 'invalidated' || error.code === 'not_saved') { await vault().forget(); phone.saved = false; renderPasskey(); }
+          $('setup-error').textContent = error.code === 'cancelled' ? '' : error.code === 'vault_unlock_failed' ? 'Your password changed. Type it once and your fingerprint takes over again.'
+            : error.code === 'invalidated' ? 'Your phone\'s fingerprints changed. Type your password once to turn fingerprint back on.' : error.code ? "Fingerprint didn't work. Type your password." : friendly(error);
+        } finally { updateSetup(); }
+        return;
+      }
       try {
         const options = await api('api/view/passkey/unlock-options', {method: 'POST', body: {}, signal, session: true});
-        const credential = await navigator.credentials.get({signal, publicKey: {...options, challenge: unb64u(options.challenge), allowCredentials: options.allowCredentials.map(c => ({...c, id: unb64u(c.id)}))}});
+        const {credential, prf} = await fingerprint(options, signal);
+        const wrap = options.prf?.wraps?.[credential.id];
+        if (prf && wrap) {
+          let password = null; try { password = await openSealed(prf, wrap); } catch { /* resealed on next passphrase */ }
+          if (password) {
+            try {
+              if (await unlockWith(password, signal)) { state.passkeyWrapped = true; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+              return;
+            } catch (error) {
+              if (error.code === 'vault_unlock_failed') { api('api/view/passkey/wrap', {method: 'POST', body: {id: credential.id, wrap: null}}).catch(() => {}); }
+              throw error;
+            }
+          }
+        }
         const r = credential.response;
         const session = await api('api/view/passkey/unlock', {method: 'POST', session: true, signal, body: {id: credential.id, clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature)}});
         if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
@@ -709,17 +807,25 @@
   $('fingerprint-toggle').onclick = () => {
     if (isBusy()) return;
     $('copy-error').textContent = '';
+    if (phone.available) {
+      act(async () => {
+        if (phone.saved) { await vault().forget(); phone.saved = false; renderPasskey(); $('copy-error').textContent = 'Fingerprint unlock is off. Messenger asks for your password.'; return; }
+        if (!phone.typed) { $('copy-error').textContent = 'Lock Messenger, then type your password once: your fingerprint takes over from then on.'; return; }
+        if (await savePhoneFingerprint(phone.typed)) $('copy-error').textContent = 'Fingerprint unlock is on, even after Messenger restarts.';
+      });
+      return;
+    }
     act(async signal => {
       try {
         const wasOn = state.passkey;
         if (wasOn) await api('api/view/passkey/clear', {method: 'POST', body: {}, signal});
         else {
           const o = await api('api/view/passkey/register-options', {method: 'POST', body: {}, signal});
-          const credential = await navigator.credentials.create({signal, publicKey: {...o, challenge: unb64u(o.challenge), user: {...o.user, id: unb64u(o.user.id)}, excludeCredentials: o.excludeCredentials.map(c => ({...c, id: unb64u(c.id)}))}});
+          const credential = await navigator.credentials.create({signal, publicKey: {...o, challenge: unb64u(o.challenge), user: {...o.user, id: unb64u(o.user.id)}, excludeCredentials: o.excludeCredentials.map(c => ({...c, id: unb64u(c.id)})), extensions: {prf: {}}}});
           await api('api/view/passkey/register', {method: 'POST', signal, body: {clientDataJSON: b64u(credential.response.clientDataJSON), attestationObject: b64u(credential.response.attestationObject)}});
         }
         await refreshPasskey();
-        $('copy-error').textContent = wasOn ? 'Fingerprint unlock is off.' : 'Fingerprint unlock is on. Messenger asks for it instead of your passphrase.';
+        $('copy-error').textContent = wasOn ? 'Fingerprint unlock is off.' : 'Fingerprint unlock is on. Type your passphrase once more next time it asks; after that your fingerprint reopens Messenger, even after restarts.';
       } catch (error) {
         if (error.name !== 'AbortError') $('copy-error').textContent = error.name === 'NotAllowedError' ? 'Fingerprint setup cancelled.' : error.name === 'InvalidStateError' ? 'This phone is already set up.' : friendly(error);
       }
@@ -803,15 +909,25 @@
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated(); await snapshot(signal);
+        bootTries = 0;
       } catch (error) {
         if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
-        disconnect(); if (error.code === 'setup_link_required') gate('first_open');
+        // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
+        // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
+        if (transient(error) && bootTries < 40) {
+          bootTries++; gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…';
+          clearTimeout(bootTimer); bootTimer = setTimeout(boot, Math.min(1000 * bootTries, 5000)); return;
+        }
+        bootTries = 0; disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
     }, false, true);
   }
+  let bootTries = 0, bootTimer = null;
+  const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
+  addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = boot;
-  refreshPasskey();
+  refreshPasskey(); refreshPhoneVault();
   boot();
 })();
