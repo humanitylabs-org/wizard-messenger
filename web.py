@@ -111,7 +111,13 @@ from drafts import Drafts
 class ViewServer(MessengerServer):
     def __init__(self,address,engine,token,origins):
         super().__init__(address,engine,token,origins)
+        engine=self.engine
         data=getattr(engine,'data',None)
+        from remote_authority import RemoteAuthority, CachedDirectory
+        self.remote_authority=RemoteAuthority.from_environment()
+        self.remote_required=os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1'
+        if self.remote_required and not data:
+            raise ValueError('remote-required needs persistent credential-free data')
         self.auth=BrowserAuth(Path(data)/'browser-auth.json' if data else None)
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
@@ -122,7 +128,10 @@ class ViewServer(MessengerServer):
             raise ValueError('MESSENGER_PUBLIC_PATH must be an app path ending in /')
         self.cookie_secure=os.environ.get('MESSENGER_COOKIE_SECURE','1')!='0'
         self.static_root=Path(__file__).parent/'static'
-        if os.environ.get('CONNECTORS_ENABLED') == '1':
+        if self.remote_required:
+            self.RequestHandlerClass=ViewHandler
+            self.unified=CachedDirectory(data)
+        elif os.environ.get('CONNECTORS_ENABLED') == '1':
             from connector_inbox import ConnectorInbox
             from connector_web import ConnectorViewHandler
             self.RequestHandlerClass = ConnectorViewHandler
@@ -278,6 +287,9 @@ class ViewHandler(Handler):
     def _dispatch(self,method):
         self.pending_cookie=None
         path=urlsplit(self.path).path
+        if self.service.remote_required:
+            from remote_authority import remote_required_gate
+            remote_required_gate(method, path)
         self._agent_gate(method,path)
         if path.startswith('/api/view/push'):
             # Bearers (including Full access) never possess notification authority.
@@ -306,6 +318,12 @@ class ViewHandler(Handler):
                     raise EngineError('invalid_subscription', 'Invalid notification subscription', 400) from None
                 return 200, {'ok': True, 'result': result}
             raise EngineError('not_found', 'No such notification route', 404)
+        if path == '/api/view/authority':
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Independent review configuration is owner-only', 403)
+            self._authorize()
+            if method != 'GET': raise EngineError('not_found', 'No such authority route', 404)
+            return 200, {'ok': True, 'result': self.service.remote_authority.state()}
         if path=='/api/view/agent-access':
             # Owner-only: a browser session with CSRF, never the machine key.
             if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can change agent access, from the Messenger view',403)
@@ -319,7 +337,8 @@ class ViewHandler(Handler):
                 raise EngineError('not_configured', 'Unified inbox is not enabled', 503)
             suffix = path.split('/')[3:]
             result = self.service.drafts.dispatch(method, suffix, self._body() if method in ('POST', 'DELETE') else {},
-                self.service.unified, owner=not bool(self.headers.get('Authorization')))
+                self.service.unified, owner=not bool(self.headers.get('Authorization')),
+                authority=self.service.remote_authority, remote_required=self.service.remote_required)
             return 200, {'ok': True, 'result': result}
         if path.startswith('/api/unified/'):
             self._authorize()
@@ -437,7 +456,8 @@ class ViewHandler(Handler):
 
 if __name__=='__main__':
     os.umask(0o077)
-    engine=MarmotEngine(os.environ.get('MESSENGER_DATA','/data'))
+    from remote_authority import OfflineEngine
+    engine=(OfflineEngine if os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1' else MarmotEngine)(os.environ.get('MESSENGER_DATA','/data'))
     server=ViewServer(('0.0.0.0',int(os.environ.get('MESSENGER_PORT','8765'))),engine,os.environ.get('MESSENGER_API_TOKEN',''),[x for x in os.environ.get('MESSENGER_ALLOWED_ORIGINS','').split(',') if x])
     def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop); signal.signal(signal.SIGINT,stop)

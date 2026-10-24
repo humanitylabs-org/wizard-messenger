@@ -905,10 +905,9 @@
     const recipient = node('select', 'u-channel'); recipient.setAttribute('aria-label', 'Draft recipient and channel');
     const body = node('textarea'); body.rows = 5; body.maxLength = 16384; body.value = draft.text; body.setAttribute('aria-label', 'Draft message');
     const preview = node('div', 'u-preview');
-    let generation = 0;
-    const invalidate = () => { generation++; preview.replaceChildren(); };
+    const invalidate = () => { preview.replaceChildren(); };
     recipient.onchange = body.oninput = invalidate;
-    sheet.append(node('p', 'helper', 'Nothing is sent until you review this revision and click Send.'), recipient, body, problem, preview);
+    sheet.append(node('p', 'helper', 'Save this exact text and recipient for independent passkey review. This app cannot approve the export.'), recipient, body, problem, preview);
     try {
       const directory = await call('directory');
       if (s.overlay !== 'Review agent draft') return;
@@ -917,27 +916,40 @@
         opt.value = JSON.stringify([person.id, identity.id]); recipient.append(opt);
       }
       recipient.value = JSON.stringify([draft.person_id, draft.identity_id]);
-      const review = button('Save and review', () => action(async () => {
-        problem.textContent = ''; invalidate(); const current = generation;
+      const authority = await api('api/view/authority');
+      const reason = node('p', 'helper', authority.reason); sheet.append(reason);
+      const link = origin => {
+        const a = node('a', 'primary wide', 'Open independent review');
+        a.href = origin; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.referrerPolicy = 'no-referrer';
+        preview.replaceChildren(node('p', 'helper', 'Frozen revision ' + draft.revision + '. Independently unlock, inspect account, room and exact text, then approve with your passkey.'), a);
+      };
+      if (authority.ready && draft.export?.review_origin === authority.review_origin) link(authority.review_origin);
+      const review = button(draft.state === 'exported' ? 'Retry secure export' : 'Review securely', () => action(async () => {
+        problem.textContent = ''; review.disabled = body.disabled = recipient.disabled = true;
         try {
-          const [person_id, identity_id] = JSON.parse(recipient.value);
-          draft = (await api('api/drafts/' + draft.id, {method: 'POST', body: {revision: draft.revision, person_id, identity_id, text: body.value}})).draft;
-          draft = (await api('api/drafts/' + draft.id + '/preview', {method: 'POST', body: {revision: draft.revision}})).draft;
-          if (generation !== current || s.overlay !== 'Review agent draft') return;
-          const reviewed = draft; const p = draft.preview;
-          preview.append(node('p', '', 'Original: ' + p.original), node('p', '', p.error ? 'Translation failed. You may explicitly send the original.' : 'To send: ' + p.translated));
-          const send = original => action(async () => {
-            if (!confirm('Send this reviewed draft now?')) return;
-            try { await api('api/drafts/' + reviewed.id + '/send', {method: 'POST', body: {revision: reviewed.revision, send_original: original}}); await agentDrafts(); }
-            catch (e) { problem.textContent = e.message; invalidate(); }
-          });
-          if (!p.error) preview.append(button('Send', () => send(false), 'primary wide'));
-          else preview.append(button('Send original', () => send(true), 'primary wide'));
-        } catch (e) { problem.textContent = e.message || 'Choose a valid recipient and try again.'; }
+          if (draft.state === 'draft') {
+            const [person_id, identity_id] = JSON.parse(recipient.value);
+            draft = (await api('api/drafts/' + draft.id, {method: 'POST', body: {revision: draft.revision, person_id, identity_id, text: body.value}})).draft;
+          }
+          const result = await api('api/drafts/' + draft.id + '/export', {method: 'POST', body: {revision: draft.revision}});
+          draft = result.draft; link(result.review_origin);
+          await reviewAgentDraft(draft); // Repaint frozen controls/status, removing stale local Delete.
+        } catch (e) {
+          problem.textContent = e.message || 'Independent review unavailable. No local fallback.';
+          // An uncertain export is frozen server-side. Reload before any edit/retry.
+          try { draft = (await api('api/drafts/' + draft.id)).draft; } catch { /* leave disabled */ }
+        } finally {
+          body.disabled = recipient.disabled = draft.state !== 'draft';
+          review.disabled = !authority.ready || !['draft', 'exported'].includes(draft.state);
+        }
       }), 'primary wide');
-      review.disabled = draft.state !== 'draft'; body.disabled = recipient.disabled = review.disabled;
-      if (draft.state === 'sending') sheet.append(node('p', 'helper', 'Delivery outcome is not yet confirmed. Check the conversation before taking any further action; do not create a replacement draft.'));
-      if (draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
+      review.disabled = !authority.ready || !['draft', 'exported'].includes(draft.state);
+      body.disabled = recipient.disabled = draft.state !== 'draft';
+      if (draft.state === 'exported') sheet.append(button('Refresh independent status', () => action(async () => {
+        try { await api('api/drafts/' + draft.id + '/authority-status', {method: 'POST', body: {revision: draft.revision}}); await agentDrafts(); }
+        catch (e) { problem.textContent = e.message; }
+      }), 'secondary wide'));
+      if (!draft.export && draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
         if (!confirm('Delete this local draft?')) return;
         try { await api('api/drafts/' + draft.id, {method: 'DELETE', body: {revision: draft.revision}}); await agentDrafts(); }
         catch (e) { problem.textContent = e.message; }

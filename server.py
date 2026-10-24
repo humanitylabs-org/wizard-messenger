@@ -20,6 +20,10 @@ MCP_TOOLS=[
 class MessengerServer(ThreadingHTTPServer):
     daemon_threads=True
     def __init__(self, address, engine, token, origins):
+        self.remote_required = os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1'
+        if self.remote_required:
+            from remote_authority import OfflineEngine
+            engine = OfflineEngine(getattr(engine, 'data', None))
         if not isinstance(token,str) or len(token)<32:
             raise ValueError('MESSENGER_API_TOKEN must contain at least 32 characters')
         self.engine, self.token, self.origins=engine, token, frozenset(origins)
@@ -112,6 +116,9 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self,method):
         parsed=urlsplit(self.path)
         path=parsed.path
+        if self.service.remote_required:
+            from remote_authority import remote_required_gate
+            remote_required_gate(method, path)
         if method=='GET' and path=='/healthz':
             return 200,{'ok':True,'service':'wizard-messenger'}
         self._authorize()
@@ -173,7 +180,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     os.umask(0o077)
-    engine=MarmotEngine(os.environ.get('MESSENGER_DATA','/data'))
+    from remote_authority import OfflineEngine
+    engine=(OfflineEngine if os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1' else MarmotEngine)(os.environ.get('MESSENGER_DATA','/data'))
     server=MessengerServer(('0.0.0.0',int(os.environ.get('MESSENGER_PORT','8765'))),engine,os.environ.get('MESSENGER_API_TOKEN',''),[x for x in os.environ.get('MESSENGER_ALLOWED_ORIGINS','').split(',') if x])
     def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop)
