@@ -860,22 +860,22 @@
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => i.network === 'telegram');
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
-    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.hidden = true;
-    const attach = iconButton('plus', 'Attach photo', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
+    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.multiple = true; file.hidden = true;
+    const attach = iconButton('plus', 'Attach photos', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
     const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
     const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
     const field = node('div', 'u-field'); field.append(draft);
     const row = node('div', 'u-compose-row'); row.append(attach, field, send, mic, file);
     const paintBar = () => {
-      bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach;
-      bar.hidden = !target && !a;
+      bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach || [];
+      bar.hidden = !target && !a.length;
       if (target) {
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
-      if (a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = a.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(a.url); view.attach = null; paintBar(); grow(); })); bar.append(chip); }
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const ph of a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = ph.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(ph.url); view.attach = a.filter(x => x !== ph); if (!view.attach.length) view.attach = null; paintBar(); grow(); })); strip.append(chip); } bar.append(strip); }
     };
-    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
+    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
     let typingAt = 0, idle = null;
     const typing = on => { if (!telegramOnly) return; call('people/' + id + '/typing', {typing: on}).catch(() => {}); };
     draft.oninput = () => {
@@ -884,16 +884,18 @@
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
     draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
-    file.onchange = async () => { const f = file.files[0]; file.value = ''; if (!f) return; try { view.attach = await preparePhoto(f); paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
+    // Several photos at once, like Wizard chats (up to 10, Telegram's album size); each goes as its own photo, the caption on the first.
+    file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
-      const text = draft.value.trim(), a = view.attach;
-      if (!text && !a) return;
+      const text = draft.value.trim(), a = view.attach || [];
+      if (!text && !a.length) return;
       if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }
-      if (reviewed && !a) return reviewSend(id, p, text, channel.value);
+      if (reviewed && !a.length) return reviewSend(id, p, text, channel.value);
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
-      queueSend(id, {text, photo: a, reply, identity_id: channel.value});
+      if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
+      else a.forEach((ph, i) => queueSend(id, {text: i ? '' : text, photo: ph, reply: i ? null : reply, identity_id: channel.value}));
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;

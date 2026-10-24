@@ -269,7 +269,9 @@ button { touch-action: manipulation; }
 .u-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .u-bar[hidden] { display: none; }
 .u-bar .u-quote { flex: 1; min-width: 0; margin: 0; background: var(--surface); }
-.u-attach-chip { position: relative; width: 72px; height: 72px; border-radius: 12px; overflow: hidden; }
+.u-attach-strip .u-attach-chip .icon-button { left: auto; right: 2px; width: 26px; min-width: 0; height: 26px; }
+.u-attach-strip { display: flex; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
+.u-attach-chip { flex: 0 0 auto; position: relative; width: 72px; height: 72px; border-radius: 12px; overflow: hidden; }
 .u-attach-chip img { width: 100%; height: 100%; object-fit: cover; }
 .u-attach-chip .icon-button { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; min-height: 0; background: rgba(0,0,0,.6); border-radius: 50%; padding: 4px; }
 .u-recording { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 2px 0 4px; }
