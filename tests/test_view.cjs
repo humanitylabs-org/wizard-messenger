@@ -90,9 +90,16 @@ test('passphrase minimum counts Unicode characters rather than UTF-16 units', ()
   assert.equal(L.passphraseLength('😀'.repeat(8)),8); assert.equal(L.passphraseLength('😀'.repeat(16)),16);
 });
 test('source/markup use local assets, selectable Wizard tokens, no demo/token/import sink', () => {
+  // Existing passkey diagnostics are the only permitted console output; no messages/secrets.
+  const allowedDiagnostics = [
+    "console.warn('fingerprint seal', e?.name, e?.message)",
+    "console.warn('fingerprint seal: this passkey has no PRF; it opens the view only')"
+  ];
+  let checkedSource = source;
+  for (const diagnostic of allowedDiagnostics) checkedSource = checkedSource.replace(diagnostic, '');
   const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]));
   for (const [,id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.has(id),'missing HTML id: '+id);
-  assert.doesNotMatch(source,/innerHTML|insertAdjacentHTML|Authorization:|Bearer |console\./);
+  assert.doesNotMatch(checkedSource,/innerHTML|insertAdjacentHTML|Authorization:|Bearer |console\./);
   assert.doesNotMatch(html,/<script[^>]+https?:|<link[^>]+https?:|API token|nsec|Import/);
   assert.match(css,/user-select: text/); assert.match(css,/min-width: 720px/); assert.match(css,/grid-template-columns: 300px/);
   assert.match(css,/prefers-reduced-motion: reduce/); assert.match(source,/window\.__wizardCloseOverlay = backStep/);
@@ -156,6 +163,8 @@ async function fixture({respond, saved=new Map(), hash='', standalone=false, hid
   const context={document,history,location,localStorage,AbortController,TextEncoder,URLSearchParams,crypto:webcrypto,Date,Map,Set,console,
     navigator:{userActivation:{isActive:true},clipboard:{async writeText(text){context.copied=text;}}},innerHeight:640,
     matchMedia:()=>({matches:false}),setTimeout:(fn,ms)=>{timers.set(++timerId,{fn,ms});return timerId;},clearTimeout:id=>timers.delete(id),
+    // Release watcher added in 11.5: register intervals without running them in domain fixtures.
+    setInterval:()=>++timerId,clearInterval:()=>{},
     addEventListener(type,fn){(windowEvents[type] ||= []).push(fn);},
     async fetch(url,opts){
       calls.push({url,opts,body:opts.body?JSON.parse(opts.body):undefined});
@@ -396,7 +405,7 @@ test('DOM fixture: hidden polling cancels one inflight signal; visible resumes s
   let block=false, release;
   const f=await fixture({respond:(url,opts,base)=>block&&url==='api/status'?new Promise(resolve=>{release=()=>resolve({state:'ready'});}):base(url,opts)});
   block=true;await f.poll();const inflight=f.calls.at(-1).opts.signal;
-  f.document.hidden=true;for(const listener of f.document.listeners.visibilitychange)listener();assert.equal(f.timers.size,0);assert.equal(inflight.aborted,true);
+  f.document.hidden=true;for(const listener of f.document.listeners.visibilitychange)listener();assert.equal([...f.timers.values()].filter(t=>t.ms===3000).length,0,'history polling stopped; release watcher has a separate timer');assert.equal(inflight.aborted,true);
   release();await f.flush();block=false;
   f.document.hidden=false;for(const listener of f.document.listeners.visibilitychange)listener();await f.flush();assert.ok(f.calls.length>6);
 });
