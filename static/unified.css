@@ -229,17 +229,9 @@ button { touch-action: manipulation; }
 .u-dur { font-size: 12px; opacity: .8; min-width: 32px; }
 .u-speed { display: none; flex: 0 0 auto; white-space: nowrap; min-width: 0; min-height: 0; height: 22px; padding: 0 7px; border-radius: 11px; background: rgba(255,255,255,.18); color: inherit; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .u-voice.playing .u-speed { display: inline-block; }
-/* Wizard skin roles, with the existing dark standalone palette as fallback. */
-:root[data-wz-hosted] {
-  --bg: var(--wz-base); --surface: var(--wz-surface); --raised: var(--wz-surface-raised); --raised-2: var(--wz-chrome);
-  --ink: var(--wz-text); --ink-2: var(--wz-text-secondary); --ink-3: var(--wz-text-muted);
-  --line: var(--wz-border); --line-2: var(--wz-border); --accent: var(--wz-accent); --accent-press: var(--wz-accent);
-  --accent-soft: var(--wz-accent-soft); --on-accent: var(--wz-on-accent); --bubble-in: var(--wz-surface-raised); --bubble-out: var(--wz-accent);
-}
-:root[data-wz-hosted] .u-day { background: var(--wz-chrome); }
 /* Transcript and selection extend existing message bubbles, not a second message renderer. */
 .u-voice-note { min-width: 0; max-width: 100%; }
-.u-message .u-transcript { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; color: inherit; }
+.u-message .u-transcript { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: inherit; -webkit-user-select: inherit; color: inherit; }
 .u-transcribe { display: block; margin-top: 2px; padding: 4px 0; min-height: 32px; min-width: 0; font-size: 13px; color: var(--wz-accent, var(--accent)); }
 .outgoing .u-transcribe { color: inherit; text-decoration: underline; }
 .u-selection { display: flex; align-items: center; flex: 0 0 auto; gap: 8px; padding: 8px 10px; background: var(--wz-chrome, var(--surface)); color: var(--wz-text, var(--ink)); border-bottom: 1px solid var(--wz-border, var(--line)); }
@@ -309,3 +301,7 @@ button { touch-action: manipulation; }
   .u-sheet .grabber { display: none; }
   #unified-inbox { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 }
+
+/* Telegram message gestures: the initial hold is message selection, the next is native text. */
+.u-message, .message .bubble { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.u-row.u-selecting .u-message, .message.u-selecting .bubble { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }

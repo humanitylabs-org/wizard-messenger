@@ -239,6 +239,11 @@
   function apply(r) {
     if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
     store.seq = Math.max(store.seq, r.seq);
+    for (const id of r.removed || []) {
+      for (const k of ['people', 'groups']) if (store.lists[k]) store.lists[k] = store.lists[k].filter(p => p.id !== id);
+      delete unreadById[id]; delete mutedById[id]; delete kindById[id];
+    }
+    if (r.removed?.length) syncBadge();
     if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
     for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
@@ -523,7 +528,7 @@
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
     const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
-    scroll.oncontextmenu = e => { if (e.target.closest('.u-message')) e.preventDefault(); };
+    scroll.oncontextmenu = e => { if (!view.selection?.active && e.target.closest('.u-message')) e.preventDefault(); };
     scroll.onscroll = () => { const near = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80; view.bottom = near; view.pill.hidden = near; if (near) markRead(); if (scroll.scrollTop < 400) older(); };
     const pill = iconButton('down', 'Scroll to newest', () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'}), 'u-down'); pill.hidden = true;
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
@@ -635,14 +640,22 @@
     return row;
   }
   // One selection/forward controller for unified media threads and the text-only Marmot tab.
-  // Selection is disposable UI, never an update hold. Sharing is OUT through Wizard's existing share service:
-  // on Android choose Wizard in the OS sheet, then its existing new-chat/recent-thread picker.
+  // Selection is disposable UI. The shared Wizard sheet sends the whole batch internally; old shells retain their share fallback.
+  async function forwardFile(m) {
+    const blob = m.msgtype === 'm.audio' ? await player.blob(m.local || mediaURL(m.id), m.media?.mime || m.media?.mimetype) : await fetch(m.local || mediaURL(m.id), {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('Could not download attachment'); return r.blob(); });
+    const safe = s => s.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_');
+    const sender = safe(m.outgoing ? 'You' : nameOf(m.sender) || 'Sender');
+    const d = new Date(m.timestamp), pad = n => String(n).padStart(2, '0');
+    const date = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + '-' + pad(d.getMinutes());
+    const type = blob.type.split(';')[0], ext = {'audio/ogg':'ogg','audio/wav':'wav','audio/webm':'webm','audio/mp4':'m4a','audio/mpeg':'mp3','image/jpeg':'jpg','image/png':'png','image/webp':'webp','video/mp4':'mp4'}[type] || 'bin';
+    return new File([blob], safe(m.media.filename || sender + (m.msgtype === 'm.audio' ? ' voice note ' : ' attachment ') + date + '.' + ext), {type: blob.type});
+  }
   function messageSelection(root, entries) {
     const ids = new Set(), head = root.querySelector('.u-thread-head,.chat-header');
     const bar = node('header', 'u-selection'); bar.hidden = true; bar.setAttribute('aria-label', 'Selected messages');
     const count = node('strong', '', '0 selected'), cancel = button('Cancel', () => clear(), 'secondary');
     const forward = button('Forward to Wizard', () => send(), 'primary'); bar.append(cancel, count, forward); head.after(bar);
-    let active = false, sending = false, queue = null, cursor = 0;
+    let active = false, sending = false, holdAt = 0, queue = null, cursor = 0;
     function paint() {
       bar.hidden = !active; head.hidden = active; count.textContent = ids.size + ' selected';
       forward.disabled = !ids.size || sending; cancel.disabled = sending;
@@ -656,8 +669,9 @@
       }
     }
     function clear() { if (sending) return; active = false; ids.clear(); queue = null; cursor = 0; paint(); }
+    root.addEventListener('pointerdown', e => { holdAt = e.pointerType === 'touch' ? performance.now() : 0; }, true);
     root.addEventListener('click', e => {
-      if (!active || !e.target.closest('.u-row,.message')) return;
+      if (!active || !e.target.closest('.u-row,.message') || window.getSelection()?.toString() || (holdAt && performance.now() - holdAt >= 450)) return;
       e.preventDefault(); e.stopImmediatePropagation(); if (sending) return;
       const found = entries().find(x => x.node?.contains(e.target)); if (!found || found.message.deleted || found.message.pending) return;
       const id = found.message.id; if (ids.has(id)) ids.delete(id); else ids.add(id); queue = null; cursor = 0; paint();
@@ -666,6 +680,16 @@
     async function send() {
       if (sending || !ids.size) return; sending = true; paint();
       try {
+        if (window.WizardApp?.share?.wizard) {
+          const files = [], texts = [];
+          for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) files.push(await forwardFile(m));
+            if (m.original || m.transcript) texts.push(line(m));
+          }
+          const receipt = await WizardApp.share.wizard({files, text: texts.join('\n\n'), title: 'Forwarded from Messenger'});
+          if (receipt !== 'sent') { toast(receipt === 'cancelled' ? 'Share cancelled · selection kept' : 'Sharing unavailable · selection kept', 4500); return; }
+          toast('Sent to Wizard'); sending = false; clear(); return;
+        }
         if (!queue) {
           queue = []; let texts = [];
           const flush = () => { if (texts.length) queue.push({text: texts.join('\n\n')}); texts = []; };
@@ -679,13 +703,7 @@
         while (cursor < queue.length) {
           const op = queue[cursor]; let receipt;
           if (op.message) {
-            const m = op.message, blob = m.msgtype === 'm.audio' ? await player.blob(m.local || mediaURL(m.id), m.media?.mime || m.media?.mimetype) : await fetch(m.local || mediaURL(m.id), {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('Could not download attachment'); return r.blob(); });
-            const sender = (m.outgoing ? 'You' : nameOf(m.sender) || 'Sender').replace(/[\/:*?"<>|\x00-\x1f]/g, '_');
-            const d = new Date(m.timestamp), pad = n => String(n).padStart(2, '0');
-            const date = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + '-' + pad(d.getMinutes());
-            const type = blob.type.split(';')[0], ext = {'audio/ogg':'ogg','audio/wav':'wav','audio/webm':'webm','audio/mp4':'m4a','audio/mpeg':'mp3','image/jpeg':'jpg','image/png':'png','image/webp':'webp','video/mp4':'mp4'}[type] || 'bin';
-            const filename = (m.media.filename || sender + (m.msgtype === 'm.audio' ? ' voice note ' : ' attachment ') + date + '.' + ext).replace(/[\/:*?"<>|\x00-\x1f]/g, '_');
-            receipt = await WizardApp.share.file(new File([blob], filename, {type: blob.type}), {title: 'Forwarded from ' + sender});
+            receipt = await WizardApp.share.file(await forwardFile(op.message), {title: 'Forwarded from Messenger'});
           } else receipt = await WizardApp.share.text({text: op.text, title: 'Forwarded from Messenger'});
           if (receipt !== 'shared' && receipt !== 'copied') { toast(receipt === 'cancelled' ? 'Share cancelled · selection kept; retry resumes' : 'Sharing unavailable · selection kept; retry resumes', 4500); return; }
           receipts.push(receipt); cursor++;
@@ -695,7 +713,7 @@
       } catch (e) { toast((e.message || 'Could not forward') + ' · Try Forward again', 4500); }
       finally { sending = false; paint(); }
     }
-    return {get active() { return active; }, begin(id) { active = true; ids.add(id); queue = null; cursor = 0; paint(); }, paint, clear};
+    return {get active() { return active; }, forward(selected) { if (sending) return; ids.clear(); for (const id of selected) ids.add(id); active = true; queue = null; cursor = 0; return send(); }, begin(id) { active = true; ids.add(id); queue = null; cursor = 0; paint(); }, paint, clear};
   }
 
   function toneOf(name) { let h = 0; for (const ch of name || '?') h = (h * 31 + ch.codePointAt(0)) >>> 0; return h % TONES; }
@@ -773,23 +791,50 @@
     });
   }
 
-  // Long-press (or right-click) opens the menu; a short swipe right replies, like Signal.
-  function gestures(row, b, m) {
-    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false;
-    b.addEventListener('pointerdown', e => {
-      if (view.selection?.active || e.button > 0 || e.target.closest('a,.u-vplay,.u-translate,.u-speed,.u-transcribe,.u-transcript')) return;
-      delete b.dataset.held;
-      x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
-      timer = setTimeout(() => { timer = null; navigator.vibrate?.(10); b.dataset.held = '1'; swallowRelease(); menu(m, b); }, 450);
+  // Shared by both message renderers. Chat-row holdToMenu deliberately stays separate.
+  function messageGestures(row, bubble, {selection, id, menu, reply}) {
+    const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
+    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    bubble.addEventListener('selectstart', e => { if (!selection()?.active || firstHold) e.preventDefault(); });
+    bubble.addEventListener('pointerdown', e => {
+      firstHold = false; suppressTap = false;
+      if (selection()?.active || e.button > 0 || e.target.closest(interactive)) return;
+      cancel(); x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
+      if (e.pointerType !== 'touch') return;
+      timer = setTimeout(() => {
+        timer = null; firstHold = true; navigator.vibrate?.(10);
+        window.getSelection()?.removeAllRanges(); swallowRelease(); selection()?.begin(id);
+      }, 450);
     });
-    b.addEventListener('pointermove', e => {
+    bubble.addEventListener('pointermove', e => {
+      if (selection()?.active || e.target.closest(interactive)) return;
       const mx = e.clientX - x0, my = e.clientY - y0;
-      if (timer && Math.hypot(mx, my) > 8) { clearTimeout(timer); timer = null; }
-      if (e.pointerType === 'touch' && (swiping || (mx > 12 && Math.abs(my) < 10))) { swiping = true; dx = Math.max(0, Math.min(72, mx)); row.style.transform = 'translateX(' + dx + 'px)'; row.classList.toggle('arm', dx > 56); }
+      if (Math.hypot(mx, my) > 8) cancel();
+      if (reply && e.pointerType === 'touch' && (swiping || (mx > 12 && Math.abs(my) < 10))) {
+        swiping = true; dx = Math.max(0, Math.min(72, mx)); row.style.transform = 'translateX(' + dx + 'px)'; row.classList.toggle('arm', dx > 56);
+      }
     });
-    const end = () => { if (timer) { clearTimeout(timer); timer = null; } if (swiping) { row.style.transform = ''; row.classList.remove('arm'); if (dx > 56) startReply(m); swiping = false; } };
-    b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end); b.addEventListener('pointerleave', end);
-    b.addEventListener('contextmenu', e => { e.preventDefault(); if (b.dataset.held || view.selection?.active) return; if (timer) clearTimeout(timer); timer = null; menu(m, b); });
+    const end = () => {
+      cancel();
+      if (swiping) { row.style.transform = ''; row.classList.remove('arm'); suppressTap = true; if (dx > 56) reply(); swiping = false; }
+    };
+    for (const type of ['pointerup','pointercancel','pointerleave']) bubble.addEventListener(type, end);
+    bubble.addEventListener('click', e => {
+      if (suppressTap) { suppressTap = false; e.preventDefault(); e.stopPropagation(); return; }
+      if (selection()?.active || e.target.closest(interactive)) return;
+      e.stopPropagation(); menu();
+    });
+    bubble.addEventListener('contextmenu', e => {
+      // The first hold selects messages; the next hold is left entirely to native text selection.
+      if (selection()?.active && !firstHold) return;
+      if (e.target.closest(interactive)) return;
+      e.preventDefault(); cancel();
+      if (!selection()?.active) menu();
+    });
+  }
+  function gestures(row, b, m) {
+    messageGestures(row, b, {selection: () => view.selection, id: m.id, menu: () => menu(m, b), reply: () => startReply(m)});
   }
   function menu(m, b) {
     const t = store.threads[view.id]; if (!t) return;
@@ -806,7 +851,7 @@
     }
     const list = node('div', 'u-actions');
     const item = (label, ic, fn, cls = '') => { const it = button('', () => { closeOverlay(); fn(); }, 'u-act ' + cls); it.setAttribute('role', 'menuitem'); it.append(icon(ic), node('span', '', label)); list.append(it); };
-    if (!m.deleted) item('Select', 'copy', () => view.selection.begin(m.id));
+    if (!m.deleted) item('Forward to Wizard', 'reply', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item('Save', 'download', () => { const a = node('a'); a.href = mediaURL(m.id); a.download = m.media.filename || ''; a.click(); });
@@ -1294,7 +1339,7 @@
   }
   window.MessengerUnified = {
     receiveShare, shareTargetRows,
-    ask, toast, holdToMenu, actionMenu, muteAction, icon, messageSelection,
+    ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
     mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },

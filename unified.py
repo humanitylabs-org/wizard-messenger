@@ -236,7 +236,7 @@ class PeopleStore:
             last = {r['person_id']: r for r in db.execute(
                 'SELECT * FROM (SELECT m.original,m.outgoing,m.sender,m.timestamp,m.msgtype,m.deleted,m.media,i.person_id,'
                 'ROW_NUMBER() OVER (PARTITION BY i.person_id ORDER BY m.timestamp DESC,m.id DESC) rn '
-                'FROM message m JOIN identity i ON i.id=m.identity_id WHERE i.kind=?) WHERE rn=1', (kind,))}
+                'FROM message m JOIN identity i ON i.id=m.identity_id WHERE i.kind=? AND m.deleted=0) WHERE rn=1', (kind,))}
             unread = dict(db.execute(
                 'SELECT i.person_id,COUNT(*) FROM message m JOIN identity i ON i.id=m.identity_id '
                 'WHERE i.kind=? AND m.outgoing=0 AND m.deleted=0 AND m.timestamp>i.last_read_ts GROUP BY i.person_id', (kind,)).fetchall())
@@ -1008,7 +1008,7 @@ class UnifiedInbox:
         people = self.store.people('person', True, touched) + self.store.people('group', True, touched)
         now = time.time()
         typing = {pid: t['names'] for pid, t in self.typing.items() if pid in touched and t['until'] > now}
-        return {'seq': seq, 'people': people, 'messages': grouped, 'typing': typing}
+        return {'seq': seq, 'people': people, 'removed': sorted(set(touched) - {p['id'] for p in people}), 'messages': grouped, 'typing': typing}
 
     def translate_message(self, message_id):
         """Owner tapped Translate under one incoming message: one model call, cached."""
