@@ -279,7 +279,8 @@ button { touch-action: manipulation; }
 .u-qr-btn { width: 44px; height: 44px; min-height: 0; min-width: 0; padding: 0; border-radius: 50%; font-size: 24px; background: none; }
 .u-qr-btn.mine { background: var(--accent-soft); }
 .u-qr-btn.more { font-size: 20px; color: var(--ink-2); background: var(--raised-2); }
-.u-grid { display: grid; grid-template-columns: repeat(8, 44px); gap: 2px; padding: 8px; border-radius: 20px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-width: calc(100vw - 24px); overflow: auto; }
+.u-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 44px)); gap: 2px; padding: 8px; border-radius: 20px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); box-sizing: border-box; width: min(382px, calc(100vw - 24px)); overflow-y: auto; overflow-x: hidden; }
+.u-grid .u-qr-btn { width: 100%; min-width: 0; }
 .u-actions { display: flex; flex-direction: column; min-width: 220px; padding: 6px 0; border-radius: 16px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); align-self: flex-start; }
 .u-menu.right .u-quick, .u-menu.right .u-actions { align-self: flex-end; }
 .u-act { display: flex; align-items: center; gap: 14px; min-height: 46px; padding: 0 18px; border-radius: 0; justify-content: flex-start; background: none; color: var(--ink); font-size: 15px; }
