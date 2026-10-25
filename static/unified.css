@@ -308,7 +308,7 @@ button { touch-action: manipulation; }
 .u-row.u-selecting .u-message, .message.u-selecting .bubble { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }
 /* My QR codes */
 .u-myqr-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
-.u-myqr-chips { padding: 2px 0 8px; margin: 0 -4px; }
+.u-myqr-chips { padding: 2px 0 8px; }
 .u-myqr-card { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 0 12px; touch-action: pan-y; }
 .u-sheet .u-myqr-name { margin: 6px 0 0; font-size: 17px; text-transform: none; letter-spacing: 0; color: var(--ink); }
 .u-myqr { width: min(100%, 340px); margin: 12px auto; padding: 0; border-radius: 16px; image-rendering: pixelated; }

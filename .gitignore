@@ -10,3 +10,4 @@ qa/artifacts/
 *.log
 *.tar
 *.tar.gz
+evidence/
