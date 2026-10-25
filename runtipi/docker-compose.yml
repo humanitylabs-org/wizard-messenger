@@ -79,7 +79,7 @@ services:
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
-      - 'if [ -f /data/configured ]; then exec /usr/bin/mautrix-telegram -c /data/config.yaml; else printf "%s\n" "Telegram not configured"; exec sleep infinity; fi'
+      - 'while [ ! -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-telegram -c /data/config.yaml'
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

@@ -7,6 +7,26 @@ from unified_setup import write
 
 EXTRA_NETWORKS = ('whatsapp', 'signal', 'slack', 'line', 'instagram')
 
+# bridgev2 backfill (pinned mautrix-go v0.32.0 keys). Forward backfill fills each
+# NEW portal and catches up after restarts on stock Synapse. The backward queue
+# needs Beeper batch sending ("Matrix server doesn't support batch sending"), so it
+# stays off. Messages older than unread_hours_threshold arrive already read.
+BACKFILL = {'enabled': True, 'max_initial_messages': 100, 'max_catchup_messages': 500,
+            'unread_hours_threshold': 720}
+
+
+def apply_history_settings(name, config):
+    """Regenerated on every connector-init run; secrets come from connector-secrets.json."""
+    config['backfill'].update(BACKFILL)
+    config['backfill']['threads']['max_initial_messages'] = 50
+    config['backfill']['queue']['enabled'] = False
+    if name == 'whatsapp':
+        # WhatsApp sends history only while pairing, and the bridge drops those
+        # payloads unless backfill is enabled: existing links must re-pair once.
+        # Full sync asks the phone for ~1 year instead of ~3 months.
+        config['network']['history_sync'].update(max_initial_conversations=-1, request_full_sync=True)
+    return config
+
 
 def setup_connectors(root, enabled=()):
     root = Path(root)
@@ -58,6 +78,7 @@ def setup_connectors(root, enabled=()):
         config['encryption'].update(allow=False, default=False, require=False)
         config['double_puppet'].update(servers={}, secrets={'messenger.internal': 'as_token:' + old_keys['doublepuppet']})
         config['logging'] = {'min_level': 'error', 'writers': [{'type': 'stdout', 'format': 'json'}]}
+        apply_history_settings(name, config)
         write(folder / 'config.yaml', config)
         write(root / 'matrix' / (name + '-registration.yaml'), {
             'id': name, 'url': url, 'as_token': private['as_token'], 'hs_token': private['hs_token'],

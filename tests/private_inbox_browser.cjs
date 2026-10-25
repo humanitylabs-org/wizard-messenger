@@ -1,0 +1,128 @@
+// Fully synthetic APIs + shipping app.js/unified.js in real Chromium. No account access.
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+const L = require('../static/app.js');
+const root = path.resolve(__dirname, '../static'), out = process.argv[2] || '/home/oscar/.hermes/cache/scratch/private-inbox-proof';
+fs.mkdirSync(out, {recursive: true});
+(async () => {
+  const browser = await chromium.launch();
+  for (const width of [390, 1280]) {
+    const ctx = await browser.newContext({viewport: {width, height: 844}});
+    await ctx.addInitScript(() => {
+      const noop = () => {}; window.__badges = [];
+      window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: hooks => { window.__back = hooks; }}, on: noop, badge: {set: n => window.__badges.push(n)}};
+    });
+    const page = await ctx.newPage(), errors = [], requests = [];
+    page.on('pageerror', e => errors.push(e.message));
+    const ownKey = '11'.repeat(32), peerKey = '22'.repeat(32), inviteKey = '33'.repeat(32);
+    const own = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
+    const dm = {group_id: 'ab'.repeat(32), members: [{member_id: peerKey, display_name: 'Private Alice'}, {member_id: ownKey}]};
+    const invite = {group_id: 'cd'.repeat(32), pending_confirmation: true, members: [{member_id: inviteKey, display_name: 'Private Invite'}, {member_id: ownKey}]};
+    const now = Date.now(); let ready = true, accepted = false, latest = 'Private hello';
+    const msg = (id, text, ago = 0) => ({message_id: id.repeat(64), group_id: dm.group_id, author: peerKey, direction: 'received', text, created_at: (now - ago) / 1000});
+    await page.route('https://messenger.test/**', async route => {
+      const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1); requests.push([p, req.method(), url.search]);
+      const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
+      if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
+      if (p === 'api/status') return ok({state: ready ? 'ready' : 'locked', account_configured: true});
+      if (p === 'api/identity') return ok({identity: own});
+      if (p === 'api/contacts') return ok({contacts: []});
+      if (p === 'api/invites') return ok({invites: accepted ? [] : [invite]});
+      if (p === 'api/dms') return ok({dms: accepted ? [dm, {...invite, pending_confirmation: false}] : [dm]});
+      if (p === 'api/invites/' + invite.group_id + '/accept') { accepted = true; return ok({completed: true}); }
+      if (p.endsWith('/messages') && p.startsWith('api/dms/')) {
+        if (req.method() === 'POST') return route.fulfill({status: 409, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'send_outcome_unknown', message: 'Unknown fixture outcome'}})});
+        if (p.includes(invite.group_id)) return ok({messages: [], next_cursor: null});
+        if (url.searchParams.has('before')) return ok({messages: [msg('a', 'Older private history', 120000)], next_cursor: null});
+        return ok({messages: [msg(latest === 'Private hello' ? 'b' : 'c', latest)], next_cursor: url.searchParams.get('limit') === '1' ? null : {before: now / 1000, before_message_id: 'b'.repeat(64)}});
+      }
+      if (p === 'api/unified/people') return ok({people: [{id: 'p1', display_name: 'Bridged Bob', identities: [{id: 'i1', network: 'telegram', kind: 'person'}], unread: 2, last: {text: 'Bridge hello', timestamp: now - 60000}}], seq: 5});
+      if (p === 'api/unified/groups') return ok({groups: [{id: 'g1', display_name: 'Bridged Group', identities: [{id: 'i2', network: 'slack', kind: 'group'}], unread: 0, last: {text: 'Group hello', timestamp: now - 90000}}], seq: 5});
+      if (p === 'api/unified/directory') return ok({people: [], groups: []});
+      if (p === 'api/unified/connectors') return ok({providers: []});
+      if (p === 'api/unified/telegram/status') return ok({state: 'not_configured', logins: []});
+      if (p === 'api/unified/updates') { await new Promise(r => setTimeout(r, 1000)); return ok({seq: 5}); }
+      if (p.startsWith('api/')) return ok({enabled: false, log: []});
+      if (p.startsWith('wizard-') || p.startsWith('shared/')) return route.fulfill({status: 404, body: ''});
+      const file = path.join(root, p || 'index.html');
+      if (!file.startsWith(root + '/') || !fs.existsSync(file)) return route.fulfill({status: 404, body: ''});
+      return route.fulfill({status: 200, contentType: {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html'}[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file)});
+    });
+    await page.goto('https://messenger.test/');
+    await page.locator('.u-person', {hasText: 'Private Alice'}).waitFor();
+    assert.equal(await page.locator('.u-person').count(), 4);
+    assert.equal(await page.locator('#inbox-tabs [data-tab=messenger]').count(), 0);
+    assert.equal(await page.evaluate(() => window.__badges.at(-1)), 4, 'private invite + private unread + bridge unread');
+    assert.equal((await page.locator('.u-person strong').allTextContents())[0], 'Private Alice');
+    await page.screenshot({path: path.join(out, `all-${width}.png`)});
+    const historyLength = await page.evaluate(() => history.length);
+    await page.getByRole('button', {name: 'Unread', exact: true}).click();
+    assert.equal(await page.locator('.u-person').count(), 3, 'Unread spans private invites, private chats and bridges');
+    await page.getByRole('button', {name: 'Private', exact: true}).click();
+    assert.equal(await page.locator('.u-person').count(), 2);
+    await page.locator('.u-person', {hasText: 'Private Alice'}).click({button: 'right'});
+    await page.getByRole('menuitem', {name: 'Mute', exact: true}).click();
+    assert.equal(await page.evaluate(() => window.__badges.at(-1)), 3, 'native mute excludes unread from app badge');
+    await page.locator('.u-person', {hasText: 'Private Alice'}).click({button: 'right'});
+    await page.getByRole('menuitem', {name: 'Unmute', exact: true}).click();
+    assert.equal(await page.evaluate(() => window.__badges.at(-1)), 4);
+    await page.locator('.u-person', {hasText: 'Private Alice'}).click();
+    await page.locator('#messages', {hasText: 'Private hello'}).waitFor();
+    assert.equal(await page.locator('#workspace .list-pane').isVisible(), false);
+    assert.equal(await page.locator('#chat-back').isVisible(), true);
+    const detail = await page.locator('#chat').boundingBox(); assert.ok(detail.width >= width - 4, 'native thread fills viewport');
+    await page.getByRole('button', {name: 'Earlier messages', exact: true}).click();
+    await page.locator('#messages', {hasText: 'Older private history'}).waitFor();
+    await page.screenshot({path: path.join(out, `thread-${width}.png`)});
+    await page.locator('#draft').fill('Unsent native draft');
+    await page.locator('#chat-back').click();
+    assert.equal(await page.locator('[data-filter="net:private"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('.u-person', {hasText: 'Private Alice'}).locator('.u-badge').count(), 0);
+    assert.equal(await page.evaluate(() => window.__badges.at(-1)), 3);
+    await page.locator('.u-person', {hasText: 'Private Alice'}).click();
+    assert.equal(await page.locator('#draft').inputValue(), 'Unsent native draft');
+    await page.locator('#send').click();
+    await page.locator('#messages', {hasText: 'Checking delivery'}).waitFor();
+    assert.equal(await page.getByRole('button', {name: 'Retry', exact: true}).count(), 0);
+    await page.locator('#draft').fill('Draft after ambiguous send');
+    await page.reload();
+    await page.locator('#chat').waitFor({state: 'visible'});
+    assert.equal(await page.locator('#draft').inputValue(), 'Draft after ambiguous send');
+    await page.locator('#messages', {hasText: 'Checking delivery'}).waitFor();
+    await page.locator('#chat-back').click();
+    await page.locator('.u-person', {hasText: 'Private Invite'}).click();
+    assert.equal(await page.locator('#draft').isDisabled(), true, 'pending invite cannot send');
+    await page.locator('#accept-invite').click();
+    await page.waitForFunction(() => !document.getElementById('draft').disabled);
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', {name: 'New chat', exact: true}).click();
+    await page.getByRole('button', {name: 'New private chat', exact: true}).click();
+    await page.locator('#contact-form').waitFor({state: 'visible'});
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#unified-inbox').isVisible(), true);
+    assert.equal(await page.evaluate(() => window.__back.canGoBack()), false, 'root Back belongs to shell');
+    await page.getByRole('button', {name: 'All', exact: true}).click();
+    await page.getByRole('button', {name: 'Groups', exact: true}).click();
+    assert.equal(await page.locator('.u-person').count(), 1, 'bridged group filter intact');
+    await page.getByRole('button', {name: 'All', exact: true}).click();
+    latest = 'New private update';
+    await page.locator('.u-person', {hasText: latest}).waitFor({timeout: 15000});
+    assert.equal(await page.locator('.u-person', {hasText: 'Private Alice'}).locator('.u-badge').textContent(), '1');
+    await page.getByRole('button', {name: 'Settings', exact: true}).click();
+    await page.getByRole('button', {name: 'Private account · address, unlock and lock', exact: true}).click();
+    await page.locator('#lock').waitFor({state: 'visible'});
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => history.length), historyLength, 'detail routing and Back never push browser history');
+    // A saved bridge cache must never cover the unlock screen after a reload.
+    ready = false; await page.reload();
+    await page.locator('#setup-form').waitFor({state: 'visible'});
+    assert.equal(await page.locator('#unified-inbox').isVisible(), false);
+    assert.equal(requests.filter(([p,m]) => m === 'POST' && /send$/.test(p)).length, 0, 'native never uses unified send');
+    assert.equal(requests.filter(([p,m]) => m === 'POST' && /messages$/.test(p)).length, 1, 'unknown native send is not retried on reopen or refresh');
+    assert.equal(requests.some(([p,,q]) => /messages$/.test(p) && q.includes('before_message_id')), true);
+    assert.deepEqual(errors, []);
+    console.log(`PASS ${width}: All/Private, native history/draft/resume/invite, Back, updates/unread, new chat, settings/unlock`);
+    await ctx.close();
+  }
+  await browser.close();
+})().catch(e => {console.error(e); process.exit(1);});

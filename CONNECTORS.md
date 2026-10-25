@@ -114,6 +114,44 @@ supports private Synapse. `bbctl` is Beeper-server-only and is **not used** here
   receive-only; generic inbox actions do not imply every network accepts them.
   Matrix acceptance is not remote delivery confirmation.
 
+## Room discovery, own messages and history
+
+- Rooms are classified only by an `m.bridge` event whose `protocol.id` is in the
+  explicit alias map (`connectors.PROTOCOL_IDS`: `instagramgo` → instagram,
+  `github.com/highesttt/matrix-line-messenger` → line, `slackgo` → slack) **and**
+  whose sender is that network's bridge bot. Display names never classify.
+  Rooms cached by older releases with `network: null` are re-read once
+  (`room_meta.v`), and a one-time `/joined_rooms` rescan imports quiet ones.
+- First sight of a bridged room imports up to 500 lines the homeserver already
+  holds via `/messages` (read-only), always `live=False`. Lines older than
+  15 minutes never push; lines older than 720 h never count as unread.
+- Owner messages: every bridge config carries the shared-secret double puppet
+  (`as_token:` + doublepuppet registration), so phone-sent lines normally arrive
+  as `@owner`. As a fallback, `learn_me` reads each connected bridge's
+  provisioning `/whoami` (GET only) and treats `@<net>_<EncodeUserLocalpart(id)>`
+  as the owner (Slack ids lowercased per `slackid.MakeUserID`), re-marking
+  stored rows for that network. API rows with `outgoing` always have
+  `sender: "You"`.
+- Names: a synced room/peer name replaces a phone number, raw id, generic
+  fallback or the owner's own name; an owner rename (`person.name_locked`) is
+  never overwritten. DMs are titled by the other participant.
+
+### Backfill per bridge (bridgev2 `backfill.*`, mautrix-go v0.32.0 keys)
+
+Generated on every connector-init run (secrets are reused, never rotated):
+`enabled: true`, `max_initial_messages: 100` (Telegram 200), `max_catchup_messages: 500`,
+`unread_hours_threshold: 720`, `queue.enabled: false` (the backward queue
+requires Beeper batch sending; stock Synapse cannot insert older history).
+
+- WhatsApp: history arrives only in the pairing-time history sync and the
+  bridge discards it while backfill is disabled. `history_sync.request_full_sync`
+  is now true (~1 year instead of ~3 months). **Existing links must be
+  unlinked and re-paired once** to receive history.
+- Telegram, Instagram (mautrix/meta), Slack: forward backfill for each new
+  portal and catch-up after restarts. Rooms created earlier only gain catch-up.
+- LINE (beeper/line 72c7a51): fetches the newest 50 messages per chat at login
+  itself; `FetchMessages` is forward-only with no older pagination.
+
 ## Verified candidate results
 
 - Real disposable Synapse plus all five required bridge processes (and optional

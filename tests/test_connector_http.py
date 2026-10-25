@@ -46,6 +46,41 @@ class ConnectorHTTP(unittest.TestCase):
         response = conn.getresponse(); data = response.read(); headers = dict(response.getheaders()); conn.close()
         return response.status, headers, json.loads(data)
 
+    def test_step_worker_short_http_poll_owner_csrf_and_cancel(self):
+        controller = self.inbox.connectors
+        release = threading.Event()
+        self.addCleanup(release.set)
+        step = {'login_id': 'synthetic', 'step_id': 'qr', 'txn_id': 'bls_first', 'type': 'display_and_wait'}
+        controller.remember('line', step)
+        calls = []
+        def writer(**kwargs):
+            calls.append(kwargs['path'])
+            if '/login/step/' in kwargs['path']:
+                release.wait(5)
+                return {**step, 'step_id': 'late_pin'}
+            return {}
+        controller.writer = writer
+        token, session = self.server.auth.create()
+        headers = {'Cookie': 'wizard_messenger_session=' + token, 'Origin': 'https://wizard.example.com', 'X-Messenger-CSRF': session['csrf']}
+        with patch.object(controller, 'config', return_value=('http://synthetic.invalid', 'synthetic-only-token')):
+            status, _, _ = self.request('POST', '/api/unified/connectors/line/step', step, {'Cookie': headers['Cookie'], 'Origin': headers['Origin']})
+            self.assertEqual(status, 403)
+            self.assertFalse(calls)
+            status, response_headers, body = self.request('POST', '/api/unified/connectors/line/step', step, headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(body['result']['type'], 'pending')
+            self.assertIn('no-store', response_headers['Cache-Control'])
+            job = controller._jobs['line']
+            status, _, body = self.request('POST', '/api/unified/connectors/line/step', step, headers)
+            self.assertEqual(body['result']['type'], 'pending')
+            self.assertEqual(len(calls), 1)
+            status, _, _ = self.request('POST', '/api/unified/connectors/line/cancel', {'login_id': 'synthetic'}, headers)
+            self.assertEqual(status, 200)
+            release.set(); self.assertTrue(job['done'].wait(2))
+            self.assertNotIn('line', controller.pending)
+            status, _, _ = self.request('POST', '/api/unified/connectors/line/step', step, headers)
+            self.assertEqual(status, 409)
+
     def test_unauthenticated_health_dormant_and_owner_only_even_with_agent_grant(self):
         with patch('connector_inbox.http', side_effect=AssertionError('No external traffic')), patch('connectors.http', side_effect=AssertionError('No external traffic')):
             status, _, health = self.request('GET', '/healthz')

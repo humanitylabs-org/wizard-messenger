@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -89,7 +90,8 @@ class PushIntegration(unittest.TestCase):
             receiver.is_me = lambda sender: sender == '@owner:fixture'
             receiver.room_meta = lambda *a: {'telegram': True, 'network':'telegram', 'label':'Fixture', 'kind':'person'}
             def event(identifier, sender='@other:fixture', **content):
-                return {'event_id':identifier,'sender':sender,'type':'m.room.message','origin_server_ts':1,'content':{'msgtype':'m.text','body':'fixture',**content}}
+                # Live lines carry a current timestamp; bridged history keeps its old one.
+                return {'event_id':identifier,'sender':sender,'type':'m.room.message','origin_server_ts':int(time.time()*1000),'content':{'msgtype':'m.text','body':'fixture',**content}}
             batch = {'next_batch':'first','rooms':{'join':{'!fixture':{'timeline':{'events':[event('$history')]}}}}}
             receiver.mx = lambda *a, **k: batch
             receiver.sync()

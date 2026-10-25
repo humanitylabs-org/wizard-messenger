@@ -1,7 +1,12 @@
 /* Chats and Groups: Signal-style list, thread, composer and sheets. Tokens come from app.css. */
 html[data-inbox-tab] #messenger { display: flex; flex-direction: column; }
 html[data-inbox-tab=people] #gate, html[data-inbox-tab=groups] #gate, html[data-inbox-tab=people] #workspace, html[data-inbox-tab=groups] #workspace { display: none !important; }
-html[data-inbox-tab=messenger] #workspace { flex: 1; min-height: 0; }
+/* A native private thread is a detail route, never a second inbox/tab. */
+html[data-private-view] #workspace { display: flex !important; flex: 1; min-height: 0; }
+html[data-private-view] #workspace .list-pane { display: none !important; }
+html[data-private-view] #detail { display: block !important; flex: 1; min-width: 0; }
+html[data-private-view] #chat-back { display: inline-flex !important; }
+html[data-private-view] #gate { display: none !important; }
 #inbox-tabs[hidden], #unified-inbox[hidden] { display: none !important; }
 
 /* Bottom tab bar, hidden inside a conversation like Signal. */
@@ -286,3 +291,72 @@ button { touch-action: manipulation; }
   .u-sheet .grabber { display: none; }
   #unified-inbox { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 }
+
+/* ---------- Unified Inbox (Beeper-style): accounts strip, filter chips, network badges ---------- */
+.u-accounts { padding: 0 12px 8px; flex-shrink: 0; }
+.u-acct-open { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 14px; border-radius: 16px; background: var(--surface); text-align: left; }
+.u-acct-open.warn { box-shadow: inset 0 0 0 1px var(--warn); }
+.u-acct-strip { display: flex; flex-shrink: 0; }
+.u-acct-dot { display: grid; place-items: center; width: 26px; height: 26px; margin-left: -6px; border-radius: 50%; background: var(--raised-2); color: var(--ink-3); font: 700 12px/1 system-ui, sans-serif; box-shadow: 0 0 0 2px var(--surface); }
+.u-acct-dot:first-child { margin-left: 0; }
+.u-acct-dot.on { color: #fff; }
+.u-acct-dot.warn { background: var(--warn); color: #222; }
+.u-acct-text { flex: 1; min-width: 0; font-size: 14px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-acct-cta { flex-shrink: 0; font-size: 14px; font-weight: 600; color: #9dbbff; }
+.u-chips { padding: 0 12px 10px; }
+.u-chip { min-height: 34px; padding: 0 14px; font-weight: 500; transition: background-color 120ms, color 120ms; }
+.u-chip.net::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--net, var(--ink-3)); vertical-align: 1px; }
+.u-chip[aria-pressed=true] { background: var(--ink); color: var(--bg); }
+.u-av-wrap { position: relative; flex: 0 0 48px; display: block; }
+.u-net { position: absolute; right: -3px; bottom: -3px; display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; color: #fff; font: 700 10px/1 system-ui, sans-serif; box-shadow: 0 0 0 2.5px var(--bg); }
+.u-person { border-radius: 14px; margin: 0 6px; width: calc(100% - 12px); padding: 10px 12px; }
+.u-person.unread .u-chat-top strong { font-weight: 700; }
+.u-person.unread .u-snippet { color: var(--ink); }
+.u-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.u-empty .primary { padding: 0 22px; min-height: 46px; }
+
+/* ---------- Account cards and login steps ---------- */
+.u-connected-networks { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.c-summary { font-size: 14px; color: var(--ink-2); margin: 2px 2px 4px; }
+.c-card { padding: 14px; border-radius: 16px; background: var(--raised); }
+.c-card.on { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-2); }
+.c-card .wide { margin-top: 12px; }
+.c-card .helper { margin-top: 10px; }
+.c-card-top { display: flex; align-items: center; gap: 12px; }
+.c-card-text { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.c-card-text strong { font-size: 16px; font-weight: 600; }
+.c-mark { display: grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; border-radius: 12px; color: #fff; font: 700 17px/1 system-ui, sans-serif; }
+.c-mark.big { flex-basis: 48px; width: 48px; height: 48px; border-radius: 14px; font-size: 21px; }
+.c-mark.small { flex-basis: 22px; width: 22px; height: 22px; border-radius: 7px; font-size: 11px; }
+.c-pill { flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--raised-2); color: var(--ink-2); }
+.c-pill.on { background: rgba(79,194,138,.16); color: var(--ok); }
+.c-pill.warn { background: rgba(242,183,75,.16); color: var(--warn); }
+.c-link { display: block; width: 100%; min-height: 40px; margin-top: 4px; font-size: 14px; color: #9dbbff; border-radius: 12px; }
+.c-link.danger { color: var(--err); }
+.c-step-head { display: flex; align-items: center; gap: 14px; margin: 6px 0 10px; }
+.c-step-head h3 { font-size: 19px; font-weight: 600; color: var(--ink); text-transform: none; letter-spacing: 0; margin: 0; }
+.c-howto { margin: 4px 0 0; padding-left: 22px; color: var(--ink-2); font-size: 14px; line-height: 1.7; }
+.c-howto li::marker { color: var(--ink-3); font-weight: 600; }
+.c-qr-frame { display: grid; place-items: center; margin: 16px auto 4px; padding: 14px; width: min(100%, 320px); border-radius: 20px; background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.c-qr { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.c-code { margin: 14px 0 4px; padding: 16px; border-radius: 14px; background: var(--raised); font: 600 28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-align: center; overflow-wrap: anywhere; user-select: all; }
+.c-waiting { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; font-size: 14px; color: var(--ink-2); }
+.c-form label:first-child { margin-top: 6px; }
+.c-later { margin-top: 6px; color: var(--ink-3); font-size: 13px; }
+.c-later summary { cursor: pointer; padding: 8px 2px; }
+.c-later-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px; }
+.c-problem { margin-top: 10px; }
+@media (min-width: 900px) { .u-sheet { max-width: 520px; border-radius: 20px; margin-bottom: 24px; } .u-overlay { align-items: center; } }
+/* Review fixes: chips never shrink or overlap; unread rows carry the weight; compose is the accent. */
+.u-chips .u-chip { flex: 0 0 auto; min-width: 0; }
+.u-chat-top strong { font-weight: 500; }
+.u-person.unread .u-chat-top strong { font-weight: 700; }
+.u-person.unread .u-when { color: #9dbbff; }
+.u-fab { background: var(--accent); color: #fff; box-shadow: 0 8px 24px rgba(44,107,237,.35); }
+.u-fab:not(:disabled):hover, .u-fab:not(:disabled):active { background: var(--accent-press); }
+.u-acct-dot { font-size: 10px; letter-spacing: -.02em; }
+.u-net { font-size: 8px; letter-spacing: -.03em; }
+.c-pill { color: var(--ink-2); }
+.c-card { scroll-margin: 12px; }
+body { font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans","Noto Sans CJK JP","Noto Sans Thai","Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif; }
+.c-card .c-link:last-child { margin-bottom: -4px; } .c-card-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .c-pill { background: transparent; padding: 0; } .c-pill.on, .c-pill.warn { background: transparent; }

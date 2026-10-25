@@ -5,12 +5,24 @@ kept in sync with baseline 490abc8. Parent integration selects this class after
 owner/agent boundary wiring. No writer means NO Matrix/provisioning writes.
 """
 from unified import *
-from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network
+from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
+from unified import weak_label
+
+# Cached room_meta written before this version may have dropped a bridged room
+# (protocol.id aliases): re-read room state once for those.
+META_VERSION = 2
+# Bridged history (bridgev2 backfill on stock Synapse) arrives through /sync with
+# its original timestamps; only recent lines may notify.
+LIVE_WINDOW_MS = 15 * 60 * 1000
+HISTORY_PAGES, HISTORY_PAGE = 5, 100
 
 
 class ConnectorInbox(UnifiedInbox):
     def __init__(self, data, engine, sender=None):
         super().__init__(data, engine)
+        self.importing = set()
+        self.import_slots = threading.Semaphore(2)
+        self.history_sync = False  # tests: import inline
         self.sender = sender
         self.connectors = Connectors(self.root, self.owner, writer=sender,
                                      ensure_owner=self.matrix_token)
@@ -74,22 +86,36 @@ class ConnectorInbox(UnifiedInbox):
                 row = db.execute('SELECT json FROM room_meta WHERE room=?', (room,)).fetchone()
             meta = json.loads(row[0]) if row else None
         events = (data.get('state', {}).get('events') or []) + [e for e in data.get('timeline', {}).get('events', []) if 'state_key' in e]
-        if meta is not None and 'network' in meta and not any(e.get('type') in self.META_TYPES for e in events):
+        fresh = meta is not None and 'network' in meta and (meta['network'] or meta.get('v', 0) >= META_VERSION)
+        if fresh and not any(e.get('type') in self.META_TYPES for e in events):
             self.rooms[room] = meta
             return meta
         state = self.mx(self.room(room) + '/state')
         info = next((e['content'] for e in state if e['type'] in ('m.bridge', 'uk.half-shot.bridge')), None)
         network = room_network(state)
-        meta = {'network': network, 'telegram': network == 'telegram'}
+        meta = {'network': network, 'telegram': network == 'telegram', 'v': META_VERSION}
         if meta['network']:
             channel = info.get('channel', {})
-            members = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join' and e.get('state_key') not in (self.owner, '@' + network + 'bot:messenger.internal')]
+            bot = '@' + network + 'bot:messenger.internal'
+            joined = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join']
+            # The owner's own ghost (no double puppeting yet) is not another participant.
+            members = [e for e in joined if e.get('state_key') not in (self.owner, bot) and not self.is_me(e.get('state_key'))]
             # bridgev2 emits room_type in bridge info; fallback counts real participants.
             room_type = info.get('com.beeper.room_type.v2') or channel.get('fi.mau.' + network + '.type') or info.get('com.beeper.room_type')
-            meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state)
+            meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state) or room_type in ('space', 'personal_filtering_space')
             meta['kind'] = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
-            meta['label'] = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname') or PROVIDERS[network].label + ' conversation'
             meta['names'] = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member' and (e.get('content') or {}).get('displayname')}
+            label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
+            own = self.store.own_names()
+            if meta['kind'] == 'person' and weak_label(label, own):
+                # A DM is titled by the other participant, never the owner or a raw number.
+                peers = {(e.get('content') or {}).get('displayname') for e in members} - {None}
+                peers = [n for n in peers if not weak_label(n, own)]
+                if len(peers) == 1:
+                    label = peers[0]
+            if not label or (meta['kind'] == 'person' and label in own):
+                label = PROVIDERS[network].label + ' conversation'
+            meta['label'] = label
         with self.store.db() as db:
             db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', (room, json.dumps(meta, ensure_ascii=False)))
         self.rooms[room] = meta
@@ -118,9 +144,110 @@ class ConnectorInbox(UnifiedInbox):
         if parts is None:
             return
         msgtype, body, media, reply_to = parts
-        self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, push_live=live)
-        self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
+        stamp = event.get('origin_server_ts', 0)
+        # Backfilled history keeps its original timestamp: it never notifies.
+        live = live and stamp >= time.time() * 1000 - LIVE_WINDOW_MS
+        inserted = self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
+                                          stamp, msgtype=msgtype, media=media, reply_to=reply_to, push_live=live)
+        if inserted and not outgoing:
+            self.store.mark_history_read(identity['id'], stamp)
+        self.warm_voice(event['event_id'], msgtype, outgoing, media, stamp)
+
+    def learn_me(self):
+        """Own ghosts and names from every connected bridge's provisioning /whoami (read-only).
+
+        Bridges double-puppet the owner when they can; anything sent from the
+        owner's phone before that (or when it fails) arrives from their own
+        ghost @<network>_<escaped login id>. Those lines are the owner's."""
+        if time.time() - self.mine_checked < 300:
+            return
+        self.mine_checked = time.time()
+        found = set()
+        for network in sorted(MATRIX_NETWORKS):
+            try:
+                self.connectors.config(network)
+                logins = self.connectors.request(network, '/whoami').get('logins') or []
+            except EngineError:
+                continue
+            except Exception:
+                continue
+            names = set()
+            for login in logins:
+                if not isinstance(login, dict):
+                    continue
+                ghost = own_ghost(network, login.get('id'))
+                if ghost:
+                    found.add(ghost)
+                profile = login.get('profile') if isinstance(login.get('profile'), dict) else {}
+                names.update(v for v in (login.get('name'), profile.get('name'), profile.get('username')) if isinstance(v, str))
+            self.store.remember_own_names(network, names)
+        if found - self.mine:
+            self.mine |= found
+            self.store.put('own_ghosts', json.dumps(sorted(self.mine)))
+        for ghost in sorted(self.mine):
+            if not self.store.get('own_fixed:' + ghost):
+                self.store.claim_own(ghost)
+                self.store.put('own_fixed:' + ghost, '1')
+
+    def rescan_dropped(self):
+        """Once per META_VERSION: rooms an older release cached as non-bridged (LINE,
+        Instagram) only reappear in an incremental /sync when they get new activity.
+        Re-read every joined room's state once and import those chats now."""
+        marker = 'meta_rescan_v%d' % META_VERSION
+        if self.store.get(marker):
+            return
+        try:
+            rooms = self.mx('/joined_rooms').get('joined_rooms') or []
+            with self.store.db() as db:
+                known = {r[0] for r in db.execute('SELECT address FROM identity')}
+            for room in rooms:
+                if not isinstance(room, str) or room in known:
+                    continue
+                meta = self.room_meta(room, {})
+                if not meta.get('network') or meta.get('space'):
+                    continue
+                identity = self.store.identity(meta['network'], room, meta['label'], meta['kind'])
+                self.import_history(identity, meta)
+        except Exception:
+            return  # retried after the next sync; never blocks live delivery
+        self.store.put(marker, '1')
+
+    def import_history(self, identity, meta):
+        """First sight of a bridged room (e.g. one dropped by older metadata rules):
+        import what the homeserver already holds, silently (live=False)."""
+        room = identity['address']
+        key = 'history_imported:' + room
+        if self.store.get(key) or room in self.importing:
+            return
+        self.importing.add(room)
+
+        def run():
+            try:
+                with self.import_slots:
+                    self._import_pages(identity, meta, room)
+                self.store.put(key, '1')
+            except Exception:
+                pass
+            finally:
+                self.importing.discard(room)
+        if self.history_sync:
+            run()
+        else:
+            threading.Thread(target=run, name='history-import', daemon=True).start()
+
+    def _import_pages(self, identity, meta, room):
+                token = None
+                for _ in range(HISTORY_PAGES):
+                    query = {'dir': 'b', 'limit': HISTORY_PAGE}
+                    if token:
+                        query['from'] = token
+                    page = self.mx(self.room(room) + '/messages?' + urlencode(query))
+                    for event in reversed(page.get('chunk', [])):
+                        if event.get('type') in ('m.room.message', 'm.sticker', 'm.reaction', 'm.room.redaction'):
+                            self.ingest(identity, meta, event, live=False)
+                    token = page.get('end')
+                    if not token or not page.get('chunk'):
+                        break
 
     def ephemeral(self, identity, events):
         for event in events:
@@ -172,10 +299,13 @@ class ConnectorInbox(UnifiedInbox):
                     continue
                 identity = self.store.identity(meta['network'], room, meta['label'], meta['kind'])
                 for event in data.get('timeline', {}).get('events', []):
+                    # ingest() also refuses to notify for backfilled (old-timestamp) lines.
                     self.ingest(identity, meta, event, live=bool(since))
+                self.import_history(identity, meta)
                 self.ephemeral(identity, data.get('ephemeral', {}).get('events', []))
             self.store.put('sync_token', result['next_batch'])
             self.store.put('sync_error', '')
+            self.rescan_dropped()
             return {'state': 'ready'}
         except EngineError as error:
             self.store.put('sync_error', error.message)
