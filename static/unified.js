@@ -1001,7 +1001,7 @@
     const takePhotos = files => {
       if (!files.length) return false;
       const photos = files.filter(f => PHOTO.test(f.type));
-      if (!telegramOnly) { toast('Photos can be sent in Telegram chats'); return true; }
+      if (!telegramOnly) { toast('Photos can be sent in Telegram, WhatsApp and Signal chats'); return true; }
       if (!photos.length) { toast('Only photos can be attached here'); return true; }
       if (photos.length < files.length) toast('Only photos were attached');
       addPhotos(photos); return true;
