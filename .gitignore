@@ -11,3 +11,4 @@ qa/artifacts/
 *.tar
 *.tar.gz
 evidence/
+voicefix/

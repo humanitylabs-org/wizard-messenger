@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
   const base = process.env.PREVIEW_URL || 'https://localhost:19253/';
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const pw = 'preview-only-passphrase-' + Date.now();
-  const browser = await chromium.launch({headless: true});
+  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, hasTouch: true, isMobile: true});
   await ctx.addInitScript(() => {
     let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) { app = Object.freeze({...v, back: v.back, update: {...v.update, hold(reason) { const h = {reason, released: false, at: new Error().stack.split('\n').slice(2, 5).join(' | ')}; (window.__holds ||= []).push(h); return {release() { h.released = true; }}; }}, capture: v.capture, vault: {has: async () => ({available: false, saved: false})}, badge: {set: n => { window.__badges = (window.__badges || []).concat(n); return Promise.resolve(true); }}}); }});

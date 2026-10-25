@@ -10,7 +10,7 @@ const novaire = { id: 'p2', display_name: 'Novaire', identities: [{ id: 'i2', ne
 const team = { id: 'g1', display_name: 'AI Wizards team', identities: [{ id: 'i3', network: 'telegram', label: 'group', kind: 'group' }], last: { text: 'ok', timestamp: 3000 }, unread: 0 };
 const ok = result => ({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, result }) });
 (async () => {
-  const b = await chromium.launch({ headless: true });
+  const b = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true, colorScheme: 'dark' });
   await ctx.route('**/unified.js*', r => r.fulfill({ status: 200, contentType: 'application/javascript', body: fs.readFileSync(MSG + '/static/unified.js', 'utf8') }));
   const sends = [];

@@ -9,6 +9,7 @@
 node_modules
 app-data
 qa/artifacts
+voicefix
 *.log
 *.tar
 *.tar.gz

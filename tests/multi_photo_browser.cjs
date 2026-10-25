@@ -1,4 +1,4 @@
-// Disposable preview only. Attach several photos at once; each sends as its own photo, caption on the first.
+// Disposable preview only. Attach several photos at once; one album request, caption once.
 const {chromium} = require('playwright');
 const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const transcript = 'Miguel says: Let us think through the next step together. ' + 'This longer transcript wraps safely inside the voice-note bubble. '.repeat(3).trim();
   let transcribes = 0; const shares = [], inputs = []; let receipt = 'shared';
-  const browser = await chromium.launch({headless: true});
+  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, timezoneId: 'UTC'});
   await ctx.exposeBinding('__transcribe', (_, data) => { transcribes++; inputs.push(data); return {text: transcript}; });
   await ctx.exposeBinding('__share', (_, data) => { shares.push(data); return receipt; });
@@ -64,10 +64,11 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await page.locator('.u-composer textarea').fill('three photos');
   await page.screenshot({path: ev + '/multi-photo.png'});
   await page.locator('.u-send').click();
-  for (let i = 0; i < 50 && sends.length < 3; i++) await page.waitForTimeout(200);
-  assert.equal(uploads.length, 3, 'three uploads'); assert.equal(sends.length, 3, 'three sends');
-  assert.deepEqual(sends.map(s => s.text), ['three photos', '', ''], 'caption on the first photo only');
-  assert.deepEqual(sends.map(s => s.upload_id), ['u1', 'u2', 'u3']);
+  for (let i = 0; i < 50 && sends.length < 1; i++) await page.waitForTimeout(200);
+  assert.equal(uploads.length, 3, 'three uploads'); assert.equal(sends.length, 1, 'one album send');
+  assert.equal(sends[0].text, 'three photos', 'one caption');
+  assert.deepEqual(sends[0].upload_ids, ['u1', 'u2', 'u3']);
+  assert.equal(sends[0].upload_id, undefined);
   assert.equal(await page.locator('.u-attach-chip').count(), 0, 'tray cleared');
   assert.deepEqual(errors, []);
   fs.writeFileSync(ev + '/receipt.json', JSON.stringify({uploads, sends}, null, 1));
