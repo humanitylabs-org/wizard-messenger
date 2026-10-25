@@ -1,7 +1,12 @@
 /* Chats and Groups: Signal-style list, thread, composer and sheets. Tokens come from app.css. */
 html[data-inbox-tab] #messenger { display: flex; flex-direction: column; }
 html[data-inbox-tab=people] #gate, html[data-inbox-tab=groups] #gate, html[data-inbox-tab=people] #workspace, html[data-inbox-tab=groups] #workspace { display: none !important; }
-html[data-inbox-tab=messenger] #workspace { flex: 1; min-height: 0; }
+/* A native private thread is a detail route, never a second inbox/tab. */
+html[data-private-view] #workspace { display: flex !important; flex: 1; min-height: 0; }
+html[data-private-view] #workspace .list-pane { display: none !important; }
+html[data-private-view] #detail { display: block !important; flex: 1; min-width: 0; }
+html[data-private-view] #chat-back { display: inline-flex !important; }
+html[data-private-view] #gate { display: none !important; }
 #inbox-tabs[hidden], #unified-inbox[hidden] { display: none !important; }
 
 /* Bottom tab bar, hidden inside a conversation like Signal. */

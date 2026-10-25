@@ -155,8 +155,8 @@
   }
   function schedule() {
     clearTimeout(state.timer);
-    // The Marmot engine serialises every RPC; poll it fast only while its own tab is in front.
-    if (!document.hidden && !state.operation && state.authenticated) state.timer = setTimeout(() => run(snapshot), window.MessengerUnified?.active() ? 60000 : 3000);
+    // The Marmot engine serialises every RPC; keep unified previews current without a tight background loop.
+    if (!document.hidden && !state.operation && state.authenticated) state.timer = setTimeout(() => run(snapshot), window.MessengerUnified?.active() ? 10000 : 3000);
   }
   const isBusy = () => state.operation?.action === true;
   const act = work => run(work, true);
@@ -386,7 +386,17 @@
     if (state.mode !== 'ready') return;
     const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
-    window.MessengerUnified?.setNativeUnread?.(state.invites.length + state.dms.filter(dm => { if (isIncoming(dm)) return false; if (readRecord(dm.group_id).muted) return false; const last = cacheFor(dm.group_id).messages.at(-1); return last?.direction === 'received' && readRecord(dm.group_id).seen !== last.message_id; }).length);
+    // Adapter rows only: native history, invite and send handling stay in this engine.
+    const nativeRows = [...state.invites, ...state.dms.filter(dm => !isIncoming(dm))].map(dm => {
+      const record = readRecord(dm.group_id), last = cacheFor(dm.group_id).messages.at(-1), invite = isIncoming(dm);
+      return {id: 'private:' + dm.group_id, native: true, group_id: dm.group_id, display_name: peerName(dm),
+        identities: [{network: 'private', kind: 'person'}], muted: !!record.muted,
+        unread: invite || (last?.direction === 'received' && record.seen !== last.message_id) ? 1 : 0,
+        last: {text: invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet'),
+          timestamp: stamp(last?.created_at), outgoing: last?.direction === 'sent'},
+        setMuted: () => { record.muted = !record.muted; persist(dm.group_id); state.listSignature = ''; renderList(); }};
+    });
+    window.MessengerUnified?.setNativeRows?.(nativeRows);
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();
     if (state.invites.length) {
       fragment.append(element('h2', 'section-label', 'Invites'));
@@ -496,6 +506,7 @@
     $('message-scroll').scrollTop = top;
   }
   function openChat(group) {
+    window.MessengerUnified?.showNative?.(group);
     if (state.group === group) { closeSheet(); return; }
     cancel(); if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
     state.group = group; state.chatOpening = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
@@ -509,8 +520,10 @@
     state.group = null; state.chatOpening = null; $('chat').hidden = true; $('no-selection').hidden = false;
     $('workspace').classList.remove('has-chat'); $('draft').value = ''; state.nodes.clear(); $('messages').replaceChildren();
     renderList(); updateComposer();
+    window.MessengerUnified?.returnNative?.();
   }
   function openSheet(kind) {
+    window.MessengerUnified?.showNative?.();
     cancel(); state.focusBefore = document.activeElement; state.sheet = kind;
     $('sheet-title').textContent = kind === 'contact' ? 'Add contact' : 'My address';
     $('contact-form').hidden = kind !== 'contact'; $('address-panel').hidden = kind !== 'address';
@@ -525,6 +538,7 @@
     cancel(); state.sheet = null; $('sheet-layer').hidden = true;
     $('workspace').inert = false;
     state.focusBefore?.focus?.(); state.focusBefore = null; schedule();
+    if (!state.group) window.MessengerUnified?.returnNative?.();
   }
   function renderContacts() {
     const target = $('saved-contacts'); target.replaceChildren();
@@ -722,7 +736,7 @@
   // First time only: ask, never spring the fingerprint prompt on someone. "Not now" is remembered on this phone.
   async function offerPhoneFingerprint(password) {
     if (!phone.available || phone.saved || localStorage.getItem('messenger.fingerprint.declined')) return;
-    const U = window.MessengerUnified, later = 'Not now. You can turn it on anytime from the Messenger tab.';
+    const U = window.MessengerUnified, later = 'Not now. You can turn it on anytime from Settings.';
     const yes = await U?.ask?.({title: 'Unlock with your fingerprint?', body: 'Next time Messenger asks for your password, a fingerprint touch opens it instead. Your password stays on this phone.', yes: 'Use fingerprint', no: 'Not now'});
     if (!yes) { localStorage.setItem('messenger.fingerprint.declined', '1'); U?.toast?.(later, 4000); return; }
     if (await savePhoneFingerprint(password)) U?.toast?.('Fingerprint unlock is on', 2500);
@@ -934,7 +948,7 @@
   let bootTries = 0, bootTimer = null;
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
   addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
-  window.MessengerUnified?.mount({api, csrf: () => state.csrf});
+  window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = () => boot(true);
   refreshPasskey(); refreshPhoneVault();

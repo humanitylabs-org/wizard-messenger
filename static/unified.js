@@ -63,7 +63,8 @@
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
-  let api, timer, lastFocus, updateHold, connectorController;
+  let api, timer, lastFocus, updateHold, connectorController, native;
+  let nativeRows = [], nativeFocus = null;
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
   const foreignScript = t => /(?![\p{Script=Latin}])\p{L}/u.test(t || '');
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
@@ -183,6 +184,7 @@
   async function newChat() {
     // The full A-Z contact list lives only here.
     const sheet = overlay('New chat'); sheet.classList.add('tall');
+    sheet.append(button('New private chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
@@ -248,10 +250,10 @@
   }
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
-    const counts = {people: 0, groups: 0, messenger: nativeUnread};
+    const counts = {people: nativeUnread, groups: 0};
     for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id]) counts.people += n; // one Inbox: groups count there too
     paintTabBadges(counts);
-    const n = counts.people + counts.groups + counts.messenger;
+    const n = counts.people + counts.groups;
     if (n === badgeShown) return; badgeShown = n;
     try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
@@ -382,7 +384,7 @@
     const nets = [...new Set(all.flatMap(networksOf))].sort();
     const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
         const options = [['all', 'All'], ['unread', 'Unread'], ['direct', 'Direct'], ['groups', 'Groups'],
-      ...nets.map(n => ['net:' + n, cap(n === 'whatsapp' ? 'WhatsApp' : n === 'line' ? 'LINE' : n)]), ...labels.map(l => ['label:' + l, l])];
+      ...['private', ...nets.filter(n => n !== 'private')].map(n => ['net:' + n, cap(n === 'whatsapp' ? 'WhatsApp' : n === 'line' ? 'LINE' : n)]), ...labels.map(l => ['label:' + l, l])];
     const sig = options.map(o => o.join('=')).join('|');
     let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
     if (chips.dataset.sig !== sig) {
@@ -408,7 +410,7 @@
   }
   function netAvatar(p) {
     const wrap = node('span', 'u-av-wrap'); wrap.append(avatar(p.display_name));
-    const net = networksOf(p)[0], b = net && (window.MessengerConnectors?.BRAND || {})[net];
+    const net = networksOf(p)[0], b = net === 'private' ? {mark: 'P', color: 'var(--accent)', label: 'Private'} : net && (window.MessengerConnectors?.BRAND || {})[net];
     if (b) { const dot = node('span', 'u-net', b.mark); dot.style.background = b.color; dot.title = cap(net); wrap.append(dot); }
     return wrap;
   }
@@ -459,15 +461,15 @@
       return;
     }
     const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
-    if (!store.lists.people) return;
-    const people = [...store.lists.people, ...(store.lists.groups || [])]
+    const people = [...(store.lists.people || []), ...(store.lists.groups || []), ...nativeRows]
       .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
     const filter = paintFilters(people) || 'all';
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
     for (const p of people.filter(p => matchesFilter(p, filter) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
       const groups = listKey(p) === 'groups';
-      const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
+      const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
       holdToMenu(card, () => chatMenu(p, card));
+      if (p.native) card.dataset.nativeGroup = p.group_id;
       card.append(netAvatar(p));
       const info = node('span', 'u-person-info');
       const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
@@ -535,7 +537,7 @@
     list.firstChild?.focus(); hold();
   }
   const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
-  function chatMenu(p, card) { actionMenu(card, p.display_name, [muteAction(p.muted, () => setMuted(p, !p.muted))]); }
+  function chatMenu(p, card) { actionMenu(card, p.display_name, [muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted))]); }
   async function setMuted(p, muted) {
     const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
     flip(muted);
@@ -1201,6 +1203,7 @@
   async function accounts(focus) {
     // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
+    sheet.append(button('Private account · address, unlock and lock', () => { closeOverlay(); showNative(); native?.settings(); }, 'secondary wide'));
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
       connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, body}), {
@@ -1466,25 +1469,47 @@
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   // After a reload, come back to the same tab and chat (saved on pagehide).
   // Any reload (a Wizard update, the Reload strip) comes back on the same tab and chat.
-  window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person})); } catch { /* fresh start */ } });
+  window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person, nativeGroup: s.nativeGroup})); } catch { /* fresh start */ } });
   function resume() {
     let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
-    switchTab(at?.tab === 'messenger' ? 'messenger' : 'people');
-    if (at?.person && at.tab !== 'messenger') openPerson(at.person);
+    switchTab('people');
+    if (at?.nativeGroup) s.resumeNative = at.nativeGroup;
+    else if (at?.person && at.tab !== 'messenger') openPerson(at.person);
+  }
+  function showNative(group) {
+    if (!s.ready) return;
+    if (group) s.nativeGroup = group;
+    s.native = true; s.person = null; view.id = null; s.epoch++;
+    document.documentElement.dataset.privateView = '';
+    $('unified-inbox').hidden = true; inChat(true);
+  }
+  function openNative(group, card) {
+    if (!s.ready || !native) return;
+    nativeFocus = card; s.nativeGroup = group; showNative(); native.open(group);
+  }
+  function returnNative() {
+    if (!s.native) return;
+    s.native = false; s.nativeGroup = null;
+    delete document.documentElement.dataset.privateView;
+    $('unified-inbox').hidden = false; inChat(false); renderList();
+    // List rendering is synchronous when cached; focus the same row after Back.
+    const group = nativeFocus?.dataset.nativeGroup;
+    if (group) [...document.querySelectorAll('.u-person')].find(el => el.dataset.nativeGroup === group)?.focus();
   }
   window.MessengerUnified = {
-    settings: accounts,
+    settings: accounts, showNative, returnNative,
+    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted ? 0 : p.unread), 0); syncBadge(); if (!s.native && !s.person) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
     ask, toast, holdToMenu, actionMenu, muteAction, icon,
-    // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
+    // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
-    // Saved chats paint at once; the session handshake and the server's copy follow behind.
+    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); },
+    // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
-      if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
+      if (!s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
       resume(); return true;
     },
     authenticated() {
-      if (s.ready) return; s.ready = true; $('inbox-tabs').hidden = false;
+      if (s.ready) return; s.ready = true; restore(); $('inbox-tabs').hidden = false;
       const painted = document.documentElement.dataset.inboxTab;
       if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
@@ -1492,7 +1517,7 @@
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
-    active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
+    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();
