@@ -212,7 +212,7 @@
       form.onsubmit = async e => {
         e.preventDefault(); if (save.disabled || mine !== generation) return;
         save.disabled = true;
-        const payload = {api_id: id.value.trim(), api_hash: hash.value.trim()}; hash.value = '';
+        const payload = {api_id: id.value, api_hash: hash.value}; hash.value = '';
         try {
           const result = await api('/api/view/telegram/application', 'POST', payload);
           if (mine !== generation) return;
