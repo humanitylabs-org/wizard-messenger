@@ -41,6 +41,7 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   page.on('close', () => {});
   const ticket = JSON.parse(execFileSync('curl', ['-sf','-X','POST','-H','Authorization: Bearer ' + process.env.MESSENGER_API_TOKEN,'-H','Content-Type: application/json','-d','{"bootstrap":true}','http://127.0.0.1:19252/api/view/ticket'])).result.ticket;
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000);
+  await page.locator('#setup-form:visible, #inbox-tabs:visible').first().waitFor({timeout: 60000});
   if (!(await page.locator('#setup-form').isVisible())) await page.click('#inbox-tabs [data-tab="messenger"]');
   await page.locator('#confirm-passphrase').waitFor({state: 'visible', timeout: 30000});
   const pw = 'preview-only-passphrase-' + Date.now(); await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
