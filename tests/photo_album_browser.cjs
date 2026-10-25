@@ -105,6 +105,7 @@ const assert = require('node:assert/strict');
   rows = rows.slice(0,2); rows[1] = {...rows[1], sender: 'Someone else'};
   await page.evaluate(() => {sessionStorage.clear(); localStorage.clear();}); await page.reload();
   await page.locator('.u-person', {hasText: 'Album preview'}).click();
+  await page.locator('.u-message').nth(1).waitFor();
   assert.equal(await page.locator('.u-message').count(), 2);
   assert.equal(await page.locator('.u-album').count(), 0);
   assert.deepEqual(errors, []);
