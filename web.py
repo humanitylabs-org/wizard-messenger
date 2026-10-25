@@ -564,7 +564,13 @@ if __name__=='__main__':
             and server.auth.path is not None
             and not (server.auth.path.parent / 'owner-enrollment.json').exists()):
         provision_owner_enrollment(server)
-    def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
+    from owner_unix import start_owner_hop
+    owner_hop = start_owner_hop(server)
+    def stop(*_):
+        threading.Thread(target=server.shutdown,daemon=True).start()
+        if owner_hop: threading.Thread(target=owner_hop.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop); signal.signal(signal.SIGINT,stop)
     try: server.serve_forever()
-    finally: server.server_close(); engine.lock()
+    finally:
+        if owner_hop: owner_hop.server_close()
+        server.server_close(); engine.lock()
