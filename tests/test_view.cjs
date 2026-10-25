@@ -316,7 +316,8 @@ test('DOM fixture: setup match/minimum, CSRF body-only secret and first address 
   let created=false;
   const f=await fixture({respond:(url,opts,base)=>{
     if(url==='api/status') return {state:created?'ready':'setup_required'};
-    if(url==='api/setup'){created=true;return {state:'ready',identity:own};}return base(url,opts);
+    if(url==='api/setup'){created=true;return {state:'ready',identity:own};}
+    if(url==='api/view/unlock')return {authenticated:true,csrf_token:'fixture-csrf',status:{state:'ready'}};return base(url,opts);
   }});
   assert.equal(f.e('setup-submit').disabled,true);
   f.e('display-name').value='Fixture owner';f.e('display-name').fire('input');assert.equal(f.context.sharedHolds.size,1);

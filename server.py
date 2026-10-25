@@ -9,6 +9,7 @@ import threading
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 from engine import EngineError, MarmotEngine
+from permissions import AgentAccess, PUBLIC, route_shape
 
 MAX_BODY=65536
 MCP_TOOLS=[
@@ -19,9 +20,14 @@ MCP_TOOLS=[
 class MessengerServer(ThreadingHTTPServer):
     daemon_threads=True
     def __init__(self, address, engine, token, origins):
+        self.remote_required = os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1'
+        if self.remote_required:
+            from remote_authority import OfflineEngine
+            engine = OfflineEngine(getattr(engine, 'data', None))
         if not isinstance(token,str) or len(token)<32:
             raise ValueError('MESSENGER_API_TOKEN must contain at least 32 characters')
         self.engine, self.token, self.origins=engine, token, frozenset(origins)
+        self.agent_access = AgentAccess(getattr(engine, 'data', None))
         super().__init__(address,Handler)
 
 class Handler(BaseHTTPRequestHandler):
@@ -60,6 +66,17 @@ class Handler(BaseHTTPRequestHandler):
             raise EngineError('origin_forbidden','This browser origin is not allowed',403)
         if self.headers.get('Sec-Fetch-Site') == 'cross-site':
             raise EngineError('origin_forbidden','Cross-site requests are not permitted',403)
+        self._agent_gate(self.command, urlsplit(self.path).path)
+    def _agent_gate(self, method, path):
+        if not self.headers.get('Authorization'): return
+        if not hmac.compare_digest(self.headers.get('Authorization', '').encode(), ('Bearer ' + self.service.token).encode()):
+            raise EngineError('unauthorized', 'A Messenger API capability is required', 401)
+        if (method, path) in PUBLIC: return
+        allowed = self.service.agent_access.permits(method, path)
+        self.service.agent_access.record(method, route_shape(path), 'allowed' if allowed else 'blocked')
+        if not allowed:
+            code = 'agent_access_off' if not self.service.agent_access.active() else 'agent_permission_denied'
+            raise EngineError(code, 'This action is not allowed by the owner’s Messenger agent policy.', 403)
     def _body(self):
         if self.headers.get('Transfer-Encoding'):
             raise EngineError('invalid_request','Chunked bodies are not supported',400)
@@ -99,6 +116,9 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self,method):
         parsed=urlsplit(self.path)
         path=parsed.path
+        if self.service.remote_required:
+            from remote_authority import remote_required_gate
+            remote_required_gate(method, path)
         if method=='GET' and path=='/healthz':
             return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.11.7'}
         self._authorize()
@@ -160,7 +180,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     os.umask(0o077)
-    engine=MarmotEngine(os.environ.get('MESSENGER_DATA','/data'))
+    from remote_authority import OfflineEngine
+    engine=(OfflineEngine if os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1' else MarmotEngine)(os.environ.get('MESSENGER_DATA','/data'))
     server=MessengerServer(('0.0.0.0',int(os.environ.get('MESSENGER_PORT','8765'))),engine,os.environ.get('MESSENGER_API_TOKEN',''),[x for x in os.environ.get('MESSENGER_ALLOWED_ORIGINS','').split(',') if x])
     def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop)

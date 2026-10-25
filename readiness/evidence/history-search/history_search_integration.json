@@ -1,0 +1,37 @@
+{
+  "successful": true,
+  "tests_run": 7,
+  "passed": 7,
+  "known_failures": 0,
+  "skipped": 0,
+  "outcomes": [
+    {
+      "test": "test_history_search.HistorySearch.test_history_pages_all_ties_merged_networks_and_bound_cursors",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_history_search.HistorySearch.test_scoped_early_redaction_does_not_poison_other_threads",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_history_search.HistorySearch.test_search_ingest_edit_translation_redaction_forget_reconcile",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_history_search.HistorySearch.test_search_rebuild_and_edits_keep_paging_positions",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_history_search.HistorySearch.test_search_scope_cursor_validation_atomic_rollback_and_account_isolation",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_history_search.HistorySearch.test_shipping_js_paging_and_search_contracts",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_history_search.SearchHTTP.test_real_authenticated_http_search_and_history_validation",
+      "outcome": "passed"
+    }
+  ]
+}

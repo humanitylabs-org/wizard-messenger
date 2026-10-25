@@ -1,0 +1,5 @@
+pywebpush==2.1.1
+# Transport relies on these versioned requests/urllib3 extension contracts.
+requests==2.34.2
+urllib3==2.8.0
+cryptography==50.0.2

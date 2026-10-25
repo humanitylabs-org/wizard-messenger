@@ -1,0 +1,12 @@
+test_account_thread_network_isolation_with_colliding_ids (readiness.tests.test_search.SearchTests.test_account_thread_network_isolation_with_colliding_ids) ... ok
+test_cursor_scope_replay_invalid_input_and_page_bounds (readiness.tests.test_search.SearchTests.test_cursor_scope_replay_invalid_input_and_page_bounds) ... ok
+test_keyset_pagination_no_loss_for_equal_timestamps (readiness.tests.test_search.SearchTests.test_keyset_pagination_no_loss_for_equal_timestamps) ... ok
+test_query_and_message_input_are_data_not_sql (readiness.tests.test_search.SearchTests.test_query_and_message_input_are_data_not_sql) ... ok
+test_real_fts_unicode_translated_and_literal_not_operators (readiness.tests.test_search.SearchTests.test_real_fts_unicode_translated_and_literal_not_operators) ... ok
+test_thread_teardown_does_not_delete_other_scopes (readiness.tests.test_search.SearchTests.test_thread_teardown_does_not_delete_other_scopes) ... ok
+test_upsert_edit_redaction_disconnect_and_restart (readiness.tests.test_search.SearchTests.test_upsert_edit_redaction_disconnect_and_restart) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.595s
+
+OK

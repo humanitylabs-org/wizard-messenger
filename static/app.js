@@ -212,6 +212,7 @@
   function friendly(error) {
     const messages = {
       unauthorized: "You were signed out of Messenger. Tap Try again.",
+      owner_unlock_required: 'Use your independently issued owner enrollment link, or unlock with your existing passphrase.',
       vault_unlock_failed: "That passphrase isn't right.", invalid_public_key: "That address doesn't look right.",
       login_rate_limited: 'Too many tries. Wait a minute and try again.',
       invalid_vault_password: state.mode === 'locked' ? "That passphrase isn't right." : 'Needs at least 16 characters.',
@@ -686,6 +687,11 @@
       state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
     } else {
       await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
+      // Launcher tickets are setup-only; passphrase proof opens the owner view,
+      // including when a phone-vault or PRF unlock calls this shared helper.
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
+      state.csrf = session.csrf_token; state.authenticated = true;
     }
     return true;
   }

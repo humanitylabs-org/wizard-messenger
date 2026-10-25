@@ -1,0 +1,19 @@
+{
+  "origin": "https://owner.example.net",
+  "rp_id": "owner.example.net",
+  "database": "/var/lib/isolated-sender/authority.sqlite3",
+  "agent_key_sha256": "REPLACE_WITH_SHA256_OF_RANDOM_DRAFT_ONLY_KEY",
+  "accounts": ["owner-telegram"],
+  "backend": "matrix",
+  "matrix_accounts": {
+    "owner-telegram": {
+      "homeserver": "https://matrix.example.net",
+      "user_id": "@owner:matrix.example.net",
+      "token_file": "/etc/isolated-sender/matrix-owner.token",
+      "rooms": ["!REPLACE_WITH_OWNER_CONFIGURED_ROOM:matrix.example.net"]
+    }
+  },
+  "allow_full_access": false,
+  "independently_administered": false,
+  "challenge_seconds": 120
+}

@@ -7,11 +7,63 @@
     if (state.search != null) return {...state, search: null, handled: true};
     return {...state, handled: false}; // Shared WizardApp owns the root guard.
   }
-  if (typeof module !== 'undefined') module.exports = {backState};
+  async function fetchOlder(t, id, call) {
+    if (!t.has_more || !t.next_cursor) return false;
+    const r = await call('people/' + encodeURIComponent(id) + '?limit=60&cursor=' + encodeURIComponent(t.next_cursor));
+    const known = new Set(t.messages.map(m => m.id));
+    t.messages = [...r.messages.filter(m => !known.has(m.id)), ...t.messages];
+    t.has_more = r.has_more; t.next_cursor = r.next_cursor;
+    return true;
+  }
+  async function notificationSettings(sheet, api, env = window) {
+    const box = env.document.createElement('section'); sheet.append(box);
+    try {
+      const config = await api('api/view/push');
+      if (!config.enabled) return;
+      const button = env.document.createElement('button'); button.type = 'button';
+      const status = env.document.createElement('p'); status.setAttribute('role', 'status');
+      button.textContent = 'Enable notifications'; box.append(button, status);
+      if (!env.isSecureContext || !env.Notification || !env.navigator.serviceWorker || !env.PushManager) {
+        button.disabled = true; status.textContent = 'Notifications require a supported secure browser.'; return;
+      }
+      let subscription, identifier;
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          if (identifier) {
+            await api('api/view/push/unsubscribe', {method: 'POST', body: {id: identifier}});
+            if (!await subscription.unsubscribe()) throw new Error('Browser subscription removal incomplete.');
+            identifier = null; button.textContent = 'Enable notifications'; status.textContent = 'Notifications disabled.';
+            return;
+          }
+          // Permission is requested synchronously from this explicit click, not on mount.
+          const permission = await env.Notification.requestPermission();
+          if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+          const scope = new URL(config.scope, env.location.origin).href;
+          const existing = await env.navigator.serviceWorker.getRegistration(scope);
+          const script = new URL(config.worker, env.location.origin).href;
+          if (existing && (existing.scope !== scope || [existing.active, existing.waiting, existing.installing].filter(Boolean).some(w => w.scriptURL !== script)))
+            throw new Error('Another service worker owns this app scope.');
+          const registration = existing || await env.navigator.serviceWorker.register(script, {scope, updateViaCache: 'none'});
+          if (!registration.active) await new Promise((resolve, reject) => {
+            const worker = registration.installing || registration.waiting;
+            if (!worker) return reject(new Error('Notification worker unavailable.'));
+            worker.addEventListener('statechange', () => { if (worker.state === 'activated') resolve(); else if (worker.state === 'redundant') reject(new Error('Notification worker failed.')); });
+          });
+          const key = env.atob(config.public_key.replace(/-/g, '+').replace(/_/g, '/'));
+          subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: Uint8Array.from(key, c => c.charCodeAt(0))});
+          const result = await api('api/view/push/subscribe', {method: 'POST', body: subscription.toJSON()});
+          identifier = result.id; button.textContent = 'Disable notifications'; status.textContent = 'Notifications enabled for this browser. Real-device delivery still needs verification.';
+        } catch (e) { status.textContent = e.message || 'Notification setup failed.'; }
+        finally { button.disabled = false; }
+      };
+    } catch (_) { box.textContent = 'Notification settings unavailable.'; }
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
-  let api, timer, lastFocus, updateHold;
+  let api, timer, lastFocus, updateHold, connectorController;
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
   const foreignScript = t => /(?![\p{Script=Latin}])\p{L}/u.test(t || '');
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
@@ -63,6 +115,7 @@
   }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
   function closeOverlay() {
+    connectorController?.close().catch(() => {}); connectorController = null;
     const answered = s.answer; s.answer = null; answered?.(false);
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
@@ -96,7 +149,7 @@
     const head = node('header', 'u-header');
     if (s.search != null) {
       const field = node('input', 'u-search'); field.type = 'search'; field.placeholder = 'Search'; field.setAttribute('aria-label', 'Search ' + title.toLowerCase()); field.value = s.search;
-      field.oninput = () => { s.search = field.value; root.querySelector('.u-list')?.dispatchEvent(new Event('filter')); };
+      field.oninput = () => { s.search = field.value; scheduleSearch(); };
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
@@ -282,7 +335,52 @@
       persist();
     } catch (e) { error(e); }
   }
+  let searchTimer, searchGeneration = 0;
+  const searchView = {query: null, rows: [], cursor: null, loading: false};
+  function scheduleSearch() {
+    clearTimeout(searchTimer); const generation = ++searchGeneration;
+    Object.assign(searchView, {query: s.search, rows: [], cursor: null, loading: !!s.search.trim()});
+    drawSearch();
+    if (s.search.trim()) searchTimer = setTimeout(() => loadSearch(generation), 200);
+  }
+  async function loadSearch(generation = searchGeneration, cursor = null) {
+    const query = s.search, epoch = s.epoch;
+    if (!s.ready || s.person || query == null || !query.trim() || generation !== searchGeneration) return;
+    try {
+      const r = await call('search?' + new URLSearchParams({q: query, limit: '50', ...(cursor ? {cursor} : {})}));
+      if (generation !== searchGeneration || epoch !== s.epoch || s.person || query !== s.search || !s.ready) return;
+      searchView.rows.push(...r.messages); searchView.cursor = r.next_cursor; searchView.loading = false; drawSearch();
+    } catch (e) {
+      if (generation !== searchGeneration || epoch !== s.epoch || query !== s.search) return;
+      searchView.loading = false; drawSearch(); error(e);
+    }
+  }
+  function drawSearch() {
+    const list = $('unified-inbox').querySelector('.u-list'); if (!list || s.person || s.search == null) return;
+    list.replaceChildren();
+    for (const m of searchView.rows) {
+      const row = button('', () => action(async () => {
+        await openPerson(m.person_id);
+        const t = store.threads[m.person_id];
+        while (s.person === m.person_id && t && !t.messages.some(x => x.id === m.message_id) && t.has_more && t.next_cursor) await fetchOlder(t, m.person_id, call);
+        if (s.person === m.person_id) { paintThread(); jumpTo(m.message_id); }
+      }), 'u-person');
+      const info = node('span', 'u-person-info');
+      info.append(node('strong', '', m.display_name + ' · ' + cap(m.network)), node('span', 'u-snippet', m.original), node('time', 'u-when', when(m.timestamp)));
+      if (m.translated && m.translated !== m.original) info.append(node('span', 'u-snippet', m.translated));
+      row.append(info); list.append(row);
+    }
+    if (searchView.loading) list.append(node('p', 'u-empty', 'Searching stored messages…'));
+    else if (!searchView.rows.length) list.append(node('p', 'u-empty', s.search.trim() ? 'No stored messages match' : 'Search all stored message text'));
+    if (searchView.cursor) {
+      const more = button('More results', () => { more.disabled = true; loadSearch(searchGeneration, searchView.cursor); }); list.append(more);
+    }
+  }
   function drawList() {
+    if (s.search != null) {
+      if (searchView.query !== s.search) scheduleSearch(); else drawSearch();
+      return;
+    }
     const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
     const groups = s.tab === 'groups', people = store.lists[groups ? 'groups' : 'people']; if (!people) return;
     let label = root.dataset.label || '';
@@ -492,7 +590,7 @@
     if (!s.ready) return;
     try {
       const r = await call('people/' + id + '?limit=60');
-      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, warning: r.history_warning};
+      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, next_cursor: r.next_cursor, warning: r.history_warning};
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
       persist();
@@ -558,12 +656,9 @@
   }
   async function older() {
     const t = store.threads[view.id]; if (!t || !t.has_more || view.loadingOlder) return;
-    const first = t.messages.find(m => !m.pending); if (!first) return;
     view.loadingOlder = true; const id = view.id;
     try {
-      const r = await call('people/' + id + '?limit=60&before=' + first.timestamp);
-      const known = new Set(t.messages.map(m => m.id));
-      t.messages = [...r.messages.filter(m => !known.has(m.id)), ...t.messages]; t.has_more = r.has_more;
+      await fetchOlder(t, id, call);
       if (view.id === id) { view.anchor = true; paintThread(); }
     } catch (e) { error(e); } finally { view.loadingOlder = false; }
   }
@@ -700,7 +795,7 @@
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Message';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
     const panel = node('div', 'u-menu'); panel.setAttribute('role', 'menu');
-    const telegram = m.network === 'telegram';
+    const telegram = ['telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram'].includes(m.network);
     if (telegram) {
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
@@ -765,7 +860,7 @@
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
     for (const i of p.identities || []) { const opt = node('option', '', 'via ' + cap(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
-    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => i.network === 'telegram');
+    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => ['telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram'].includes(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
     const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.hidden = true;
     const attach = iconButton('plus', 'Attach photo', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
@@ -1025,7 +1120,24 @@
     }
   }
   async function accounts() {
-    const sheet = overlay('Settings'); sheet.append(node('h3', '', 'Telegram'));
+    const sheet = overlay('Settings');
+    notificationSettings(sheet, api);
+    if (window.MessengerConnectors) {
+      const networks = node('section', 'u-connected-networks'); sheet.append(networks);
+      connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, body}));
+      try {
+        await connectorController.show();
+        await agentAccess(sheet);
+        return;
+      } catch (e) {
+        // Older/dormant installations retain the existing Telegram settings.
+        networks.remove(); connectorController = null;
+        if (!['not_found', 'unified_not_found'].includes(e.code)) {
+          error(e); await agentAccess(sheet); return;
+        }
+      }
+    }
+    sheet.append(node('h3', '', 'Telegram'));
     try {
       const status = await call('telegram/status'); if (s.overlay !== 'Settings') return;
       if (status.pending_login) { localStorage.setItem(LOGIN_FLAG, '1'); return loginStep(status.pending_login, true); }
@@ -1040,12 +1152,20 @@
     const box = node('section', 'u-agent-access'); sheet.append(box);
     const paint = st => {
       box.replaceChildren(node('h3', '', 'Agent access'));
-      box.append(node('p', 'u-status ' + (st.enabled ? 'warn' : 'on'), st.enabled
-        ? 'Agents can read and send your messages until ' + new Date(st.until).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) + '.'
-        : 'Off. Agents see Messenger status only, never your messages.'));
-      const set = minutes => action(async () => paint(await api('api/view/agent-access', {method: 'POST', body: {minutes}})));
-      if (st.enabled) box.append(button('Turn off now', () => set(0), 'primary wide'));
-      else { const pair = node('div', 'u-pair'); pair.append(button('Allow 1 hour', () => set(60), 'secondary'), button('Allow 24 hours', () => set(1440), 'secondary')); box.append(pair); }
+      const descriptions = {no_access: 'Status only. Agents cannot read your conversations.', read_only: 'Agents can read conversations, but cannot draft or change anything.', draft_only: 'Agents can read and save drafts. You review and click Send.', draft_and_send: 'Agents can read and send messages, react, edit and delete. Account linking and access settings stay owner-only.'};
+      box.append(node('p', 'u-status ' + (st.enabled ? 'warn' : 'on'), descriptions[st.mode] || descriptions.no_access));
+      const choice = node('select', 'u-channel'); choice.setAttribute('aria-label', 'Agent access level');
+      for (const [value, label] of [['no_access', 'No access'], ['read_only', 'Read-only'], ['draft_only', 'Draft-only'], ['draft_and_send', 'Draft-and-send']]) { const opt = node('option', '', label); opt.value = value; choice.append(opt); }
+      choice.value = st.mode || 'no_access';
+      const expiry = node('select', 'u-channel'); expiry.setAttribute('aria-label', 'Agent access duration');
+      for (const [value, label] of [['', 'Until I change it'], ['60', '1 hour'], ['1440', '24 hours']]) { const opt = node('option', '', label); opt.value = value; expiry.append(opt); }
+      box.append(choice, expiry, button('Save agent access', () => action(async () => {
+        if (choice.value === 'draft_and_send' && !confirm('Allow agents to send, edit and delete messages without your review?')) return;
+        const body = {mode: choice.value}; if (expiry.value) body.minutes = Number(expiry.value);
+        paint(await api('api/view/agent-access', {method: 'POST', body}));
+      }), 'primary wide'));
+      if (st.until) box.append(node('p', 'helper', 'Expires ' + new Date(st.until).toLocaleString()));
+      box.append(node('p', 'helper', 'App permissions only unless the entire agent runs in the restricted worker. Host administrators can bypass these controls. Same-server isolation is supported.'), button('Review agent drafts', agentDrafts, 'secondary wide'));
       if (st.log.length) {
         const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
         const list = node('ul', 'u-access-log');
@@ -1054,6 +1174,112 @@
       }
     };
     try { const st = await api('api/view/agent-access'); if (s.overlay === 'Settings') paint(st); } catch (e) { error(e); }
+  }
+  async function agentDrafts() {
+    const sheet = overlay('Agent drafts');
+    try {
+      const result = await api('api/drafts');
+      if (s.overlay !== 'Agent drafts') return;
+      if (!result.drafts.length) sheet.append(node('p', 'helper', 'No agent drafts yet. Nothing has been sent.'));
+      for (const draft of result.drafts) {
+        const row = node('div', 'u-account');
+        row.append(node('p', '', draft.text), node('p', 'helper', draft.state + ' · revision ' + draft.revision), button('Review draft', () => reviewAgentDraft(draft), 'secondary'));
+        sheet.append(row);
+      }
+    } catch (e) { sheet.append(node('p', 'error', e.message)); }
+  }
+  async function reviewAgentDraft(initial) {
+    const sheet = overlay('Review agent draft'); let draft = initial;
+    const problem = node('p', 'error'); problem.setAttribute('role', 'status');
+    const recipient = node('select', 'u-channel'); recipient.setAttribute('aria-label', 'Draft recipient and channel');
+    const body = node('textarea'); body.rows = 5; body.maxLength = 16384; body.value = draft.text; body.setAttribute('aria-label', 'Draft message');
+    const preview = node('div', 'u-preview');
+    const invalidate = () => { preview.replaceChildren(); };
+    recipient.onchange = body.oninput = invalidate;
+    sheet.append(node('p', 'helper', 'Check the recipient, channel and exact message before sending.'), recipient, body, problem, preview);
+    try {
+      const directory = await call('directory');
+      if (s.overlay !== 'Review agent draft') return;
+      for (const person of [...directory.people, ...directory.groups]) for (const identity of person.identities || []) {
+        const opt = node('option', '', person.display_name + ' · ' + cap(identity.network) + ' · ' + identity.label);
+        opt.value = JSON.stringify([person.id, identity.id]); recipient.append(opt);
+      }
+      recipient.value = JSON.stringify([draft.person_id, draft.identity_id]);
+      const authority = await api('api/view/authority');
+      // Missing/old metadata fails closed. Local review is explicitly advertised by the server.
+      if (authority.required === false && !draft.export && !draft.authority_receipt) {
+        const review = button('Review message', () => action(async () => {
+          problem.textContent = ''; review.disabled = body.disabled = recipient.disabled = true;
+          try {
+            const [person_id, identity_id] = JSON.parse(recipient.value);
+            draft = (await api('api/drafts/' + draft.id, {method:'POST', body:{revision:draft.revision, person_id, identity_id, text:body.value}})).draft;
+            draft = (await api('api/drafts/' + draft.id + '/preview', {method:'POST', body:{revision:draft.revision}})).draft;
+            if (s.overlay !== 'Review agent draft') return;
+            const exact = draft.preview;
+            const send = button(exact.error ? 'Send original' : 'Send', () => action(async () => {
+              send.disabled = true;
+              try {
+                await api('api/drafts/' + draft.id + '/send', {method:'POST', body:{revision:draft.revision, send_original:!!exact.error}});
+                await agentDrafts();
+              } catch (e) { problem.textContent = e.message; }
+            }), 'primary wide');
+            preview.replaceChildren(node('p', 'helper', 'Revision ' + draft.revision + ' · ' + Array.from(recipient.children).find(o => o.value === recipient.value)?.textContent),
+              node('p', '', exact.error ? exact.original : exact.translated),
+              node('p', 'helper', exact.error ? 'Translation unavailable. Send original only if this exact text is what you want.' : ''), send);
+            body.oninput = recipient.onchange = () => { send.disabled = true; invalidate(); };
+          } catch (e) { problem.textContent = e.message; }
+          finally { review.disabled = body.disabled = recipient.disabled = draft.state !== 'draft'; }
+        }), 'secondary wide');
+        review.disabled = body.disabled = recipient.disabled = draft.state !== 'draft';
+        if (draft.state === 'sending') sheet.append(node('p', 'helper', 'Delivery is uncertain. Check the conversation before creating a replacement. Editing is locked.'));
+        if (draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
+          if (!confirm('Delete this local draft?')) return;
+          try { await api('api/drafts/' + draft.id, {method:'DELETE', body:{revision:draft.revision}}); await agentDrafts(); }
+          catch (e) { problem.textContent = e.message; }
+        }), 'secondary wide'));
+        sheet.append(node('p', 'helper', 'Review the recipient and text, then click Send. Nothing is sent by reviewing.'), review,
+          button('Back to drafts', agentDrafts, 'secondary wide'));
+        return;
+      }
+      const reason = node('p', 'helper', authority.reason); sheet.append(reason);
+      const link = origin => {
+        const a = node('a', 'primary wide', 'Open independent review');
+        a.href = origin; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.referrerPolicy = 'no-referrer';
+        preview.replaceChildren(node('p', 'helper', 'Frozen revision ' + draft.revision + '. Independently unlock, inspect account, room and exact text, then approve with your passkey.'), a);
+      };
+      if (authority.ready && draft.export?.review_origin === authority.review_origin) link(authority.review_origin);
+      const review = button(draft.state === 'exported' ? 'Retry secure export' : 'Review securely', () => action(async () => {
+        problem.textContent = ''; review.disabled = body.disabled = recipient.disabled = true;
+        try {
+          if (draft.state === 'draft') {
+            const [person_id, identity_id] = JSON.parse(recipient.value);
+            draft = (await api('api/drafts/' + draft.id, {method: 'POST', body: {revision: draft.revision, person_id, identity_id, text: body.value}})).draft;
+          }
+          const result = await api('api/drafts/' + draft.id + '/export', {method: 'POST', body: {revision: draft.revision}});
+          draft = result.draft; link(result.review_origin);
+          await reviewAgentDraft(draft); // Repaint frozen controls/status, removing stale local Delete.
+        } catch (e) {
+          problem.textContent = e.message || 'Independent review unavailable. No local fallback.';
+          // An uncertain export is frozen server-side. Reload before any edit/retry.
+          try { draft = (await api('api/drafts/' + draft.id)).draft; } catch { /* leave disabled */ }
+        } finally {
+          body.disabled = recipient.disabled = draft.state !== 'draft';
+          review.disabled = !authority.ready || !['draft', 'exported'].includes(draft.state);
+        }
+      }), 'primary wide');
+      review.disabled = !authority.ready || !['draft', 'exported'].includes(draft.state);
+      body.disabled = recipient.disabled = draft.state !== 'draft';
+      if (draft.state === 'exported') sheet.append(button('Refresh independent status', () => action(async () => {
+        try { await api('api/drafts/' + draft.id + '/authority-status', {method: 'POST', body: {revision: draft.revision}}); await agentDrafts(); }
+        catch (e) { problem.textContent = e.message; }
+      }), 'secondary wide'));
+      if (!draft.export && draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
+        if (!confirm('Delete this local draft?')) return;
+        try { await api('api/drafts/' + draft.id, {method: 'DELETE', body: {revision: draft.revision}}); await agentDrafts(); }
+        catch (e) { problem.textContent = e.message; }
+      }), 'secondary wide'));
+      sheet.append(review, button('Back to drafts', agentDrafts, 'secondary wide'));
+    } catch (e) { problem.textContent = e.message; }
   }
   const LOGIN_FLAG = 'messenger-telegram-login';
   // Region code, dialling code, name. Built from libphonenumber + ISO 3166 names.
@@ -1163,6 +1389,7 @@
     if (at?.person && at.tab !== 'messenger') openPerson(at.person);
   }
   window.MessengerUnified = {
+    settings: accounts,
     ask, toast, holdToMenu, actionMenu, muteAction, icon,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
@@ -1182,6 +1409,6 @@
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (s.tab !== 'messenger' || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
-    signout(wipe = false) { nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

@@ -1,0 +1,153 @@
+{
+  "whatsapp": {
+    "tag": "v0.2610.0",
+    "image": "dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391",
+    "manifest": {
+      "schemaVersion": 2,
+      "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:d502c988bbe71c58993d20b9c5644a9cc51043492d956b284b32aa4dfad04b34",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:d9652896efefc0d8ac1d79e3b9a53ea37d42b43a523479093e49836b1e5a332a",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    "binary_sha256": "6ae3dade4888a2ea6ccc87f6902b0faabe47f143ca50c43eb011ad94745bfec8",
+    "template_sha256": "2632697ff43f622626d98dc54b43158388d062d7211e80977657bccafc3ecb66",
+    "source": "https://github.com/mautrix/whatsapp/tree/v0.2610.0"
+  },
+  "signal": {
+    "tag": "v0.2610.0",
+    "image": "dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a",
+    "manifest": {
+      "schemaVersion": 2,
+      "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:bf8282036a7965876a2d9b7e21d1e3c92ccb4bf23c890435ce7e67a8800a7075",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:cb9cf3b494cdc20e644d5518d1a38c66d91be8cec7a4d3a65d812987c0f03138",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    "binary_sha256": "13867e87604464b7ca848bd0e4b6afdb013710f021cc7477007629d1585f3b5f",
+    "template_sha256": "b35d306cc63d4522adbbe7ede4cc0214d918088127f173319d7f5f30bde0dc76",
+    "source": "https://github.com/mautrix/signal/tree/v0.2610.0"
+  },
+  "slack": {
+    "tag": "v0.2610.0",
+    "image": "dock.mau.dev/mautrix/slack@sha256:0de822d47926b7077322a4fa9f349cd024af13107ab4bc63a0962dc53ef72a63",
+    "manifest": {
+      "schemaVersion": 2,
+      "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1364,
+          "digest": "sha256:1195ea6a0ab18a00642441e5d473065696418c0f1506d626b908f0480ef320b2",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1364,
+          "digest": "sha256:57ff2a6fae4298dd66a2e00ba252c427b7d5b705a2cd3f5b7b39cda1d70b5246",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    "binary_sha256": "f3efbd43081f313b8ab458c0f14c250e60cca899dfac045213a5ee4828ff83f8",
+    "template_sha256": "fde88ed2d060cd88d4c2bd98aaa7b7c6c9d21097b296ddf4b4af66962cd3fa63",
+    "source": "https://github.com/mautrix/slack/tree/v0.2610.0"
+  },
+  "instagram": {
+    "tag": "v0.2610.0",
+    "image": "dock.mau.dev/mautrix/meta@sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26",
+    "manifest": {
+      "schemaVersion": 2,
+      "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:fdac5d84f3f455c8b38d5c40310a4269616fcd7397426ad072fdccc4e2f2dba5",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:5b4944a956b82a170f1e1368703ef5c8c4dbe420c83bce91da8a57227c0dbed6",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    "source": "https://github.com/mautrix/meta/tree/v0.2610.0",
+    "license": "AGPL-3.0-or-later",
+    "mautrix_go": "v0.32.0",
+    "template_sha256": "39328d70ec7c3da426f07d0810fe10420303f9e9caeb9d298eb88b19e977f10d",
+    "image_executable": "/usr/bin/mautrix-meta",
+    "image_binary_sha256": "c3b469ea8c257055ae9e6a5695292686b1c82692761fae2e969eea9a426d94fa",
+    "release_binary_sha256": "c3b469ea8c257055ae9e6a5695292686b1c82692761fae2e969eea9a426d94fa"
+  },
+  "line": {
+    "tag": null,
+    "release_note": "1.2.0 lacks QR; pinned main commit includes QR and self-hosting fixes",
+    "source_commit": "72c7a51a44f344966b916bd2f42a734381061186",
+    "source": "https://github.com/beeper/line/tree/72c7a51a44f344966b916bd2f42a734381061186",
+    "source_archive_sha256": "db6f424bdbbe27751ea1e395f09032e4611d7d74a23507ef2e12459891e0fc9b",
+    "image": "wizard-messenger-line:72c7a51a44f344966b916bd2f42a734381061186",
+    "image_origin": "local source build, no verified public image; upstream CI registry is secret",
+    "license": "MIT",
+    "mautrix_go": "v0.31.1-0.20261012132636-34107524d2ab",
+    "template_sha256": "0f3cab81353b9043ff35b2854feca957a44eb18cd3f7384e2076daf08dc926ca",
+    "local_image_id": "sha256:9a47f439a7e634017cc7a0a3f743a670ccef3d93b49d445a786742baa42997e4",
+    "image_executable": "/usr/bin/matrix-line",
+    "build_adjustments": [
+      "immutable base images",
+      "GOMAXPROCS=2 GOMEMLIMIT=1536MiB -p 2",
+      "-gcflags=github.com/beeper/line/pkg/ltsm=-N -l (disable optimizer for huge generated crypto only)"
+    ],
+    "dockerfile_sha256": "11addc6aa7280d28c23a203fea311d238c9a1b7c927485c4b2cc2f0fb2359afc",
+    "image_binary_sha256": "ad75ab145fa3defbbcc0e0dedd8a9703afcc290aa1fcef415b3a2f325a421bd7",
+    "source_license_sha256": "01287a3e9bb97779353d145d79edc9c9862f469a1a651b8c526fafc1a6cbc8c4",
+    "build_context_note": "Pinned GitHub source; only Dockerfile modified. Optimized compile cancelled after GC thrashing; bounded ltsm -N -l build succeeded."
+  }
+}

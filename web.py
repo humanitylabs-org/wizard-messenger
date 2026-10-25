@@ -29,14 +29,14 @@ class BrowserAuth:
         self.path=Path(path) if path else None; self.login_attempts=[]
         if self.path and self.path.exists():
             data=json.loads(self.path.read_text())
-            self.tickets=data.get('tickets',{}); self.sessions=data.get('sessions',{}); self.credential=data.get('credential')
+            self.tickets=data.get('tickets',{}) if data.get('version') == 2 else {}; self.sessions=data.get('sessions',{}) if data.get('version') == 2 else {}; self.credential=data.get('credential')
     def _save(self):
         if self.path:
             self.path.parent.mkdir(parents=True,exist_ok=True)
             tmp=self.path.with_suffix('.tmp')
             with tmp.open('w') as f:
                 os.chmod(tmp,0o600)
-                json.dump({'tickets':self.tickets,'sessions':self.sessions,'credential':self.credential},f)
+                json.dump({'version':2,'tickets':self.tickets,'sessions':self.sessions,'credential':self.credential},f)
                 f.flush(); os.fsync(f.fileno())
             os.replace(tmp,self.path)
     def _clean(self):
@@ -64,7 +64,8 @@ class BrowserAuth:
                     raise EngineError('invalid_view_ticket','Open Messenger from Wizard again',401)
             if len(self.sessions)>=256: raise EngineError('session_limit','Please try again shortly',429)
             token=secrets.token_urlsafe(32)
-            session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+SESSION_SECONDS}
+            session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+SESSION_SECONDS, 'setup_only': ticket is not None,
+                     'owner_enrollment': bool(ticket is not None and isinstance(issued, dict) and issued.get('bootstrap'))}
             self.sessions[hashlib.sha256(token.encode()).hexdigest()]=session
             self._save()
             return token,session
@@ -104,75 +105,22 @@ class BrowserAuth:
             self.credential={'salt':salt,'digest':self._digest(password,salt)}
             self._save()
 
-# Agent boundary: the app's machine key (MESSENGER_API_TOKEN) is held by the Wizard host, so
-# any agent on the box can find it. It may open the owner's view and read status, but it never
-# reads or sends message content unless the owner turns on a time-limited grant from the view.
-# Every machine-key call outside the open set is logged (route shape only, never content).
-BEARER_OPEN = {
-    ('GET', '/healthz'), ('GET', '/api/status'), ('GET', '/api/identity'), ('POST', '/api/view/ticket'),
-    ('GET', '/api/unified/status'), ('GET', '/api/unified/telegram/status'), ('POST', '/api/resolve-contact'),
-    # Passphrase-proved setup/unlock or lock; returns state, never message content.
-    ('POST', '/api/setup'),
-}
-AGENT_GRANT_MAX_MINUTES = 24 * 60
-
-ROUTE_WORDS = {'api', 'dms', 'messages', 'contacts', 'invites', 'retry', 'accept', 'decline', 'setup', 'unified', 'people',
-               'groups', 'labels', 'merge', 'unmerge', 'preview', 'send', 'translate', 'sync', 'telegram', 'status', 'start',
-               'step', 'disconnect', 'cancel', 'view', 'session', 'identity', 'resolve-contact', 'mcp', 'spec',
-               'updates', 'media', 'upload', 'read', 'typing', 'react', 'edit', 'delete', 'directory'}
-
-def route_shape(path):
-    # Log the route's shape only: every id, address or unknown segment becomes :id.
-    return '/' + '/'.join(p if p in ROUTE_WORDS else ':id' for p in path.split('/') if p)
-
-class AgentAccess:
-    def __init__(self, root=None):
-        self.lock = threading.Lock(); self.root = Path(root) if root else None; self.until = 0.0; self.memory_log = []
-        if self.root and (self.root / 'agent-access.json').exists():
-            try: self.until = float(json.loads((self.root / 'agent-access.json').read_text()).get('until', 0))
-            except (ValueError, OSError): self.until = 0.0
-    def active(self):
-        return self.until > time.time()
-    def state(self, limit=50):
-        return {'enabled': self.active(), 'until': int(self.until * 1000) if self.active() else None, 'log': self.recent(limit)}
-    def grant(self, minutes):
-        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 0 <= minutes <= AGENT_GRANT_MAX_MINUTES:
-            raise EngineError('invalid_grant', 'Choose off, 1 hour or 24 hours', 400)
-        with self.lock:
-            self.until = time.time() + minutes * 60 if minutes else 0.0
-            if self.root:
-                tmp = self.root / 'agent-access.tmp'
-                with tmp.open('w') as f:
-                    os.chmod(tmp, 0o600); json.dump({'until': self.until}, f)
-                os.replace(tmp, self.root / 'agent-access.json')
-        self.record('OWNER', '/agent-access', 'granted' if minutes else 'revoked')
-        return self.state()
-    def record(self, method, route, outcome):
-        entry = {'t': int(time.time() * 1000), 'method': method, 'route': route, 'outcome': outcome}
-        with self.lock:
-            if not self.root:
-                self.memory_log = (self.memory_log + [entry])[-500:]; return
-            path = self.root / 'agent-access-log.jsonl'
-            lines = path.read_text().splitlines()[-499:] if path.exists() else []
-            lines.append(json.dumps(entry))
-            tmp = self.root / 'agent-access-log.tmp'
-            with tmp.open('w') as f:
-                os.chmod(tmp, 0o600); f.write('\n'.join(lines) + '\n')
-            os.replace(tmp, path)
-    def recent(self, limit=50):
-        with self.lock:
-            if not self.root: return list(reversed(self.memory_log[-limit:]))
-            path = self.root / 'agent-access-log.jsonl'
-            if not path.exists(): return []
-            return [json.loads(l) for l in reversed(path.read_text().splitlines()[-limit:]) if l.strip()]
+# Machine keys are untrusted agent capabilities, never owner browser authority.
+from drafts import Drafts
 
 class ViewServer(MessengerServer):
     def __init__(self,address,engine,token,origins):
         super().__init__(address,engine,token,origins)
+        engine=self.engine
         data=getattr(engine,'data',None)
+        from remote_authority import RemoteAuthority, CachedDirectory
+        self.remote_authority=RemoteAuthority.from_environment()
+        self.remote_required=os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1'
+        if self.remote_required and not data:
+            raise ValueError('remote-required needs persistent credential-free data')
         self.auth=BrowserAuth(Path(data)/'browser-auth.json' if data else None)
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
-        self.agent_access=AgentAccess(data)
+        self.drafts=Drafts(data)
         # One transaction for provider proof, engine transition and verifier issuance.
         self.setup_lock=threading.Lock()
         self.public_path=os.environ.get('MESSENGER_PUBLIC_PATH','/')
@@ -180,12 +128,32 @@ class ViewServer(MessengerServer):
             raise ValueError('MESSENGER_PUBLIC_PATH must be an app path ending in /')
         self.cookie_secure=os.environ.get('MESSENGER_COOKIE_SECURE','1')!='0'
         self.static_root=Path(__file__).parent/'static'
-        self.RequestHandlerClass=ViewHandler
-        self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        if self.remote_required:
+            self.RequestHandlerClass=ViewHandler
+            self.unified=CachedDirectory(data)
+        elif os.environ.get('CONNECTORS_ENABLED') == '1':
+            from connector_inbox import ConnectorInbox
+            from connector_web import ConnectorViewHandler
+            self.RequestHandlerClass = ConnectorViewHandler
+            from connector_sender import LocalOwnerSender
+            # Normal app only. Parent must authorize actor BEFORE this callback.
+            # remote_required above takes precedence; never inject in strong mode.
+            sender = LocalOwnerSender(matrix=os.environ.get('MATRIX_URL', 'http://matrix:8008')) if os.environ.get('MESSENGER_CONNECTOR_SENDER_MODE') == 'local-owner' else None
+            self.unified = ConnectorInbox(data, engine, sender=sender) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        else:
+            self.RequestHandlerClass=ViewHandler
+            self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        self.push = None
+        if os.environ.get('MESSENGER_PUSH_ENABLED') == '1':
+            from push_notifications.runtime import PushRuntime
+            self.push = PushRuntime(data, self.unified, self.public_path)
+            self.push.start()
         if self.unified:
             self.unified.start()
 
     def server_close(self):
+        if getattr(self, 'push', None):
+            self.push.close()
         if getattr(self, 'unified', None):
             self.unified.close()
         super().server_close()
@@ -216,6 +184,11 @@ class ViewHandler(Handler):
         self._origin(required=self.command in ['POST','DELETE','PUT','PATCH'])
         session=self._session()
         if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
+        if session.get('setup_only') and urlsplit(self.path).path == '/api/setup':
+            if not session.get('owner_enrollment') or self.service.auth.credential:
+                raise EngineError('owner_unlock_required', 'Use an independently issued owner enrollment link or unlock with your passphrase', 403)
+        if session.get('setup_only') and urlsplit(self.path).path not in ('/api/setup', '/api/status', '/api/identity', '/api/view/session'):
+            raise EngineError('owner_unlock_required', 'Finish setup or unlock with your passphrase first', 403)
         if self.command in ['POST','DELETE','PUT','PATCH']:
             supplied=self.headers.get('X-Messenger-CSRF','')
             if not hmac.compare_digest(supplied.encode(),session['csrf'].encode()):
@@ -228,6 +201,8 @@ class ViewHandler(Handler):
         self.send_header('Content-Type',mime)
         self.send_header('Content-Length',str(len(body)))
         self.send_header('Cache-Control','no-store')
+        if urlsplit(self.path).path == '/push-service-worker.js':
+            self.send_header('Service-Worker-Allowed', self.service.public_path)
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Referrer-Policy','no-referrer')
         self.send_header('Content-Security-Policy',csp or "default-src 'none'; frame-ancestors 'self'")
@@ -284,16 +259,6 @@ class ViewHandler(Handler):
                 if not chunk: break
                 self.wfile.write(chunk); left-=len(chunk)
         return None
-    def _agent_gate(self,method,path):
-        # Machine-key callers only; a bad key still fails in _authorize as before.
-        if not self.headers.get('Authorization') or (method,path) in BEARER_OPEN: return
-        if not hmac.compare_digest(self.headers.get('Authorization','').encode(),('Bearer '+self.service.token).encode()): return
-        if path in ('/api/setup','/api/view/session') and not self.service.engine.status().get('account_configured',False): return
-        route=route_shape(path)
-        if not self.service.agent_access.active():
-            self.service.agent_access.record(method,route,'blocked')
-            raise EngineError('agent_access_off','Agent access to messages is off. The owner can allow it for a limited time in Messenger → Connected accounts.',403)
-        self.service.agent_access.record(method,route,'allowed')
     def _passkey(self,method,path):
         # Fingerprint/face unlock: opens a browser session only; never the encrypted vault.
         if self.headers.get('Authorization'): raise EngineError('owner_only','Fingerprint unlock is set up from the Messenger screen',403)
@@ -327,14 +292,63 @@ class ViewHandler(Handler):
     def _dispatch(self,method):
         self.pending_cookie=None
         path=urlsplit(self.path).path
+        if self.service.remote_required or bool(self.service.remote_authority.endpoint):
+            from remote_authority import remote_required_gate
+            remote_required_gate(method, path)
         self._agent_gate(method,path)
+        if path.startswith('/api/view/push'):
+            # Bearers (including Full access) never possess notification authority.
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Only the owner can manage notifications', 403)
+            self._authorize()
+            push = self.service.push
+            if method == 'GET' and path == '/api/view/push':
+                return 200, {'ok': True, 'result': push.config() if push else {'enabled': False}}
+            if push is None:
+                raise EngineError('not_configured', 'Notifications are not configured', 503)
+            if method == 'POST' and path in ('/api/view/push/subscribe', '/api/view/push/unsubscribe'):
+                if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                    raise EngineError('invalid_request', 'JSON required', 400)
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                except ValueError:
+                    length = 0
+                if not 0 < length <= 8192:
+                    raise EngineError('too_large', 'Invalid subscription size', 413)
+                from push_notifications import OwnerAPI
+                from push_notifications.runtime import OWNER
+                try:
+                    result = OwnerAPI(push.store, lambda _: OWNER).handle(self, path.rsplit('/', 1)[1], self._body())
+                except (ValueError, TypeError, PermissionError):
+                    raise EngineError('invalid_subscription', 'Invalid notification subscription', 400) from None
+                return 200, {'ok': True, 'result': result}
+            raise EngineError('not_found', 'No such notification route', 404)
+        if path == '/api/view/authority':
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Independent review configuration is owner-only', 403)
+            self._authorize()
+            if method != 'GET': raise EngineError('not_found', 'No such authority route', 404)
+            state = self.service.remote_authority.state()
+            state['required'] = self.service.remote_required or bool(self.service.remote_authority.endpoint)
+            return 200, {'ok': True, 'result': state}
         if path=='/api/view/agent-access':
             # Owner-only: a browser session with CSRF, never the machine key.
             if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can change agent access, from the Messenger view',403)
             self._authorize()
             if method=='GET': return 200,{'ok':True,'result':self.service.agent_access.state()}
-            if method=='POST': return 200,{'ok':True,'result':self.service.agent_access.grant(self._body().get('minutes'))}
+            if method=='POST': return 200,{'ok':True,'result':self.service.agent_access.configure(self._body())}
             raise EngineError('not_found','No such view route',404)
+        if path == '/api/drafts' or path.startswith('/api/drafts/'):
+            self._authorize()
+            if self.service.unified is None:
+                raise EngineError('not_configured', 'Unified inbox is not enabled', 503)
+            suffix = path.split('/')[3:]
+            result = self.service.drafts.dispatch(method, suffix, self._body() if method in ('POST', 'DELETE') else {},
+                self.service.unified, owner=not bool(self.headers.get('Authorization')),
+                authority=self.service.remote_authority,
+                remote_required=self.service.remote_required or bool(self.service.remote_authority.endpoint),
+                can_send=bool(self.headers.get('Authorization')) and self.service.agent_access.effective_mode() == 'draft_and_send')
+            return 200, {'ok': True, 'result': result}
         if path.startswith('/api/unified/'):
             self._authorize()
             if self.service.unified is None:
@@ -349,8 +363,8 @@ class ViewHandler(Handler):
             return 200, {'ok':True,'result':result}
         if path=='/api/view/ticket' and method=='POST':
             # Only a trusted API caller/proxy can mint an initial browser capability.
-            super()._authorize(); payload=self._body()
-            bootstrap=payload.get('bootstrap') is True and not self.service.engine.status().get('account_configured',False)
+            super()._authorize(); self._body()
+            bootstrap=False  # Machine callers cannot issue owner enrollment authority.
             return 200,{'ok':True,'result':{'ticket':self.service.auth.ticket(bootstrap),'expires_in':7*24*3600 if bootstrap else 300}}
         if path.startswith('/api/view/passkey'):
             return self._passkey(method,path)
@@ -367,7 +381,9 @@ class ViewHandler(Handler):
                 ticket=self._body().get('ticket')
                 if not isinstance(ticket,str) or not ticket:
                     raise EngineError('invalid_view_ticket','Open Messenger from Wizard again',401)
-                token,session=self.service.auth.create(ticket,allow_bootstrap=not self.service.engine.status().get('account_configured',False))
+                if self.service.engine.status().get('account_configured',False) or self.service.auth.credential:
+                    raise EngineError('session_unlock_required', 'Enter your passphrase to open Messenger', 401)
+                token,session=self.service.auth.create(ticket,allow_bootstrap=True)
                 self.pending_cookie=self._cookie(token)
             elif method=='GET':
                 if not self.headers.get('Authorization') and self._session() is None:
@@ -379,8 +395,7 @@ class ViewHandler(Handler):
                 self._authorize()
                 session=self._session()
                 if session is None:
-                    super()._authorize()
-                    token,session=self.service.auth.create(); self.pending_cookie=self._cookie(token)
+                    raise EngineError('session_unlock_required', 'Enter your passphrase to open Messenger', 401)
             else: raise EngineError('not_found','No such view route',404)
             return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
         if path=='/api/resolve-contact' and method=='POST':
@@ -411,6 +426,8 @@ class ViewHandler(Handler):
                     self.service.auth.remember_password(password)
                 elif not self.service.auth.credential:
                     raise EngineError('relock_required','Lock and unlock Messenger once to confirm its passphrase',409)
+            # Setup-link cookies never become unlocked owner sessions. The owner
+            # must prove the newly established passphrase through /view/unlock.
             return 200,{'ok':True,'result':result}
         if path=='/api/identity' and method=='GET':
             self._authorize(); result=self.service.engine.identity()
@@ -421,15 +438,20 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         path=urlsplit(self.path).path
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+        if path == '/push-service-worker.js':
+            self.pending_cookie = None
+            if self.service.push is None:
+                return self._reply(404, {'ok': False})
+            return self._headers(200, self.service.push.script(), 'application/javascript; charset=utf-8')
+        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:
             if path=='/api/spec': self._authorize()
-            # The stock gateway may authenticate the HTML request server-side.
-            # In that case silently mint a separate HttpOnly browser session.
+            # A gateway/agent bearer can load public HTML, but NEVER mint an owner cookie.
             if path in ['/','/index.html'] and self.headers.get('Authorization'):
-                super()._authorize(); token,_=self.service.auth.create(); self.pending_cookie=self._cookie(token)
+                if not hmac.compare_digest(self.headers['Authorization'].encode(), ('Bearer '+self.service.token).encode()):
+                    raise EngineError('unauthorized', 'Invalid capability', 401)
             source=self.service.static_root/allowed[path]
             if not source.is_file(): raise EngineError('not_found','Messenger view is not available',404)
             body=source.read_bytes()
@@ -441,10 +463,36 @@ class ViewHandler(Handler):
         except (BrokenPipeError,ConnectionResetError): pass
         except OSError: self._reply(500,{'ok':False,'error':{'code':'view_unavailable','message':'Could not load Messenger'}})
 
+def provision_owner_enrollment(service):
+    """Trusted local operator hook, deliberately not reachable through HTTP/MCP.
+
+    Enable only for first-run startup. The link is a secret: retrieve it through
+    owner-controlled local provisioning, never through the agent bearer API.
+    """
+    if service.auth.credential or service.engine.status().get('account_configured', False):
+        raise ValueError('Owner enrollment is only available before account setup')
+    if service.auth.path is None:
+        raise ValueError('Owner enrollment requires persistent private data')
+    ticket = service.auth.ticket(bootstrap=True)
+    target = service.auth.path.parent / 'owner-enrollment.json'
+    # Exclusive creation prevents overwriting an owner-provisioned link or symlink.
+    with open(target, 'x', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        json.dump({'fragment': '#ticket=' + ticket, 'expires_in': 7*24*3600}, output)
+        output.flush(); os.fsync(output.fileno())
+    return target
+
+
 if __name__=='__main__':
     os.umask(0o077)
-    engine=MarmotEngine(os.environ.get('MESSENGER_DATA','/data'))
+    from remote_authority import OfflineEngine
+    engine=(OfflineEngine if os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1' else MarmotEngine)(os.environ.get('MESSENGER_DATA','/data'))
     server=ViewServer(('0.0.0.0',int(os.environ.get('MESSENGER_PORT','8765'))),engine,os.environ.get('MESSENGER_API_TOKEN',''),[x for x in os.environ.get('MESSENGER_ALLOWED_ORIGINS','').split(',') if x])
+    if (os.environ.get('MESSENGER_PROVISION_OWNER_ENROLLMENT') == '1'
+            and not server.auth.credential
+            and not server.engine.status().get('account_configured', False)
+            and server.auth.path is not None
+            and not (server.auth.path.parent / 'owner-enrollment.json').exists()):
+        provision_owner_enrollment(server)
     def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop); signal.signal(signal.SIGINT,stop)
     try: server.serve_forever()

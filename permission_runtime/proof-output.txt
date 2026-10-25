@@ -1,0 +1,87 @@
+NORMAL MESSENGER HTTP + FIXTURE PROVIDER CALLBACK ONLY; no current Oscar confinement claim
+IMAGE sha256:59207abb88a818995e38f3e58d820cd4b74766bbdae83ae5baa1b2f3c733dedd
+PASS worker no network, nonroot, RO, no caps/admin mounts
+PASS default no access enforced
+PASS real app read through MCP and broker
+PASS MCP SDK transport interoperates
+PASS official MCP SDK initialization, discovery and broker-backed read
+
+PASS read-only cannot draft
+PASS real persisted draft readback
+PASS draft-only broker denies send_draft
+PASS draft-only broker denies preview_draft
+PASS draft-only broker denies react
+PASS draft-only broker denies typing
+PASS draft-only broker denies read_receipt
+PASS draft-only broker denies edit
+PASS draft-only broker denies delete_message
+PASS draft-only broker denies policy
+PASS draft-only broker denies approve
+PASS draft-only broker denies http
+PASS worker denied send
+PASS worker denied approve
+PASS worker denied freeze
+PASS worker denied policy
+PASS worker denied inspect
+PASS worker denied exec
+PASS worker denied upload
+PASS worker denied proxy
+PASS worker cannot schema-smuggle owner flag
+PASS worker cannot read /state/token
+PASS worker cannot read /state/config.json
+PASS worker cannot read /state/owner.json
+PASS worker cannot read /app
+PASS worker cannot read /state/fixture-provider-key
+PASS worker cannot read /state/fixture.json
+PASS worker cannot read /owner/control.sock
+PASS worker cannot read /var/run/docker.sock
+PASS worker cannot read /run/docker.sock
+PASS worker cannot read /run/user/1000/docker.sock
+PASS worker cannot read /home/oscar/.hermes/.env
+PASS worker cannot read /home/oscar/runtipi
+PASS worker cannot read /root/.ssh/id_rsa
+PASS worker cannot read /host
+PASS worker cannot read /proc/1/root/state/fixture-provider-key
+PASS worker cannot connect /owner/control.sock
+PASS worker cannot connect /agent/../owner/control.sock
+PASS worker cannot connect /var/run/docker.sock
+PASS worker cannot connect /run/user/1000/docker.sock
+PASS worker no provider/owner credential env
+PASS worker zero effective caps
+PASS worker no-new-privileges
+PASS worker seccomp filter active
+PASS worker unprivileged UID
+PASS worker has no sudo executable
+PASS worker has no Docker executable
+PASS worker immutable mount /code/broker.py
+PASS worker immutable mount /agent/injected
+PASS worker only loopback interface
+PASS worker blocked network 172.17.0.1:2375
+PASS worker blocked network 172.17.0.1:80
+PASS worker blocked network 169.254.169.254:80
+PASS worker blocked network 1.1.1.1:443
+PASS worker blocked network 127.0.0.1:2375
+PASS worker no host gateway alias
+PASS worker cannot mount
+ADVERSARIAL WORKER COMPLETE
+PASS no worker-caused callback
+PASS owner HTTP edit with cookie+CSRF
+PASS owner edit readback
+PASS owner wrong CSRF denied
+PASS owner HTTP preview
+PASS review alone has zero callbacks
+PASS owner exact click send
+PASS owner callback exact text and recipient
+PASS send persisted and idempotent
+PASS app policy still denies despite broker ceiling
+PASS explicit Draft-and-send preview
+PASS explicit Draft-and-send callback
+PASS Draft-and-send denies admin policy
+PASS Draft-and-send denies admin provision
+PASS Draft-and-send denies admin owner_session
+PASS Draft-and-send denies admin approve
+PASS Draft-and-send denies admin shell
+PASS Draft-and-send denies admin http
+PASS live revocation denies reads
+PASS runtime vertical slice: two fixture callbacks (one owner click, one explicitly permitted agent)
+PASS test resources removed and read-back verified

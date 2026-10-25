@@ -1,0 +1,29 @@
+{
+  "successful": true,
+  "tests_run": 5,
+  "passed": 5,
+  "known_failures": 0,
+  "skipped": 0,
+  "outcomes": [
+    {
+      "test": "test_unified.SignalMvpTests.test_reply_reaction_edit_redaction_ingest",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_unified.SignalMvpTests.test_media_rows_hide_mxc_and_upgrade_label_rows",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_unified.SignalMvpTests.test_voice_note_ingest",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_unified.SignalMvpTests.test_media_proxy_caches_and_serves_safe_types_only",
+      "outcome": "passed"
+    },
+    {
+      "test": "test_unified.SignalMvpTests.test_updates_feed_returns_new_rows_and_wakes_waiters",
+      "outcome": "passed"
+    }
+  ]
+}

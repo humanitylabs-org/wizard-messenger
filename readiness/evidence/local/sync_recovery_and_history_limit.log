@@ -1,0 +1,8 @@
+test_failed_sync_preserves_cursor_restart_replay_is_deduplicated (readiness.tests.test_transport.TransportTests.test_failed_sync_preserves_cursor_restart_replay_is_deduplicated) ... ok
+test_known_gap_timestamp_only_history_cursor_skips_ties (readiness.tests.test_transport.TransportTests.test_known_gap_timestamp_only_history_cursor_skips_ties) ... expected failure
+test_limited_sync_warns_history_incomplete (readiness.tests.test_transport.TransportTests.test_limited_sync_warns_history_incomplete) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 1.577s
+
+OK (expected failures=1)
