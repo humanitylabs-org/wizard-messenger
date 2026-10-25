@@ -104,6 +104,16 @@
   }
   const networksOf = p => [...new Set((p.identities || []).map(i => i.network))];
   const cap = t => t ? t[0].toUpperCase() + t.slice(1) : '';
+  // Brand-correct network names (WhatsApp, LINE, Instagram…) from connectors.js, falling back to Capitalised.
+  const brandOf = n => (window.MessengerConnectors?.BRAND || {})[n] || (n === 'private' ? {color: 'var(--accent)', mark: 'P', label: 'Private'} : null);
+  const netLabel = n => brandOf(n)?.label || cap(n);
+  // Round network badge (inline SVG glyph); a text mark only when connectors.js is missing.
+  function netBadge(n, cls = '') {
+    const made = window.MessengerConnectors?.badge?.(n, cls);
+    if (made) return made;
+    const b = brandOf(n) || {mark: (n || '?')[0].toUpperCase(), color: 'var(--ink-3)'};
+    const el = node('span', 'net-badge text' + (cls ? ' ' + cls : ''), b.mark); el.style.background = b.color; el.dataset.network = n; el.title = netLabel(n); return el;
+  }
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
@@ -158,13 +168,15 @@
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
-  function threadBase(name, subtitle, onInfo) {
+  function threadBase(name, subtitle, onInfo, network) {
     const root = $('unified-inbox'); root.replaceChildren();
     const head = node('header', 'u-header u-thread-head');
     head.append(iconButton('back', 'Back', back));
     const who = button('', onInfo || null, 'u-who'); who.disabled = !onInfo;
     const text = node('span', 'u-who-text'); text.append(node('strong', '', name)); if (subtitle) text.append(node('span', '', subtitle));
-    who.append(avatar(name, 'small'), text); head.append(who);
+    const face = node('span', 'u-av-wrap small'); face.append(avatar(name, 'small'));
+    if (network) { const b = netBadge(network, 'u-net'); b.setAttribute('aria-hidden', 'true'); face.append(b); }
+    who.append(face, text); head.append(who);
     if (onInfo) head.append(iconButton('more', 'Edit', onInfo));
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
@@ -196,8 +208,8 @@
           const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
           if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
           const row = button('', () => { closeOverlay(); openPerson(p.id); }, 'u-directory-row');
-          const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', p.group ? 'Group' : networksOf(p).map(cap).join(' · ')));
-          row.append(avatar(p.display_name, 'small'), text); list.append(row);
+          const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
+          row.append(netAvatar(p, 'small'), text); list.append(row);
         }
         if (!list.children.length) list.append(node('p', 'u-empty', 'No one matches'));
       };
@@ -359,12 +371,11 @@
     if (!box || !accountsSeen) return;
     const on = accountsSeen.filter(p => p.state === 'connected'), broken = accountsSeen.filter(p => p.state === 'degraded');
     box.replaceChildren();
-    const BRAND = window.MessengerConnectors?.BRAND || {};
     const strip = node('div', 'u-acct-strip');
-    for (const p of accountsSeen) {
-      const m = node('span', 'u-acct-dot' + (p.state === 'connected' ? ' on' : p.state === 'degraded' ? ' warn' : ''), (BRAND[p.network] || {}).mark || p.label[0]);
-      if (p.state === 'connected') m.style.background = (BRAND[p.network] || {}).color || '';
-      m.title = p.label + ': ' + (p.state === 'connected' ? 'connected' : 'not connected'); strip.append(m);
+    // Connected accounts first, in full colour; the rest are dimmed so the strip reads as status at a glance.
+    for (const p of [...accountsSeen].sort((a, b) => (b.state === 'connected') - (a.state === 'connected'))) {
+      const m = netBadge(p.network, 'u-acct-dot' + (p.state === 'connected' ? ' on' : p.state === 'degraded' ? ' warn' : ''));
+      m.title = p.label + ': ' + (p.state === 'connected' ? 'connected' : p.state === 'degraded' ? 'needs reconnecting' : 'not connected'); strip.append(m);
     }
     const text = broken.length ? broken.map(p => p.label).join(', ') + ' needs reconnecting'
       : on.length === accountsSeen.length ? 'All accounts connected' : on.length + ' of ' + accountsSeen.length + ' connected';
@@ -379,24 +390,35 @@
     const chips = node('div', 'u-chips'); chips.id = 'u-filters'; chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Filter chats');
     return chips;
   }
+  // One row of chips: All, Unread, one chip per platform (with its icon), then quieter Direct/Groups and labels.
   function paintFilters(all) {
     const chips = $('u-filters'); if (!chips) return;
-    const nets = [...new Set(all.flatMap(networksOf))].sort();
+    const connected = (accountsSeen || []).filter(p => p.state === 'connected' || p.state === 'degraded').map(p => p.network);
+    const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private').sort((a, b) => netLabel(a).localeCompare(netLabel(b)));
     const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
-        const options = [['all', 'All'], ['unread', 'Unread'], ['direct', 'Direct'], ['groups', 'Groups'],
-      ...['private', ...nets.filter(n => n !== 'private')].map(n => ['net:' + n, cap(n === 'whatsapp' ? 'WhatsApp' : n === 'line' ? 'LINE' : n)]), ...labels.map(l => ['label:' + l, l])];
+    const options = [['all', 'All'], ['unread', 'Unread'], ...nets.map(n => ['net:' + n, netLabel(n)]), ['net:private', 'Private'],
+      ['direct', 'Direct', 'sub'], ['groups', 'Groups', 'sub'], ...labels.map(l => ['label:' + l, l, 'sub label'])];
     const sig = options.map(o => o.join('=')).join('|');
     let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
     if (chips.dataset.sig !== sig) {
-      chips.dataset.sig = sig; chips.replaceChildren();
-      for (const [value, text] of options) {
-        const chip = button(text, () => { try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip');
-        chip.dataset.filter = value;
-        if (value.startsWith('net:')) { const b = (window.MessengerConnectors?.BRAND || {})[value.slice(4)]; if (b) chip.style.setProperty('--net', b.color); chip.classList.add('net'); }
+      chips.dataset.sig = sig; chips.replaceChildren(); let divided = false;
+      for (const [value, text, kind] of options) {
+        if (kind && !divided) { divided = true; const d = node('span', 'u-chip-divider'); d.setAttribute('aria-hidden', 'true'); chips.append(d); }
+        const chip = button('', () => { try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip' + (kind ? ' ' + kind : ''));
+        chip.dataset.filter = value; chip.setAttribute('aria-label', text);
+        if (value.startsWith('net:')) { chip.classList.add('net'); chip.append(netBadge(value.slice(4), 'u-chip-icon')); }
+        chip.append(node('span', 'u-chip-text', text), node('span', 'u-chip-count'));
         chips.append(chip);
       }
     }
-    for (const c of chips.children) c.setAttribute('aria-pressed', String(c.dataset.filter === current));
+    // Unread chats per chip (muted chats do not count), cheap enough to recompute on every paint.
+    for (const c of chips.querySelectorAll('.u-chip')) {
+      const f = c.dataset.filter, n = f === 'all' ? 0 : all.filter(p => p.unread > 0 && !p.muted && matchesFilter(p, f)).length;
+      const count = c.querySelector('.u-chip-count'), show = f !== 'all' && !c.classList.contains('sub') && n > 0;
+      count.textContent = show ? (n > 99 ? '99+' : String(n)) : ''; count.hidden = !show;
+      c.title = show ? c.getAttribute('aria-label') + ' · ' + n + ' unread' : c.getAttribute('aria-label');
+      c.setAttribute('aria-pressed', String(f === current));
+    }
     return current;
   }
   function matchesFilter(p, f) {
@@ -408,10 +430,10 @@
     if (f.startsWith('label:')) return (p.labels || []).includes(f.slice(6));
     return true;
   }
-  function netAvatar(p) {
-    const wrap = node('span', 'u-av-wrap'); wrap.append(avatar(p.display_name));
-    const net = networksOf(p)[0], b = net === 'private' ? {mark: 'P', color: 'var(--accent)', label: 'Private'} : net && (window.MessengerConnectors?.BRAND || {})[net];
-    if (b) { const dot = node('span', 'u-net', b.mark); dot.style.background = b.color; dot.title = cap(net); wrap.append(dot); }
+  function netAvatar(p, size = '') {
+    const wrap = node('span', 'u-av-wrap' + (size ? ' ' + size : '')); wrap.append(avatar(p.display_name, size));
+    const net = networksOf(p)[0];
+    if (net) wrap.append(netBadge(net, 'u-net'));
     return wrap;
   }
   let searchTimer, searchGeneration = 0;
@@ -445,7 +467,7 @@
         if (s.person === m.person_id) { paintThread(); jumpTo(m.message_id); }
       }), 'u-person');
       const info = node('span', 'u-person-info');
-      info.append(node('strong', '', m.display_name + ' · ' + cap(m.network)), node('span', 'u-snippet', m.original), node('time', 'u-when', when(m.timestamp)));
+      info.append(node('strong', '', m.display_name + ' · ' + netLabel(m.network)), node('span', 'u-snippet', m.original), node('time', 'u-when', when(m.timestamp)));
       if (m.translated && m.translated !== m.original) info.append(node('span', 'u-snippet', m.translated));
       row.append(info); list.append(row);
     }
@@ -470,7 +492,7 @@
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
       holdToMenu(card, () => chatMenu(p, card));
       if (p.native) card.dataset.nativeGroup = p.group_id;
-      card.append(netAvatar(p));
+      card.append(netAvatar(p)); card.dataset.network = networksOf(p)[0] || '';
       const info = node('span', 'u-person-info');
       const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
       if (p.muted) { const m = icon('belloff'); m.classList.add('u-muted-mark'); m.setAttribute('aria-label', 'Muted'); m.removeAttribute('aria-hidden'); name.append(m); }
@@ -480,13 +502,16 @@
       const typing = (store.typing[p.id] || []).length;
       if (typing) bottom.append(node('span', 'u-snippet typing', 'typing…'));
       else if (p.last) {
-        const who = p.last.outgoing ? 'You: ' : groups && p.last.sender ? nameOf(p.last.sender).split(' ')[0] + ': ' : '';
-        bottom.append(node('span', 'u-snippet', who + snippet(p.last)));
+        // Own last message always reads "You:", never the owner's display name; groups name the other sender.
+        const who = p.last.outgoing ? 'You' : groups && p.last.sender ? nameOf(p.last.sender).split(' ')[0] : '';
+        const line = node('span', 'u-snippet' + (p.last.outgoing ? ' mine' : ''));
+        if (who) line.append(node('span', 'u-snippet-who', who + ': '));
+        line.append(snippet(p.last) || ''); bottom.append(line);
       }
       if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
       else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
       info.append(top, bottom);
-      const extra = networksOf(p).length > 1 ? networksOf(p).map(cap) : []; // labels live in the filter chips
+      const extra = networksOf(p).length > 1 ? networksOf(p).map(netLabel) : []; // labels live in the filter chips
       if (extra.length) info.append(node('span', 'u-tags', extra.join(' · ')));
       card.append(info); frag.append(card);
     }
@@ -684,14 +709,15 @@
   function subtitle(p) {
     if ((store.typing[p.id] || []).length) return 'typing…';
     const langName = {th: 'Thai', ja: 'Japanese', zh: 'Chinese', es: 'Spanish', fr: 'French', de: 'German'}[p.language] || p.language;
-    return reviewedOf(p) ? 'Auto-translate · ' + langName : networksOf(p).map(cap).join(' · ');
+    const group = (p.identities || []).some(i => i.kind === 'group');
+    return reviewedOf(p) ? 'Auto-translate · ' + langName : (group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ');
   }
   function paintHead() {
     const t = store.threads[s.person]; if (!t || !view.sub) return;
     view.sub.textContent = subtitle(t.person); view.sub.classList.toggle('typing', (store.typing[s.person] || []).length > 0);
   }
   function buildThread(id, p) {
-    const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null);
+    const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null, networksOf(p)[0]);
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
     const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
@@ -759,13 +785,15 @@
     p.append(text.slice(at)); return p;
   }
   function bubble(m, pos, ctx) {
-    const row = node('div', 'u-row' + (m.outgoing ? ' outgoing' : '') + ' pos-' + pos); row.dataset.id = m.id;
+    // Direction comes only from message.outgoing: own messages sit right in the accent colour and never carry a name.
+    const row = node('div', 'u-row' + (m.outgoing ? ' outgoing' : ' incoming') + ' pos-' + pos + (ctx.group && !m.outgoing ? ' in-group' : '')); row.dataset.id = m.id; row.dataset.direction = m.outgoing ? 'out' : 'in';
+    if (ctx.group && !m.outgoing && (pos === 'last' || pos === 'single')) { const face = avatar(nameOf(m.sender) || '?', 'tiny u-row-av'); face.title = nameOf(m.sender); row.append(face); }
     const b = node('article', 'u-message' + (m.outgoing ? ' outgoing' : '') + (m.deleted ? ' deleted' : '') + (m.pending ? ' pending' : '') + (m.failed ? ' failed' : ''));
     const visual = !m.deleted && ['m.image', 'm.sticker', 'm.video'].includes(m.msgtype);
     if (visual && !m.original) b.classList.add('bare');
     if (ctx.group && !m.outgoing && m.sender && (pos === 'first' || pos === 'single')) b.append(node('p', 'u-sender tone-text-' + toneOf(m.sender), nameOf(m.sender)));
     if (m.reply) {
-      const q = button('', () => jumpTo(m.reply.id), 'u-quote');
+      const q = button('', () => jumpTo(m.reply.id), 'u-quote' + (m.reply.outgoing ? ' mine' : ''));
       q.append(node('strong', '', m.reply.outgoing ? 'You' : nameOf(m.reply.sender) || 'Them'), node('span', '', m.reply.deleted ? 'Deleted message' : m.reply.voice ? '🎤 Voice message' : m.reply.text || {'m.image': '📷 Photo', 'm.video': '🎬 Video', 'm.file': '📎 File', 'm.sticker': 'Sticker'}[m.reply.msgtype] || ''));
       b.append(q);
     }
@@ -786,7 +814,7 @@
       }
     }
     const meta = node('footer');
-    if (ctx.multi) meta.append(node('span', 'u-net', cap(m.network)));
+    if (ctx.multi) { const via = node('span', 'u-via'); via.append(netBadge(m.network, 'u-via-icon')); via.title = 'via ' + netLabel(m.network); meta.append(via); }
     if (m.edited && !m.deleted) meta.append(node('span', 'u-edited', 'edited'));
     meta.append(node('time', '', new Date(m.timestamp).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})));
     if (m.outgoing) meta.append(m.failed ? node('span', 'u-status-ic fail', '!') : m.pending ? node('span', 'u-status-ic clock', '◷') : node('span', 'u-status-ic' + (ctx.read ? ' read' : ''), ctx.read ? '✓✓' : '✓'));
@@ -939,7 +967,7 @@
     const form = node('form', 'u-composer');
     const bar = node('div', 'u-bar'); bar.hidden = true;
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
-    for (const i of p.identities || []) { const opt = node('option', '', 'via ' + cap(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
+    for (const i of p.identities || []) { const opt = node('option', '', 'via ' + netLabel(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => ['telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram'].includes(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
@@ -1158,7 +1186,7 @@
       const preview = await call('people/' + id + '/preview', {text, identity_id});
       if (s.person !== id) return;
       const sheet = overlay('Review before sending');
-      sheet.append(node('p', 'helper', cap(p.identities.find(i => i.id === preview.identity_id).network) + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));
+      sheet.append(node('p', 'helper', netLabel(p.identities.find(i => i.id === preview.identity_id).network) + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));
       if (preview.error) sheet.append(node('p', 'error', preview.error));
       const reply = view.reply;
       const confirmSend = original => action(async () => {
@@ -1174,13 +1202,13 @@
   }
   function editPerson(p) {
     const sheet = overlay(p.identities.every(i => i.kind === 'person') ? 'Contact' : 'Group'); const form = node('form');
-    const hero = node('div', 'u-hero'); hero.append(avatar(p.display_name, 'large'), node('strong', '', p.display_name), node('span', '', networksOf(p).map(cap).join(' · '))); sheet.append(hero);
+    const hero = node('div', 'u-hero'); hero.append(avatar(p.display_name, 'large'), node('strong', '', p.display_name), node('span', '', networksOf(p).map(netLabel).join(' · '))); sheet.append(hero);
     const name = node('input'); name.value = p.display_name; name.maxLength = 160;
     const nameLabel = node('label', '', 'Name'); nameLabel.append(name);
     const lang = node('select'); for (const [value, label] of [['','Off'],['th','Thai'],['en','English'],['ja','Japanese'],['zh','Chinese'],['es','Spanish'],['fr','French'],['de','German']]) { const o = node('option', '', label); o.value = value; lang.append(o); } lang.value = p.language;
     const langLabel = node('label', '', 'Auto-translate'); langLabel.append(lang);
     const preferred = node('select'); const auto = node('option', '', 'Their last-used channel'); auto.value = ''; preferred.append(auto);
-    for (const i of p.identities) { const o = node('option', '', cap(i.network) + ' · ' + i.label); o.value = i.id; preferred.append(o); } preferred.value = p.preferred_identity || '';
+    for (const i of p.identities) { const o = node('option', '', netLabel(i.network) + ' · ' + i.label); o.value = i.id; preferred.append(o); } preferred.value = p.preferred_identity || '';
     const preferredLabel = node('label', '', 'Reply on'); preferredLabel.append(preferred);
     form.append(nameLabel, langLabel); if (p.identities.length > 1) form.append(preferredLabel);
     const save = () => action(async () => { await call('people/' + p.id, {display_name: name.value, language: lang.value, preferred_identity: preferred.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); });
@@ -1193,7 +1221,7 @@
         const mergeLabel = node('label', '', 'Same person on another network'); mergeLabel.append(select);
         sheet.append(node('h3', '', 'Merge'), mergeLabel, button('Merge', () => action(async () => { await call('people/' + p.id + '/merge', {source_id: select.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); }), 'secondary wide'));
       }
-      if (p.identities.length > 1) for (const i of p.identities) sheet.append(button('Separate ' + cap(i.network) + ' · ' + i.label, () => action(async () => { await call('people/' + p.id + '/unmerge', {identity_id: i.id}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); }), 'secondary wide'));
+      if (p.identities.length > 1) for (const i of p.identities) sheet.append(button('Separate ' + netLabel(i.network) + ' · ' + i.label, () => action(async () => { await call('people/' + p.id + '/unmerge', {identity_id: i.id}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); }), 'secondary wide'));
     } else {
       const labels = node('input'); labels.placeholder = 'Family, Friends'; labels.value = (p.labels || []).join(', ');
       const labelsLabel = node('label', '', 'Labels'); labelsLabel.append(labels);
