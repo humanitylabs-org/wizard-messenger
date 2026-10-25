@@ -321,12 +321,14 @@ button { touch-action: manipulation; }
 .u-myqr-chips { padding: 2px 0 8px; }
 .u-myqr-card { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 0 12px; touch-action: pan-y; }
 .u-sheet .u-myqr-name { margin: 6px 0 0; font-size: 17px; text-transform: none; letter-spacing: 0; color: var(--ink); }
-.u-myqr { width: min(100%, 340px); margin: 12px auto; padding: 0; border-radius: 16px; image-rendering: pixelated; }
-.u-myqr-value { margin: 0 0 12px; color: var(--ink-2); font-size: 15px; word-break: break-all; }
+.u-myqr { width: min(100%, 300px, max(160px, calc(92dvh - 290px))); margin: 6px auto 10px; padding: 0; border-radius: 16px; image-rendering: pixelated; }
+.u-myqr-value { margin: 0 0 10px; color: var(--ink-2); font-size: 15px; word-break: break-all; }
 .u-myqr-actions { display: flex; gap: 10px; justify-content: center; }
 .u-myqr-actions button { min-width: 120px; }
 .u-myqr-edit { display: flex; flex-direction: column; gap: 14px; margin: 8px 0 14px; }
-.u-myqr-row { display: grid; grid-template-columns: 1fr 44px; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.u-myqr-row { display: grid; grid-template-columns: 1fr 44px 44px 44px; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .u-myqr-row input { grid-column: 1 / -1; }
 .u-myqr-remove { align-self: center; }
 .u-myqr-sheet > .wide, .u-myqr-body > .wide { margin-top: 8px; }
+.u-myqr-sheet header h2 { flex: 1; }
+.u-myqr-row .icon-button:disabled { opacity: .3; }

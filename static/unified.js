@@ -25,7 +25,7 @@
     compose: ['M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z', 'M15 5l4 4'],
     more: ['M12 5.5v.01', 'M12 12v.01', 'M12 18.5v.01'],
     send: ['M4 12 20 4l-4 16-4-6.5L4 12z', 'm12 13.5 8-9.5'],
-    down: ['M12 5v14', 'm5 12 7 7 7-7'], plus: ['M12 5v14', 'M5 12h14'],
+    down: ['M12 5v14', 'm5 12 7 7 7-7'], up: ['M12 19V5', 'm5 12 7-7 7 7'], plus: ['M12 5v14', 'M5 12h14'],
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
@@ -1263,6 +1263,8 @@
     const codes = data.codes || []; body.replaceChildren();
     if (!codes.length) { body.append(node('p', 'helper', 'Add your Telegram, WhatsApp and other contacts once. They show here as codes people can scan.'), button('Add codes', () => editCodes(codes), 'primary wide')); return; }
     let current = Math.min(pick | 0, codes.length - 1);
+    // Edit sits in the sheet header so the code, its link and the actions fit one phone screen.
+    sheet.querySelector('header').insertBefore(iconButton('compose', 'Edit codes', () => editCodes(codes)), sheet.querySelector('header .icon-button'));
     const chips = node('div', 'u-chips u-myqr-chips'), card = node('div', 'u-myqr-card');
     const draw = () => {
       const c = codes[current], link = qrLink(c);
@@ -1270,13 +1272,13 @@
       const actions = node('div', 'u-myqr-actions');
       actions.append(button('Copy link', async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Could not copy'); } }, 'secondary'));
       if (window.WizardApp?.share?.text && /^https?:/.test(link)) actions.append(button('Share', () => Promise.resolve(WizardApp.share.text({text: link, title: qrTitle(c)})).catch(() => {}), 'secondary'));
-      card.replaceChildren(node('h3', 'u-myqr-name', qrTitle(c)), qrCanvas(link), node('p', 'u-myqr-value', c.value), actions);
+      card.replaceChildren(...(codes.length > 1 ? [] : [node('h3', 'u-myqr-name', qrTitle(c))]), qrCanvas(link), node('p', 'u-myqr-value', c.value), actions);
     };
     codes.forEach((c, i) => { const chip = button(qrTitle(c), () => { current = i; draw(); }, 'u-chip'); chips.append(chip); });
     // Swipe between codes, like flipping cards.
     let x0 = null; card.ontouchstart = e => { x0 = e.touches[0].clientX; };
     card.ontouchend = e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) < 50) return; current = (current + (dx < 0 ? 1 : -1) + codes.length) % codes.length; draw(); };
-    body.append(...(codes.length > 1 ? [chips] : []), card, button('Edit codes', () => editCodes(codes), 'secondary wide'));
+    body.append(...(codes.length > 1 ? [chips] : []), card);
     draw();
   }
   function editCodes(codes) {
@@ -1291,9 +1293,12 @@
       const label = node('input'); label.value = c.label || ''; label.placeholder = 'Name on the card (optional)'; label.setAttribute('aria-label', 'Name on the card');
       const hint = () => { value.placeholder = QR_NETS[net.value].hint; value.inputMode = /phone|whatsapp/.test(net.value) ? 'tel' : net.value === 'email' ? 'email' : 'text'; };
       net.onchange = hint; hint();
-      row.append(net, iconButton('trash', 'Remove', () => row.remove(), 'u-myqr-remove'), value, label); rows.append(row);
+      const move = d => { const to = d < 0 ? row.previousElementSibling : row.nextElementSibling?.nextElementSibling; if (d < 0 && !to) return; rows.insertBefore(row, to || null); arrows(); row.querySelector(d < 0 ? '.u-myqr-up' : '.u-myqr-down')?.focus(); };
+      row.append(net, iconButton('up', 'Move up', () => move(-1), 'u-myqr-up'), iconButton('down', 'Move down', () => move(1), 'u-myqr-down'), iconButton('trash', 'Remove', () => { row.remove(); arrows(); }, 'u-myqr-remove'), value, label); rows.append(row); arrows();
       return value;
     };
+    // First can't go up, last can't go down.
+    const arrows = () => [...rows.children].forEach((r, i, all) => { r.querySelector('.u-myqr-up').disabled = i === 0; r.querySelector('.u-myqr-down').disabled = i === all.length - 1; });
     for (const c of codes) addRow(c);
     sheet.append(button('Add another', () => addRow().focus(), 'secondary wide'), button('Save', () => action(async () => {
       const list = [...rows.children].map(r => { const [net, value, label] = r.querySelectorAll('select,input'); return {network: net.value, value: value.value.trim(), label: label.value.trim()}; }).filter(c => c.value);

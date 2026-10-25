@@ -21,7 +21,7 @@ const stub = `
   window.MessengerUnified.authenticated();`;
 (async () => {
   const browser = await chromium.launch({headless: true});
-  const page = await browser.newPage({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', hasTouch: true, isMobile: true});
+  const page = await browser.newPage({viewport: {width: 360, height: 597}, deviceScaleFactor: 2, colorScheme: 'dark', hasTouch: true, isMobile: true});
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.route('http://msg.test/**', route => {
     const u = new URL(route.request().url()); let f = u.pathname.replace(/^\/messenger\//, '') || 'index.html';
@@ -73,14 +73,29 @@ const stub = `
   const box = await page.locator('.u-myqr-card').boundingBox();
   await page.locator('.u-myqr-card').dispatchEvent('touchstart', {touches: [{identifier: 1, clientX: box.x + 300, clientY: box.y + 100}], changedTouches: [], targetTouches: []});
   await page.locator('.u-myqr-card').dispatchEvent('touchend', {touches: [], changedTouches: [{identifier: 1, clientX: box.x + 60, clientY: box.y + 100}], targetTouches: []});
-  assert.equal(await page.locator('.u-myqr-name').textContent(), 'Signal (private)');
+  assert.equal(await page.locator('.u-myqr-chips [aria-pressed=true]').textContent(), 'Signal (private)');
   assert.match(await page.locator('.u-myqr-card canvas').getAttribute('aria-label'), /https:\/\/signal\.me\/#p\/\+15550100199$/);
   await page.getByRole('button', {name: 'Share'}).click();
   assert.equal((await page.evaluate(() => window.shared)).text, 'https://signal.me/#p/+15550100199');
   await page.screenshot({path: evidence + '/4-signal-swipe.png'});
+  // Whole page fits one screen: no scrolling, actions fully visible.
+  const fit = await page.evaluate(() => { const b = document.querySelector('.u-myqr-body'), sh = document.querySelector('.u-sheet'), a = document.querySelector('.u-myqr-actions').getBoundingClientRect(); return {body: b.scrollHeight - b.clientHeight, sheet: sh.scrollHeight - sh.clientHeight, bottom: a.bottom, vh: innerHeight}; });
+  assert.ok(fit.body <= 1 && fit.sheet <= 1 && fit.bottom <= fit.vh, 'fits one screen: ' + JSON.stringify(fit));
+  // Reorder: move WhatsApp to the top, save, chips follow.
+  await page.getByRole('button', {name: 'Edit codes'}).click();
+  const r = page.locator('.u-myqr-row');
+  assert.equal(await r.nth(0).locator('.u-myqr-up').isDisabled(), true);
+  assert.equal(await r.nth(2).locator('.u-myqr-down').isDisabled(), true);
+  await r.nth(1).locator('.u-myqr-up').click();
+  await r.nth(2).locator('.u-myqr-up').click(); await r.nth(1).locator('.u-myqr-down').click(); // Signal up then back down
+  await page.screenshot({path: evidence + '/5-reorder.png'});
+  await page.getByRole('button', {name: 'Save'}).click();
+  await page.locator('.u-myqr-chips .u-chip').nth(2).waitFor({state: 'visible'});
+  assert.deepEqual(await page.locator('.u-myqr-chips .u-chip').allTextContents(), ['WhatsApp', 'Telegram', 'Signal (private)']);
+  assert.deepEqual(await page.evaluate(() => window.posts.at(-1).codes.map(c => c.network)), ['whatsapp', 'telegram', 'signal']);
   // QR canvas really decodes to its link: module grid matches qrcode() output for the same text.
   const size = await page.locator('.u-myqr-card canvas').evaluate(c => [c.width, c.getBoundingClientRect().width]);
-  assert.ok(size[0] >= 290 && size[1] >= 280, 'QR is large enough to scan: ' + size);
+  assert.ok(size[1] >= 160, 'QR is large enough to scan: ' + size);
   // Back closes the page, then the list is back.
   assert.equal(await page.evaluate(() => window.MessengerUnified.back()), true);
   await page.locator('.u-overlay').waitFor({state: 'detached'});
