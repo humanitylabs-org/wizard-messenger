@@ -13,7 +13,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
-from tools.owner_ingress import Ingress, Gateway, UnixHTTP, tailscaled_peer
+from tools.owner_ingress import Ingress, Gateway, UnixHTTP, tailscaled_peer, validate_layout
 from owner_unix import OwnerUnixServer
 from http.server import BaseHTTPRequestHandler
 
@@ -25,6 +25,19 @@ class Capture(BaseHTTPRequestHandler):
     do_POST=do_GET
 
 class PeerTests(unittest.TestCase):
+    def test_private_parent_and_backend_escape_enforced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            cfg={'socket':str(root/'gateway.sock'),'backend_socket':str(root/'backend'/'app.sock')}
+            self.assertEqual(validate_layout(cfg),root/'gateway.sock')
+            root.chmod(0o755)
+            with self.assertRaises(ValueError):validate_layout(cfg)
+            root.chmod(0o700)
+            cfg['backend_socket']=str(root.parent/'escaped.sock')
+            with self.assertRaises(ValueError):validate_layout(cfg)
+            (root/'escape').symlink_to(root.parent,target_is_directory=True)
+            cfg['backend_socket']=str(root/'escape'/'escaped.sock')
+            with self.assertRaises(ValueError):validate_layout(cfg)
     def test_actual_nonroot_peer_rejected(self):
         a,b=socket.socketpair()
         try: self.assertFalse(tailscaled_peer(a))

@@ -134,6 +134,18 @@ class Gateway(BaseHTTPRequestHandler):
         finally: backend.close()
     do_GET = do_HEAD = do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = handle_proxy
 
+def validate_layout(cfg):
+    path = Path(cfg['socket'])
+    info = path.parent.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError('Ingress socket parent must be owned by the gateway UID and mode 0700')
+    # The permissive rootless backend socket must remain below this same private
+    # host parent; reject symlink escapes before any listener is activated.
+    backend = Path(cfg['backend_socket']).resolve()
+    if not backend.is_relative_to(path.parent.resolve()) or backend == path.resolve():
+        raise ValueError('Backend socket must be separate and below the private ingress parent')
+    return path
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--config',required=True)
@@ -147,7 +159,7 @@ def main():
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or len(key)!=32:
             raise ValueError('invalid_private_key')
     finally: os.close(fd)
-    path=Path(cfg['socket'])
+    path=validate_layout(cfg)
     if path.exists():
         if not stat.S_ISSOCK(path.lstat().st_mode): raise ValueError('not_a_socket')
         path.unlink()
