@@ -249,7 +249,7 @@
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
     const counts = {people: 0, groups: 0, messenger: nativeUnread};
-    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id]) counts[kindById[id] === 'groups' ? 'groups' : 'people'] += n;
+    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id]) counts.people += n; // one Inbox: groups count there too
     paintTabBadges(counts);
     const n = counts.people + counts.groups + counts.messenger;
     if (n === badgeShown) return; badgeShown = n;
@@ -310,30 +310,107 @@
 
   // ---------- chat list ----------
   function skeleton(rows, cls) { const box = node('div', 'u-skeleton ' + cls); for (let i = 0; i < rows; i++) { const r = node('div', 'u-sk-row'); r.append(node('span', 'u-sk-av'), node('span', 'u-sk-lines')); box.append(r); } return box; }
+  // One Inbox for every network (like Beeper): direct chats and groups together, narrowed by filter chips.
+  async function loadLists(force = false) {
+    const keys = ['people', 'groups'].filter(k => force || !store.lists[k]);
+    const rows = await Promise.all(keys.map(k => call(k)));
+    keys.forEach((k, i) => { store.lists[k] = rows[i][k] || []; });
+    // The older of the two cursors, so the change feed cannot skip anything between the two reads.
+    if (!store.seq && rows.length) { store.seq = Math.min(...rows.map(r => r.seq || 0)); feed(); }
+  }
   async function renderList() {
-    const epoch = ++s.epoch, key = s.tab === 'groups' ? 'groups' : 'people';
-    const root = listBase(key === 'groups' ? 'Groups' : 'Chats');
+    const epoch = ++s.epoch;
+    const root = listBase('Inbox');
+    if (s.search == null) { root.append(accountsBanner()); root.append(filterChips()); }
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
-    if (key === 'people' && s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
-    if (store.lists[key]) { drawList(); if (!store.seq && s.ready) freshen(key, epoch); return; }
-    list.append(skeleton(8, 'list'));
+    if (s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
+    refreshAccounts();
+    if (store.lists.people && store.lists.groups) { drawList(); if (!store.seq && s.ready) freshen(null, epoch); return; }
+    if (store.lists.people) drawList(); else list.append(skeleton(8, 'list'));
     if (!s.ready) return;
     try {
-      const r = await call(key);
-      if (!store.lists[key]) store.lists[key] = r[key] || [];
-      if (!store.seq) { store.seq = r.seq || 0; feed(); }
+      await loadLists();
       if (s.epoch === epoch && !s.person) drawList();
       persist();
     } catch (e) { error(e); }
   }
   // A saved list painted first; the server's copy replaces it, then the change feed keeps it current.
-  async function freshen(key, epoch) {
+  async function freshen(_key, epoch) {
     try {
-      const r = await call(key); store.lists[key] = r[key] || [];
-      if (!store.seq) { store.seq = r.seq || 0; feed(); }
+      await loadLists(true);
       if (s.epoch === epoch && !s.person) drawList();
       persist();
     } catch (e) { error(e); }
+  }
+  // ---------- accounts: always one tap away from the Inbox ----------
+  let accountsSeen = null;
+  async function refreshAccounts() {
+    if (!s.ready) return;
+    try {
+      const d = await call('connectors');
+      accountsSeen = (d.providers || []).filter(p => p.network === 'telegram' || (p.supported && p.state !== 'not_configured'));
+      paintAccounts();
+    } catch { /* older installs: Telegram lives in Settings */ }
+  }
+  function accountsBanner() { const box = node('div', 'u-accounts'); box.id = 'u-accounts'; paintAccounts(box); return box; }
+  function paintAccounts(box = $('u-accounts')) {
+    if (!box || !accountsSeen) return;
+    const on = accountsSeen.filter(p => p.state === 'connected'), broken = accountsSeen.filter(p => p.state === 'degraded');
+    box.replaceChildren();
+    const BRAND = window.MessengerConnectors?.BRAND || {};
+    const strip = node('div', 'u-acct-strip');
+    for (const p of accountsSeen) {
+      const m = node('span', 'u-acct-dot' + (p.state === 'connected' ? ' on' : p.state === 'degraded' ? ' warn' : ''), (BRAND[p.network] || {}).mark || p.label[0]);
+      if (p.state === 'connected') m.style.background = (BRAND[p.network] || {}).color || '';
+      m.title = p.label + ': ' + (p.state === 'connected' ? 'connected' : 'not connected'); strip.append(m);
+    }
+    const text = broken.length ? broken.map(p => p.label).join(', ') + ' needs reconnecting'
+      : on.length === accountsSeen.length ? 'All accounts connected' : on.length + ' of ' + accountsSeen.length + ' connected';
+    const open = button('', () => accounts('accounts'), 'u-acct-open' + (broken.length ? ' warn' : ''));
+    open.append(strip, node('span', 'u-acct-text', text), node('span', 'u-acct-cta', on.length === accountsSeen.length && !broken.length ? 'Manage' : 'Connect'));
+    open.setAttribute('aria-label', text + '. Open accounts');
+    box.append(open);
+  }
+  const FILTER_KEY = 'messenger-inbox-filter';
+  const filterOf = () => { try { return sessionStorage.getItem(FILTER_KEY) || 'all'; } catch { return 'all'; } };
+  function filterChips() {
+    const chips = node('div', 'u-chips'); chips.id = 'u-filters'; chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Filter chats');
+    return chips;
+  }
+  function paintFilters(all) {
+    const chips = $('u-filters'); if (!chips) return;
+    const nets = [...new Set(all.flatMap(networksOf))].sort();
+    const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
+        const options = [['all', 'All'], ['unread', 'Unread'], ['direct', 'Direct'], ['groups', 'Groups'],
+      ...nets.map(n => ['net:' + n, cap(n === 'whatsapp' ? 'WhatsApp' : n === 'line' ? 'LINE' : n)]), ...labels.map(l => ['label:' + l, l])];
+    const sig = options.map(o => o.join('=')).join('|');
+    let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
+    if (chips.dataset.sig !== sig) {
+      chips.dataset.sig = sig; chips.replaceChildren();
+      for (const [value, text] of options) {
+        const chip = button(text, () => { try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip');
+        chip.dataset.filter = value;
+        if (value.startsWith('net:')) { const b = (window.MessengerConnectors?.BRAND || {})[value.slice(4)]; if (b) chip.style.setProperty('--net', b.color); chip.classList.add('net'); }
+        chips.append(chip);
+      }
+    }
+    for (const c of chips.children) c.setAttribute('aria-pressed', String(c.dataset.filter === current));
+    return current;
+  }
+  function matchesFilter(p, f) {
+    if (f === 'all') return true;
+    if (f === 'unread') return p.unread > 0;
+    if (f === 'direct') return listKey(p) === 'people';
+    if (f === 'groups') return listKey(p) === 'groups';
+    if (f.startsWith('net:')) return networksOf(p).includes(f.slice(4));
+    if (f.startsWith('label:')) return (p.labels || []).includes(f.slice(6));
+    return true;
+  }
+  function netAvatar(p) {
+    const wrap = node('span', 'u-av-wrap'); wrap.append(avatar(p.display_name));
+    const net = networksOf(p)[0], b = net && (window.MessengerConnectors?.BRAND || {})[net];
+    if (b) { const dot = node('span', 'u-net', b.mark); dot.style.background = b.color; dot.title = cap(net); wrap.append(dot); }
+    return wrap;
   }
   let searchTimer, searchGeneration = 0;
   const searchView = {query: null, rows: [], cursor: null, loading: false};
@@ -382,22 +459,16 @@
       return;
     }
     const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
-    const groups = s.tab === 'groups', people = store.lists[groups ? 'groups' : 'people']; if (!people) return;
-    let label = root.dataset.label || '';
-    if (groups && !root.querySelector('.u-chips')) {
-      const labels = [...new Set(people.flatMap(p => p.labels || []))];
-      if (labels.length) {
-        const chips = node('div', 'u-chips'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Filter groups by label');
-        const paintChips = () => { for (const c of chips.children) c.setAttribute('aria-pressed', String(c.dataset.label === (root.dataset.label || ''))); };
-        for (const l of ['', ...labels]) { const chip = button(l || 'All', () => { root.dataset.label = l; paintChips(); drawList(); }, 'u-chip'); chip.dataset.label = l; chips.append(chip); }
-        paintChips(); root.insertBefore(chips, list);
-      }
-    }
+    if (!store.lists.people) return;
+    const people = [...store.lists.people, ...(store.lists.groups || [])]
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
+    const filter = paintFilters(people) || 'all';
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
-    for (const p of people.filter(p => (!label || (p.labels || []).includes(label)) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
+    for (const p of people.filter(p => matchesFilter(p, filter) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
+      const groups = listKey(p) === 'groups';
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
       holdToMenu(card, () => chatMenu(p, card));
-      card.append(avatar(p.display_name));
+      card.append(netAvatar(p));
       const info = node('span', 'u-person-info');
       const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
       if (p.muted) { const m = icon('belloff'); m.classList.add('u-muted-mark'); m.setAttribute('aria-label', 'Muted'); m.removeAttribute('aria-hidden'); name.append(m); }
@@ -413,11 +484,19 @@
       if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
       else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
       info.append(top, bottom);
-      const extra = [...(networksOf(p).length > 1 ? networksOf(p).map(cap) : []), ...(p.labels || [])];
+      const extra = networksOf(p).length > 1 ? networksOf(p).map(cap) : []; // labels live in the filter chips
       if (extra.length) info.append(node('span', 'u-tags', extra.join(' · ')));
       card.append(info); frag.append(card);
     }
-    if (!frag.children.length) frag.append(node('p', 'u-empty', q ? 'No matches' : label ? 'No groups with this label' : groups ? 'Group chats appear here once an account is connected.' : 'No chats yet. Connect Telegram in Settings, or start a new chat.'));
+    if (!frag.children.length) {
+      const empty = node('div', 'u-empty');
+      if (q || filter !== 'all') empty.append(node('p', '', q ? 'No matches' : 'Nothing here with this filter'));
+      else {
+        empty.append(node('p', '', 'No chats yet. Connect WhatsApp, Telegram, Slack, LINE or Instagram and their chats land here.'));
+        empty.append(button('Connect an account', () => accounts('accounts'), 'primary'));
+      }
+      frag.append(empty);
+    }
     list.replaceChildren(frag);
   }
 
@@ -1119,14 +1198,18 @@
       sheet.append(labelsLabel, button('Save labels', () => action(async () => { await call('groups/' + p.identities[0].id + '/labels', {labels: labels.value.split(',').map(x => x.trim()).filter(Boolean)}); closeOverlay(); }), 'secondary wide'));
     }
   }
-  async function accounts() {
-    const sheet = overlay('Settings');
-    notificationSettings(sheet, api);
+  async function accounts(focus) {
+    // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
+    const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
-      connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, body}));
+      connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, body}), {
+        onChange: () => { refresh(); refreshAccounts(); },
+      });
       try {
         await connectorController.show();
+        if (focus === 'accounts') { sheet.append(button('More settings', () => accounts(), 'c-link')); return; }
+        sheet.append(node('h3', '', 'Notifications')); notificationSettings(sheet, api);
         await agentAccess(sheet);
         return;
       } catch (e) {
@@ -1137,9 +1220,10 @@
         }
       }
     }
+    notificationSettings(sheet, api);
     sheet.append(node('h3', '', 'Telegram'));
     try {
-      const status = await call('telegram/status'); if (s.overlay !== 'Settings') return;
+      const status = await call('telegram/status'); if (!['Settings', 'Accounts'].includes(s.overlay)) return;
       if (status.pending_login) { localStorage.setItem(LOGIN_FLAG, '1'); return loginStep(status.pending_login, true); }
       const line = node('p', 'u-status ' + (status.logins?.length ? 'on' : 'off'), status.message + (status.state === 'disconnected' ? ' · Not connected' : '')); sheet.append(line);
       if (status.state === 'not_configured') sheet.append(node('p', 'helper', 'Add TELEGRAM_API_ID and TELEGRAM_API_HASH in the app’s installation settings. Your phone number and login code stay inside this private Messenger.'));
@@ -1385,7 +1469,7 @@
   window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person})); } catch { /* fresh start */ } });
   function resume() {
     let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
-    switchTab(['groups', 'messenger'].includes(at?.tab) ? at.tab : 'people');
+    switchTab(at?.tab === 'messenger' ? 'messenger' : 'people');
     if (at?.person && at.tab !== 'messenger') openPerson(at.person);
   }
   window.MessengerUnified = {
