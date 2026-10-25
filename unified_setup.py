@@ -67,6 +67,11 @@ def setup(root):
     # Template is the pinned official binary's generated example, with no credentials.
     config = json.loads((Path(__file__).parent / 'plumbing' / 'telegram-template.json').read_text())
     api_id, api_hash = os.environ.get('TELEGRAM_API_ID', ''), os.environ.get('TELEGRAM_API_HASH', '')
+    if not api_id and not api_hash:
+        from telegram_application import load_application
+        saved_application = load_application(root)
+        if saved_application:
+            api_id, api_hash = saved_application['api_id'], saved_application['api_hash']
     configured = bool(api_id and api_hash)
     if configured and (not api_id.isdecimal() or int(api_id) <= 0 or len(api_hash) != 32):
         raise ValueError('Telegram configuration requires a positive API ID and 32-character API hash')

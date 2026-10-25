@@ -331,6 +331,23 @@ class ViewHandler(Handler):
             state = self.service.remote_authority.state()
             state['required'] = self.service.remote_required or bool(self.service.remote_authority.endpoint)
             return 200, {'ok': True, 'result': state}
+        if path == '/api/view/telegram/application':
+            # Initial app keys are private owner settings, not agent capabilities.
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Only the owner can set up Telegram from Messenger.', 403)
+            self._authorize()
+            if self.service.remote_required or self.service.remote_authority.endpoint:
+                raise EngineError('owner_only', 'Configure Telegram on the trusted owner service.', 403)
+            if method != 'POST':
+                raise EngineError('not_found', 'No such Telegram setup route', 404)
+            data = getattr(self.service.engine, 'data', None)
+            if not data or self.service.unified is None:
+                raise EngineError('telegram_plumbing_unavailable', 'Telegram is not installed on this Messenger.', 503)
+            from telegram_application import configure_application
+            body = self._body()
+            with self.service.setup_lock:
+                result = configure_application(data, body)
+            return 200, {'ok': True, 'result': result}
         if path=='/api/view/agent-access':
             # Owner-only: a browser session with CSRF, never the machine key.
             if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can change agent access, from the Messenger view',403)
