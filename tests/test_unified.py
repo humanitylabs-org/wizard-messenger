@@ -26,7 +26,8 @@ class PeopleTests(unittest.TestCase):
         self.store.add_message('$2', new, 'me', True, 'fresh', 200)
         chats = self.store.people()
         self.assertEqual([p['display_name'] for p in chats], ['Amy', 'Zed'])
-        self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'me', 'timestamp': 200})
+        # Outgoing lines never expose the owner's stored name/ghost as the sender.
+        self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'You', 'timestamp': 200})
         self.assertEqual([p['display_name'] for p in self.store.people(chats=False)], ['Amy', 'Bob', 'Zed'])
 
     def test_mute_persists_and_keeps_unread(self):
@@ -231,7 +232,8 @@ class UnifiedTests(unittest.TestCase):
         with patch.dict('os.environ', {'TELEGRAM_API_ID': '12345', 'TELEGRAM_API_HASH': 'a' * 32}):
             unified_setup.setup(self.tmp.name)
         config = yaml.safe_load((Path(self.tmp.name) / 'telegram' / 'config.yaml').read_text())
-        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 50))
+        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 200))
+        self.assertFalse(config['backfill']['queue']['enabled'])
         self.assertEqual(config['network']['sync']['login_sync_limit'], 50)
         self.assertFalse(config['backfill']['queue']['enabled'])
         self.assertTrue(config['double_puppet']['secrets']['messenger.internal'].startswith('as_token:'))

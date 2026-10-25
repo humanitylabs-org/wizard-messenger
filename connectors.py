@@ -46,12 +46,79 @@ MATRIX_NETWORKS = frozenset(k for k, p in PROVIDERS.items() if p.supported)
 TOKEN = re.compile(r'[A-Za-z0-9_.-]{1,160}\Z')
 
 
+# bridgev2 publishes BridgeName.BeeperBridgeType as m.bridge protocol.id, which is
+# not always the network name (pinned upstream sources: mautrix/meta igconnector
+# "instagramgo", mautrix/slack "slackgo", beeper/line
+# "github.com/highesttt/matrix-line-messenger"). Explicit allowlist only.
+PROTOCOL_IDS = {
+    'telegram': 'telegram',
+    'whatsapp': 'whatsapp',
+    'signal': 'signal',
+    'slack': 'slack', 'slackgo': 'slack',
+    'instagram': 'instagram', 'instagramgo': 'instagram',
+    'line': 'line', 'github.com/highesttt/matrix-line-messenger': 'line',
+}
+SERVER = 'messenger.internal'
+
+
 def room_network(state):
-    """Reject ambiguous bridge metadata; never classify by display name."""
-    values = {e.get('content', {}).get('protocol', {}).get('id') for e in state
-              if e.get('type') in ('m.bridge', 'uk.half-shot.bridge')}
-    values.discard(None)
-    return next(iter(values)) if len(values) == 1 and values <= MATRIX_NETWORKS else None
+    """Reject ambiguous bridge metadata; never classify by display name.
+
+    Every bridge-info event must name an allowlisted protocol and be sent by
+    that network's own bridge bot (@<network>bot:messenger.internal)."""
+    values = set()
+    for e in state:
+        if e.get('type') not in ('m.bridge', 'uk.half-shot.bridge'):
+            continue
+        protocol = (e.get('content') or {}).get('protocol') or {}
+        protocol_id = protocol.get('id') if isinstance(protocol, dict) else None
+        network = PROTOCOL_IDS.get(protocol_id) if isinstance(protocol_id, str) else None
+        if network not in MATRIX_NETWORKS or e.get('sender') != '@%sbot:%s' % (network, SERVER):
+            return None
+        values.add(network)
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _escape_localpart(value):
+    """mautrix-go id.EncodeUserLocalpart: A-Z -> _a-z, '_' -> '__', other bytes
+    outside [a-z0-9._+-] -> =xx (lowercase hex of each UTF-8 byte)."""
+    out = []
+    for b in str(value).encode('utf-8'):
+        c = chr(b)
+        if 'A' <= c <= 'Z':
+            out.append('_' + c.lower())
+        elif c == '_':
+            out.append('__')
+        elif c in '-.+' or '0' <= c <= '9' or 'a' <= c <= 'z':
+            out.append(c)
+        else:
+            out.append('=%02x' % b)
+    return ''.join(out)
+
+
+def ghost_mxid(network, user_id):
+    """Ghost for a remote user ID under appservice.username_template '<net>_{{.}}'."""
+    if network not in MATRIX_NETWORKS or not isinstance(user_id, (str, int)) or isinstance(user_id, bool) or str(user_id) == '':
+        return None
+    return '@%s_%s:%s' % (network, _escape_localpart(user_id), SERVER)
+
+
+def own_ghost(network, login_id):
+    """The owner's own ghost from a provisioning /whoami login id.
+
+    Login and user IDs coincide for the pinned whatsapp, meta, telegram, signal and
+    LINE connectors; mautrix/slack's MakeUserLoginID keeps case but MakeUserID
+    lowercases ("TEAM-USER" -> "team-user")."""
+    if not isinstance(login_id, (str, int)) or isinstance(login_id, bool):
+        return None
+    login_id = str(login_id)
+    return ghost_mxid(network, login_id.lower() if network == 'slack' else login_id)
+
+
+def ghost_network(user):
+    """Network of a bridged ghost MXID, or None (bots and foreign servers excluded)."""
+    match = re.fullmatch(r'@([a-z]+)_.+:' + re.escape(SERVER), user or '')
+    return match.group(1) if match and match.group(1) in MATRIX_NETWORKS else None
 
 
 class Connectors:

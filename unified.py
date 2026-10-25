@@ -101,7 +101,25 @@ MIGRATIONS = [
     ('identity', 'last_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'peer_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
+    # 1 once the owner renamed the person: synced network names never overwrite it.
+    ('person', 'name_locked', 'INTEGER NOT NULL DEFAULT 0'),
 ]
+
+# Matches the bridges' backfill.unread_hours_threshold: older history is read.
+HISTORY_UNREAD_HOURS = 720
+OWN_SENDER = 'You'
+_PHONE = re.compile(r'\+?[\d\s().-]{5,}\Z')
+_RAW_ID = re.compile(r'(@[^\s:]+:\S+|[uUcCrR][0-9a-f]{32})\Z')
+
+
+def weak_label(label, own=()):
+    """Labels that must never replace a real name: generic fallbacks, phone
+    numbers, raw protocol IDs and the owner's own names."""
+    if not isinstance(label, str) or not label.strip():
+        return True
+    label = label.strip()
+    return (label in own or label.endswith(' conversation') or label in ('Messenger contact', 'Direct message')
+            or bool(_PHONE.fullmatch(label)) or bool(_RAW_ID.fullmatch(label)))
 
 
 class PeopleStore:
@@ -195,6 +213,10 @@ class PeopleStore:
                 shutil.copy2(self.path, self.path.with_name(self.path.name + '.pre-signal-%d.bak' % int(time.time())))
             for table, column, decl in missing:
                 db.execute('ALTER TABLE %s ADD COLUMN %s %s' % (table, column, decl))
+            if any(m[1] == 'name_locked' for m in missing):
+                # Earlier owner renames are the only way a single-channel person's name
+                # differs from all its channel labels: keep those names authoritative.
+                db.execute('UPDATE person SET name_locked=1 WHERE display_name NOT IN (SELECT label FROM identity WHERE person_id=person.id)')
             if any(m[1] == 'last_read_ts' for m in missing):
                 # Existing chats start read: no wall of unread badges after the upgrade.
                 db.execute('UPDATE identity SET last_read_ts=(SELECT COALESCE(MAX(timestamp),0) FROM message WHERE identity_id=identity.id)')
@@ -242,16 +264,64 @@ class PeopleStore:
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO kv VALUES (?,?)', (key, value))
 
+    def own_names(self):
+        """Names the owner is known by on each network (private store, never logged)."""
+        names = set()
+        with self.db() as db:
+            for (value,) in db.execute("SELECT value FROM kv WHERE key LIKE 'own_names:%'"):
+                try:
+                    names.update(n for n in json.loads(value) if isinstance(n, str) and n.strip())
+                except ValueError:
+                    pass
+        return names
+
+    def remember_own_names(self, source, names):
+        names = sorted({n.strip() for n in names if isinstance(n, str) and n.strip()})
+        if names and self.get('own_names:' + source) != json.dumps(names, ensure_ascii=False):
+            self.put('own_names:' + source, json.dumps(names, ensure_ascii=False))
+            return True
+        return False
+
     def identity(self, network, address, label, kind='person'):
+        """Find or create a channel; a better synced name replaces a weak or stale one."""
         with self.db() as db:
             row = db.execute('SELECT * FROM identity WHERE network=? AND address=?', (network, address)).fetchone()
             if row:
-                return dict(row)
+                self.refresh_label(dict(row), label)
+                return dict(db.execute('SELECT * FROM identity WHERE id=?', (row['id'],)).fetchone())
             person_id, identity_id = secrets.token_hex(12), secrets.token_hex(12)
             db.execute('INSERT INTO person(id,display_name) VALUES (?,?)', (person_id, label))
             db.execute('INSERT INTO identity(id,person_id,network,address,label,kind,last_used,seq) VALUES (?,?,?,?,?,?,0,?)',
                        (identity_id, person_id, network, address, label, kind, self.next_seq()))
             return dict(db.execute('SELECT * FROM identity WHERE id=?', (identity_id,)).fetchone())
+
+    def refresh_label(self, identity, label):
+        own = self.own_names()
+        current = identity['label']
+        if not isinstance(label, str) or label == current or label in own:
+            return False
+        # A real name always wins; a generic fallback only replaces the owner's own
+        # name (a DM must be titled by the other participant, never by "me").
+        if weak_label(label, own) and not (current in own and identity['kind'] == 'person'):
+            return False
+        label = label.strip()[:160]
+        changed = False
+        with self.db() as db:
+            seq = self.next_seq()
+            db.execute('UPDATE identity SET label=?,seq=? WHERE id=?', (label, seq, identity['id']))
+            person = db.execute('SELECT display_name,name_locked FROM person WHERE id=?', (identity['person_id'],)).fetchone()
+            if person and not person['name_locked'] and (person['display_name'] == current or weak_label(person['display_name'], own)):
+                db.execute('UPDATE person SET display_name=? WHERE id=?', (label, identity['person_id']))
+                db.execute('UPDATE identity SET seq=? WHERE person_id=?', (seq, identity['person_id']))
+            changed = True
+        self.changed()
+        return changed
+
+    def mark_history_read(self, identity_id, timestamp):
+        """Historical lines older than the unread window never create unread badges."""
+        if timestamp < (time.time() - HISTORY_UNREAD_HOURS * 3600) * 1000:
+            with self.db() as db:
+                db.execute('UPDATE identity SET last_read_ts=MAX(last_read_ts,?) WHERE id=?', (timestamp, identity_id))
 
     def touch_identity(self, identity_id, **fields):
         with self.db() as db:
@@ -310,7 +380,7 @@ class PeopleStore:
             if pid in last:
                 r = last[pid]
                 media = json.loads(r['media']) if r['media'] else {}
-                p['last'] = {'text': '' if r['deleted'] else r['original'][:140], 'outgoing': bool(r['outgoing']), 'sender': r['sender'], 'timestamp': r['timestamp']}
+                p['last'] = {'text': '' if r['deleted'] else r['original'][:140], 'outgoing': bool(r['outgoing']), 'sender': OWN_SENDER if r['outgoing'] else r['sender'], 'timestamp': r['timestamp']}
                 if r['msgtype'] != 'm.text' or r['deleted'] or media.get('voice'):
                     p['last'].update(msgtype=r['msgtype'], deleted=bool(r['deleted']), voice=bool(media.get('voice')))
                 p['unread'] = unread.get(pid, 0)
@@ -343,6 +413,8 @@ class PeopleStore:
                         fail('invalid_language', 'Choose a supported language')
                 else:
                     value = text(value, 160)
+                    # An owner rename is final; synced contact names stop applying.
+                    db.execute('UPDATE person SET name_locked=1 WHERE id=?', (person_id,))
                 db.execute('UPDATE person SET ' + key + '=? WHERE id=?', (value, person_id))
             db.execute('UPDATE identity SET seq=? WHERE person_id=?', (self.next_seq(), person_id))
         self.changed()
@@ -413,13 +485,17 @@ class PeopleStore:
             self.changed()
         return inserted
 
-    def claim_own(self, ghost):
-        """Lines the owner wrote in the Telegram app were stored as incoming; mark them outgoing, chats read up to them."""
+    def claim_own(self, ghost, network=None):
+        """Lines the owner wrote in a network's own app arrive from their ghost and were stored
+        as incoming; mark them outgoing (that network only), chats read up to them."""
+        if network is None:
+            match = re.match(r'@([a-z]+)_', ghost)
+            network = match.group(1) if match else 'telegram'
         with self.db() as db:
             rooms = [(r[0], json.loads(r[1]).get('names', {}).get(ghost)) for r in db.execute('SELECT room,json FROM room_meta')]
             changed = 0
             for room, name in rooms:
-                row = db.execute("SELECT id FROM identity WHERE network='telegram' AND address=?", (room,)).fetchone()
+                row = db.execute('SELECT id FROM identity WHERE network=? AND address=?', (network, room)).fetchone()
                 if not row:
                     continue
                 senders = [ghost] + ([name] if name else [])
@@ -492,10 +568,13 @@ class PeopleStore:
             if replies:
                 for r in db.execute('SELECT id,sender,outgoing,original,msgtype,deleted,media FROM message WHERE id IN (%s)' % ','.join('?' * len(replies)), replies):
                     media = json.loads(r['media']) if r['media'] else {}
-                    quoted[r['id']] = {'id': r['id'], 'sender': r['sender'], 'outgoing': bool(r['outgoing']), 'text': '' if r['deleted'] else r['original'][:200],
+                    quoted[r['id']] = {'id': r['id'], 'sender': OWN_SENDER if r['outgoing'] else r['sender'], 'outgoing': bool(r['outgoing']), 'text': '' if r['deleted'] else r['original'][:200],
                                        'msgtype': r['msgtype'], 'voice': bool(media.get('voice')), 'deleted': bool(r['deleted'])}
         for r in rows:
             r['outgoing'] = bool(r['outgoing'])
+            if r['outgoing']:
+                # Never surface the owner's own network name/ghost as a sender.
+                r['sender'] = OWN_SENDER
             r['edited'], r['deleted'] = bool(r.get('edited')), bool(r.get('deleted'))
             media = json.loads(r['media']) if r.get('media') else None
             if media:
@@ -1004,7 +1083,10 @@ class UnifiedInbox:
         mine = {own.get(k) for k in ('account_id', 'member_id', 'npub')} - {None}
         for dm in self.engine.dms()['dms']:
             peer = next((m for m in dm.get('members', []) if not mine.intersection(m.get(k) for k in ('account_id', 'member_id', 'npub'))), {})
-            label = peer.get('display_name') or dm.get('name') or 'Messenger contact'
+            # The group name is chosen by whoever created the DM (often the recipient's
+            # name, i.e. the owner's): it is only a fallback, and never the owner's own name.
+            own_names = self.store.own_names() | {own.get('display_name')} - {None, ''}
+            label = next((n for n in (peer.get('display_name'), dm.get('name')) if not weak_label(n, own_names)), 'Messenger contact')
             identity = self.store.identity('messenger', dm['group_id'], label)
             self.import_marmot(identity, 50, live=True)
 

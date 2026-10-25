@@ -127,7 +127,7 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(exc.exception.code, 'unsupported_network')
 
     def test_metadata_allowlist_and_ambiguous_rejection(self):
-        event = lambda network: {'type': 'm.bridge', 'content': {'protocol': {'id': network}}}
+        event = lambda network, bot=None: {'type': 'm.bridge', 'sender': '@%sbot:messenger.internal' % (bot or network), 'content': {'protocol': {'id': network}}}
         for name in MATRIX_NETWORKS: self.assertEqual(room_network([event(name)]), name)
         self.assertIsNone(room_network([event('unknown')]))
         self.assertIsNone(room_network([event('signal'), event('telegram')]))
@@ -194,7 +194,7 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse(inbox.trusted_inviter('@signal_uuid:evil.example'))
         self.assertFalse(inbox.trusted_inviter('@whatsapp_123:messenger.internal'))
         for name in MATRIX_NETWORKS:
-            state = [{'type': 'm.bridge', 'content': {'protocol': {'id': name}, 'com.beeper.room_type.v2': 'dm'}}]
+            state = [{'type': 'm.bridge', 'sender': '@%sbot:messenger.internal' % name, 'content': {'protocol': {'id': name}, 'com.beeper.room_type.v2': 'dm'}}]
             with patch.object(inbox, 'mx', return_value=state):
                 self.assertEqual(inbox.room_meta('!' + name, {})['network'], name)
 
@@ -206,8 +206,11 @@ class ConnectorTests(unittest.TestCase):
                 return {'next_batch': 'offline-next', 'rooms': {'join': joined}}
             if path.endswith('/state'):
                 network = next(n for n in MATRIX_NETWORKS if ('room-' + n) in path)
-                return [{'type': 'm.bridge', 'content': {'protocol': {'id': network}, 'com.beeper.room_type.v2': 'dm'}}]
+                return [{'type': 'm.bridge', 'sender': '@%sbot:messenger.internal' % network, 'content': {'protocol': {'id': network}, 'com.beeper.room_type.v2': 'dm'}}]
+            if '/messages?' in path:
+                return {'chunk': []}
             raise AssertionError('Unexpected Matrix request ' + path)
+        inbox.history_sync = True
         with patch.object(inbox, 'mx', side_effect=matrix):
             self.assertEqual(inbox.sync()['state'], 'ready')
         self.assertEqual({i['network'] for p in inbox.store.people() for i in p['identities']}, set(MATRIX_NETWORKS))

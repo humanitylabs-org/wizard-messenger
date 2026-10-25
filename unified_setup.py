@@ -89,8 +89,10 @@ def setup(root):
     config['double_puppet'].update(servers={}, secrets={'messenger.internal': 'as_token:' + keys['doublepuppet']})
     config['logging'] = {'min_level': 'error', 'writers': [{'type': 'stdout', 'format': 'json'}]}
     # Bring recent history into each new or quiet chat (forward backfill works on stock Synapse),
-    # and bridge the owner's 50 most recent dialogs on login instead of 15.
-    config['backfill'].update(enabled=True, max_initial_messages=50, max_catchup_messages=500)
+    # and bridge the owner's 50 most recent dialogs on login instead of 15. Older history
+    # (backfill.queue) needs Beeper batch sending, unavailable on stock Synapse: keep it off.
+    config['backfill'].update(enabled=True, max_initial_messages=200, max_catchup_messages=500, unread_hours_threshold=720)
+    config['backfill']['queue']['enabled'] = False
     config['network']['sync'].update(create_limit=50, login_sync_limit=50)
     write(root / 'telegram' / 'config.yaml', config)
     write(root / 'unified' / 'configuration.json', {'telegram_configured': configured})
