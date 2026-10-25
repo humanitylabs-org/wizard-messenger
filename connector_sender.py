@@ -8,6 +8,30 @@ import hashlib
 import hmac
 import json
 import re
+import socket
+
+# Fixed messages keyed by pinned bridge contracts. Never forward upstream text:
+# it may contain identifiers, cookies, request URLs or submitted credentials.
+LOGIN_ERRORS = {
+    'FI.MAU.BRIDGE.LOGIN_CANCELLED': ('login_cancelled', 'Login was cancelled. Start again when you are ready.', 409),
+    'FI.MAU.BRIDGE.LOGIN_TIMED_OUT': ('login_expired', 'Login timed out. Start a new login.', 409),
+    'M_NOT_FOUND': ('login_expired', 'This login is no longer available. Start a new login.', 409),
+    'M_BAD_STATE': ('invalid_step', 'Login step changed. Start a new login.', 409),
+    'FI.MAU.SLACK.RATE_LIMITED': ('login_rate_limited', 'Slack is rate limiting sign-in. Wait a few minutes before starting again.', 429),
+    'FI.MAU.SLACK.BROWSER_REQUIRED': ('login_challenge_required', 'Slack requires browser verification which this view cannot safely complete. Finish verification in Slack, then start again.', 409),
+    'FI.MAU.META_RATE_LIMITED': ('login_rate_limited', 'Instagram is limiting sign-in attempts. Wait a few minutes before starting again.', 429),
+    'FI.MAU.META_ACCOUNT_SUSPENDED': ('login_account_restricted', 'Instagram reports an account suspension. Review it in Instagram before retrying.', 409),
+    'FI.MAU.META_ACCOUNT_PENDING_DELETION': ('login_account_restricted', 'Instagram reports this account is scheduled for deletion. Review it in Instagram before retrying.', 409),
+    'FI.MAU.META_INBOX_LOAD_FAILED': ('login_inbox_failed', 'Instagram could not load the inbox after login. Check the official app and try again later.', 502),
+    'FI.MAU.META_WEB_CHECKPOINT_FAILED': ('login_verification_failed', 'Instagram verification did not complete. Start again when your connection is stable.', 502),
+    'FI.MAU.SLACK.CAPTCHA_REJECTED': ('login_challenge_required', 'Slack requires a new interactive CAPTCHA. This view cannot safely complete it.', 409),
+    'DEV.HIGHEST.LINE.TOO_MANY_ATTEMPTS': ('login_rate_limited', 'LINE is limiting sign-in attempts. Wait before starting again.', 429),
+    'DEV.HIGHEST.LINE.LOGIN_REJECTED': ('login_rejected', 'LINE rejected this login. Review the request in LINE before starting again.', 409),
+    'DEV.HIGHEST.LINE.VERIFICATION_FAILED': ('login_verification_failed', 'LINE verification did not complete. Start a new login and approve it on your phone.', 409),
+    'DEV.HIGHEST.LINE.NO_KEYCHAIN': ('login_keys_unavailable', 'LINE did not provide the encryption keys required by this bridge. Review linked devices in LINE before trying again.', 409),
+}
+for _code in ('FI.MAU.META_CHALLENGE_ERROR', 'FI.MAU.META_CHECKPOINT_ERROR', 'FI.MAU.META_CONSENT_ERROR', 'FI.MAU.META_ACCOUNT_RECOVERY_REQUIRED', 'FI.MAU.META_NO_SUPPORTED_MFA', 'FI.MAU.META_GOOGLE_RECAPTCHA', 'FI.MAU.META_PASSKEY_MANDATORY', 'FI.MAU.META_OAUTH_MANDATORY', 'FI.MAU.META_UNSUPPORTED_CAA_STEP', 'FI.MAU.META_UNSUPPORTED_WEB_CHECKPOINT', 'FI.MAU.META_WEB_CHECKPOINT_CAPTCHA', 'FI.MAU.IG_CAA_FALLBACK_DISABLED'):
+    LOGIN_ERRORS[_code] = ('login_challenge_required', 'Instagram requires verification this view cannot safely complete. Finish verification in Instagram, then start a new login.', 409)
 from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -82,13 +106,40 @@ class LocalOwnerSender:
         else:
             encoded = json.dumps(body).encode()
             headers['Content-Type'] = 'application/json'
+        login_route = network != 'matrix' and route.startswith('/login/')
+        # Only step workers use the long bound; other owner writes retain 65s.
+        limit = 620 if login_route and route.startswith('/login/step/') else 65
         try:
-            with self.opener.open(Request(base + path, data=encoded, headers=headers, method=method), timeout=min(timeout, 65)) as response:
+            with self.opener.open(Request(base + path, data=encoded, headers=headers, method=method), timeout=min(timeout, limit)) as response:
                 return json.loads(response.read(8 * 1024 * 1024))
         except HTTPError as error:
-            error.close()
+            status = error.code
+            code = None
+            try:
+                if login_route:
+                    data = json.loads(error.read(16384))
+                    code = data.get('errcode') if isinstance(data, dict) else None
+            except (ValueError, OSError):
+                pass
+            finally:
+                error.close()
+            if login_route:
+                mapped = LOGIN_ERRORS.get(code) if isinstance(code, str) else None
+                if mapped:
+                    fail(*mapped)
+                if status == 429:
+                    fail('login_rate_limited', 'Sign-in is rate limited. Wait before trying again.', 429)
+                if status in (400, 401, 403):
+                    fail('login_failed', 'Bridge sign-in could not complete. Review verification in the provider app, then start again.', 409)
             fail('owner_transport_failed', 'Private owner transport failed', 502)
-        except (URLError, ValueError, OSError):
+        except (TimeoutError, socket.timeout):
+            fail('login_transport_timeout' if login_route else 'owner_transport_failed',
+                 'The private bridge did not answer in time. This is not proof of an expired code or rejected credentials. Start again.' if login_route else 'Private owner transport failed', 504)
+        except URLError as error:
+            if login_route and isinstance(error.reason, TimeoutError):
+                fail('login_transport_timeout', 'The private bridge did not answer in time. This is not proof of an expired code or rejected credentials. Start again.', 504)
+            fail('owner_transport_failed', 'Private owner transport failed', 502)
+        except (ValueError, OSError):
             # No raw upstream response, URL, submitted secret or QR in diagnostics.
             fail('owner_transport_failed', 'Private owner transport failed', 502)
 

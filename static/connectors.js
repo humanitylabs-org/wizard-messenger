@@ -53,7 +53,7 @@
     }
     function button(parent, text, run, cls = 'secondary wide') {
       const b = element('button', cls, text); b.type = 'button'; parent.append(b);
-      b.onclick = async () => { b.disabled = true; try { await run(); } catch (e) { problem(e); } finally { b.disabled = false; } };
+      b.onclick = async () => { b.disabled = true; try { await run(); } catch (e) { if (root.contains(b)) problem(e); } finally { b.disabled = false; } };
       return b;
     }
     function qrCanvas(data) {
@@ -70,17 +70,51 @@
       const head = element('div', 'c-step-head'); head.append(mark(network, 'big'), element('h3', '', title || 'Connect ' + label(network))); return head;
     }
     async function cancel() {
-      const old = active; active = null; ++generation;
-      if (old) await request(old.network, 'cancel', {login_id: old.login_id}).catch(() => {});
+      const old = active; active = null; const mine = ++generation;
+      if (old) {
+        try { await request(old.network, 'cancel', {login_id: old.login_id}); }
+        catch (e) {
+          // Already-ended logins need no cleanup; other failures must be visible.
+          if (!['login_expired', 'invalid_step', 'login_cancelled'].includes(e.code)) {
+            if (mine === generation) active = old;
+            throw e;
+          }
+        }
+      }
     }
     async function start(network, flow) {
-      await cancel(); const mine = generation;
+      const mine = generation + 1;
+      await cancel(); if (mine !== generation) return;
       root.replaceChildren(heading(network), element('p', 'helper', 'Starting…'));
-      try { await step(network, flow, await request(network, 'start', {flow}), mine); }
-      catch (e) { if (mine !== generation) return; problem(e); button(root, 'Back', async () => show()); }
+      try {
+        const result = await request(network, 'start', {flow});
+        if (mine !== generation) {
+          // Close may happen before start returns a process ID. Cancel that exact
+          // orphan, never the newer controller's login.
+          if (result.login_id && result.type !== 'complete') await request(network, 'cancel', {login_id: result.login_id});
+          return;
+        }
+        await step(network, flow, result, mine);
+      } catch (e) { if (mine !== generation) return; failure(e, network, flow, mine); }
+    }
+    function failure(error, network, flow, mine) {
+      if (mine !== generation) return;
+      problem(error);
+      button(root, 'Start again', async () => start(network, flow), 'primary wide');
+      button(root, 'Back to accounts', async () => show());
+    }
+    async function advance(network, payload, fields, mine) {
+      let result = await request(network, 'step', {...payload, fields});
+      while (result.type === 'pending' && mine === generation) {
+        await new Promise(resolve => global.setTimeout(resolve, 1000));
+        if (mine !== generation) return null;
+        // Poll the local worker. Never replay passwords or email/MFA codes.
+        result = await request(network, 'step', {...payload, fields: {}});
+      }
+      return result;
     }
     async function step(network, flow, result, mine) {
-      if (mine !== generation) return;
+      if (mine !== generation || !result) return;
       if (result.type === 'complete') {
         active = null;
         root.replaceChildren(heading(network, label(network) + ' connected'),
@@ -92,7 +126,10 @@
       active = {network, login_id: result.login_id};
       const payload = () => ({login_id: result.login_id, step_id: result.step_id, type: result.type, txn_id: result.txn_id});
       root.replaceChildren(heading(network));
-      const back = () => button(root, 'Cancel', async () => { await cancel(); await show(); });
+      const back = () => button(root, 'Cancel', async () => {
+        const nextGeneration = generation + 1;
+        await cancel(); if (nextGeneration === generation) await show();
+      });
       if (result.type === 'display_and_wait') {
         const params = result.display_and_wait || {};
         if (params.type === 'qr') {
@@ -110,15 +147,17 @@
         // The bridge answers once the phone acts, or with a refreshed code, so wait while this owner
         // screen is open. Closing the sheet bumps the generation and cancels the login.
         let next;
-        try { next = await request(network, 'step', {...payload(), fields: {}}); }
+        try { next = await advance(network, payload(), {}, mine); }
         catch (e) {
           if (mine !== generation) return;
-          wait.replaceChildren(element('span', '', 'That code expired.'));
-          active = null;
-          button(root, 'Show a new code', async () => start(network, flow), 'primary wide');
+          wait.replaceChildren(element('span', '', 'Login has stopped waiting.'));
+          failure(e, network, flow, mine);
           return;
         }
         await step(network, flow, next, mine);
+      } else if (result.type === 'challenge') {
+        root.append(element('p', 'helper', label(network) + ' requires browser verification (such as a CAPTCHA or checkpoint). This view cannot safely complete it. Finish verification in the official app or website, then start a new login. Completing it elsewhere may not resume this bridge session.'));
+        button(root, 'Start again', async () => start(network, flow), 'primary wide'); back();
       } else if (result.type === 'user_input') {
         if (result.instructions) root.append(element('p', 'helper', result.instructions));
         const form = element('form', 'c-form'), inputs = {}; form.autocomplete = 'off';
@@ -133,18 +172,58 @@
             input.autocapitalize = 'none'; input.spellcheck = false;
             if (field.description) input.placeholder = field.description;
           }
-          input.autocomplete = 'off'; input.required = true;
+          input.autocomplete = 'off'; input.required = !field.optional;
+          if (field.default_value != null && !SECRET.test((field.type || '') + ' ' + field.id)) input.value = field.default_value;
+          if (field.min_length) input.minLength = field.min_length;
+          if (field.max_length) input.maxLength = field.max_length;
           wrap.append(input); form.append(wrap); inputs[field.id] = input;
         }
         const submit = element('button', 'primary wide', 'Continue'); submit.type = 'submit'; form.append(submit); root.append(form); back();
         global.requestAnimationFrame?.(() => Object.values(inputs)[0]?.focus?.());
         form.onsubmit = async e => {
-          e.preventDefault(); submit.disabled = true;
+          e.preventDefault(); if (submit.disabled || mine !== generation) return; submit.disabled = true;
+          submit.textContent = 'Waiting for bridge…';
           const fields = Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, v.value]));
           for (const input of Object.values(inputs)) input.value = '';
-          try { await step(network, flow, await request(network, 'step', {...payload(), fields}), mine); } catch (err) { problem(err, form); } finally { submit.disabled = false; }
+          try { await step(network, flow, await advance(network, payload(), fields, mine), mine); }
+          catch (err) {
+            if (mine !== generation) return;
+            // A returned user_input step is the upstream's recoverable retry.
+            // A thrown error is fatal/ambiguous: never resubmit stale credentials.
+            failure(err, network, flow, mine);
+          } finally { for (const key of Object.keys(fields)) delete fields[key]; }
         };
       } else throw new Error('Unsupported login step');
+    }
+    async function setupTelegram() {
+      const mine = generation + 1;
+      await cancel(); if (mine !== generation) return;
+      root.replaceChildren(heading('telegram', 'Set up Telegram'));
+      root.append(element('p', 'helper', 'Add your Telegram application keys once. Then connect your account by scanning a QR code with Telegram on your phone. These are app keys, not your Telegram login code.'));
+      const link = element('a', '', 'Get application keys at my.telegram.org/apps');
+      link.href = 'https://my.telegram.org/apps'; link.target = '_blank'; link.rel = 'noopener noreferrer'; root.append(link);
+      const form = element('form', 'c-form'); form.autocomplete = 'off';
+      const idLabel = element('label', '', 'API ID'), id = element('input');
+      id.name = 'api_id'; id.type = 'text'; id.inputMode = 'numeric'; id.required = true; id.autocomplete = 'off'; idLabel.append(id);
+      const hashLabel = element('label', '', 'API hash'), hash = element('input');
+      hash.name = 'api_hash'; hash.type = 'password'; hash.required = true; hash.autocomplete = 'off'; hashLabel.append(hash);
+      const save = element('button', 'primary wide', 'Save application keys'); save.type = 'submit'; form.append(idLabel, hashLabel, save); root.append(form);
+      button(root, 'Back to accounts', async () => show());
+      form.onsubmit = async e => {
+        e.preventDefault(); if (save.disabled || mine !== generation) return;
+        save.disabled = true;
+        const payload = {api_id: id.value.trim(), api_hash: hash.value.trim()}; hash.value = '';
+        try {
+          const result = await api('/api/view/telegram/application', 'POST', payload);
+          if (mine !== generation) return;
+          if (result.configured !== true) throw new Error('Telegram application setup did not complete. Try again.');
+          root.replaceChildren(heading('telegram', 'Telegram application configured'), element('p', 'helper', 'Telegram is warming up. Wait a moment, then refresh accounts. When the QR option appears, click it to connect your phone.'));
+          button(root, 'Refresh accounts', async () => show(), 'primary wide');
+        } catch (_) {
+          // Setup errors must not reflect the submitted hash or other server text.
+          if (mine === generation) problem(new Error('Could not save Telegram application keys. Check the API ID and hash from my.telegram.org/apps, then try again.'), form);
+        } finally { payload.api_hash = ''; save.disabled = false; }
+      };
     }
     function card(provider) {
       const [stateText, tone] = STATE[provider.state] || [provider.state, 'off'];
@@ -163,7 +242,10 @@
         return section;
       }
       if (ABOUT[provider.network] && flows.length) section.append(element('p', 'helper', ABOUT[provider.network]));
-      if (provider.state === 'not_configured' && provider.network === 'telegram') section.append(element('p', 'helper', 'Needs your Telegram app keys (from my.telegram.org) once. Ask your Wizard to add them.'));
+      if (provider.state === 'not_configured' && provider.network === 'telegram') {
+        section.append(element('p', 'helper', 'Add Telegram application keys once, then scan a QR code with your phone.'));
+        button(section, 'Set up Telegram', setupTelegram, 'primary wide');
+      }
       else if (provider.state === 'unavailable') section.append(element('p', 'helper', 'The private bridge is not responding. Try again in a minute.'));
       [...flows].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
         const name = FLOW_LABEL[flow.id] || flow.name;
@@ -172,7 +254,8 @@
       return section;
     }
     async function show({focus} = {}) {
-      await cancel(); const mine = generation;
+      const mine = generation + 1;
+      await cancel(); if (mine !== generation) return;
       const data = await api('/api/unified/connectors', 'GET'); if (mine !== generation) return;
       providers = data.providers || [];
       // Signal and KakaoTalk are optional on this Wizard; they fold away until set up.
