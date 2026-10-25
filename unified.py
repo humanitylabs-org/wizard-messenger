@@ -377,7 +377,7 @@ class PeopleStore:
 
     def message(self, message_id):
         with self.db() as db:
-            row = db.execute('SELECT m.*,i.network,i.address,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchone()
+            row = db.execute('SELECT m.rowid AS timeline_order,m.*,i.network,i.address,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchone()
         if not row:
             fail('not_found', 'That message is no longer here', 404)
         return dict(row)
@@ -454,14 +454,14 @@ class PeopleStore:
     def messages(self, person_id, before=None, limit=2000):
         self.person(person_id)
         with self.db() as db:
-            rows = db.execute('SELECT * FROM (SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
-                              'WHERE i.person_id=? AND (? IS NULL OR m.timestamp<?) ORDER BY m.timestamp DESC,m.id DESC LIMIT ?) ORDER BY timestamp,id',
+            rows = db.execute('SELECT * FROM (SELECT m.rowid AS timeline_order,m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
+                              'WHERE i.person_id=? AND (? IS NULL OR m.timestamp<?) ORDER BY m.timestamp DESC,m.rowid DESC LIMIT ?) ORDER BY timestamp,timeline_order',
                               (person_id, before, before, limit)).fetchall()
         return self.decorate(rows)
 
     def since(self, seq, limit=400):
         with self.db() as db:
-            rows = db.execute('SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
+            rows = db.execute('SELECT m.rowid AS timeline_order,m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
                               'WHERE m.seq>? ORDER BY m.seq LIMIT ?', (seq, limit)).fetchall()
             touched = {r[0] for r in db.execute('SELECT person_id FROM identity WHERE seq>?', (seq,))}
         return self.decorate(rows), touched | {r['person_id'] for r in rows}
@@ -1138,7 +1138,7 @@ class UnifiedInbox:
 
     def row(self, message_id):
         with self.store.db() as db:
-            rows = db.execute('SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchall()
+            rows = db.execute('SELECT m.rowid AS timeline_order,m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchall()
         rows = self.store.decorate(rows)
         return rows[0] if rows else None
 
@@ -1238,7 +1238,7 @@ class UnifiedInbox:
         if not message.get('album'):
             return [self.row(message_id)]
         with self.store.db() as db:
-            ids = [r[0] for r in db.execute('SELECT id FROM message WHERE album=? AND identity_id=? AND sender=? ORDER BY timestamp,id',
+            ids = [r[0] for r in db.execute('SELECT id FROM message WHERE album=? AND identity_id=? AND sender=? ORDER BY timestamp,rowid',
                                           (message['album'], message['identity_id'], message['sender']))]
         return [self.row(key) for key in ids]
 

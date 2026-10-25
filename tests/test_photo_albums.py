@@ -80,6 +80,23 @@ class PhotoAlbumTests(unittest.TestCase):
         self.assertEqual({m['album'] for m in rows}, {'telegram:987654321012345678'})
         self.assertEqual(len(rows), 3)
 
+    def test_equal_second_received_photos_keep_timeline_order_not_random_event_id(self):
+        order = ['$z-first', '$a-second', '$m-third']
+        for event_id in order:
+            self.inbox.ingest(self.a, {}, {'event_id': event_id, 'sender': '@alice:test',
+                'type': 'm.room.message', 'origin_server_ts': 1000,
+                'content': {'msgtype': 'm.image', 'url': 'mxc://test/photo', 'body': 'p.jpg',
+                            'filename': 'p.jpg', 'fi.mau.telegram.grouped_id': '1234'}})
+        self.inbox.store.add_message('$b-neighbor', self.a, '@alice:test', False, 'After album', 1000)
+        expected = order + ['$b-neighbor']
+        self.assertEqual([m['id'] for m in self.inbox.store.messages(self.pid)], expected)
+        self.assertEqual([m['id'] for m in self.inbox.album_rows(order[0])], order)
+        self.inbox.store.bump(order[0])  # Updating a reaction/receipt must not reorder an album.
+        rows = self.inbox.store.messages(self.pid)
+        self.assertEqual([m['id'] for m in rows], expected)
+        self.assertEqual([m['timeline_order'] for m in rows], sorted(m['timeline_order'] for m in rows))
+        self.assertEqual(self.inbox.row(order[1])['timeline_order'], rows[1]['timeline_order'])
+
     def test_delete_album_once_locally_and_for_everyone(self):
         self.send()
         self.inbox.mx.reset_mock()

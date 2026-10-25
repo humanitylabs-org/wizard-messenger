@@ -3,6 +3,7 @@ const {chromium} = require('playwright');
 const fs = require('node:fs');
 const {execFileSync} = require('node:child_process');
 const assert = require('node:assert/strict');
+let diagnosticPage;
 (async () => {
   const base = process.env.PREVIEW_URL || 'https://localhost:19253/';
   assert.match(new URL(base).hostname, /^(localhost|127\.0\.0\.1)$/, 'preview only');
@@ -37,7 +38,8 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   let mediaFetches = 0;
   await ctx.route(/api\/unified\/media\/%24v[12]/, route => {mediaFetches++; return route.fulfill({status: 200, contentType: 'audio/wav', body: wav});});
   const page = await ctx.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
-  page.on('close', () => {});
+  diagnosticPage = page;
+  page.on('console', m => { if (m.type() === 'error') console.error('browser:', m.text()); });
   const ticket = JSON.parse(execFileSync('curl', ['-sf','-X','POST','-H','Authorization: Bearer ' + process.env.MESSENGER_API_TOKEN,'-H','Content-Type: application/json','-d','{"bootstrap":true}','http://127.0.0.1:19252/api/view/ticket'])).result.ticket;
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000);
   await page.locator('#setup-form:visible, #inbox-tabs:visible').first().waitFor({timeout: 60000});
@@ -45,7 +47,9 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await page.locator('#confirm-passphrase').waitFor({state: 'visible', timeout: 30000});
   const pw = 'preview-only-passphrase-' + Date.now(); await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
   await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
-  if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
+  // Address sheet opens after the asynchronous post-create snapshot, not at first ready paint.
+  await page.locator('#sheet-layer:not([hidden])').waitFor({state: 'visible', timeout: 30000});
+  await page.click('#close-sheet');
   await page.click('#inbox-tabs [data-tab="people"]');
   await page.locator('.u-person', {hasText: 'Miguel'}).click();
 
@@ -74,4 +78,11 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   assert.deepEqual(errors, []);
   fs.writeFileSync(ev + '/receipt.json', JSON.stringify({uploads, sends}, null, 1));
   console.log('pass multi_photo_browser'); await browser.close();
-})().catch(e => { console.error('FAIL', e.stack || e); process.exit(1); });
+})().catch(async e => {
+  console.error('FAIL', e.stack || e);
+  if (diagnosticPage) {
+    console.error('visible state:', await diagnosticPage.locator('body').innerText().catch(() => 'unavailable'));
+    await diagnosticPage.screenshot({path: (process.env.EVIDENCE_DIR || './evidence') + '/failure.png'}).catch(() => {});
+  }
+  process.exit(1);
+});

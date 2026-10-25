@@ -39,18 +39,25 @@ const assert = require('node:assert/strict');
   await page.locator('#confirm-passphrase').waitFor({state: 'visible'});
   const pw = 'disposable-album-fixture-' + Date.now(); await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
   await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
-  if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
+  // Address sheet opens after the asynchronous post-create snapshot, not at first ready paint.
+  await page.locator('#sheet-layer:not([hidden])').waitFor({state: 'visible', timeout: 30000});
+  await page.click('#close-sheet');
   await page.click('#inbox-tabs [data-tab="people"]');
   async function show(n, incoming = false) {
+    const stamp = Date.now() - 10000;
     rows = Array.from({length: n}, (_, i) => ({id: '$photo-' + i, album: incoming ? 'telegram:1234567890123456789' : 'matrix:$album', identity_id: 'album-id', network: 'telegram', sender: incoming ? 'Album preview' : 'You', outgoing: !incoming,
-      original: i === 0 ? 'A few photos, one post.' : '', timestamp: Date.now() - 10000, msgtype: 'm.image', media: {w: 640, h: 480, mime: 'image/jpeg'}, reactions: []}));
-    if (incoming) rows[1].reactions = [{key: '👍', count: 1, mine: true}];
+      original: i === 0 ? 'A few photos, one post.' : '', timeline_order: i + 1, timestamp: stamp, msgtype: 'm.image', media: {w: 640, h: 480, mime: 'image/jpeg'}, reactions: []}));
+    if (incoming) {
+      rows[1].reactions = [{key: '👍', count: 1, mine: true}];
+      // Random Matrix IDs must not interleave a same-second neighboring message on refresh.
+      rows.push({...rows[0], id: '$photo-00-neighbor', album: null, timeline_order: n + 1, msgtype: 'm.text', media: null, original: 'After the album'});
+    }
     await page.evaluate(() => {sessionStorage.clear(); localStorage.clear();}); await page.reload();
     await page.locator('.u-person', {hasText: 'Album preview'}).click();
     await page.locator('.u-album .u-media').nth(n - 1).waitFor();
-    assert.equal(await page.locator('.u-message').count(), 1, n + ' photos = one post');
-    assert.equal(await page.locator('.u-message footer').count(), 1, 'one timestamp/receipt');
-    assert.equal(await page.locator('.u-message .u-text').count(), 1, 'one caption');
+    assert.equal(await page.locator('.u-message').count(), incoming ? 2 : 1, n + ' photos = one post, neighbor stays separate');
+    assert.equal(await page.locator('.u-message.has-album footer').count(), 1, 'one timestamp/receipt');
+    assert.equal(await page.locator('.u-message.has-album .u-text').count(), 1, 'one caption');
     const rects = await page.locator('.u-album .u-media').evaluateAll(els => els.map(el => {const r=el.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};}));
     assert(rects.every(r => r.w > 100 && r.x >= 0 && r.x + r.w <= 390), 'tiles stay on phone');
     if (n === 2) assert.equal(rects[0].y, rects[1].y);
@@ -90,6 +97,9 @@ const assert = require('node:assert/strict');
   await page.locator('.u-reactions .u-react').click();
   for (let i=0; i<50 && reactions.length===0; i++) await page.waitForTimeout(50);
   assert.deepEqual(reactions, ['$photo-1'], 'received reaction on extra part targets that part');
+  await page.waitForTimeout(200);
+  assert.equal(await page.locator('.u-album').count(), 1, 'same-second neighbor does not split album after merge');
+  assert.equal(await page.locator('.u-album .u-media').count(), 3);
   await page.locator('.u-thread-head [aria-label="Back"]').click();
   // Same id from a different sender must never merge; ordinary single photo unchanged.
   rows = rows.slice(0,2); rows[1] = {...rows[1], sender: 'Someone else'};
