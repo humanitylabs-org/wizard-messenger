@@ -40,7 +40,7 @@ Messenger can reuse the already verified release's Marmot binaries (no Rust rebu
 docker build \
   --build-arg MDK_BUILD_IMAGE=wizard-messenger:0.2.0-unified.11.13 \
   --build-arg MESSENGER_RUNTIME_BASE=wizard-messenger:0.2.0-unified.11.13 \
-  -t wizard-messenger:0.2.0-unified.11.14 .
+  -t wizard-messenger:0.2.0-unified.11.15 .
 ```
 
 ## Verification
@@ -55,9 +55,9 @@ The disposable preview Telegram database has no user login or portal, so no real
 
 ## Live release handoff (not executed)
 
-Use the candidate `runtipi/config.json` (version `0.2.0-unified.11.14`, `tipi_version` 34) and `runtipi/docker-compose.yml` only after review and image verification. Required compose changes:
+Use the candidate `runtipi/config.json` (version `0.2.0-unified.11.15`, `tipi_version` 35) and `runtipi/docker-compose.yml` only after review and image verification. Required compose changes:
 
-- `services.unified-init.image`, `services.messenger.image`, `services.translation.image`: `${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.14}`.
+- `services.unified-init.image`, `services.messenger.image`, `services.translation.image`: `${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.15}`.
 - `services.telegram.image`: `${TELEGRAM_IMAGE:-wizard-telegram-bridge:0.2610.0-albums1}`, with `pull_policy: never` for the local build.
 
 Check installation environment overrides: an existing `MESSENGER_IMAGE` or `TELEGRAM_IMAGE` overrides these defaults. Keep all volumes/configuration/credentials intact. Back up the SQLite database before promoting the safe additive migration. No gateway/Caddyfile or live app directory changes are required by this patch. The branch includes both the live QR-code work and the unified-inbox reuse-check workflow.
