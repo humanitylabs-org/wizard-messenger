@@ -11,5 +11,4 @@ The marks remain trademarks of their respective owners. Messenger shows them onl
 conversation belongs to. It does not imply endorsement. See the Simple Icons
 [disclaimer](https://github.com/simple-icons/simple-icons/blob/develop/DISCLAIMER.md) and each brand's guidelines.
 
-Simple Icons does not include Slack. Its mark in Messenger is a neutral hash drawn for this project, not Slack
-artwork. The Private (Wizard-to-Wizard) shield-and-lock mark is original to this project.
+Slack uses the CC0 glyph from [Simple Icons 10.4.0](https://github.com/simple-icons/simple-icons/blob/10.4.0/icons/slack.svg), rather than the newer collection which omits it. The trademark and non-endorsement notice above also applies to Slack. The Private (Wizard-to-Wizard) shield-and-lock mark is original to this project.
