@@ -199,7 +199,7 @@
       signal?.throwIfAborted();
       // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
       if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code) || code.startsWith('passkey_')) throw new APIError(code, 401);
-      const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
+      const unlockRequired = ['session_unlock_required', 'remembered_unlock_unavailable'].includes(code) || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
     // A restarting release answers through the gateway with an empty or HTML body: say so, never surface a parser error.
@@ -712,15 +712,16 @@
     });
   };
   async function unlockWith(password, signal, creating = false, name = '') {
+    const rememberWizard = trustedWizard && $('remember-wizard')?.checked === true;
     if (state.sessionLocked) {
-      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
       state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
     } else {
       await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
       // Launcher tickets are setup-only; passphrase proof opens the owner view,
       // including when a phone-vault or PRF unlock calls this shared helper.
-      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
       state.csrf = session.csrf_token; state.authenticated = true;
     }
@@ -934,6 +935,13 @@
     await run(async signal => {
       try {
         const ticket = launchTicket; launchTicket = null;
+        if (!ticket) {
+          try {
+            const response = await fetch('api/view/trusted-owner', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'});
+            trustedWizard = response.ok && (await response.json())?.result?.enabled === true;
+          } catch { trustedWizard = false; }
+        }
+        if ($('remember-wizard-label')) $('remember-wizard-label').hidden = !trustedWizard;
         let session;
         try {
           session = await api('api/view/session', ticket ? {method: 'POST', body: {ticket}, signal, session: true} : {signal, session: true});
@@ -947,7 +955,7 @@
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
         bootTries = 0;
       } catch (error) {
-        if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
+        if (error.name === 'AbortError' || ['session_unlock_required', 'remembered_unlock_unavailable'].includes(error.code)) return;
         // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
         // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
         if (transient(error) && bootTries < 40) {
@@ -958,7 +966,7 @@
       }
     }, false, true);
   }
-  let bootTries = 0, bootTimer = null;
+  let bootTries = 0, bootTimer = null, trustedWizard = false;
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
   addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});

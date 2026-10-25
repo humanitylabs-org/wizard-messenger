@@ -119,6 +119,12 @@ class ViewServer(MessengerServer):
         if self.remote_required and not data:
             raise ValueError('remote-required needs persistent credential-free data')
         self.auth=BrowserAuth(Path(data)/'browser-auth.json' if data else None)
+        from trusted_owner import TrustedOwner
+        self.trusted_owner=TrustedOwner.from_environment(data)
+        if self.trusted_owner.enabled and any(hmac.compare_digest(key,token.encode()) for key in (self.trusted_owner.proof_key,self.trusted_owner.wrap_key)):
+            raise ValueError('Trusted owner keys must not reuse the machine API token')
+        if self.trusted_owner.enabled and (self.remote_required or self.remote_authority.endpoint):
+            raise ValueError('Trusted Wizard owner access is incompatible with remote authority')
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
         # One transaction for provider proof, engine transition and verifier issuance.
@@ -172,6 +178,11 @@ class ViewHandler(Handler):
             token=cookies['wizard_messenger_session'].value
         except (KeyError,ValueError): return None
         return self.service.auth.lookup(token)
+    def _trusted_owner(self):
+        # Verify once per HTTP request, never per TCP connection.
+        if not getattr(self, '_trusted_owner_verified', False):
+            self.service.trusted_owner.require(self)
+            self._trusted_owner_verified=True
     def _authorize(self):
         if urlsplit(self.path).path=='/mcp' and self.command=='POST':
             # Standard Wizard gateway currently has no per-app auth-header channel.
@@ -181,6 +192,8 @@ class ViewHandler(Handler):
             return
         if self.headers.get('Authorization'):
             return super()._authorize()
+        if self.service.trusted_owner.enabled:
+            self._trusted_owner()
         self._origin(required=self.command in ['POST','DELETE','PUT','PATCH'])
         session=self._session()
         if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
@@ -291,11 +304,19 @@ class ViewHandler(Handler):
         raise EngineError('not_found','No such view route',404)
     def _dispatch(self,method):
         self.pending_cookie=None
+        self._trusted_owner_verified=False
         path=urlsplit(self.path).path
         if self.service.remote_required or bool(self.service.remote_authority.endpoint):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         self._agent_gate(method,path)
+        if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
+            raise EngineError('owner_only','Owner browser access is required',403)
+        if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/'):
+            self._trusted_owner()
+        if path=='/api/view/trusted-owner' and method=='GET':
+            self._trusted_owner()
+            return 200,{'ok':True,'result':{'enabled':True,'remembered':self.service.trusted_owner.path.exists()}}
         if path.startswith('/api/view/push'):
             # Bearers (including Full access) never possess notification authority.
             if self.headers.get('Authorization'):
@@ -386,10 +407,14 @@ class ViewHandler(Handler):
         if path.startswith('/api/view/passkey'):
             return self._passkey(method,path)
         if path=='/api/view/unlock' and method=='POST':
-            self._origin(required=True); password=self._body().get('vault_password')
+            self._origin(required=True); body=self._body(); password=body.get('vault_password')
+            if body.get('remember_wizard') is True:
+                self._trusted_owner()
             with self.service.setup_lock:
                 self.service.auth.verify_password(password,rate_limit=True)
                 status=self.service.engine.setup({'action':'unlock','vault_password':password})
+                if body.get('remember_wizard') is True:
+                    self.service.trusted_owner.remember(password,self.service.auth.credential)
             token,session=self.service.auth.create(); self.pending_cookie=self._cookie(token)
             return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf'],'status':status}}
         if path=='/api/view/session':
@@ -403,6 +428,28 @@ class ViewHandler(Handler):
                 token,session=self.service.auth.create(ticket,allow_bootstrap=True)
                 self.pending_cookie=self._cookie(token)
             elif method=='GET':
+                if self.service.trusted_owner.enabled and self._session() is None:
+                    # Never create an identity, redeem enrollment or change its passphrase.
+                    self._trusted_owner()
+                    with self.service.setup_lock:
+                        if not self.service.auth.credential:
+                            raise EngineError('setup_link_required','Finish the existing Messenger enrollment first',401)
+                        password=self.service.trusted_owner.password(self.service.auth.credential)
+                        if password is None:
+                            raise EngineError('session_unlock_required','Unlock once with your existing passphrase and choose Remember this Wizard',401)
+                        self.service.auth.verify_password(password)
+                        if self.service.engine.status().get('state')!='ready':
+                            self.service.engine.setup({'action':'unlock','vault_password':password})
+                        token,session=self.service.auth.create()
+                        self.pending_cookie=self._cookie(token)
+                    return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
+                if self.service.trusted_owner.enabled and self.service.engine.status().get('state')!='ready':
+                    with self.service.setup_lock:
+                        password=self.service.trusted_owner.password(self.service.auth.credential)
+                        if password is None:
+                            raise EngineError('session_unlock_required','Unlock with your existing passphrase',401)
+                        self.service.auth.verify_password(password)
+                        self.service.engine.setup({'action':'unlock','vault_password':password})
                 if not self.headers.get('Authorization') and self._session() is None:
                     if self.service.auth.credential:
                         raise EngineError('session_unlock_required','Enter your passphrase to open Messenger',401)
@@ -425,7 +472,13 @@ class ViewHandler(Handler):
             action=payload.get('action'); password=payload.get('vault_password')
             if action=='lock':
                 # Locking never proves or records a passphrase.
-                return 200,{'ok':True,'result':self.service.engine.setup({'action':'lock'})}
+                with self.service.setup_lock:
+                    if self.service.trusted_owner.enabled:
+                        self.service.trusted_owner.forget()
+                        with self.service.auth.lock:
+                            self.service.auth.sessions.clear()
+                            self.service.auth._save()
+                    return 200,{'ok':True,'result':self.service.engine.setup({'action':'lock'})}
             # Validate before any provider, account or verifier side effect.
             vault_password(password)
             with self.service.setup_lock:
@@ -454,6 +507,7 @@ class ViewHandler(Handler):
             return 200,{'ok':True,'result':result}
         return super()._dispatch(method)
     def do_GET(self):
+        self._trusted_owner_verified=False
         path=urlsplit(self.path).path
         if path == '/push-service-worker.js':
             self.pending_cookie = None
