@@ -31,7 +31,7 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse(providers.health()['account_authentication_attempted'])
         statuses = providers.dispatch('GET', [], {})['providers']
         self.assertEqual(len(statuses), 3)
-        self.assertEqual({s['state'] for s in statuses}, {'not_configured', 'unsupported'})
+        self.assertEqual({s['state'] for s in statuses}, {'not_configured'})
         self.reader.assert_not_called()
         for name in ('whatsapp', 'signal'):
             self.assertFalse((self.root / name / 'configured').exists())
@@ -47,7 +47,7 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(private, secrets_path.read_bytes())
         self.assertEqual(old, (self.root / 'telegram' / 'config.yaml').read_bytes())
         keys = json.loads(private)
-        self.assertEqual(len({keys[n]['provisioning'] for n in keys}), 4)
+        self.assertEqual(len({keys[n]['provisioning'] for n in keys}), 3)
         for name in ('whatsapp', 'signal'):
             conf = json.loads((self.root / name / 'config.yaml').read_text())
             self.assertEqual(conf['bridge']['permissions']['*'], 'block')
@@ -59,8 +59,23 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(reg['as_token'], conf['appservice']['as_token'])
         setup_connectors(self.root)
         matrix = json.loads((self.root / 'matrix' / 'homeserver.yaml').read_text())
-        self.assertEqual(len(matrix['app_service_config_files']), 2)
+        self.assertEqual(len(matrix['app_service_config_files']), 4)
         self.assertFalse((self.root / 'signal' / 'configured').exists())
+
+    def test_owner_enable_wakes_only_selected_preinstalled_bridge(self):
+        setup_connectors(self.root)
+        before = (self.root / 'unified' / 'connector-secrets.json').read_bytes()
+        controller = Connectors(self.root / 'unified', writer=Mock())
+        self.assertEqual(controller.dispatch('POST', ['signal', 'enable'], {}), {'enabled': True, 'network': 'signal'})
+        self.assertTrue((self.root / 'signal' / 'configured').exists())
+        self.assertFalse((self.root / 'whatsapp' / 'configured').exists())
+        self.assertEqual(before, (self.root / 'unified' / 'connector-secrets.json').read_bytes())
+        config = json.loads((self.root / 'matrix' / 'homeserver.yaml').read_text())
+        self.assertEqual(len(config['app_service_config_files']), 4)
+        self.assertEqual(len(set(config['app_service_config_files'])), 4)
+        read_only = Connectors(self.root / 'unified')
+        with self.assertRaises(EngineError): read_only.dispatch('POST', ['whatsapp', 'enable'], {})
+        self.assertFalse((self.root / 'whatsapp' / 'configured').exists())
 
     def test_invalid_network_rejected(self):
         with self.assertRaises(ValueError): setup_connectors(self.root, ('unknown',))

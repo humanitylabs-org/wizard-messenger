@@ -805,7 +805,7 @@ class UnifiedInbox:
         if etype == 'm.room.redaction':
             target = event.get('redacts') or content.get('redacts')
             with self.store.db() as db:
-                allowed = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=?', (target, identity['id'])).fetchone()
+                allowed = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=? UNION SELECT 1 FROM reaction r JOIN message m ON m.id=r.message_id WHERE r.event_id=? AND m.identity_id=?', (target, identity['id'], target, identity['id'])).fetchone()
             if allowed:
                 self.store.redact(target)
             return

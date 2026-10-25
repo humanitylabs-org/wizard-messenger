@@ -1,9 +1,9 @@
 /* Messenger look: Signal-inspired, dark, flat and quiet. Layout stays local. */
 :root {
-  --bg: #121214; --surface: #1b1b1e; --raised: #26262a; --raised-2: #313136;
-  --ink: #ececee; --ink-2: #a4a5ab; --ink-3: #76777d;
-  --line: rgba(255,255,255,.07); --line-2: rgba(255,255,255,.12);
-  --accent: #2c6bed; --accent-press: #2559c8; --accent-soft: rgba(44,107,237,.16); --on-accent: #fff;
+  --bg: var(--wz-bg, #121214); --surface: var(--wz-surface, #1b1b1e); --raised: var(--wz-surface-raised, #26262a); --raised-2: var(--wz-surface-raised, #313136);
+  --ink: var(--wz-text, #ececee); --ink-2: var(--wz-text-muted, #a4a5ab); --ink-3: var(--wz-text-faint, #76777d);
+  --line: var(--wz-border, rgba(255,255,255,.07)); --line-2: var(--wz-border, rgba(255,255,255,.12));
+  --accent: var(--wz-accent, #2c6bed); --accent-press: #2559c8; --accent-soft: rgba(44,107,237,.16); --on-accent: var(--wz-on-accent, #fff);
   --bubble-in: #2a2a2e; --bubble-out: #2c6bed;
   --ok: #4fc28a; --warn: #f2b74b; --err: #ff6b6b;
   --ease: cubic-bezier(.2,.9,.25,1);

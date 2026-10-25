@@ -1,20 +1,6 @@
-"""Opt-in multi-network inbox; baseline UnifiedInbox remains unchanged.
-
-Methods adapted from the local MIT unified.py; shared algorithms are deliberately
-kept in sync with baseline 490abc8. Parent integration selects this class after
-owner/agent boundary wiring. No writer means NO Matrix/provisioning writes.
-"""
+"""Oscar's owner-only bridge adapter, extending the live shared inbox algorithms."""
 from unified import *
-from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
-
-# Cached room_meta written before this version may have dropped a bridged room
-# (protocol.id aliases): re-read room state once for those.
-META_VERSION = 2
-# Bridged history (bridgev2 backfill on stock Synapse) arrives through /sync with
-# its original timestamps; only recent lines may notify.
-LIVE_WINDOW_MS = 15 * 60 * 1000
-HISTORY_PAGES, HISTORY_PAGE = 5, 100
-
+from connectors import Connectors, MATRIX_NETWORKS, own_ghost
 
 class ConnectorInbox(UnifiedInbox):
     def __init__(self, data, engine, sender=None):

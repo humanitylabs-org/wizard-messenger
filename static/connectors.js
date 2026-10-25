@@ -14,6 +14,7 @@
     telegram: ['Open Telegram on your phone', 'Settings → Devices → Link Desktop Device'],
     signal: ['Open Signal on your phone', 'Settings → Linked devices → +'],
   };
+  const TELEGRAM_LABEL = {qr: 'Connect with QR', failure: 'Telegram did not accept that. Try again.'};
   const FLOW_LABEL = {qr: 'Show QR code', phone: 'Connect with phone'};
   const STATE = {
     connected: ['Connected', 'on'], disconnected: ['Not connected', 'off'], degraded: ['Needs reconnecting', 'warn'],
@@ -22,29 +23,31 @@
   const isQR = flow => /(^|[._])qr($|[._])/.test(flow.id);
   const SECRET = /password|pass|code|otp|token|cookie|secret|2fa/i;
 
+  function qrCanvas(data) {
+      if (typeof global.qrcode !== 'function') throw new Error('QR renderer unavailable');
+      const qr = global.qrcode(0, 'M'); qr.addData(data); qr.make();
+      // Render QR modules directly; never insert upstream HTML or open a QR URI.
+      const n = qr.getModuleCount(), scale = 8, canvas = document.createElement('canvas'); canvas.width = canvas.height = (n + 8) * scale;
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + 4) * scale, (r + 4) * scale, scale, scale);
+      canvas.className = 'u-qr';
+      canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Login QR code. Scan it with the app on your phone.');
+      return canvas;
+    }
+
   global.MessengerConnectors = function (root, api, options = {}) {
     let generation = 0, active = null, providers = [];
     const element = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
     const request = (network, action, body) => api('/api/unified/connectors/' + network + '/' + action, body === undefined ? 'GET' : 'POST', body);
     const label = network => (providers.find(p => p.network === network) || {}).label || network;
     function problem(e, where = root) {
-      for (const old of where.children) if (old.className === 'error c-problem') old.remove();
-      const p = element('p', 'error c-problem', (e && e.message) || 'Private bridge unavailable'); p.setAttribute('role', 'alert'); where.append(p);
+      for (const old of where.children) if (old.className === 'error u-connector-problem') old.remove();
+      const p = element('p', 'error u-connector-problem', (e && e.message) || 'Private bridge unavailable'); p.setAttribute('role', 'alert'); where.append(p);
     }
     function button(parent, text, run, cls = 'secondary wide') {
       const b = options.button ? options.button(text, null, cls) : element('button', cls, text); b.type = 'button'; parent.append(b);
       b.onclick = async () => { b.disabled = true; try { await run(); } catch (e) { if (root.contains(b)) problem(e); } finally { b.disabled = false; } };
       return b;
-    }
-    function qrCanvas(data) {
-      if (typeof global.qrcode !== 'function') throw new Error('QR renderer unavailable');
-      const qr = global.qrcode(0, 'M'); qr.addData(data); qr.make();
-      // Render QR modules directly; never insert upstream HTML or open a QR URI.
-      const n = qr.getModuleCount(), scale = 8, canvas = element('canvas', 'u-qr'); canvas.width = canvas.height = (n + 8) * scale;
-      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
-      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + 4) * scale, (r + 4) * scale, scale, scale);
-      canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Login QR code. Scan it with the app on your phone.');
-      return canvas;
     }
     function heading(network, title) {
       const head = element('div', 'u-connector-heading'); head.append(element('h3', '', title || 'Connect ' + label(network))); return head;
@@ -52,6 +55,7 @@
     async function cancel() {
       const old = active; active = null; const mine = ++generation;
       if (old) {
+        options.onPending?.(old.network, false);
         try { await request(old.network, 'cancel', {login_id: old.login_id}); }
         catch (e) {
           // Already-ended logins need no cleanup; other failures must be visible.
@@ -79,6 +83,7 @@
     }
     function failure(error, network, flow, mine) {
       if (mine !== generation) return;
+      if (network === 'telegram' && error.code === 'login_failed') error = new Error(TELEGRAM_LABEL.failure);
       problem(error);
       button(root, 'Start again', async () => start(network, flow), 'primary wide');
       button(root, 'Back to accounts', async () => show());
@@ -97,6 +102,7 @@
       if (mine !== generation || !result) return;
       if (result.type === 'complete') {
         active = null;
+        options.onPending?.(network, false);
         root.replaceChildren(heading(network, label(network) + ' connected'),
           element('p', 'helper', 'Your chats appear in the Inbox over the next few minutes. Older history fills in gradually.'));
         button(root, 'Done', async () => { if (options.onDone) options.onDone(); else await show(); }, 'primary wide');
@@ -104,6 +110,7 @@
         return;
       }
       active = {network, login_id: result.login_id};
+      options.onPending?.(network, true);
       const payload = () => ({login_id: result.login_id, step_id: result.step_id, type: result.type, txn_id: result.txn_id});
       root.replaceChildren(heading(network));
       const back = () => button(root, 'Cancel', async () => {
@@ -124,6 +131,12 @@
         } else throw new Error('Unsupported login display type');
         const wait = element('p', 'helper'); wait.append(element('span', 'spinner'), element('span', '', 'Waiting for your phone…'));
         root.append(wait);
+        if (network === 'telegram') button(root, 'I scanned it', async () => {
+          const status = await request(network, 'status');
+          if (mine !== generation) return;
+          if (status.logins?.length) { active = null; await step(network, flow, {type: 'complete'}, ++generation); }
+          else wait.textContent = 'Waiting for Telegram to confirm…';
+        });
         if (params.type === 'qr') button(root, 'Refresh QR code', () => { start(network, flow); });
         back();
         // The bridge answers once the phone acts, or with a refreshed code, so wait while this owner
@@ -188,7 +201,7 @@
       if (provider.state === 'connected') {
         const who = (provider.logins || []).map(l => l.name).filter(Boolean).join(', ');
         if (who) section.append(element('p', 'helper', who));
-        button(section, 'Disconnect', async () => {
+        button(section, provider.network === 'telegram' ? 'Disconnect Telegram' : 'Disconnect', async () => {
           if (global.confirm && !global.confirm('Disconnect ' + provider.label + '? Its chats leave this Messenger. Nothing changes on ' + provider.label + ' itself.')) return;
           await request(provider.network, 'disconnect', {}); await show(); options.onChange?.(provider.network);
         }, 'secondary wide danger').setAttribute('aria-label', 'Disconnect ' + provider.label);

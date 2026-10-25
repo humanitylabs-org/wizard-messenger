@@ -90,34 +90,21 @@ async function signalQRPinAndCloseErrorFence() {
 async function challengeIsHumanActionNotBlankFailure() {
   const root=new Element('main'), calls=[];
   const ui=window.MessengerConnectors(root,async(p)=>{calls.push(p); return p.endsWith('/start') ? step({type:'challenge',challenge:'cookies'}) : {};});
-  await ui.start('instagram','android');
+  await ui.start('signal','qr');
   assert.match(text(root),/cannot safely complete/); assert.match(text(root),/official app or website/);
   assert.equal(calls.filter(p=>p.endsWith('/step')).length,0,'never bypass browser challenge');
   await ui.close();
 }
-async function telegramApplicationSetup() {
-  const root=new Element('main'), calls=[]; let fail=false;
-  const ui=window.MessengerConnectors(root,async(p,m,b)=>{
-    calls.push({p,m,b:b&&JSON.parse(JSON.stringify(b))});
-    if(p==='/api/view/telegram/application') { if(fail) throw new Error('synthetic-secret-hash'); return {configured:true}; }
-    return {providers:[{network:'telegram',label:'Telegram',supported:true,state:'not_configured',flows:[]}]};
-  });
-  await ui.show(); await button(root,'Set up Telegram').onclick();
-  assert.equal(all(root).find(n=>n.tag==='a').href,'https://my.telegram.org/apps');
-  const id=all(root).find(n=>n.name==='api_id'), hash=all(root).find(n=>n.name==='api_hash');
-  assert.equal(hash.type,'password'); id.value='12345'; hash.value='synthetic-secret-hash';
-  await submit(root); assert.equal(hash.value,'');
-  const saved=calls.find(c=>c.p==='/api/view/telegram/application');
-  assert.deepEqual(saved.b,{api_id:'12345',api_hash:'synthetic-secret-hash'});
-  assert.match(text(root),/warming up/); assert.ok(button(root,'Refresh accounts'));
-  assert.equal(calls.filter(c=>c.p.endsWith('/start')).length,0,'saving application keys never starts account login');
-  await button(root,'Refresh accounts').onclick(); await button(root,'Set up Telegram').onclick();
-  fail=true; all(root).find(n=>n.name==='api_hash').value='synthetic-secret-hash';
-  await submit(root); assert.match(text(root),/Check the API ID and hash/); assert.doesNotMatch(text(root),/synthetic-secret-hash/);
+async function telegramSetupUsesExistingInstallationSettings() {
+  const root = new Element('main');
+  const ui = window.MessengerConnectors(root, async () => ({providers:[{network:'telegram',label:'Telegram',supported:true,state:'not_configured',flows:[]}]}));
+  await ui.show();
+  assert.match(text(root), /installation settings/);
+  assert.equal(all(root).filter(n => n.tag === 'input').length, 0, 'do not invent a parallel Telegram application-key form');
   await ui.close();
 }
 (async()=>{
-  const tests=[delayedStartClose,competingStartsAndCloseDuringCancel,waitErrorsAreNotExpiry,pendingPollsDoNotReplaySecrets,signalQRPinAndCloseErrorFence,challengeIsHumanActionNotBlankFailure,telegramApplicationSetup];
+  const tests=[delayedStartClose,competingStartsAndCloseDuringCancel,waitErrorsAreNotExpiry,pendingPollsDoNotReplaySecrets,signalQRPinAndCloseErrorFence,challengeIsHumanActionNotBlankFailure,telegramSetupUsesExistingInstallationSettings];
   for(const test of tests) await test();
   console.log(`connector login runtime: ${tests.length} synthetic UI regressions passed`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
