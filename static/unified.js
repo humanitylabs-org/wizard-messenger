@@ -56,7 +56,7 @@
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
   // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
-  // Drafts are kept in sessionStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
+  // Drafts are kept in localStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
   function hold() {
     const reason = view.recording ? 'Recording' : store.pending > 0 ? 'Sending' : s.busy ? 'Saving' : '';
     if (updateHold && updateHold.reason !== reason) { updateHold.h.release(); updateHold = null; }
@@ -991,28 +991,23 @@
       if (draft.value && Date.now() - typingAt > 4000) { typingAt = Date.now(); typing(true); }
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
-    draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
     // Several selected photos are one post and one Telegram media group (up to 10).
     // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
     const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
     const addPhotos = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); if (s.person !== id) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); } catch (e) { error(e); } };
     file.onchange = () => { const picked = [...file.files]; file.value = ''; addPhotos(picked); };
-    const filesOf = dt => { const items = [...(dt?.items || [])].filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean); return items.length ? items : [...(dt?.files || [])]; };
     const takePhotos = files => {
-      if (!files.length) return false;
+      if (!files.length || view.edit) return;
       const photos = files.filter(f => PHOTO.test(f.type));
-      if (!telegramOnly) { toast('Photos can be sent in Telegram, WhatsApp and Signal chats'); return true; }
-      if (!photos.length) { toast('Only photos can be attached here'); return true; }
+      if (!telegramOnly) return toast('Photos can be sent in Telegram, WhatsApp and Signal chats');
+      if (!photos.length) return toast('Only photos can be attached here');
       if (photos.length < files.length) toast('Only photos were attached');
-      addPhotos(photos); return true;
+      addPhotos(photos);
     };
-    // Pasting a screenshot or copied image attaches it. Text pastes keep the browser's normal behaviour.
-    draft.addEventListener('paste', e => { if (view.edit) return; if (takePhotos(filesOf(e.clipboardData))) e.preventDefault(); });
-    // Only file drags are claimed: selected text and links keep their normal drag/drop.
-    const hasFiles = dt => !!dt && ([...(dt.items || [])].some(it => it.kind === 'file') || [...(dt.types || [])].includes('Files'));
-    form.addEventListener('dragover', e => { if (view.edit || !hasFiles(e.dataTransfer)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; form.classList.add('is-file-drag'); });
-    form.addEventListener('dragleave', e => { if (!e.relatedTarget || !form.contains(e.relatedTarget)) form.classList.remove('is-file-drag'); });
-    form.addEventListener('drop', e => { form.classList.remove('is-file-drag'); if (view.edit || !hasFiles(e.dataTransfer)) return; e.preventDefault(); takePhotos(filesOf(e.dataTransfer)); });
+    // Paste and drop of files, dictation-safe text paste (Wispr Flow), the drag highlight and Enter / Shift+Enter /
+    // Ctrl|Cmd+Enter are Wizard's one composer implementation, the same code as Chats (James, 25 Oct 2026: "one
+    // implementation, shared by many apps"). Messenger only decides what an attached file becomes.
+    window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takePhotos, onSubmit: () => submit(), notice: msg => toast(msg)});
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
       const text = draft.value.trim(), a = view.attach || [];
@@ -1135,7 +1130,24 @@
     await enc.flush(); enc.close(); if (err) throw err; if (!packets.length) throw new Error('Voice note was empty');
     return new Blob([oggFromOpus(packets, 1)], {type: 'audio/ogg'});
   }
-  function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
+  // Unsent drafts survive closing Messenger or a reload, like Chats' drafts: per person, newest 50, kept 30 days.
+  const DRAFTS_KEY = 'messenger-drafts-v2', DRAFT_DAYS = 30, DRAFTS_KEPT = 50;
+  let draftAt = {};
+  function saveDrafts() {
+    const now = Date.now();
+    for (const [k, v] of Object.entries(s.drafts)) { if (v) draftAt[k] = draftAt[k] && draftAt[k].text === v ? draftAt[k] : {text: v, at: now}; else delete draftAt[k]; }
+    for (const k of Object.keys(draftAt)) if (!s.drafts[k]) delete draftAt[k];
+    draftAt = Object.fromEntries(Object.entries(draftAt).sort((x, y) => y[1].at - x[1].at).slice(0, DRAFTS_KEPT));
+    try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(draftAt)); } catch { /* storage full or blocked: drafts stay in memory */ }
+  }
+  function loadDrafts() {
+    let kept = {}; try { kept = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}') || {}; } catch { kept = {}; }
+    const fresh = Date.now() - DRAFT_DAYS * 864e5; draftAt = {};
+    for (const [k, v] of Object.entries(kept)) if (v?.text && v.at > fresh) draftAt[k] = v;
+    // One-time move from the old per-tab drafts.
+    try { const old = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}') || {}; for (const [k, v] of Object.entries(old)) if (v && !draftAt[k]) draftAt[k] = {text: v, at: Date.now()}; sessionStorage.removeItem('messenger-unified-drafts'); } catch { /* none */ }
+    return Object.fromEntries(Object.entries(draftAt).map(([k, v]) => [k, v.text]));
+  }
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
     // Albums use still JPEG photos, including the first frame of an animated image.
@@ -1455,7 +1467,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() {
       if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;

@@ -39,6 +39,8 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await ctx.route(/api\/unified\/media\/%24v[12]/, route => {mediaFetches++; return route.fulfill({status: 200, contentType: 'audio/wav', body: wav});});
   // Serve this checkout's view files so the shared preview container is not touched.
   if (process.env.STATIC_DIR) await ctx.route(/\/(unified\.js|unified\.css)(\?|$)/, route => { const f = new URL(route.request().url()).pathname.split('/').pop(); return route.fulfill({status: 200, contentType: f.endsWith('.js') ? 'text/javascript' : 'text/css', body: fs.readFileSync(process.env.STATIC_DIR + '/' + f)}); });
+  // The composer behaviour is Wizard's shared WizComposerInput; serve a shell checkout's copy when given.
+  if (process.env.SHELL_DIR) await ctx.route(/\/wizard-os-home\/core\/(app-client|composer-input)\.js(\?|$)/, route => route.fulfill({status: 200, contentType: 'text/javascript', body: fs.readFileSync(process.env.SHELL_DIR + '/web/core/' + new URL(route.request().url()).pathname.split('/').pop())}));
   const page = await ctx.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
   diagnosticPage = page;
   page.on('console', m => { if (m.type() === 'error') console.error('browser:', m.text()); });
@@ -72,9 +74,15 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await page.locator('.u-attach-chip').first().waitFor({timeout: 10000});
   assert.equal(await page.locator('.u-attach-chip').count(), 1, 'pasted image attaches');
   assert.equal(await ta.inputValue(), '', 'no junk text from the image paste');
-  // A text paste keeps the browser's normal behaviour.
-  const textClaimed = await ta.evaluate(el => { const dt = new DataTransfer(); dt.setData('text/plain', 'hello'); const ev = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}); el.dispatchEvent(ev); return ev.defaultPrevented; });
-  assert.equal(textClaimed, false, 'text paste untouched');
+  assert.equal(await page.evaluate(() => typeof window.WizComposerInput?.bind), 'function', 'shared composer input loaded');
+  // A text paste lands from the paste event's own snapshot, so a dictation app that restores its clipboard at
+  // once (Wispr Flow) still gets its words in, exactly as in Chats.
+  const textClaimed = await ta.evaluate(el => { const dt = new DataTransfer(); dt.setData('text/plain', 'dictated take'); const ev = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}); el.focus(); el.dispatchEvent(ev); return ev.defaultPrevented; });
+  assert.equal(textClaimed, true, 'text paste inserted from the event snapshot');
+  assert.equal(await ta.inputValue(), 'dictated take', 'dictated words landed');
+  // Drafts survive closing Messenger: kept in localStorage, not the tab.
+  const kept = await page.evaluate(() => JSON.stringify(localStorage.getItem('messenger-drafts-v2') || ''));
+  assert.ok(kept.includes('dictated take'), 'draft saved to localStorage: ' + kept);
   // Dropping an image file on the composer attaches it too.
   await page.locator('.u-composer').evaluate(async form => {
     const cv = document.createElement('canvas'); cv.width = 40; cv.height = 40; cv.getContext('2d').fillRect(0, 0, 40, 40);
@@ -87,6 +95,7 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   await ta.evaluate(el => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'notes.pdf', {type: 'application/pdf'})); el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); });
   await page.getByText('Only photos can be attached here').waitFor({timeout: 5000});
   assert.equal(await page.locator('.u-attach-chip').count(), 2);
+  await ta.fill('');
   await ta.fill('pasted shot');
   await page.screenshot({path: ev + '/paste-photo.png'});
   await page.locator('.u-send').click();
@@ -95,6 +104,13 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   assert.equal(sends[0].text, 'pasted shot');
   assert.deepEqual(sends[0].upload_ids, ['u1', 'u2']);
   assert.equal(await page.locator('.u-attach-chip').count(), 0, 'tray cleared');
+  // Ctrl/Cmd+Enter sends, Shift+Enter is a new line (the shared Enter policy).
+  await ta.fill('line one'); await ta.press('Shift+Enter'); await ta.type('line two');
+  assert.equal(await ta.inputValue(), 'line one\nline two', 'Shift+Enter is a new line');
+  await ta.press('Control+Enter');
+  for (let i = 0; i < 50 && sends.length < 2; i++) await page.waitForTimeout(200);
+  assert.equal(sends.length, 2, 'Ctrl+Enter sends'); assert.equal(sends[1].text, 'line one\nline two');
+  assert.equal(await ta.inputValue(), '', 'composer cleared after send');
   assert.deepEqual(errors, []);
   fs.writeFileSync(ev + '/receipt.json', JSON.stringify({uploads, sends}, null, 1));
   console.log('pass paste_photo_browser'); await browser.close();
