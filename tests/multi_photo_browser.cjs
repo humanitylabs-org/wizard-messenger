@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 (async () => {
   const base = process.env.PREVIEW_URL || 'https://localhost:19253/';
   assert.match(new URL(base).hostname, /^(localhost|127\.0\.0\.1)$/, 'preview only');
+  assert.match(process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1', /^messenger-.*preview-/, 'fixture container must be an isolated Messenger preview');
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const transcript = 'Miguel says: Let us think through the next step together. ' + 'This longer transcript wraps safely inside the voice-note bubble. '.repeat(3).trim();
   let transcribes = 0; const shares = [], inputs = []; let receipt = 'shared';
@@ -29,6 +30,12 @@ const assert = require('node:assert/strict');
   execFileSync('docker', ['exec', process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1', 'python3', '-c', `
 from unified import PeopleStore
 s=PeopleStore('/data/unified/people.sqlite3')
+# This harness owns these four synthetic fixture IDs; start clean on repeat runs.
+with s.db() as db:
+    fixture=('$v1','$t1','$v2','$back')
+    db.execute('DELETE FROM reaction WHERE message_id IN (?,?,?,?)',fixture)
+    db.execute('DELETE FROM redacted WHERE event_id IN (?,?,?,?)',fixture)
+    db.execute('DELETE FROM message WHERE id IN (?,?,?,?)',fixture)
 a=s.identity('telegram','!preview-miguel','Miguel')
 s.add_message('$v1',a,'Miguel',False,'',1792869840000,msgtype='m.audio',media={'voice':True,'duration':2000,'mime':'audio/wav'})
 s.add_message('$t1',a,'Miguel',False,'What do you think of this idea?',1792869900000)

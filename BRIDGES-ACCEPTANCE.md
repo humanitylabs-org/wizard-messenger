@@ -110,7 +110,8 @@ Legacy preview harnesses that require additional seeded fixtures or destructive
 restart/setup scenarios were not represented as having been run. Multi-photo
 and transcribe harnesses now accept explicit preview container/API/session
 inputs so they can run against this task's own stack rather than alter a
-reference preview.
+reference preview. They reset their four owned synthetic message IDs before
+seeding, avoiding stale persisted transcripts on repeat runs.
 
 Private evidence contains the API QR responses, decoder results, screenshot
 paths, exact image identity, test logs, cancellation readback, reuse inventory,
