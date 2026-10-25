@@ -70,6 +70,7 @@ class Blob:
 # Served inline only for these; everything else (SVG, HTML, PDF...) is an attachment download.
 INLINE_MIME = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
                'audio/webm', 'audio/aac', 'audio/x-m4a', 'video/mp4', 'video/webm', 'video/quicktime'}
+MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal'))
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
 
@@ -774,20 +775,22 @@ class UnifiedInbox:
                 row = db.execute('SELECT json FROM room_meta WHERE room=?', (room,)).fetchone()
             meta = json.loads(row[0]) if row else None
         events = (data.get('state', {}).get('events') or []) + [e for e in data.get('timeline', {}).get('events', []) if 'state_key' in e]
-        if meta is not None and not any(e.get('type') in self.META_TYPES for e in events):
+        if meta is not None and 'network' in meta and not any(e.get('type') in self.META_TYPES for e in events):
             self.rooms[room] = meta
             return meta
         state = self.mx(self.room(room) + '/state')
         info = next((e['content'] for e in state if e['type'] in ('m.bridge', 'uk.half-shot.bridge')), None)
-        meta = {'telegram': bool(info and info.get('protocol', {}).get('id') == 'telegram')}
-        if meta['telegram']:
+        from connectors import room_network
+        network = room_network(state)
+        meta = {'network': network, 'telegram': network == 'telegram'}
+        if network:
             channel = info.get('channel', {})
-            members = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join' and e.get('state_key') not in (self.owner, '@telegrambot:messenger.internal')]
+            members = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join' and e.get('state_key') not in (self.owner, '@' + network + 'bot:messenger.internal') and not self.is_me(e.get('state_key'))]
             # bridgev2 emits room_type in bridge info; fallback counts real participants.
-            room_type = info.get('com.beeper.room_type.v2') or channel.get('fi.mau.telegram.type') or info.get('com.beeper.room_type')
+            room_type = info.get('com.beeper.room_type.v2') or channel.get('fi.mau.' + network + '.type') or info.get('com.beeper.room_type')
             meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state)
             meta['kind'] = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
-            meta['label'] = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname') or 'Telegram conversation'
+            meta['label'] = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname') or network.title() + ' conversation'
             meta['names'] = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member' and (e.get('content') or {}).get('displayname')}
         with self.store.db() as db:
             db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', (room, json.dumps(meta, ensure_ascii=False)))
@@ -801,21 +804,26 @@ class UnifiedInbox:
         relates = content.get('m.relates_to') or {}
         if etype == 'm.room.redaction':
             target = event.get('redacts') or content.get('redacts')
-            if target:
+            with self.store.db() as db:
+                allowed = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=?', (target, identity['id'])).fetchone()
+            if allowed:
                 self.store.redact(target)
             return
         if etype == 'm.reaction' and relates.get('rel_type') == 'm.annotation' and isinstance(relates.get('key'), str):
-            self.store.react(event['event_id'], relates.get('event_id', ''), sender, relates['key'][:32], outgoing)
+            with self.store.db() as db:
+                allowed = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=?', (relates.get('event_id', ''), identity['id'])).fetchone()
+            if allowed:
+                self.store.react(event['event_id'], relates.get('event_id', ''), sender, relates['key'][:32], outgoing)
             return
         if etype == 'm.room.message' and relates.get('rel_type') == 'm.replace':
             new = content.get('m.new_content') or {}
             if isinstance(new.get('body'), str) and new.get('msgtype') in ('m.text', 'm.notice', 'm.emote'):
                 with self.store.db() as db:
-                    ok = db.execute('SELECT 1 FROM message WHERE id=? AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
+                    ok = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=? AND (sender=? OR (outgoing=1 AND ?))', (relates.get('event_id'), identity['id'], meta.get('names', {}).get(sender) or sender, outgoing)).fetchone()
                 if ok:
                     self.store.bump(relates.get('event_id'), ',original=?,translated=NULL,translation_error=NULL,edited=1', (new['body'],))
             return
-        if sender.startswith('@telegrambot:'):
+        if sender == '@' + identity['network'] + 'bot:messenger.internal':
             # Bridge error notices are not chat lines: mark our newest recent outgoing message as failed.
             if content.get('msgtype') == 'm.notice':
                 stamp = event.get('origin_server_ts', 0)
@@ -823,7 +831,7 @@ class UnifiedInbox:
                     row = db.execute('SELECT id FROM message WHERE identity_id=? AND outgoing=1 AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1',
                                      (identity['id'], stamp - 120000, stamp + 5000)).fetchone()
                 if row:
-                    self.store.bump(row[0], ',failed=?', ('Telegram did not accept this message',))
+                    self.store.bump(row[0], ',failed=?', (identity['network'].title() + ' did not accept this message',))
             return
         parts = message_parts(event)
         if parts is None:
@@ -864,7 +872,7 @@ class UnifiedInbox:
                                 continue
                             if self.is_me(user):
                                 self.store.touch_identity(identity['id'], last_read_ts=row[0])
-                            elif user != '@telegrambot:messenger.internal':
+                            elif user != '@' + identity['network'] + 'bot:messenger.internal':
                                 self.store.touch_identity(identity['id'], peer_read_ts=row[0])
 
     def is_me(self, user):
@@ -888,6 +896,9 @@ class UnifiedInbox:
                 self.store.claim_own(ghost)
                 self.store.put('own_fixed:' + ghost, '1')
 
+    def trusted_inviter(self, sender):
+        return sender.endswith(':messenger.internal') and sender.startswith(('@telegram_', '@telegrambot:'))
+
     def sync(self, timeout_ms=0):
         if not self.sync_lock.acquire(blocking=False):
             return {'state': 'syncing'}
@@ -901,20 +912,20 @@ class UnifiedInbox:
             for room, invited in result.get('rooms', {}).get('invite', {}).items():
                 events = invited.get('invite_state', {}).get('events', [])
                 # Never auto-join arbitrary invitations: bridge bot/ghost namespace only.
-                if any(e.get('type') == 'm.room.member' and e.get('state_key') == self.owner and e.get('sender', '').startswith(('@telegram_', '@telegrambot:')) for e in events):
+                if any(e.get('type') == 'm.room.member' and e.get('state_key') == self.owner and self.trusted_inviter(e.get('sender', '')) for e in events):
                     self.mx('/join/' + quote(room, safe=''), 'POST', {})
             for room in result.get('rooms', {}).get('leave', {}):
                 # A bridged chat that was removed (e.g. on disconnect) leaves no stale card behind.
-                if self.store.forget('telegram', room):
+                if any([self.store.forget(network, room) for network in MATRIX_NETWORKS]):
                     self.store.next_seq()
                     self.notify()
             for room, data in result.get('rooms', {}).get('join', {}).items():
                 if data.get('timeline', {}).get('limited'):
                     self.store.put('history_gap:' + room, 'Earlier history may be incomplete')
                 meta = self.room_meta(room, data)
-                if not meta.get('telegram') or meta.get('space'):
+                if not (meta.get('network') or meta.get('telegram')) or meta.get('space'):
                     continue
-                identity = self.store.identity('telegram', room, meta['label'], meta['kind'])
+                identity = self.store.identity(meta.get('network') or 'telegram', room, meta['label'], meta['kind'])
                 for event in data.get('timeline', {}).get('events', []):
                     self.ingest(identity, meta, event)
                 self.ephemeral(identity, data.get('ephemeral', {}).get('events', []))
@@ -931,7 +942,7 @@ class UnifiedInbox:
         """Rows stored before media support carry only "[Photo] caption"; re-read recent room history once
         and upgrade those rows in place so the pictures appear a moment after the thread opens."""
         room = identity['address']
-        if room in self.backfilled or identity['network'] != 'telegram':
+        if room in self.backfilled or identity['network'] not in MATRIX_NETWORKS:
             return
         self.backfilled.add(room)
 
@@ -1100,7 +1111,7 @@ class UnifiedInbox:
             reply_to = self.reply_target(identity, payload.get('reply_to'))
             # Stable transaction ID makes even ambiguous Matrix retries idempotent.
             delivery = 'sent'
-            if identity['network'] == 'telegram':
+            if identity['network'] in MATRIX_NETWORKS:
                 content = {'msgtype': 'm.text', 'body': body}
                 if reply_to:
                     content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
@@ -1164,7 +1175,7 @@ class UnifiedInbox:
         if body and not upload and person['language'] and person['language'] != 'en':
             fail('review_required', 'This chat translates before sending', 409)
         reply_to = self.reply_target(identity, payload.get('reply_to'))
-        if identity['network'] != 'telegram':
+        if identity['network'] not in MATRIX_NETWORKS:
             if upload:
                 fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
             result = self.engine.send(identity['address'], {'text': body, 'request_id': client_id[:64]})
@@ -1215,7 +1226,7 @@ class UnifiedInbox:
         if kind not in ('image', 'voice'):
             fail('invalid_upload', 'Choose a photo or a voice note')
         _, identity = self.channel(person_id)
-        if identity['network'] != 'telegram':
+        if identity['network'] not in MATRIX_NETWORKS:
             fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
         mime = sniff(data)
         if kind == 'voice' and mime == 'video/mp4':
@@ -1226,19 +1237,22 @@ class UnifiedInbox:
         ext = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/mp4': 'm4a'}[mime]
         filename = ('voice-message.' if kind == 'voice' else 'photo.') + ext
         started = time.time()
-        req = Request(self.matrix.rstrip('/') + '/_matrix/media/v3/upload?' + urlencode({'filename': filename}), data=data, method='POST',
-                      headers={'Authorization': 'Bearer ' + self.matrix_token(), 'Content-Type': mime})
-        try:
-            with urlopen(req, timeout=60) as response:
-                mxc = json.load(response)['content_uri']
-        except (HTTPError, URLError, OSError, ValueError, KeyError):
-            fail('upstream_unavailable', 'Upload failed. Please try again.', 503)
+        mxc = self.matrix_upload(data, filename, mime)['content_uri']
         self.timing('upload', started)
         upload_id = secrets.token_hex(16)
         now = time.time()
         self.uploads = {k: v for k, v in self.uploads.items() if v['expires'] > now}
         self.uploads[upload_id] = {'mxc': mxc, 'mime': mime, 'size': len(data), 'kind': kind, 'filename': filename, 'person_id': person_id, 'expires': now + 3600}
         return {'upload_id': upload_id, 'mime': mime, 'size': len(data)}
+
+    def matrix_upload(self, data, filename, mime):
+        req = Request(self.matrix.rstrip('/') + '/_matrix/media/v3/upload?' + urlencode({'filename': filename}), data=data, method='POST',
+                      headers={'Authorization': 'Bearer ' + self.matrix_token(), 'Content-Type': mime})
+        try:
+            with urlopen(req, timeout=60) as response:
+                return json.load(response)
+        except (HTTPError, URLError, OSError, ValueError, KeyError):
+            fail('upstream_unavailable', 'Upload failed. Please try again.', 503)
 
     def media(self, message_id, kind):
         """Proxy a message's media from the private homeserver; mxc URIs and tokens never leave the box."""
@@ -1317,7 +1331,7 @@ class UnifiedInbox:
         key = payload.get('key')
         if not isinstance(key, str) or not key or len(key) > 32:
             fail('invalid_input', 'Choose a reaction')
-        if message['network'] != 'telegram':
+        if message['network'] not in MATRIX_NETWORKS:
             fail('unsupported', 'Reactions are not available on Messenger yet', 409)
         room = self.room(message['address'])
         with self.store.db() as db:
@@ -1336,7 +1350,7 @@ class UnifiedInbox:
     def edit(self, message_id, payload):
         message = self.store.message(message_id)
         new = text(payload.get('text'))
-        if not message['outgoing'] or message['deleted'] or message['network'] != 'telegram' or message['msgtype'] != 'm.text':
+        if not message['outgoing'] or message['deleted'] or message['network'] not in MATRIX_NETWORKS or message['msgtype'] != 'm.text':
             fail('not_editable', 'Only your own text messages can be edited', 409)
         self.mx(self.room(message['address']) + '/send/m.room.message/' + secrets.token_hex(12), 'PUT',
                 {'msgtype': 'm.text', 'body': '* ' + new, 'm.new_content': {'msgtype': 'm.text', 'body': new},
@@ -1348,7 +1362,7 @@ class UnifiedInbox:
         message = self.store.message(message_id)
         everyone = payload.get('everyone') is True
         if everyone:
-            if not message['outgoing'] or message['network'] != 'telegram':
+            if not message['outgoing'] or message['network'] not in MATRIX_NETWORKS:
                 fail('not_deletable', 'Only your own messages can be deleted for everyone', 409)
             self.mx(self.room(message['address']) + '/redact/' + quote(message_id, safe='') + '/' + secrets.token_hex(8), 'PUT', {})
         self.store.redact(message_id)
@@ -1366,7 +1380,7 @@ class UnifiedInbox:
             if not row or row[1] <= identity['last_read_ts']:
                 continue
             self.store.touch_identity(identity['id'], last_read_ts=row[1])
-            if identity['network'] == 'telegram':
+            if identity['network'] in MATRIX_NETWORKS:
                 event_id = row[0]
 
                 def receipt(address=identity['address'], event_id=event_id):
@@ -1379,7 +1393,7 @@ class UnifiedInbox:
 
     def set_typing(self, person_id, payload):
         _, identity = self.channel(person_id)
-        if identity['network'] == 'telegram':
+        if identity['network'] in MATRIX_NETWORKS:
             on = payload.get('typing') is True
             self.mx(self.room(identity['address']) + '/typing/' + quote(self.owner, safe=''), 'PUT', {'typing': on, 'timeout': 6000} if on else {'typing': False})
         return {'ok': True}

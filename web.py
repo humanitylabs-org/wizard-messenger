@@ -181,7 +181,15 @@ class ViewServer(MessengerServer):
         self.cookie_secure=os.environ.get('MESSENGER_COOKIE_SECURE','1')!='0'
         self.static_root=Path(__file__).parent/'static'
         self.RequestHandlerClass=ViewHandler
-        self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        if os.environ.get('CONNECTORS_ENABLED') == '1':
+            from connector_inbox import ConnectorInbox
+            from connector_web import ConnectorViewHandler
+            from connector_sender import LocalOwnerSender
+            self.RequestHandlerClass = ConnectorViewHandler
+            sender = LocalOwnerSender(matrix=os.environ.get('MATRIX_URL', 'http://matrix:8008')) if os.environ.get('MESSENGER_CONNECTOR_SENDER_MODE') == 'local-owner' else None
+            self.unified = ConnectorInbox(data, engine, sender=sender) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
+        else:
+            self.unified = UnifiedInbox(data, engine) if data and os.environ.get('UNIFIED_ENABLED') == '1' else None
         if self.unified:
             self.unified.start()
 
