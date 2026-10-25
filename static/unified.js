@@ -32,6 +32,7 @@
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
+    qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
@@ -68,6 +69,7 @@
   }
   function back() {
     if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
+    if (s.overlay === 'Edit QR codes') { myCodes(); return true; } // nested: Back returns to the codes, not the list
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
@@ -101,7 +103,7 @@
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
-      head.append(node('h1', '', title), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', accounts));
+      head.append(node('h1', '', title), iconButton('qr', 'My QR codes', () => myCodes()), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', accounts));
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
@@ -1187,6 +1189,76 @@
       const labelsLabel = node('label', '', 'Labels'); labelsLabel.append(labels);
       sheet.append(labelsLabel, button('Save labels', () => action(async () => { await call('groups/' + p.identities[0].id + '/labels', {labels: labels.value.split(',').map(x => x.trim()).filter(Boolean)}); closeOverlay(); }), 'secondary wide'));
     }
+  }
+  // My QR codes: the owner's own Telegram, WhatsApp, Signal… as big scannable codes, one tap from Chats.
+  const QR_NETS = {
+    telegram: {name: 'Telegram', hint: 'Username or phone', link: v => /^\+?\d[\d\s-]{5,}$/.test(v) ? 'https://t.me/+' + v.replace(/\D/g, '') : 'https://t.me/' + v.replace(/^@/, '')},
+    whatsapp: {name: 'WhatsApp', hint: 'Phone with country code', link: v => 'https://wa.me/' + v.replace(/\D/g, '')},
+    signal: {name: 'Signal', hint: 'Phone, or paste your username link', link: v => 'https://signal.me/#p/+' + v.replace(/\D/g, '')},
+    messenger: {name: 'Wizard Messenger', hint: 'npub contact code', link: v => v},
+    instagram: {name: 'Instagram', hint: 'Username', link: v => 'https://instagram.com/' + v.replace(/^@/, '')},
+    x: {name: 'X', hint: 'Username', link: v => 'https://x.com/' + v.replace(/^@/, '')},
+    line: {name: 'LINE', hint: 'LINE ID', link: v => 'https://line.me/ti/p/~' + v.replace(/^@/, '')},
+    wechat: {name: 'WeChat', hint: 'Paste your WeChat QR link', link: v => v},
+    facebook: {name: 'Facebook Messenger', hint: 'Username', link: v => 'https://m.me/' + v.replace(/^@/, '')},
+    email: {name: 'Email', hint: 'Email address', link: v => 'mailto:' + v},
+    phone: {name: 'Phone', hint: 'Phone with country code', link: v => 'tel:+' + v.replace(/\D/g, '')},
+    link: {name: 'Link', hint: 'Any link', link: v => v},
+  };
+  const qrLink = c => /^[a-z][a-z0-9+.-]*:/i.test(c.value) ? c.value : (QR_NETS[c.network] || QR_NETS.link).link(c.value.trim());
+  const qrTitle = c => c.label || (QR_NETS[c.network] || QR_NETS.link).name;
+  function qrCanvas(data) {
+    const qr = window.qrcode(0, 'M'); qr.addData(data); qr.make();
+    const canvas = node('canvas', 'u-qr u-myqr'), count = qr.getModuleCount(), scale = 10; canvas.width = canvas.height = (count + 8) * scale;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
+    for (let y = 0; y < count; y++) for (let x = 0; x < count; x++) if (qr.isDark(y, x)) ctx.fillRect((x + 4) * scale, (y + 4) * scale, scale, scale);
+    canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'QR code for ' + data); return canvas;
+  }
+  async function myCodes(pick) {
+    const sheet = overlay('My QR codes'); sheet.classList.add('tall', 'u-myqr-sheet');
+    const body = node('div', 'u-myqr-body'); body.append(skeleton(1, 'list')); sheet.append(body);
+    let data; try { data = await call('qr-codes'); } catch (e) { body.replaceChildren(); return error(e); }
+    if (s.overlay !== 'My QR codes') return;
+    const codes = data.codes || []; body.replaceChildren();
+    if (!codes.length) { body.append(node('p', 'helper', 'Add your Telegram, WhatsApp and other contacts once. They show here as codes people can scan.'), button('Add codes', () => editCodes(codes), 'primary wide')); return; }
+    let current = Math.min(pick | 0, codes.length - 1);
+    const chips = node('div', 'u-chips u-myqr-chips'), card = node('div', 'u-myqr-card');
+    const draw = () => {
+      const c = codes[current], link = qrLink(c);
+      for (const [i, el] of [...chips.children].entries()) el.setAttribute('aria-pressed', String(i === current));
+      const actions = node('div', 'u-myqr-actions');
+      actions.append(button('Copy link', async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Could not copy'); } }, 'secondary'));
+      if (window.WizardApp?.share?.text && /^https?:/.test(link)) actions.append(button('Share', () => Promise.resolve(WizardApp.share.text({text: link, title: qrTitle(c)})).catch(() => {}), 'secondary'));
+      card.replaceChildren(node('h3', 'u-myqr-name', qrTitle(c)), qrCanvas(link), node('p', 'u-myqr-value', c.value), actions);
+    };
+    codes.forEach((c, i) => { const chip = button(qrTitle(c), () => { current = i; draw(); }, 'u-chip'); chips.append(chip); });
+    // Swipe between codes, like flipping cards.
+    let x0 = null; card.ontouchstart = e => { x0 = e.touches[0].clientX; };
+    card.ontouchend = e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) < 50) return; current = (current + (dx < 0 ? 1 : -1) + codes.length) % codes.length; draw(); };
+    body.append(...(codes.length > 1 ? [chips] : []), card, button('Edit codes', () => editCodes(codes), 'secondary wide'));
+    draw();
+  }
+  function editCodes(codes) {
+    const sheet = overlay('Edit QR codes'); sheet.classList.add('tall');
+    const rows = node('div', 'u-myqr-edit'); sheet.append(rows);
+    const addRow = (c = {network: 'whatsapp', value: '', label: ''}) => {
+      const row = node('div', 'u-myqr-row');
+      const net = node('select'); net.setAttribute('aria-label', 'Network');
+      for (const [id, n] of Object.entries(QR_NETS)) { const o = node('option', '', n.name); o.value = id; net.append(o); }
+      net.value = c.network;
+      const value = node('input'); value.value = c.value; value.setAttribute('aria-label', 'Username, number or link'); value.autocomplete = 'off'; value.spellcheck = false;
+      const label = node('input'); label.value = c.label || ''; label.placeholder = 'Name on the card (optional)'; label.setAttribute('aria-label', 'Name on the card');
+      const hint = () => { value.placeholder = QR_NETS[net.value].hint; value.inputMode = /phone|whatsapp/.test(net.value) ? 'tel' : net.value === 'email' ? 'email' : 'text'; };
+      net.onchange = hint; hint();
+      row.append(net, iconButton('trash', 'Remove', () => row.remove(), 'u-myqr-remove'), value, label); rows.append(row);
+      return value;
+    };
+    for (const c of codes) addRow(c);
+    sheet.append(button('Add another', () => addRow().focus(), 'secondary wide'), button('Save', () => action(async () => {
+      const list = [...rows.children].map(r => { const [net, value, label] = r.querySelectorAll('select,input'); return {network: net.value, value: value.value.trim(), label: label.value.trim()}; }).filter(c => c.value);
+      await call('qr-codes', {codes: list}); myCodes();
+    }), 'primary wide'));
+    if (!codes.length) requestAnimationFrame(() => addRow().focus());
   }
   async function accounts() {
     const sheet = overlay('Settings'); sheet.append(node('h3', '', 'Telegram'));

@@ -715,6 +715,45 @@ class UnifiedInbox:
             self._pending_login = None
         return result
 
+    # ---------- My QR codes: the owner's own contact links, shown as scannable codes ----------
+    QR_NETWORKS = ('telegram', 'whatsapp', 'signal', 'messenger', 'instagram', 'x', 'line', 'wechat', 'facebook', 'email', 'phone', 'link')
+
+    def qr_codes(self):
+        # Saved list once the owner has edited it; until then, what this Messenger already knows (Telegram username).
+        saved = self.store.get('my_qr_codes')
+        suggested = []
+        try:
+            for login in self.telegram_status().get('logins') or []:
+                username = ((login.get('profile') or {}).get('username') or '').strip()
+                if re.fullmatch(r'[A-Za-z0-9_]{4,64}', username):
+                    suggested.append({'network': 'telegram', 'value': username, 'label': ''})
+                    break
+        except Exception:  # Telegram unreachable: the saved list still shows.
+            pass
+        if saved:
+            try:
+                return {'codes': json.loads(saved), 'saved': True, 'suggested': suggested}
+            except ValueError:
+                pass
+        return {'codes': suggested, 'saved': False, 'suggested': suggested}
+
+    def save_qr_codes(self, payload):
+        codes = payload.get('codes')
+        if not isinstance(codes, list) or len(codes) > 24:
+            fail('invalid_codes', 'Invalid QR code list')
+        clean = []
+        for item in codes:
+            if not isinstance(item, dict) or item.get('network') not in self.QR_NETWORKS:
+                fail('invalid_codes', 'Unknown network')
+            value, label = item.get('value'), item.get('label') or ''
+            if not isinstance(value, str) or not value.strip() or len(value) > 1024:
+                fail('invalid_codes', 'Each code needs a username, number or link')
+            if not isinstance(label, str) or len(label) > 80:
+                fail('invalid_codes', 'Labels are up to 80 characters')
+            clean.append({'network': item['network'], 'value': value.strip(), 'label': label.strip()})
+        self.store.put('my_qr_codes', json.dumps(clean))
+        return {'codes': clean, 'saved': True}
+
     def telegram_status(self):
         if not self.telegram_configured():
             return {'state': 'not_configured', 'message': 'Telegram not configured', 'logins': [], 'flows': []}
@@ -1406,6 +1445,8 @@ class UnifiedInbox:
             if suffix[2] == 'delete': return self.delete(message_id, payload)
         if len(suffix) == 3 and suffix[0] == 'groups' and suffix[2] == 'labels' and method == 'POST':
             return self.store.labels(suffix[1], payload.get('labels'))
+        if suffix == ['qr-codes'] and method == 'GET': return self.qr_codes()
+        if suffix == ['qr-codes'] and method == 'POST': return self.save_qr_codes(payload)
         if suffix == ['telegram', 'status'] and method == 'GET': return self.telegram_status()
         if suffix == ['telegram', 'start'] and method == 'POST':
             flow = payload.get('flow')
