@@ -239,7 +239,8 @@
       if (i >= 0) { const local = t.messages[i].local; t.messages[i] = m; if (local) m.local = local; }
       else if (!t.has_more || m.timestamp >= oldest) t.messages.push(m);
     }
-    t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || (a.id < b.id ? -1 : 1));
+    // Telegram parts share second-resolution timestamps; random Matrix IDs must not reorder/split albums.
+    t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
   }
   function apply(r) {
     if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
@@ -547,7 +548,28 @@
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
     root.append(composer(id, p));
-    view.selection = messageSelection(root, () => (store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
+    view.selection = messageSelection(root, () => albumPosts(store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
+  }
+  // Network-neutral projection: only adjacent parts with the same source and sender join.
+  function albumPosts(messages) {
+    const posts = [];
+    for (const m of messages) {
+      const last = posts[posts.length - 1];
+      if (m.album && last?.album === m.album && last.sender === m.sender && last.identity_id === m.identity_id && last.network === m.network && last.outgoing === m.outgoing) {
+        last.photos.push(m);
+        if (!last.original && m.original) last.original = m.original;
+        last.deleted = last.photos.every(p => p.deleted);
+      } else posts.push(m.album ? {...m, photos: m.photos || [m]} : m);
+    }
+    for (const post of posts) if (post.photos) {
+      const reactions = new Map();
+      for (const photo of post.photos) for (const reaction of photo.reactions || []) {
+        const current = reactions.get(reaction.key) || {key: reaction.key, count: 0, mine: false};
+        current.count += reaction.count; current.mine ||= reaction.mine; reactions.set(reaction.key, current);
+      }
+      post.reactions = [...reactions.values()];
+    }
+    return posts;
   }
   function nearBottom() { const sc = view.scroll; return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
   function paintThread(toBottom = false) {
@@ -557,16 +579,17 @@
     if (t.has_more) kids.push(node('p', 'u-older', 'Loading earlier messages…'));
     let day = '';
     const side = m => (m.outgoing ? 'o' : 'i' + (m.sender || ''));
-    t.messages.forEach((m, i) => {
+    const posts = albumPosts(t.messages);
+    posts.forEach((m, i) => {
       const label = dayLabel(m.timestamp);
       if (label !== day) { day = label; kids.push(node('p', 'u-day', label)); }
-      const prev = t.messages[i - 1], next = t.messages[i + 1];
+      const prev = posts[i - 1], next = posts[i + 1];
       const jp = prev && dayLabel(prev.timestamp) === day && side(prev) === side(m) && m.timestamp - prev.timestamp < 3e5;
       const jn = next && dayLabel(next.timestamp) === day && side(next) === side(m) && next.timestamp - m.timestamp < 3e5;
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
+      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -621,6 +644,13 @@
       b.append(q);
     }
     if (m.deleted) b.append(node('p', 'u-deleted', m.outgoing ? 'You deleted this message' : 'This message was deleted'));
+    else if (visual && m.photos?.length > 1) {
+      b.classList.add('has-album'); row.dataset.album = m.album;
+      const photos = m.photos.filter(p => !p.deleted);
+      const grid = node('div', 'u-album n-' + photos.length); grid.setAttribute('aria-label', photos.length + ' photos');
+      for (const photo of photos) grid.append(visualMedia(photo));
+      b.append(grid);
+    }
     else if (visual) b.append(visualMedia(m));
     else if (m.msgtype === 'm.audio') b.append(voice(m));
     else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
@@ -708,7 +738,7 @@
         if (window.WizardApp?.share?.wizard) {
           const files = [], texts = [];
           for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
-            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) files.push(await forwardFile(m));
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) for (const photo of m.photos || [m]) if (!photo.deleted) files.push(await forwardFile(photo));
             if (m.original || m.transcript) texts.push(line(m));
           }
           const receipt = await WizardApp.share.wizard({files, text: texts.join('\n\n'), title: 'Forwarded from Messenger'});
@@ -719,7 +749,7 @@
           queue = []; let texts = [];
           const flush = () => { if (texts.length) queue.push({text: texts.join('\n\n')}); texts = []; };
           for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
-            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) { flush(); queue.push({message: m}); if (m.original || m.transcript) texts.push(line(m)); }
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) { flush(); for (const photo of m.photos || [m]) if (!photo.deleted) queue.push({message: photo}); if (m.original || m.transcript) texts.push(line(m)); }
             else texts.push(line(m));
           }
           flush(); cursor = 0;
@@ -808,7 +838,7 @@
     return wrap;
   }
   const transcriptionText = new Map(); // retain a successful result if saving failed: Retry only saves, never bills twice
-  function jumpTo(id) { const el = view.scroll?.querySelector('[data-id="' + CSS.escape(id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
+  function jumpTo(id) { const post = albumPosts(store.threads[view.id]?.messages || []).find(m => m.id === id || m.photos?.some(p => p.id === id)); const el = view.scroll?.querySelector('[data-id="' + CSS.escape(post?.id || id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
   function translate(m) {
     action(async () => {
       if (shown[m.id] !== 'translated' && !m.translated) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
@@ -817,14 +847,15 @@
   }
 
   // Shared by both message renderers. Chat-row holdToMenu deliberately stays separate.
-  function messageGestures(row, bubble, {selection, id, menu, reply}) {
+  function messageGestures(row, bubble, {selection, id, menu, reply, album}) {
     const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
+    const holdInteractive = album ? 'a,button:not(.u-media),input,textarea,select,video,audio,.u-reply,.u-wave,.reply-quote' : interactive;
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false;
     const cancel = () => { clearTimeout(timer); timer = null; };
     bubble.addEventListener('selectstart', e => { if (!selection()?.active || firstHold) e.preventDefault(); });
     bubble.addEventListener('pointerdown', e => {
       firstHold = false; suppressTap = false;
-      if (selection()?.active || e.button > 0 || e.target.closest(interactive)) return;
+      if (selection()?.active || e.button > 0 || e.target.closest(holdInteractive)) return;
       cancel(); x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
       if (e.pointerType !== 'touch') return;
       timer = setTimeout(() => {
@@ -833,7 +864,7 @@
       }, 450);
     });
     bubble.addEventListener('pointermove', e => {
-      if (selection()?.active || e.target.closest(interactive)) return;
+      if (selection()?.active || e.target.closest(holdInteractive)) return;
       const mx = e.clientX - x0, my = e.clientY - y0;
       if (Math.hypot(mx, my) > 8) cancel();
       if (reply && e.pointerType === 'touch' && (swiping || (mx > 12 && Math.abs(my) < 10))) {
@@ -853,13 +884,13 @@
     bubble.addEventListener('contextmenu', e => {
       // The first hold selects messages; the next hold is left entirely to native text selection.
       if (selection()?.active && !firstHold) return;
-      if (e.target.closest(interactive)) return;
+      if (e.target.closest(holdInteractive)) return;
       e.preventDefault(); cancel();
       if (!selection()?.active) menu();
     });
   }
   function gestures(row, b, m) {
-    messageGestures(row, b, {selection: () => view.selection, id: m.id, menu: () => menu(m, b), reply: () => startReply(m)});
+    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: () => menu(m, b), reply: () => startReply(m)});
   }
   function menu(m, b) {
     const t = store.threads[view.id]; if (!t) return;
@@ -879,7 +910,7 @@
     if (!m.deleted) item('Forward to Wizard', 'reply', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
-    if (m.media && !m.deleted) item('Save', 'download', () => { const a = node('a'); a.href = mediaURL(m.id); a.download = m.media.filename || ''; a.click(); });
+    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     item('Delete for me', 'trash', () => del(m, false), 'danger');
     if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
@@ -910,17 +941,18 @@
   async function react(m, key) {
     recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
     const t = store.threads[view.id]; const before = m.reactions;
+    const target = m.photos?.find(p => p.reactions?.some(r => r.mine && r.key === key)) || m;
     // Optimistic: one reaction per person, tapping your own again removes it.
     const others = (m.reactions || []).map(r => r.mine ? {...r, count: r.count - 1, mine: false} : r).filter(r => r.count > 0);
     const had = (m.reactions || []).some(r => r.mine && r.key === key);
     if (!had) { const e = others.find(r => r.key === key); if (e) { e.count++; e.mine = true; } else others.push({key, count: 1, mine: true}); }
     m.reactions = others; paintThread();
-    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
+    try { const r = await call('messages/' + encodeURIComponent(target.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
     catch (e) { m.reactions = before; paintThread(); error(e); }
   }
   async function del(m, everyone) {
     if (everyone && !confirm('Delete this message for everyone?')) return;
-    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, [r.message]); paintThread(); } catch (e) { error(e); }
+    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, r.messages || [r.message]); paintThread(); } catch (e) { error(e); }
   }
   function startReply(m) { view.edit = null; view.reply = m; view.paintBar?.(); view.draft?.focus(); }
   function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = m.original; view.grow?.(); view.paintBar?.(); view.draft.focus(); }
@@ -958,7 +990,7 @@
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
     draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
-    // Several photos at once, like Wizard chats (up to 10, Telegram's album size); each goes as its own photo, the caption on the first.
+    // Several selected photos are one post and one Telegram media group (up to 10).
     file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
@@ -969,7 +1001,8 @@
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
       if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
-      else a.forEach((ph, i) => queueSend(id, {text: i ? '' : text, photo: ph, reply: i ? null : reply, identity_id: channel.value}));
+      else if (a.length === 1) queueSend(id, {text, photo: a[0], reply, identity_id: channel.value});
+      else queueSend(id, {text, photos: a, reply, identity_id: channel.value});
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -1084,13 +1117,16 @@
   function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
-    if (f.type === 'image/gif') { const bmp = await createImageBitmap(f); return {blob: f, url: URL.createObjectURL(f), w: bmp.width, h: bmp.height}; }
+    // Albums use still JPEG photos, including the first frame of an animated image.
     // Downscale like Signal's "standard" quality: long edge 2048, JPEG.
     const bmp = await createImageBitmap(f, {imageOrientation: 'from-image'});
     const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
     const canvas = node('canvas'); canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
     const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
-    return {blob, url: URL.createObjectURL(blob), w, h};
+    bmp.close();
+    // Preserve single animated photos; albums explicitly use their still preview.
+    const original = f.type === 'image/gif' ? f : blob;
+    return {blob: original, albumBlob: blob, url: URL.createObjectURL(original), w, h};
   }
   async function upload(id, kind, blob) {
     // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
@@ -1107,8 +1143,9 @@
     const t = store.threads[id]; if (!t) return;
     const client_id = 'w' + uid();
     const m = {id: 'pending:' + client_id, client_id, outgoing: true, pending: true, original: job.text || '', timestamp: Date.now(), network: t.person.identities?.[0]?.network || 'telegram',
-      msgtype: job.photo ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
+      msgtype: job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
       reply: job.reply ? {id: job.reply.id, sender: job.reply.sender, outgoing: job.reply.outgoing, text: job.reply.original, msgtype: job.reply.msgtype, voice: job.reply.media?.voice} : null};
+    if (job.photos) { m.album = 'pending:' + client_id; m.photos = job.photos.map((photo, i) => ({...m, photos: undefined, id: m.id + ':' + i, original: i ? '' : m.original, local: photo.url, media: {w: photo.w, h: photo.h, mime: 'image/jpeg'}})); m.media = m.photos[0].media; }
     if (job.photo) { m.local = job.photo.url; m.media = {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'}; }
     if (job.voice) { m.local = job.voice.url; m.media = {voice: true, duration: job.voice.duration, waveform: job.voice.waveform.map(v => Math.round(v / 10.24))}; }
     t.messages.push(m); store.pending++; hold();
@@ -1116,11 +1153,15 @@
     const run = async () => {
       m.pending = true; m.failed = false; if (s.person === id) paintThread();
       try {
-        let upload_id, media;
+        let upload_id, upload_ids, media;
+        if (job.photos) {
+          upload_ids = []; media = [];
+          for (const photo of job.photos) { upload_ids.push((await upload(id, 'image', photo.albumBlob || photo.blob)).upload_id); media.push({w: photo.w, h: photo.h}); }
+        }
         if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
-        const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, media});
-        if (r.message) mergeMessages(id, [r.message]);
+        const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
+        if (r.message) mergeMessages(id, r.messages || [r.message]);
         if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();

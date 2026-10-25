@@ -38,6 +38,16 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .tone-4 { background: #a35a2a; } .tone-5 { background: #3f7d4e; } .tone-6 { background: #2f6db0; } .tone-7 { background: #8a4f9e; }
 .tone-8 { background: #23866a; } .tone-9 { background: #b0543f; } .tone-10 { background: #5a5fa8; } .tone-11 { background: #7f6a24; }
 
+/* Album tiles share the existing bubble, viewer, and selection surface. */
+.u-message.has-album { width: 304px; max-width: 100%; padding: 3px 3px 6px; }
+.u-album { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px; overflow: hidden; border-radius: 15px 15px 5px 5px; background: var(--wz-surface, var(--surface)); }
+.u-album .u-media { width: 100%; height: 132px; min-width: 0; margin: 0; padding: 0; border-radius: 0; overflow: hidden; aspect-ratio: auto; }
+.u-album .u-media img { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; object-fit: cover; border-radius: 0; }
+.u-album.n-3 .u-media:first-child { grid-row: span 2; height: 267px; }
+.u-album.n-5 .u-media:last-child, .u-album.n-7 .u-media:last-child, .u-album.n-9 .u-media:last-child { grid-column: span 2; }
+.u-message.has-album > .u-text { padding: 7px 8px 0; }
+.u-message.has-album > footer { padding: 0 8px; }
+.u-message.has-album > .u-sender { margin: 4px 8px; }
 /* Chat list */
 .u-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 96px; }
 .u-person { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 10px 18px; text-align: left; border-radius: 0; color: var(--ink); }

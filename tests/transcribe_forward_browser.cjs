@@ -6,11 +6,10 @@ const assert = require('node:assert/strict');
 (async () => {
   const base = process.env.PREVIEW_URL || 'https://localhost:19253/';
   assert.match(new URL(base).hostname, /^(localhost|127\.0\.0\.1)$/, 'preview only');
-  assert.match(process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1', /^messenger-.*preview-/, 'fixture container must be an isolated Messenger preview');
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const transcript = 'Miguel says: Let us think through the next step together. ' + 'This longer transcript wraps safely inside the voice-note bubble. '.repeat(3).trim();
   let transcribes = 0; const shares = [], inputs = []; let receipt = 'sent';
-  const browser = await chromium.launch({headless: true});
+  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, timezoneId: 'UTC'});
   await ctx.exposeBinding('__transcribe', (_, data) => { transcribes++; inputs.push(data); return {text: transcript}; });
   await ctx.exposeBinding('__share', (_, data) => { shares.push(data); return receipt; });
@@ -27,15 +26,9 @@ const assert = require('node:assert/strict');
   wav.write('RIFF', 0); wav.writeUInt32LE(36 + n * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
   wav.writeUInt32LE(sr, 24); wav.writeUInt32LE(sr * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(n * 2, 40);
   for (let i = 0; i < n; i++) wav.writeInt16LE(Math.round(8000 * Math.sin(2 * Math.PI * 220 * i / sr)), 44 + i * 2);
-  execFileSync('docker', ['exec', process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1', 'python3', '-c', `
+  execFileSync('docker', ['exec', 'messenger-mvp-preview-messenger-1', 'python3', '-c', `
 from unified import PeopleStore
 s=PeopleStore('/data/unified/people.sqlite3')
-# This harness owns these four synthetic fixture IDs; start clean on repeat runs.
-with s.db() as db:
-    fixture=('$v1','$t1','$v2','$back')
-    db.execute('DELETE FROM reaction WHERE message_id IN (?,?,?,?)',fixture)
-    db.execute('DELETE FROM redacted WHERE event_id IN (?,?,?,?)',fixture)
-    db.execute('DELETE FROM message WHERE id IN (?,?,?,?)',fixture)
 a=s.identity('telegram','!preview-miguel','Miguel')
 s.add_message('$v1',a,'Miguel',False,'',1792869840000,msgtype='m.audio',media={'voice':True,'duration':2000,'mime':'audio/wav'})
 s.add_message('$t1',a,'Miguel',False,'What do you think of this idea?',1792869900000)
@@ -46,20 +39,16 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   const page = await ctx.newPage(), errors = [], changes = []; page.on('pageerror', e => errors.push(e.message));
   page.on('response', async r => { if (r.url().includes('api/unified/updates')) { try { const j=await r.json(); changes.push({status:r.status(),seq:j.result?.seq,removed:j.result?.removed,people:j.result?.people?.length}); } catch {} } });
   page.on('close', () => {});
-  if (process.env.PREVIEW_OWNER_SESSION) {
-    const owner = JSON.parse(fs.readFileSync(process.env.PREVIEW_OWNER_SESSION, 'utf8'));
-    const [name, ...value] = owner.cookie.split('=');
-    await ctx.addCookies([{name, value:value.join('='), url:base, httpOnly:true, sameSite:'Strict'}]);
-    await page.goto(base); await page.locator('#inbox-tabs').waitFor({state:'visible',timeout:30000});
-  } else {
-  const ticket = JSON.parse(execFileSync('curl', ['-sf','-X','POST','-H','Authorization: Bearer ' + process.env.MESSENGER_API_TOKEN,'-H','Content-Type: application/json','-d','{"bootstrap":true}',(process.env.PREVIEW_API_URL || 'http://127.0.0.1:19252') + '/api/view/ticket'])).result.ticket;
+  const ticket = JSON.parse(execFileSync('curl', ['-sf','-X','POST','-H','Authorization: Bearer ' + process.env.MESSENGER_API_TOKEN,'-H','Content-Type: application/json','-d','{"bootstrap":true}','http://127.0.0.1:19252/api/view/ticket'])).result.ticket;
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000);
+  await page.locator('#setup-form:visible, #inbox-tabs:visible').first().waitFor({timeout: 60000});
   if (!(await page.locator('#setup-form').isVisible())) await page.click('#inbox-tabs [data-tab="messenger"]');
   await page.locator('#confirm-passphrase').waitFor({state: 'visible', timeout: 30000});
   const pw = 'preview-only-passphrase-' + Date.now(); await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
   await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
-  if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
-  }
+  // Address sheet opens after the asynchronous post-create snapshot, not at first ready paint.
+  await page.locator('#sheet-layer:not([hidden])').waitFor({state: 'visible', timeout: 30000});
+  await page.click('#close-sheet');
   await page.click('#inbox-tabs [data-tab="people"]');
   await page.locator('.u-person', {hasText: 'Miguel'}).click();
   const note = page.locator('.u-row').filter({has: page.locator('.u-voice')}).first();
@@ -218,10 +207,10 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
     const csrf=(await(await fetch('api/view/session')).json()).result.csrf_token;
     for(let n=0;n<12;n++){const r=await fetch('api/unified/people/'+id,{method:'POST',headers:{'Content-Type':'application/json','X-Messenger-CSRF':csrf},body:JSON.stringify({muted:!!(n%2)})});if(!r.ok)throw Error('Fixture pulse failed '+r.status);}
   },fixtureId);
-  execFileSync('docker',['exec','-i',process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1','python3','-c',"from unified import PeopleStore; s=PeopleStore('/data/unified/people.sqlite3'); [s.redact(x) for x in ['$v1','$v2','$t1']]"],{timeout:30000});
+  execFileSync('docker',['exec','-i','messenger-mvp-preview-messenger-1','python3','-c',"from unified import PeopleStore; s=PeopleStore('/data/unified/people.sqlite3'); [s.redact(x) for x in ['$v1','$v2','$t1']]"],{timeout:30000});
   await pulse();
   await page.locator('.u-person',{hasText:'Miguel'}).waitFor({state:'hidden',timeout:45000}).catch(async e => { console.log(JSON.stringify({changes,api:await page.evaluate(async()=>await(await fetch('api/unified/people')).json())})); throw e; });
-  execFileSync('docker',['exec','-i',process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1','python3','-c',"from unified import PeopleStore; s=PeopleStore('/data/unified/people.sqlite3'); a=s.identity('telegram','!preview-miguel','Miguel'); s.add_message('$back',a,'Miguel',False,'A new message restores this chat',1792869990000)"],{timeout:30000});
+  execFileSync('docker',['exec','-i','messenger-mvp-preview-messenger-1','python3','-c',"from unified import PeopleStore; s=PeopleStore('/data/unified/people.sqlite3'); a=s.identity('telegram','!preview-miguel','Miguel'); s.add_message('$back',a,'Miguel',False,'A new message restores this chat',1792869990000)"],{timeout:30000});
   await pulse();
   await page.locator('.u-person',{hasText:'Miguel'}).waitFor({timeout:45000});
   fs.writeFileSync(ev+'/receipt.json',JSON.stringify({transcribes,shares:shares.map(({bytes,...x})=>({...x,bytes:bytes?.length})),mediaFetches,errors},null,2));

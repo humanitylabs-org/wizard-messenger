@@ -78,8 +78,9 @@ services:
       retries: 10
     restart: unless-stopped
   telegram:
-    # Official bridgev2 Go rewrite v0.2610.0, not the legacy Python bridge.
-    image: dock.mau.dev/mautrix/telegram@sha256:ed3f3b39289fae425a875311d8875729271c24f88ba03209bd1bfbaf31e6c78f
+    # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
+    image: ${TELEGRAM_IMAGE:-wizard-telegram-bridge:0.2610.0-albums1}
+    pull_policy: never
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
