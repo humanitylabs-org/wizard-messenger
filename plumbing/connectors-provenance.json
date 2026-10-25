@@ -1,0 +1,64 @@
+{
+  "whatsapp": {
+    "tag": "v0.2610.0",
+    "image": "dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391",
+    "manifest": {
+      "schemaVersion": 2,
+      "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:d502c988bbe71c58993d20b9c5644a9cc51043492d956b284b32aa4dfad04b34",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:d9652896efefc0d8ac1d79e3b9a53ea37d42b43a523479093e49836b1e5a332a",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    "binary_sha256": "6ae3dade4888a2ea6ccc87f6902b0faabe47f143ca50c43eb011ad94745bfec8",
+    "template_sha256": "2632697ff43f622626d98dc54b43158388d062d7211e80977657bccafc3ecb66",
+    "source": "https://github.com/mautrix/whatsapp/tree/v0.2610.0"
+  },
+  "signal": {
+    "tag": "v0.2610.0",
+    "image": "dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a",
+    "manifest": {
+      "schemaVersion": 2,
+      "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:bf8282036a7965876a2d9b7e21d1e3c92ccb4bf23c890435ce7e67a8800a7075",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "size": 1365,
+          "digest": "sha256:cb9cf3b494cdc20e644d5518d1a38c66d91be8cec7a4d3a65d812987c0f03138",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    "binary_sha256": "13867e87604464b7ca848bd0e4b6afdb013710f021cc7477007629d1585f3b5f",
+    "template_sha256": "b35d306cc63d4522adbbe7ede4cc0214d918088127f173319d7f5f30bde0dc76",
+    "source": "https://github.com/mautrix/signal/tree/v0.2610.0"
+  }
+}

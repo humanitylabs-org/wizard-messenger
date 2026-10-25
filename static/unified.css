@@ -333,3 +333,13 @@ button { touch-action: manipulation; }
 .u-myqr-sheet > .wide, .u-myqr-body > .wide { margin-top: 8px; }
 .u-myqr-sheet header h2 { flex: 1; }
 .u-myqr-row .icon-button:disabled { opacity: .3; }
+
+/* Account linking uses the existing Settings sheet, status rows and buttons. */
+.u-connector-card { padding: 8px 0 16px; border-bottom: 1px solid var(--line); }
+.u-connector-text > strong { display: block; margin: 6px 0; }
+.u-connectors .u-status { margin: 6px 0; padding: 8px 12px; }
+.u-connector-qr .u-qr { width: min(100%, 240px); margin: 10px auto; padding: 0; border-radius: 0; }
+.u-connectors ol { padding-left: 20px; font-size: 13px; line-height: 1.4; }
+.u-connectors .u-connector-heading h3 { margin-top: 0; }
+
+.u-connectors .helper { color: var(--ink-2); }
