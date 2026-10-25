@@ -97,6 +97,8 @@ MIGRATIONS = [
     ('message', 'deleted', 'INTEGER NOT NULL DEFAULT 0'),
     ('message', 'client_id', 'TEXT'),
     ('message', 'failed', 'TEXT'),
+    ('message', 'album', 'TEXT'),
+    ('message', 'source_event', 'TEXT'),
     ('identity', 'last_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'peer_read_ts', 'INTEGER NOT NULL DEFAULT 0'),
     ('identity', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
@@ -325,19 +327,22 @@ class PeopleStore:
         return {'labels': labels}
 
     def add_message(self, event_id, identity, sender, outgoing, original, timestamp, translated=None,
-                    msgtype='m.text', media=None, reply_to=None, client_id=None):
+                    msgtype='m.text', media=None, reply_to=None, client_id=None, album=None, source_event=None):
         """Insert once; a later sighting with richer media upgrades a label-only row in place."""
         media_json = json.dumps(media, ensure_ascii=False) if media else None
         with self.db() as db:
             seq = self.next_seq()
-            cur = db.execute('INSERT OR IGNORE INTO message(id,identity_id,sender,outgoing,original,translated,timestamp,seq,msgtype,media,reply_to,client_id) '
-                             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                             (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id))
+            cur = db.execute('INSERT OR IGNORE INTO message(id,identity_id,sender,outgoing,original,translated,timestamp,seq,msgtype,media,reply_to,client_id,album,source_event) '
+                             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                             (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id, album, source_event))
             inserted = cur.rowcount == 1
             if not inserted and msgtype != 'm.text':
                 cur = db.execute("UPDATE message SET msgtype=?,media=?,original=?,reply_to=COALESCE(reply_to,?),seq=? WHERE id=? AND (msgtype='m.text' OR media IS NULL)",
                                  (msgtype, media_json, original, reply_to, seq, event_id))
                 inserted = cur.rowcount == 1
+            if album and not inserted:
+                db.execute('UPDATE message SET album=COALESCE(album,?),source_event=COALESCE(source_event,?),client_id=COALESCE(client_id,?),seq=? WHERE id=? AND (album IS NULL OR (client_id IS NULL AND ? IS NOT NULL))',
+                           (album, source_event, client_id, seq, event_id, client_id))
             if not outgoing:
                 db.execute('UPDATE identity SET last_used=MAX(last_used,?) WHERE id=?', (timestamp, identity['id']))
             else:
@@ -372,7 +377,7 @@ class PeopleStore:
 
     def message(self, message_id):
         with self.db() as db:
-            row = db.execute('SELECT m.*,i.network,i.address,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchone()
+            row = db.execute('SELECT m.rowid AS timeline_order,m.*,i.network,i.address,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchone()
         if not row:
             fail('not_found', 'That message is no longer here', 404)
         return dict(row)
@@ -405,7 +410,11 @@ class PeopleStore:
             if row:
                 db.execute('DELETE FROM reaction WHERE event_id=?', (event_id,))
                 return self.bump(row[0])
-        return self.bump(event_id, ",deleted=1,original='',translated=NULL,media=NULL,transcript=NULL")
+        with self.db() as db:
+            ids = [r[0] for r in db.execute('SELECT id FROM message WHERE id=? OR source_event=?', (event_id, event_id))]
+        for target in ids:
+            self.bump(target, ",deleted=1,original='',translated=NULL,media=NULL,transcript=NULL")
+        return bool(ids)
 
     def decorate(self, rows):
         """Public message rows: media without mxc URIs, aggregated reactions, reply excerpts."""
@@ -445,14 +454,14 @@ class PeopleStore:
     def messages(self, person_id, before=None, limit=2000):
         self.person(person_id)
         with self.db() as db:
-            rows = db.execute('SELECT * FROM (SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
-                              'WHERE i.person_id=? AND (? IS NULL OR m.timestamp<?) ORDER BY m.timestamp DESC,m.id DESC LIMIT ?) ORDER BY timestamp,id',
+            rows = db.execute('SELECT * FROM (SELECT m.rowid AS timeline_order,m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
+                              'WHERE i.person_id=? AND (? IS NULL OR m.timestamp<?) ORDER BY m.timestamp DESC,m.rowid DESC LIMIT ?) ORDER BY timestamp,timeline_order',
                               (person_id, before, before, limit)).fetchall()
         return self.decorate(rows)
 
     def since(self, seq, limit=400):
         with self.db() as db:
-            rows = db.execute('SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
+            rows = db.execute('SELECT m.rowid AS timeline_order,m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id '
                               'WHERE m.seq>? ORDER BY m.seq LIMIT ?', (seq, limit)).fetchall()
             touched = {r[0] for r in db.execute('SELECT person_id FROM identity WHERE seq>?', (seq,))}
         return self.decorate(rows), touched | {r['person_id'] for r in rows}
@@ -715,6 +724,45 @@ class UnifiedInbox:
             self._pending_login = None
         return result
 
+    # ---------- My QR codes: the owner's own contact links, shown as scannable codes ----------
+    QR_NETWORKS = ('telegram', 'whatsapp', 'signal', 'messenger', 'instagram', 'x', 'line', 'wechat', 'facebook', 'email', 'phone', 'link')
+
+    def qr_codes(self):
+        # Saved list once the owner has edited it; until then, what this Messenger already knows (Telegram username).
+        saved = self.store.get('my_qr_codes')
+        suggested = []
+        try:
+            for login in self.telegram_status().get('logins') or []:
+                username = ((login.get('profile') or {}).get('username') or '').strip()
+                if re.fullmatch(r'[A-Za-z0-9_]{4,64}', username):
+                    suggested.append({'network': 'telegram', 'value': username, 'label': ''})
+                    break
+        except Exception:  # Telegram unreachable: the saved list still shows.
+            pass
+        if saved:
+            try:
+                return {'codes': json.loads(saved), 'saved': True, 'suggested': suggested}
+            except ValueError:
+                pass
+        return {'codes': suggested, 'saved': False, 'suggested': suggested}
+
+    def save_qr_codes(self, payload):
+        codes = payload.get('codes')
+        if not isinstance(codes, list) or len(codes) > 24:
+            fail('invalid_codes', 'Invalid QR code list')
+        clean = []
+        for item in codes:
+            if not isinstance(item, dict) or item.get('network') not in self.QR_NETWORKS:
+                fail('invalid_codes', 'Unknown network')
+            value, label = item.get('value'), item.get('label') or ''
+            if not isinstance(value, str) or not value.strip() or len(value) > 1024:
+                fail('invalid_codes', 'Each code needs a username, number or link')
+            if not isinstance(label, str) or len(label) > 80:
+                fail('invalid_codes', 'Labels are up to 80 characters')
+            clean.append({'network': item['network'], 'value': value.strip(), 'label': label.strip()})
+        self.store.put('my_qr_codes', json.dumps(clean))
+        return {'codes': clean, 'saved': True}
+
     def telegram_status(self):
         if not self.telegram_configured():
             return {'state': 'not_configured', 'message': 'Telegram not configured', 'logins': [], 'flows': []}
@@ -790,8 +838,17 @@ class UnifiedInbox:
         if parts is None:
             return
         msgtype, body, media, reply_to = parts
+        if content.get('org.wizard.gallery') is not None and msgtype == 'm.image':
+            try:
+                self.store_gallery(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, content, event.get('origin_server_ts', 0), reply_to=reply_to)
+                return
+            except (EngineError, TypeError, AttributeError):
+                pass  # A malformed optional extension must not stall the room's sync.
+
+        grouped = content.get('fi.mau.telegram.grouped_id')
+        album = 'telegram:' + str(grouped) if isinstance(grouped, (str, int)) and str(grouped) else None
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to)
+                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, album=album)
         self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
 
     WARM_DAYS = 3
@@ -1081,7 +1138,7 @@ class UnifiedInbox:
 
     def row(self, message_id):
         with self.store.db() as db:
-            rows = db.execute('SELECT m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchall()
+            rows = db.execute('SELECT m.rowid AS timeline_order,m.*,i.network,i.label,i.kind,i.person_id FROM message m JOIN identity i ON m.identity_id=i.id WHERE m.id=?', (message_id,)).fetchall()
         rows = self.store.decorate(rows)
         return rows[0] if rows else None
 
@@ -1091,7 +1148,7 @@ class UnifiedInbox:
         message = self.store.message(text(reply_to, 300))
         if message['identity_id'] != identity['id']:
             fail('invalid_reply', 'Reply to a message in this chat')
-        return message['id']
+        return message.get('source_event') or message['id']
 
     def channel(self, person_id, identity_id=None):
         person = self.store.person(person_id)
@@ -1102,6 +1159,11 @@ class UnifiedInbox:
         return person, identity
 
     def send(self, person_id, payload):
+        # Serialize duplicate taps, including the local rows after the Matrix receipt.
+        with self.lock:
+            return self._send(person_id, payload)
+
+    def _send(self, person_id, payload):
         """One-call send for chats that need no translation review; the client id is the Matrix
         transaction id, so a retried tap can never produce a second message."""
         if payload.get('preview_id'):
@@ -1110,11 +1172,23 @@ class UnifiedInbox:
         if not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', client_id):
             fail('invalid_client_id', 'Missing message id')
         with self.store.db() as db:
-            done = db.execute('SELECT id FROM message WHERE client_id=?', (client_id,)).fetchone()
+            done = db.execute('SELECT m.id FROM message m JOIN identity i ON i.id=m.identity_id WHERE m.client_id=? AND i.person_id=?', (client_id, person_id)).fetchone()
         if done:
-            return {'state': 'sent', 'event_id': done[0], 'message': self.row(done[0])}
+            return {'state': 'sent', 'event_id': done[0], 'message': self.row(done[0]), 'messages': self.album_rows(done[0])}
         person, identity = self.channel(person_id, payload.get('identity_id'))
-        upload = self.uploads.get(payload.get('upload_id')) if payload.get('upload_id') else None
+        upload_ids = payload.get('upload_ids')
+        gallery = None
+        if upload_ids is not None:
+            if (not isinstance(upload_ids, list) or not 2 <= len(upload_ids) <= 10
+                    or not all(isinstance(x, str) for x in upload_ids) or len(set(upload_ids)) != len(upload_ids)
+                    or payload.get('upload_id')):
+                fail('invalid_album', 'Choose between 2 and 10 different photos')
+            gallery = [self.uploads.get(x) for x in upload_ids]
+            if any(not u or u['person_id'] != person_id or u['expires'] <= time.time() for u in gallery):
+                fail('upload_expired', 'Attach the photos again', 409)
+            if any(u['kind'] != 'image' or u['mime'] not in ('image/jpeg', 'image/png', 'image/webp') for u in gallery):
+                fail('invalid_album', 'Albums contain still photos only')
+        upload = gallery[0] if gallery else self.uploads.get(payload.get('upload_id')) if payload.get('upload_id') else None
         if payload.get('upload_id') and (not upload or upload['person_id'] != person_id):
             fail('upload_expired', 'Attach the file again', 409)
         body = payload.get('text') or ''
@@ -1134,20 +1208,61 @@ class UnifiedInbox:
             return {'state': 'sent' if result['published'] else 'queued', 'event_id': event, 'message': self.row(event)}
         msgtype, media = 'm.text', None
         if upload:
-            msgtype, content, media = self.media_content(upload, body, payload)
+            msgtype, content, media = self.media_content(upload, body, {} if gallery else payload)
         else:
             content = {'msgtype': 'm.text', 'body': body}
+        if gallery:
+            metadata = payload.get('media') if isinstance(payload.get('media'), list) else []
+            items = [self.media_content(u, body if i == 0 else '', {'media': metadata[i] if i < len(metadata) else {}})[1]
+                     for i, u in enumerate(gallery)]
+            content = dict(items[0], **{'org.wizard.gallery': items})
         if reply_to:
             content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
         started = time.time()
         result = self.mx(self.room(identity['address']) + '/send/m.room.message/' + client_id, 'PUT', content)
         self.timing('send', started)
         event = result['event_id']
+        if gallery:
+            self.store_gallery(event, identity, self.owner, True, content, int(time.time() * 1000), reply_to=reply_to, client_id=client_id)
+            for key in upload_ids:
+                self.uploads.pop(key, None)
+            return {'state': 'sent', 'event_id': event, 'message': self.row(event), 'messages': self.album_rows(event)}
         self.store.add_message(event, identity, self.owner, True, body if upload is None else (body or ''), int(time.time() * 1000),
                                msgtype=msgtype, media=media, reply_to=reply_to, client_id=client_id)
         if upload:
             self.uploads.pop(payload.get('upload_id'), None)
         return {'state': 'sent', 'event_id': event, 'message': self.row(event)}
+
+    def album_rows(self, message_id):
+        message = self.store.message(message_id)
+        if not message.get('album'):
+            return [self.row(message_id)]
+        with self.store.db() as db:
+            ids = [r[0] for r in db.execute('SELECT id FROM message WHERE album=? AND identity_id=? AND sender=? ORDER BY timestamp,rowid',
+                                          (message['album'], message['identity_id'], message['sender']))]
+        return [self.row(key) for key in ids]
+
+    def store_gallery(self, event_id, identity, sender, outgoing, content, stamp, reply_to=None, client_id=None):
+        # All N items (including item zero) are in the extension. Stable per-photo rows
+        # reuse media proxy/viewer/forwarding; source_event is the one transport event.
+        items = content.get('org.wizard.gallery')
+        if not isinstance(items, list) or not 2 <= len(items) <= 10:
+            fail('invalid_album', 'Invalid photo album')
+        with self.store.db() as db:
+            # Explicit BEGIN makes the store's nested db() calls join one transaction.
+            if not db.in_transaction:
+                db.execute('BEGIN')
+            for i, item in enumerate(items):
+                if not isinstance(item, dict) or not isinstance(item.get('url'), str):
+                    fail('invalid_album', 'Invalid photo album')
+                parts = message_parts({'type': 'm.room.message', 'content': dict(item, msgtype='m.image')})
+                if not parts:
+                    fail('invalid_album', 'Invalid photo album')
+                _, caption, media, _ = parts
+                self.store.add_message(event_id if i == 0 else event_id + '#photo:%02d' % i, identity, sender, outgoing,
+                                       caption if i == 0 else '', stamp, msgtype='m.image', media=media,
+                                       reply_to=reply_to if i == 0 else None, client_id=client_id if i == 0 else None,
+                                       album='matrix:' + event_id, source_event=event_id)
 
     def media_content(self, upload, caption, payload):
         info = {'mimetype': upload['mime'], 'size': upload['size']}
@@ -1275,6 +1390,8 @@ class UnifiedInbox:
 
     def react(self, message_id, payload):
         message = self.store.message(message_id)
+        message_id = message.get('source_event') or message_id
+        message = self.store.message(message_id)
         key = payload.get('key')
         if not isinstance(key, str) or not key or len(key) > 32:
             fail('invalid_input', 'Choose a reaction')
@@ -1308,12 +1425,15 @@ class UnifiedInbox:
     def delete(self, message_id, payload):
         message = self.store.message(message_id)
         everyone = payload.get('everyone') is True
-        if everyone:
-            if not message['outgoing'] or message['network'] != 'telegram':
-                fail('not_deletable', 'Only your own messages can be deleted for everyone', 409)
-            self.mx(self.room(message['address']) + '/redact/' + quote(message_id, safe='') + '/' + secrets.token_hex(8), 'PUT', {})
-        self.store.redact(message_id)
-        return {'message': self.row(message_id)}
+        rows = self.album_rows(message_id)
+        if everyone and (not message['outgoing'] or message['network'] != 'telegram'):
+            fail('not_deletable', 'Only your own messages can be deleted for everyone', 409)
+        targets = list(dict.fromkeys(self.store.message(r['id']).get('source_event') or r['id'] for r in rows))
+        for target in targets:
+            if everyone:
+                self.mx(self.room(message['address']) + '/redact/' + quote(target, safe='') + '/' + secrets.token_hex(8), 'PUT', {})
+            self.store.redact(target)
+        return {'message': self.row(message_id), 'messages': [self.row(r['id']) for r in rows]}
 
     def read(self, person_id, payload):
         person = self.store.person(person_id)
@@ -1328,7 +1448,7 @@ class UnifiedInbox:
                 continue
             self.store.touch_identity(identity['id'], last_read_ts=row[1])
             if identity['network'] == 'telegram':
-                event_id = row[0]
+                event_id = self.store.message(row[0]).get('source_event') or row[0]
 
                 def receipt(address=identity['address'], event_id=event_id):
                     try:
@@ -1406,6 +1526,8 @@ class UnifiedInbox:
             if suffix[2] == 'delete': return self.delete(message_id, payload)
         if len(suffix) == 3 and suffix[0] == 'groups' and suffix[2] == 'labels' and method == 'POST':
             return self.store.labels(suffix[1], payload.get('labels'))
+        if suffix == ['qr-codes'] and method == 'GET': return self.qr_codes()
+        if suffix == ['qr-codes'] and method == 'POST': return self.save_qr_codes(payload)
         if suffix == ['telegram', 'status'] and method == 'GET': return self.telegram_status()
         if suffix == ['telegram', 'start'] and method == 'POST':
             flow = payload.get('flow')

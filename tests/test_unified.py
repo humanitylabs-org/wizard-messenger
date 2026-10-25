@@ -144,6 +144,22 @@ class UnifiedTests(unittest.TestCase):
         for ident, value in [('$missing', 'x'), ('$text', 'x'), ('$voice', ''), ('$voice', 'x' * 100001), ('$voice', None)]:
             with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/messages/' + ident + '/transcript', {'text': value})
 
+    def test_my_qr_codes_suggest_telegram_then_persist_owner_list(self):
+        self.inbox.telegram_status = lambda: {'logins': [{'profile': {'username': 'JamesDeFleur'}}]}
+        first = self.inbox.dispatch('GET', '/api/unified/qr-codes', {})
+        self.assertEqual(first['codes'], [{'network': 'telegram', 'value': 'JamesDeFleur', 'label': ''}])
+        self.assertFalse(first['saved'])
+        codes = [{'network': 'telegram', 'value': ' JamesDeFleur ', 'label': ''}, {'network': 'whatsapp', 'value': '+1 555 0100', 'label': 'Work'}]
+        self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': codes})
+        again = UnifiedInbox(self.tmp.name, self.engine).dispatch('GET', '/api/unified/qr-codes', {})
+        self.assertTrue(again['saved'])
+        self.assertEqual(again['codes'][0]['value'], 'JamesDeFleur')
+        self.assertEqual(again['codes'][1], {'network': 'whatsapp', 'value': '+1 555 0100', 'label': 'Work'})
+        self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': []})
+        self.assertEqual(self.inbox.dispatch('GET', '/api/unified/qr-codes', {})['codes'], [])
+        for bad in [None, [{'network': 'myspace', 'value': 'x'}], [{'network': 'x', 'value': ''}], [{'network': 'x', 'value': 'a', 'label': 'l' * 81}], [{'network': 'x', 'value': 'a'}] * 25]:
+            with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': bad})
+
     def test_dormant_status_does_not_contact_telegram(self):
         with patch('unified.http') as request:
             self.assertEqual(self.inbox.telegram_status()['state'], 'not_configured')

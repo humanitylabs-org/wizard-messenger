@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const transcript = 'Miguel says: Let us think through the next step together. ' + 'This longer transcript wraps safely inside the voice-note bubble. '.repeat(3).trim();
   let transcribes = 0; const shares = [], inputs = []; let receipt = 'sent';
-  const browser = await chromium.launch({headless: true});
+  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, timezoneId: 'UTC'});
   await ctx.exposeBinding('__transcribe', (_, data) => { transcribes++; inputs.push(data); return {text: transcript}; });
   await ctx.exposeBinding('__share', (_, data) => { shares.push(data); return receipt; });
@@ -41,11 +41,14 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   page.on('close', () => {});
   const ticket = JSON.parse(execFileSync('curl', ['-sf','-X','POST','-H','Authorization: Bearer ' + process.env.MESSENGER_API_TOKEN,'-H','Content-Type: application/json','-d','{"bootstrap":true}','http://127.0.0.1:19252/api/view/ticket'])).result.ticket;
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(2000);
+  await page.locator('#setup-form:visible, #inbox-tabs:visible').first().waitFor({timeout: 60000});
   if (!(await page.locator('#setup-form').isVisible())) await page.click('#inbox-tabs [data-tab="messenger"]');
   await page.locator('#confirm-passphrase').waitFor({state: 'visible', timeout: 30000});
   const pw = 'preview-only-passphrase-' + Date.now(); await page.fill('#passphrase', pw); await page.fill('#confirm-passphrase', pw); await page.click('#setup-submit');
   await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
-  if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
+  // Address sheet opens after the asynchronous post-create snapshot, not at first ready paint.
+  await page.locator('#sheet-layer:not([hidden])').waitFor({state: 'visible', timeout: 30000});
+  await page.click('#close-sheet');
   await page.click('#inbox-tabs [data-tab="people"]');
   await page.locator('.u-person', {hasText: 'Miguel'}).click();
   const note = page.locator('.u-row').filter({has: page.locator('.u-voice')}).first();

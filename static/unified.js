@@ -25,13 +25,14 @@
     compose: ['M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z', 'M15 5l4 4'],
     more: ['M12 5.5v.01', 'M12 12v.01', 'M12 18.5v.01'],
     send: ['M4 12 20 4l-4 16-4-6.5L4 12z', 'm12 13.5 8-9.5'],
-    down: ['M12 5v14', 'm5 12 7 7 7-7'], plus: ['M12 5v14', 'M5 12h14'],
+    down: ['M12 5v14', 'm5 12 7 7 7-7'], up: ['M12 19V5', 'm5 12 7-7 7 7'], plus: ['M12 5v14', 'M5 12h14'],
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
+    qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
     const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
@@ -68,6 +69,7 @@
   }
   function back() {
     if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
+    if (s.overlay === 'Edit QR codes') { myCodes(); return true; } // nested: Back returns to the codes, not the list
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
@@ -101,7 +103,7 @@
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
-      head.append(node('h1', '', title), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', accounts));
+      head.append(node('h1', '', title), iconButton('qr', 'My QR codes', () => myCodes()), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', accounts));
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
@@ -234,7 +236,8 @@
       if (i >= 0) { const local = t.messages[i].local; t.messages[i] = m; if (local) m.local = local; }
       else if (!t.has_more || m.timestamp >= oldest) t.messages.push(m);
     }
-    t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || (a.id < b.id ? -1 : 1));
+    // Telegram parts share second-resolution timestamps; random Matrix IDs must not reorder/split albums.
+    t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
   }
   function apply(r) {
     if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
@@ -542,7 +545,28 @@
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
     root.append(composer(id, p));
-    view.selection = messageSelection(root, () => (store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
+    view.selection = messageSelection(root, () => albumPosts(store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
+  }
+  // Network-neutral projection: only adjacent parts with the same source and sender join.
+  function albumPosts(messages) {
+    const posts = [];
+    for (const m of messages) {
+      const last = posts[posts.length - 1];
+      if (m.album && last?.album === m.album && last.sender === m.sender && last.identity_id === m.identity_id && last.network === m.network && last.outgoing === m.outgoing) {
+        last.photos.push(m);
+        if (!last.original && m.original) last.original = m.original;
+        last.deleted = last.photos.every(p => p.deleted);
+      } else posts.push(m.album ? {...m, photos: m.photos || [m]} : m);
+    }
+    for (const post of posts) if (post.photos) {
+      const reactions = new Map();
+      for (const photo of post.photos) for (const reaction of photo.reactions || []) {
+        const current = reactions.get(reaction.key) || {key: reaction.key, count: 0, mine: false};
+        current.count += reaction.count; current.mine ||= reaction.mine; reactions.set(reaction.key, current);
+      }
+      post.reactions = [...reactions.values()];
+    }
+    return posts;
   }
   function nearBottom() { const sc = view.scroll; return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
   function paintThread(toBottom = false) {
@@ -552,16 +576,17 @@
     if (t.has_more) kids.push(node('p', 'u-older', 'Loading earlier messages…'));
     let day = '';
     const side = m => (m.outgoing ? 'o' : 'i' + (m.sender || ''));
-    t.messages.forEach((m, i) => {
+    const posts = albumPosts(t.messages);
+    posts.forEach((m, i) => {
       const label = dayLabel(m.timestamp);
       if (label !== day) { day = label; kids.push(node('p', 'u-day', label)); }
-      const prev = t.messages[i - 1], next = t.messages[i + 1];
+      const prev = posts[i - 1], next = posts[i + 1];
       const jp = prev && dayLabel(prev.timestamp) === day && side(prev) === side(m) && m.timestamp - prev.timestamp < 3e5;
       const jn = next && dayLabel(next.timestamp) === day && side(next) === side(m) && next.timestamp - m.timestamp < 3e5;
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group]);
+      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -616,6 +641,13 @@
       b.append(q);
     }
     if (m.deleted) b.append(node('p', 'u-deleted', m.outgoing ? 'You deleted this message' : 'This message was deleted'));
+    else if (visual && m.photos?.length > 1) {
+      b.classList.add('has-album'); row.dataset.album = m.album;
+      const photos = m.photos.filter(p => !p.deleted);
+      const grid = node('div', 'u-album n-' + photos.length); grid.setAttribute('aria-label', photos.length + ' photos');
+      for (const photo of photos) grid.append(visualMedia(photo));
+      b.append(grid);
+    }
     else if (visual) b.append(visualMedia(m));
     else if (m.msgtype === 'm.audio') b.append(voice(m));
     else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
@@ -703,7 +735,7 @@
         if (window.WizardApp?.share?.wizard) {
           const files = [], texts = [];
           for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
-            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) files.push(await forwardFile(m));
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) for (const photo of m.photos || [m]) if (!photo.deleted) files.push(await forwardFile(photo));
             if (m.original || m.transcript) texts.push(line(m));
           }
           const receipt = await WizardApp.share.wizard({files, text: texts.join('\n\n'), title: 'Forwarded from Messenger'});
@@ -714,7 +746,7 @@
           queue = []; let texts = [];
           const flush = () => { if (texts.length) queue.push({text: texts.join('\n\n')}); texts = []; };
           for (const {message: m} of entries().filter(x => ids.has(x.message.id))) {
-            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) { flush(); queue.push({message: m}); if (m.original || m.transcript) texts.push(line(m)); }
+            if (m.media && ['m.audio','m.image','m.video','m.file','m.sticker'].includes(m.msgtype)) { flush(); for (const photo of m.photos || [m]) if (!photo.deleted) queue.push({message: photo}); if (m.original || m.transcript) texts.push(line(m)); }
             else texts.push(line(m));
           }
           flush(); cursor = 0;
@@ -803,7 +835,7 @@
     return wrap;
   }
   const transcriptionText = new Map(); // retain a successful result if saving failed: Retry only saves, never bills twice
-  function jumpTo(id) { const el = view.scroll?.querySelector('[data-id="' + CSS.escape(id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
+  function jumpTo(id) { const post = albumPosts(store.threads[view.id]?.messages || []).find(m => m.id === id || m.photos?.some(p => p.id === id)); const el = view.scroll?.querySelector('[data-id="' + CSS.escape(post?.id || id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
   function translate(m) {
     action(async () => {
       if (shown[m.id] !== 'translated' && !m.translated) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
@@ -812,14 +844,15 @@
   }
 
   // Shared by both message renderers. Chat-row holdToMenu deliberately stays separate.
-  function messageGestures(row, bubble, {selection, id, menu, reply}) {
+  function messageGestures(row, bubble, {selection, id, menu, reply, album}) {
     const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
+    const holdInteractive = album ? 'a,button:not(.u-media),input,textarea,select,video,audio,.u-reply,.u-wave,.reply-quote' : interactive;
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false;
     const cancel = () => { clearTimeout(timer); timer = null; };
     bubble.addEventListener('selectstart', e => { if (!selection()?.active || firstHold) e.preventDefault(); });
     bubble.addEventListener('pointerdown', e => {
       firstHold = false; suppressTap = false;
-      if (selection()?.active || e.button > 0 || e.target.closest(interactive)) return;
+      if (selection()?.active || e.button > 0 || e.target.closest(holdInteractive)) return;
       cancel(); x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
       if (e.pointerType !== 'touch') return;
       timer = setTimeout(() => {
@@ -828,7 +861,7 @@
       }, 450);
     });
     bubble.addEventListener('pointermove', e => {
-      if (selection()?.active || e.target.closest(interactive)) return;
+      if (selection()?.active || e.target.closest(holdInteractive)) return;
       const mx = e.clientX - x0, my = e.clientY - y0;
       if (Math.hypot(mx, my) > 8) cancel();
       if (reply && e.pointerType === 'touch' && (swiping || (mx > 12 && Math.abs(my) < 10))) {
@@ -848,13 +881,13 @@
     bubble.addEventListener('contextmenu', e => {
       // The first hold selects messages; the next hold is left entirely to native text selection.
       if (selection()?.active && !firstHold) return;
-      if (e.target.closest(interactive)) return;
+      if (e.target.closest(holdInteractive)) return;
       e.preventDefault(); cancel();
       if (!selection()?.active) menu();
     });
   }
   function gestures(row, b, m) {
-    messageGestures(row, b, {selection: () => view.selection, id: m.id, menu: () => menu(m, b), reply: () => startReply(m)});
+    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: () => menu(m, b), reply: () => startReply(m)});
   }
   function menu(m, b) {
     const t = store.threads[view.id]; if (!t) return;
@@ -874,7 +907,7 @@
     if (!m.deleted) item('Forward to Wizard', 'reply', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
-    if (m.media && !m.deleted) item('Save', 'download', () => { const a = node('a'); a.href = mediaURL(m.id); a.download = m.media.filename || ''; a.click(); });
+    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     item('Delete for me', 'trash', () => del(m, false), 'danger');
     if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
@@ -905,17 +938,18 @@
   async function react(m, key) {
     recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
     const t = store.threads[view.id]; const before = m.reactions;
+    const target = m.photos?.find(p => p.reactions?.some(r => r.mine && r.key === key)) || m;
     // Optimistic: one reaction per person, tapping your own again removes it.
     const others = (m.reactions || []).map(r => r.mine ? {...r, count: r.count - 1, mine: false} : r).filter(r => r.count > 0);
     const had = (m.reactions || []).some(r => r.mine && r.key === key);
     if (!had) { const e = others.find(r => r.key === key); if (e) { e.count++; e.mine = true; } else others.push({key, count: 1, mine: true}); }
     m.reactions = others; paintThread();
-    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
+    try { const r = await call('messages/' + encodeURIComponent(target.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
     catch (e) { m.reactions = before; paintThread(); error(e); }
   }
   async function del(m, everyone) {
     if (everyone && !confirm('Delete this message for everyone?')) return;
-    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, [r.message]); paintThread(); } catch (e) { error(e); }
+    try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, r.messages || [r.message]); paintThread(); } catch (e) { error(e); }
   }
   function startReply(m) { view.edit = null; view.reply = m; view.paintBar?.(); view.draft?.focus(); }
   function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = m.original; view.grow?.(); view.paintBar?.(); view.draft.focus(); }
@@ -953,7 +987,7 @@
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
     draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
-    // Several photos at once, like Wizard chats (up to 10, Telegram's album size); each goes as its own photo, the caption on the first.
+    // Several selected photos are one post and one Telegram media group (up to 10).
     file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
@@ -964,7 +998,8 @@
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
       if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
-      else a.forEach((ph, i) => queueSend(id, {text: i ? '' : text, photo: ph, reply: i ? null : reply, identity_id: channel.value}));
+      else if (a.length === 1) queueSend(id, {text, photo: a[0], reply, identity_id: channel.value});
+      else queueSend(id, {text, photos: a, reply, identity_id: channel.value});
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -1079,13 +1114,16 @@
   function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
-    if (f.type === 'image/gif') { const bmp = await createImageBitmap(f); return {blob: f, url: URL.createObjectURL(f), w: bmp.width, h: bmp.height}; }
+    // Albums use still JPEG photos, including the first frame of an animated image.
     // Downscale like Signal's "standard" quality: long edge 2048, JPEG.
     const bmp = await createImageBitmap(f, {imageOrientation: 'from-image'});
     const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
     const canvas = node('canvas'); canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
     const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
-    return {blob, url: URL.createObjectURL(blob), w, h};
+    bmp.close();
+    // Preserve single animated photos; albums explicitly use their still preview.
+    const original = f.type === 'image/gif' ? f : blob;
+    return {blob: original, albumBlob: blob, url: URL.createObjectURL(original), w, h};
   }
   async function upload(id, kind, blob) {
     // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
@@ -1102,8 +1140,9 @@
     const t = store.threads[id]; if (!t) return;
     const client_id = 'w' + uid();
     const m = {id: 'pending:' + client_id, client_id, outgoing: true, pending: true, original: job.text || '', timestamp: Date.now(), network: t.person.identities?.[0]?.network || 'telegram',
-      msgtype: job.photo ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
+      msgtype: job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
       reply: job.reply ? {id: job.reply.id, sender: job.reply.sender, outgoing: job.reply.outgoing, text: job.reply.original, msgtype: job.reply.msgtype, voice: job.reply.media?.voice} : null};
+    if (job.photos) { m.album = 'pending:' + client_id; m.photos = job.photos.map((photo, i) => ({...m, photos: undefined, id: m.id + ':' + i, original: i ? '' : m.original, local: photo.url, media: {w: photo.w, h: photo.h, mime: 'image/jpeg'}})); m.media = m.photos[0].media; }
     if (job.photo) { m.local = job.photo.url; m.media = {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'}; }
     if (job.voice) { m.local = job.voice.url; m.media = {voice: true, duration: job.voice.duration, waveform: job.voice.waveform.map(v => Math.round(v / 10.24))}; }
     t.messages.push(m); store.pending++; hold();
@@ -1111,11 +1150,15 @@
     const run = async () => {
       m.pending = true; m.failed = false; if (s.person === id) paintThread();
       try {
-        let upload_id, media;
+        let upload_id, upload_ids, media;
+        if (job.photos) {
+          upload_ids = []; media = [];
+          for (const photo of job.photos) { upload_ids.push((await upload(id, 'image', photo.albumBlob || photo.blob)).upload_id); media.push({w: photo.w, h: photo.h}); }
+        }
         if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
-        const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, media});
-        if (r.message) mergeMessages(id, [r.message]);
+        const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
+        if (r.message) mergeMessages(id, r.messages || [r.message]);
         if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
@@ -1187,6 +1230,81 @@
       const labelsLabel = node('label', '', 'Labels'); labelsLabel.append(labels);
       sheet.append(labelsLabel, button('Save labels', () => action(async () => { await call('groups/' + p.identities[0].id + '/labels', {labels: labels.value.split(',').map(x => x.trim()).filter(Boolean)}); closeOverlay(); }), 'secondary wide'));
     }
+  }
+  // My QR codes: the owner's own Telegram, WhatsApp, Signal… as big scannable codes, one tap from Chats.
+  const QR_NETS = {
+    telegram: {name: 'Telegram', hint: 'Username or phone', link: v => /^\+?\d[\d\s-]{5,}$/.test(v) ? 'https://t.me/+' + v.replace(/\D/g, '') : 'https://t.me/' + v.replace(/^@/, '')},
+    whatsapp: {name: 'WhatsApp', hint: 'Phone with country code', link: v => 'https://wa.me/' + v.replace(/\D/g, '')},
+    signal: {name: 'Signal', hint: 'Phone, or paste your username link', link: v => 'https://signal.me/#p/+' + v.replace(/\D/g, '')},
+    messenger: {name: 'Wizard Messenger', hint: 'npub contact code', link: v => v},
+    instagram: {name: 'Instagram', hint: 'Username', link: v => 'https://instagram.com/' + v.replace(/^@/, '')},
+    x: {name: 'X', hint: 'Username', link: v => 'https://x.com/' + v.replace(/^@/, '')},
+    line: {name: 'LINE', hint: 'LINE ID', link: v => 'https://line.me/ti/p/~' + v.replace(/^@/, '')},
+    wechat: {name: 'WeChat', hint: 'Paste your WeChat QR link', link: v => v},
+    facebook: {name: 'Facebook Messenger', hint: 'Username', link: v => 'https://m.me/' + v.replace(/^@/, '')},
+    email: {name: 'Email', hint: 'Email address', link: v => 'mailto:' + v},
+    phone: {name: 'Phone', hint: 'Phone with country code', link: v => 'tel:+' + v.replace(/\D/g, '')},
+    link: {name: 'Link', hint: 'Any link', link: v => v},
+  };
+  const qrLink = c => /^[a-z][a-z0-9+.-]*:/i.test(c.value) ? c.value : (QR_NETS[c.network] || QR_NETS.link).link(c.value.trim());
+  const qrTitle = c => c.label || (QR_NETS[c.network] || QR_NETS.link).name;
+  function qrCanvas(data) {
+    const qr = window.qrcode(0, 'M'); qr.addData(data); qr.make();
+    const canvas = node('canvas', 'u-qr u-myqr'), count = qr.getModuleCount(), scale = 10; canvas.width = canvas.height = (count + 8) * scale;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
+    for (let y = 0; y < count; y++) for (let x = 0; x < count; x++) if (qr.isDark(y, x)) ctx.fillRect((x + 4) * scale, (y + 4) * scale, scale, scale);
+    canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'QR code for ' + data); return canvas;
+  }
+  async function myCodes(pick) {
+    const sheet = overlay('My QR codes'); sheet.classList.add('tall', 'u-myqr-sheet');
+    const body = node('div', 'u-myqr-body'); body.append(skeleton(1, 'list')); sheet.append(body);
+    let data; try { data = await call('qr-codes'); } catch (e) { body.replaceChildren(); return error(e); }
+    if (s.overlay !== 'My QR codes') return;
+    const codes = data.codes || []; body.replaceChildren();
+    if (!codes.length) { body.append(node('p', 'helper', 'Add your Telegram, WhatsApp and other contacts once. They show here as codes people can scan.'), button('Add codes', () => editCodes(codes), 'primary wide')); return; }
+    let current = Math.min(pick | 0, codes.length - 1);
+    // Edit sits in the sheet header so the code, its link and the actions fit one phone screen.
+    sheet.querySelector('header').insertBefore(iconButton('compose', 'Edit codes', () => editCodes(codes)), sheet.querySelector('header .icon-button'));
+    const chips = node('div', 'u-chips u-myqr-chips'), card = node('div', 'u-myqr-card');
+    const draw = () => {
+      const c = codes[current], link = qrLink(c);
+      for (const [i, el] of [...chips.children].entries()) el.setAttribute('aria-pressed', String(i === current));
+      const actions = node('div', 'u-myqr-actions');
+      actions.append(button('Copy link', async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Could not copy'); } }, 'secondary'));
+      if (window.WizardApp?.share?.text && /^https?:/.test(link)) actions.append(button('Share', () => Promise.resolve(WizardApp.share.text({text: link, title: qrTitle(c)})).catch(() => {}), 'secondary'));
+      card.replaceChildren(...(codes.length > 1 ? [] : [node('h3', 'u-myqr-name', qrTitle(c))]), qrCanvas(link), node('p', 'u-myqr-value', c.value), actions);
+    };
+    codes.forEach((c, i) => { const chip = button(qrTitle(c), () => { current = i; draw(); }, 'u-chip'); chips.append(chip); });
+    // Swipe between codes, like flipping cards.
+    let x0 = null; card.ontouchstart = e => { x0 = e.touches[0].clientX; };
+    card.ontouchend = e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) < 50) return; current = (current + (dx < 0 ? 1 : -1) + codes.length) % codes.length; draw(); };
+    body.append(...(codes.length > 1 ? [chips] : []), card);
+    draw();
+  }
+  function editCodes(codes) {
+    const sheet = overlay('Edit QR codes'); sheet.classList.add('tall');
+    const rows = node('div', 'u-myqr-edit'); sheet.append(rows);
+    const addRow = (c = {network: 'whatsapp', value: '', label: ''}) => {
+      const row = node('div', 'u-myqr-row');
+      const net = node('select'); net.setAttribute('aria-label', 'Network');
+      for (const [id, n] of Object.entries(QR_NETS)) { const o = node('option', '', n.name); o.value = id; net.append(o); }
+      net.value = c.network;
+      const value = node('input'); value.value = c.value; value.setAttribute('aria-label', 'Username, number or link'); value.autocomplete = 'off'; value.spellcheck = false;
+      const label = node('input'); label.value = c.label || ''; label.placeholder = 'Name on the card (optional)'; label.setAttribute('aria-label', 'Name on the card');
+      const hint = () => { value.placeholder = QR_NETS[net.value].hint; value.inputMode = /phone|whatsapp/.test(net.value) ? 'tel' : net.value === 'email' ? 'email' : 'text'; };
+      net.onchange = hint; hint();
+      const move = d => { const to = d < 0 ? row.previousElementSibling : row.nextElementSibling?.nextElementSibling; if (d < 0 && !to) return; rows.insertBefore(row, to || null); arrows(); row.querySelector(d < 0 ? '.u-myqr-up' : '.u-myqr-down')?.focus(); };
+      row.append(net, iconButton('up', 'Move up', () => move(-1), 'u-myqr-up'), iconButton('down', 'Move down', () => move(1), 'u-myqr-down'), iconButton('trash', 'Remove', () => { row.remove(); arrows(); }, 'u-myqr-remove'), value, label); rows.append(row); arrows();
+      return value;
+    };
+    // First can't go up, last can't go down.
+    const arrows = () => [...rows.children].forEach((r, i, all) => { r.querySelector('.u-myqr-up').disabled = i === 0; r.querySelector('.u-myqr-down').disabled = i === all.length - 1; });
+    for (const c of codes) addRow(c);
+    sheet.append(button('Add another', () => addRow().focus(), 'secondary wide'), button('Save', () => action(async () => {
+      const list = [...rows.children].map(r => { const [net, value, label] = r.querySelectorAll('select,input'); return {network: net.value, value: value.value.trim(), label: label.value.trim()}; }).filter(c => c.value);
+      await call('qr-codes', {codes: list}); myCodes();
+    }), 'primary wide'));
+    if (!codes.length) requestAnimationFrame(() => addRow().focus());
   }
   async function accounts() {
     const sheet = overlay('Settings'); sheet.append(node('h3', '', 'Telegram'));

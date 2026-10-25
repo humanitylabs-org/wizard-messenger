@@ -1,0 +1,458 @@
+diff --git a/pkg/connector/album.go b/pkg/connector/album.go
+new file mode 100644
+index 00000000..f7991ca8
+--- /dev/null
++++ b/pkg/connector/album.go
+@@ -0,0 +1,192 @@
++// Copyright (C) 2026 Wizard contributors
++// SPDX-License-Identifier: AGPL-3.0-or-later
++package connector
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/binary"
++	"encoding/json"
++	"fmt"
++	"strconv"
++	"time"
++
++	"github.com/rs/zerolog"
++	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
++	"go.mau.fi/mautrix-telegram/pkg/connector/matrixfmt"
++	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
++	"maunium.net/go/mautrix/bridgev2"
++	"maunium.net/go/mautrix/bridgev2/database"
++	"maunium.net/go/mautrix/bridgev2/networkid"
++	"maunium.net/go/mautrix/event"
++	"maunium.net/go/mautrix/id"
++)
++
++// org.wizard.gallery contains ALL N photos, including the event's own first photo.
++// Never fall back to N sends: an error must not silently change post semantics.
++func wizardGallery(raw any) ([]*event.MessageEventContent, error) {
++	data, err := json.Marshal(raw)
++	if err != nil {
++		return nil, err
++	}
++	var items []*event.MessageEventContent
++	if err = json.Unmarshal(data, &items); err != nil {
++		return nil, fmt.Errorf("invalid gallery: %w", err)
++	}
++	if len(items) < 2 || len(items) > 10 {
++		return nil, fmt.Errorf("gallery needs 2-10 photos")
++	}
++	for i, item := range items {
++		if item == nil || item.MsgType != event.MsgImage || item.URL == "" || item.File != nil {
++			return nil, fmt.Errorf("gallery item %d must be an unencrypted Matrix image", i)
++		}
++	}
++	return items, nil
++}
++
++func wizardAlbumMessages(updates tg.UpdatesClass, count int) ([]*tg.Message, error) {
++	var list []tg.UpdateClass
++	switch u := updates.(type) {
++	case *tg.Updates:
++		list = u.Updates
++	case *tg.UpdatesCombined:
++		list = u.Updates
++	default:
++		return nil, fmt.Errorf("unexpected album updates %T", updates)
++	}
++	var messages []*tg.Message
++	var grouped int64
++	for _, update := range list {
++		var item tg.MessageClass
++		switch u := update.(type) {
++		case *tg.UpdateNewMessage:
++			item = u.Message
++		case *tg.UpdateNewChannelMessage:
++			item = u.Message
++		default:
++			continue
++		}
++		m, ok := item.(*tg.Message)
++		if !ok {
++			continue
++		}
++		group, ok := m.GetGroupedID()
++		if !ok || group == 0 || (grouped != 0 && grouped != group) {
++			return nil, fmt.Errorf("Telegram returned inconsistent album group")
++		}
++		grouped = group
++		messages = append(messages, m)
++	}
++	if len(messages) != count {
++		return nil, fmt.Errorf("Telegram returned %d/%d album messages", len(messages), count)
++	}
++	return messages, nil
++}
++
++type wizardAlbumAPI interface {
++	MessagesUploadMedia(context.Context, *tg.MessagesUploadMediaRequest) (tg.MessageMediaClass, error)
++	MessagesSendMultiMedia(context.Context, *tg.MessagesSendMultiMediaRequest) (tg.UpdatesClass, error)
++}
++
++func wizardAlbumRandomID(eventID id.EventID, index int) int64 {
++	h := sha256.Sum256([]byte(fmt.Sprintf("wizard-gallery:%s:%d", eventID, index)))
++	return int64(binary.BigEndian.Uint64(h[:8]))
++}
++
++// Shared by the real connector and the recording-API integration test.
++func wizardPublishAlbum(ctx context.Context, api wizardAlbumAPI, eventID id.EventID, peer tg.InputPeerClass, replyTo tg.InputReplyToClass,
++	items []*event.MessageEventContent, caption string, entities []tg.MessageEntityClass,
++	transfer func(context.Context, *event.MessageEventContent) (tg.InputMediaClass, error)) ([]*tg.Message, error) {
++	media := make([]tg.InputSingleMedia, len(items))
++	for i, item := range items {
++		uploaded, err := transfer(ctx, item)
++		if err != nil {
++			return nil, fmt.Errorf("gallery photo %d: %w", i, err)
++		}
++		// sendMultiMedia requires finalized inputPhoto references, not upload handles.
++		saved, err := api.MessagesUploadMedia(ctx, &tg.MessagesUploadMediaRequest{Peer: peer, Media: uploaded})
++		if err != nil {
++			return nil, fmt.Errorf("gallery upload %d: %w", i, err)
++		}
++		photoMedia, ok := saved.(*tg.MessageMediaPhoto)
++		if !ok {
++			return nil, fmt.Errorf("gallery upload returned %T", saved)
++		}
++		photo, ok := photoMedia.Photo.(*tg.Photo)
++		if !ok {
++			return nil, fmt.Errorf("gallery upload has no photo")
++		}
++		media[i] = tg.InputSingleMedia{Media: &tg.InputMediaPhoto{ID: photo.AsInput()}, RandomID: wizardAlbumRandomID(eventID, i)}
++		if i == 0 {
++			media[i].Message, media[i].Entities = caption, entities
++		}
++	}
++	updates, err := api.MessagesSendMultiMedia(ctx, &tg.MessagesSendMultiMediaRequest{Peer: peer, MultiMedia: media, ReplyTo: replyTo})
++	if err != nil {
++		return nil, err
++	}
++	return wizardAlbumMessages(updates, len(items))
++}
++
++func wizardAlbumRows(ctx context.Context, portal networkid.PortalKey, sender networkid.UserID, root id.EventID, items []*event.MessageEventContent, messages []*tg.Message) []*database.Message {
++	idsList := make([]int, len(messages))
++	for i, m := range messages {
++		idsList[i] = m.ID
++	}
++	rows := make([]*database.Message, len(messages))
++	for i, m := range messages {
++		h := sha256.New()
++		h.Write([]byte(m.Message))
++		h.Write(mediaHashID(ctx, m.Media))
++		rows[i] = &database.Message{ID: ids.MakeMessageID(portal, m.ID), SenderID: sender,
++			Timestamp: time.Unix(int64(m.Date), 0), Metadata: &MessageMetadata{ContentHash: h.Sum(nil), ContentURI: items[i].URL, AlbumMessageIDs: idsList, AlbumRoot: root}}
++		if i > 0 {
++			rows[i].PartID = networkid.PartID("wizard-gallery:" + strconv.Itoa(i))
++		}
++	}
++	return rows
++}
++
++func wizardGroupConverted(cm *bridgev2.ConvertedMessage, msg *tg.Message) {
++	if grouped, ok := msg.GetGroupedID(); ok && grouped != 0 {
++		for _, part := range cm.Parts {
++			if part.Extra == nil {
++				part.Extra = make(map[string]any)
++			}
++			part.Extra["fi.mau.telegram.grouped_id"] = strconv.FormatInt(grouped, 10)
++		}
++	}
++}
++
++func (tc *TelegramClient) sendWizardAlbum(ctx context.Context, msg *bridgev2.MatrixMessage, peer tg.InputPeerClass, replyTo tg.InputReplyToClass, raw any) (*bridgev2.MatrixMessageResponse, error) {
++	items, err := wizardGallery(raw)
++	if err != nil {
++		return nil, err
++	}
++	if items[0].URL != msg.Content.URL {
++		return nil, fmt.Errorf("gallery first image must match event URL")
++	}
++	caption, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal, tc.getMaxMessageLength(ctx, true))
++	messages, err := wizardPublishAlbum(ctx, tc.client.API(), msg.Event.ID, peer, replyTo, items, caption, entities,
++		func(ctx context.Context, item *event.MessageEventContent) (tg.InputMediaClass, error) {
++			return tc.transferMediaToTelegram(ctx, item, false, false, false)
++		})
++	if err != nil {
++		return nil, err
++	}
++	rows := wizardAlbumRows(ctx, msg.Portal.PortalKey, tc.userID, msg.Event.ID, items, messages)
++	return &bridgev2.MatrixMessageResponse{DB: rows[0], StreamOrder: int64(messages[len(messages)-1].ID),
++		PostSave: func(ctx context.Context, first *database.Message) {
++			for _, row := range rows[1:] {
++				row.Room = first.Room
++				row.SenderMXID = first.SenderMXID
++				row.IsDoublePuppeted = first.IsDoublePuppeted
++				// bridgev2 has UNIQUE(bridge_id,mxid): extra logical parts use its fake MXIDs.
++				// Real Telegram IDs suppress echoes; AlbumRoot links to the ONE real event.
++				row.SetFakeMXID()
++				if err := tc.main.Bridge.DB.Message.Insert(ctx, row); err != nil {
++					zerolog.Ctx(ctx).Err(err).Msg("Failed to persist gallery part")
++				}
++			}
++		}}, nil
++}
+diff --git a/pkg/connector/album_test.go b/pkg/connector/album_test.go
+new file mode 100644
+index 00000000..9e43c397
+--- /dev/null
++++ b/pkg/connector/album_test.go
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++package connector
++
++import (
++	"context"
++	"fmt"
++	"reflect"
++	"testing"
++
++	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
++	"maunium.net/go/mautrix/bridgev2"
++	"maunium.net/go/mautrix/bridgev2/networkid"
++	"maunium.net/go/mautrix/event"
++	"maunium.net/go/mautrix/id"
++)
++
++type albumRecordingAPI struct {
++	uploads    []*tg.MessagesUploadMediaRequest
++	sends      []*tg.MessagesSendMultiMediaRequest
++	failUpload bool
++}
++
++func (a *albumRecordingAPI) MessagesUploadMedia(ctx context.Context, req *tg.MessagesUploadMediaRequest) (tg.MessageMediaClass, error) {
++	a.uploads = append(a.uploads, req)
++	if a.failUpload {
++		return nil, fmt.Errorf("fixture upload failure")
++	}
++	return &tg.MessageMediaPhoto{Photo: &tg.Photo{ID: int64(len(a.uploads)), AccessHash: 42}}, nil
++}
++func (a *albumRecordingAPI) MessagesSendMultiMedia(ctx context.Context, req *tg.MessagesSendMultiMediaRequest) (tg.UpdatesClass, error) {
++	a.sends = append(a.sends, req)
++	updates := &tg.Updates{}
++	for i, media := range req.MultiMedia {
++		m := &tg.Message{ID: 100 + i, Date: 1000, Message: media.Message, Media: &tg.MessageMediaPhoto{Photo: &tg.Photo{ID: int64(i + 1)}}}
++		m.SetGroupedID(987654321012345678)
++		updates.Updates = append(updates.Updates, &tg.UpdateNewMessage{Message: m})
++	}
++	return updates, nil
++}
++func albumFixtures(n int) []*event.MessageEventContent {
++	items := make([]*event.MessageEventContent, n)
++	for i := range items {
++		items[i] = &event.MessageEventContent{MsgType: event.MsgImage, URL: id.ContentURIString(fmt.Sprintf("mxc://test/%d", i)), Body: "image.jpg", FileName: "image.jpg"}
++	}
++	return items
++}
++func TestWizardAlbumOneRealMultiMediaCall(t *testing.T) {
++	for _, n := range []int{2, 3, 10} {
++		t.Run(fmt.Sprint(n), func(t *testing.T) {
++			ctx := context.Background()
++			api := &albumRecordingAPI{}
++			items := albumFixtures(n)
++			peer := &tg.InputPeerSelf{}
++			reply := &tg.InputReplyToMessage{ReplyToMsgID: 99}
++			messages, err := wizardPublishAlbum(ctx, api, "$root", peer, reply, items, "One caption", nil, func(context.Context, *event.MessageEventContent) (tg.InputMediaClass, error) {
++				return &tg.InputMediaUploadedPhoto{}, nil
++			})
++			if err != nil {
++				t.Fatal(err)
++			}
++			if len(api.uploads) != n || len(api.sends) != 1 {
++				t.Fatalf("uploads=%d sends=%d", len(api.uploads), len(api.sends))
++			}
++			req := api.sends[0]
++			if req.Peer != peer || req.ReplyTo != reply || len(req.MultiMedia) != n {
++				t.Fatal("request lost peer/reply/photos")
++			}
++			for i, m := range req.MultiMedia {
++				if _, ok := m.Media.(*tg.InputMediaPhoto); !ok {
++					t.Fatal("must use finalized photo references")
++				}
++				if i == 0 && m.Message != "One caption" || i > 0 && m.Message != "" {
++					t.Fatal("caption must appear once")
++				}
++				if m.RandomID != wizardAlbumRandomID("$root", i) {
++					t.Fatal("retry changed random id")
++				}
++			}
++			rows := wizardAlbumRows(ctx, networkid.PortalKey{ID: "user:1"}, "1", "$root", items, messages)
++			seen := map[networkid.MessageID]bool{}
++			for i, row := range rows {
++				if seen[row.ID] {
++					t.Fatal("duplicate Telegram mapping")
++				}
++				seen[row.ID] = true
++				meta := row.Metadata.(*MessageMetadata)
++				if meta.AlbumRoot != "$root" || len(meta.AlbumMessageIDs) != n || meta.AlbumMessageIDs[i] != messages[i].ID {
++					t.Fatal("incomplete delete/echo mapping")
++				}
++				if i > 0 {
++					if row.PartID == "" {
++						t.Fatal("extra part needs PartID")
++					}
++					row.SetFakeMXID()
++					if !row.HasFakeMXID() {
++						t.Fatal("extra part must not create a real Matrix echo")
++					}
++				}
++			}
++		})
++	}
++}
++func TestWizardAlbumUploadFailureDoesNotSplitSend(t *testing.T) {
++	api := &albumRecordingAPI{failUpload: true}
++	_, err := wizardPublishAlbum(context.Background(), api, "$root", &tg.InputPeerSelf{}, nil, albumFixtures(3), "", nil, func(context.Context, *event.MessageEventContent) (tg.InputMediaClass, error) {
++		return &tg.InputMediaUploadedPhoto{}, nil
++	})
++	if err == nil || len(api.sends) != 0 {
++		t.Fatal("failed upload must not send a partial album")
++	}
++}
++func TestWizardGalleryValidation(t *testing.T) {
++	for _, n := range []int{2, 3, 10} {
++		if _, err := wizardGallery(albumFixtures(n)); err != nil {
++			t.Fatal(err)
++		}
++	}
++	for _, raw := range []any{nil, "bad", albumFixtures(1), albumFixtures(11), []any{nil, nil}} {
++		if _, err := wizardGallery(raw); err == nil {
++			t.Fatalf("accepted invalid gallery %v", raw)
++		}
++	}
++	items := albumFixtures(2)
++	items[1].MsgType = event.MsgAudio
++	if _, err := wizardGallery(items); err == nil {
++		t.Fatal("mixed album accepted")
++	}
++}
++func TestWizardIncomingGroupIDExactStringOnAllParts(t *testing.T) {
++	cm := &bridgev2.ConvertedMessage{Parts: []*bridgev2.ConvertedMessagePart{{}, {Extra: map[string]any{"keep": true}}}}
++	msg := &tg.Message{}
++	msg.SetGroupedID(987654321012345678)
++	wizardGroupConverted(cm, msg)
++	for _, part := range cm.Parts {
++		if part.Extra["fi.mau.telegram.grouped_id"] != "987654321012345678" {
++			t.Fatal("group id lost precision")
++		}
++	}
++	if cm.Parts[1].Extra["keep"] != true {
++		t.Fatal("overwrote existing extension")
++	}
++	single := &bridgev2.ConvertedMessage{Parts: []*bridgev2.ConvertedMessagePart{{}}}
++	wizardGroupConverted(single, &tg.Message{})
++	if single.Parts[0].Extra != nil {
++		t.Fatal("single media changed")
++	}
++}
++func TestWizardAlbumResponseRequiresOneGroupAndAllParts(t *testing.T) {
++	api := &albumRecordingAPI{}
++	u, _ := api.MessagesSendMultiMedia(context.Background(), &tg.MessagesSendMultiMediaRequest{MultiMedia: make([]tg.InputSingleMedia, 3)})
++	a, err := wizardAlbumMessages(u, 3)
++	if err != nil || len(a) != 3 {
++		t.Fatal(err)
++	}
++	combined := &tg.UpdatesCombined{Updates: u.(*tg.Updates).Updates}
++	b, err := wizardAlbumMessages(combined, 3)
++	if err != nil || !reflect.DeepEqual(a, b) {
++		t.Fatal("combined updates failed")
++	}
++	if _, err := wizardAlbumMessages(u, 2); err == nil {
++		t.Fatal("missing count validation")
++	}
++	a[1].SetGroupedID(123)
++	if _, err := wizardAlbumMessages(u, 3); err == nil {
++		t.Fatal("mixed groups accepted")
++	}
++}
++func TestWizardAlbumRetryIDsAreStableAndDistinct(t *testing.T) {
++	if wizardAlbumRandomID("$root", 0) != wizardAlbumRandomID("$root", 0) || wizardAlbumRandomID("$root", 0) == wizardAlbumRandomID("$root", 1) || wizardAlbumRandomID("$root", 0) == wizardAlbumRandomID("$other", 0) {
++		t.Fatal("unstable/colliding album id")
++	}
++}
+diff --git a/pkg/connector/handlematrix.go b/pkg/connector/handlematrix.go
+index 31bdfb91..47e04398 100644
+--- a/pkg/connector/handlematrix.go
++++ b/pkg/connector/handlematrix.go
+@@ -511,6 +511,12 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
+ 
+ 	randomID := parseRandomID(msg.InputTransactionID)
+ 
++	if gallery, ok := msg.Event.Content.Raw["org.wizard.gallery"]; ok {
++		if msg.Content.MsgType != event.MsgImage || viewLimitedTTL != 0 {
++			return nil, fmt.Errorf("gallery must be a non-disappearing image event")
++		}
++		return tc.sendWizardAlbum(ctx, msg, peer, replyTo, gallery)
++	}
+ 	var updates tg.UpdatesClass
+ 	if msg.Event.Type == event.EventSticker {
+ 		mediaReq := &tg.MessagesSendMediaRequest{
+@@ -823,19 +829,30 @@ func (tc *TelegramClient) HandleMatrixMessageRemove(ctx context.Context, msg *br
+ 		return err
+ 	} else if peer, _, err := tc.inputPeerForPortalID(ctx, msg.Portal.ID); err != nil {
+ 		return err
+-	} else if ch, ok := peer.(*tg.InputPeerChannel); ok {
++	} else {
++		messageIDs := []int{messageID}
++		if meta, ok := dbMsg.Metadata.(*MessageMetadata); ok && len(meta.AlbumMessageIDs) > 0 {
++			messageIDs = meta.AlbumMessageIDs
++		}
++		return tc.deleteWizardMessages(ctx, peer, messageIDs)
++	}
++}
++
++func (tc *TelegramClient) deleteWizardMessages(ctx context.Context, peer tg.InputPeerClass, messageIDs []int) error {
++	var err error
++	if ch, ok := peer.(*tg.InputPeerChannel); ok {
+ 		_, err = tc.client.API().ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
+ 			Channel: &tg.InputChannel{
+ 				ChannelID:  ch.ChannelID,
+ 				AccessHash: ch.AccessHash,
+ 			},
+-			ID: []int{messageID},
++			ID: messageIDs,
+ 		})
+ 		return err
+ 	} else {
+ 		_, err = tc.client.API().MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{
+ 			Revoke: true,
+-			ID:     []int{messageID},
++			ID:     messageIDs,
+ 		})
+ 		return err
+ 	}
+diff --git a/pkg/connector/metadata.go b/pkg/connector/metadata.go
+index b845346b..d1eca3f8 100644
+--- a/pkg/connector/metadata.go
++++ b/pkg/connector/metadata.go
+@@ -93,9 +93,11 @@ func (pm *PortalMetadata) SetIsForumGeneral(isForumGeneral bool) (changed bool)
+ }
+ 
+ type MessageMetadata struct {
+-	ViewLimited *event.BeeperViewLimitedMedia `json:"view_limited,omitempty"`
+-	ContentHash []byte                        `json:"content_hash,omitempty"`
+-	ContentURI  id.ContentURIString           `json:"content_uri,omitempty"`
++	AlbumMessageIDs []int                         `json:"wizard_album_ids,omitempty"`
++	AlbumRoot       id.EventID                    `json:"wizard_album_root,omitempty"`
++	ViewLimited     *event.BeeperViewLimitedMedia `json:"view_limited,omitempty"`
++	ContentHash     []byte                        `json:"content_hash,omitempty"`
++	ContentURI      id.ContentURIString           `json:"content_uri,omitempty"`
+ }
+ 
+ type UserLoginMetadata struct {
+diff --git a/pkg/connector/tomatrix.go b/pkg/connector/tomatrix.go
+index 04abfcbf..d8ee938a 100644
+--- a/pkg/connector/tomatrix.go
++++ b/pkg/connector/tomatrix.go
+@@ -295,6 +295,7 @@ func (tc *TelegramClient) convertToMatrix(
+ 	if externalURL := getMessageLink(msg); externalURL != "" {
+ 		cm.Parts[0].Extra["external_url"] = externalURL
+ 	}
++	wizardGroupConverted(cm, msg)
+ 	if len(cm.Parts) > 1 {
+ 		log.Warn().Int("part_count", len(cm.Parts)).Msg("Message has multiple parts")
+ 		for i, part := range cm.Parts[1:] {
