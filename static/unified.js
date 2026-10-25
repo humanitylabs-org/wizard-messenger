@@ -979,6 +979,8 @@
       if (a.length) { const strip = node('div', 'u-attach-strip'); for (const ph of a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = ph.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(ph.url); view.attach = a.filter(x => x !== ph); if (!view.attach.length) view.attach = null; paintBar(); grow(); })); strip.append(chip); } bar.append(strip); }
     };
     const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
+    // The thread rebuilds its composer once the person loads: keep photos/reply already in the tray visible.
+    if (view.attach?.length || view.reply) queueMicrotask(() => { paintBar(); grow(); });
     let typingAt = 0, idle = null;
     const typing = on => { if (!telegramOnly) return; call('people/' + id + '/typing', {typing: on}).catch(() => {}); };
     draft.oninput = () => {
@@ -988,7 +990,26 @@
     };
     draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
     // Several selected photos are one post and one Telegram media group (up to 10).
-    file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
+    // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
+    const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
+    const addPhotos = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); if (s.person !== id) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); } catch (e) { error(e); } };
+    file.onchange = () => { const picked = [...file.files]; file.value = ''; addPhotos(picked); };
+    const filesOf = dt => { const items = [...(dt?.items || [])].filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean); return items.length ? items : [...(dt?.files || [])]; };
+    const takePhotos = files => {
+      if (!files.length) return false;
+      const photos = files.filter(f => PHOTO.test(f.type));
+      if (!telegramOnly) { toast('Photos can be sent in Telegram chats'); return true; }
+      if (!photos.length) { toast('Only photos can be attached here'); return true; }
+      if (photos.length < files.length) toast('Only photos were attached');
+      addPhotos(photos); return true;
+    };
+    // Pasting a screenshot or copied image attaches it. Text pastes keep the browser's normal behaviour.
+    draft.addEventListener('paste', e => { if (view.edit) return; if (takePhotos(filesOf(e.clipboardData))) e.preventDefault(); });
+    // Only file drags are claimed: selected text and links keep their normal drag/drop.
+    const hasFiles = dt => !!dt && ([...(dt.items || [])].some(it => it.kind === 'file') || [...(dt.types || [])].includes('Files'));
+    form.addEventListener('dragover', e => { if (view.edit || !hasFiles(e.dataTransfer)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; form.classList.add('is-file-drag'); });
+    form.addEventListener('dragleave', e => { if (!e.relatedTarget || !form.contains(e.relatedTarget)) form.classList.remove('is-file-drag'); });
+    form.addEventListener('drop', e => { form.classList.remove('is-file-drag'); if (view.edit || !hasFiles(e.dataTransfer)) return; e.preventDefault(); takePhotos(filesOf(e.dataTransfer)); });
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
       const text = draft.value.trim(), a = view.attach || [];
