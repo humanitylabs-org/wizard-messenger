@@ -34,8 +34,8 @@ const {chromium} = require('playwright');
       await card.waitFor();
       const enable = card.getByRole('button',{name:'Enable '+label,exact:true});
       if (await enable.count()) await enable.click();
-      await card.getByRole('button',{name:'Show QR code',exact:true}).waitFor({timeout:60000});
-      await card.getByRole('button',{name:'Show QR code',exact:true}).click();
+      await card.getByRole('button',{name:'Show QR code for '+label,exact:true}).waitFor({timeout:60000});
+      await card.getByRole('button',{name:'Show QR code for '+label,exact:true}).click();
       const qr = page.locator('.u-connectors canvas.u-qr');
       await qr.waitFor({state:'visible',timeout:60000});
       assert(captured[network], 'real bridge QR API response recorded');
@@ -49,8 +49,12 @@ const {chromium} = require('playwright');
       await qr.screenshot({path:path.join(out,network+'-qr.png')});
       // Verify the existing sheet consumes the platform's shared skin variables.
       await page.evaluate(() => {
-        const skin = {'--wz-bg':'#f5f6f8','--wz-surface':'#ffffff','--wz-surface-raised':'#eef0f4','--wz-text':'#15171b','--wz-text-muted':'#535862','--wz-text-faint':'#6b7280','--wz-border':'#d4d8df','--wz-accent':'#315bd6','--wz-on-accent':'#ffffff'};
+        const skin = {'--wz-canvas':'#f5f6f8','--wz-surface':'#ffffff','--wz-surface-raised':'#eef0f4','--wz-text':'#15171b','--wz-text-secondary':'#535862','--wz-text-muted':'#6b7280','--wz-border':'#d4d8df','--wz-accent':'#315bd6','--wz-on-accent':'#ffffff'};
         for (const [key,value] of Object.entries(skin)) document.documentElement.style.setProperty(key,value);
+      });
+      await page.evaluate(async () => {
+        await new Promise(requestAnimationFrame);
+        await Promise.all(document.getAnimations().filter(animation => animation.effect.getComputedTiming().endTime !== Infinity).map(animation => animation.finished.catch(() => {})));
       });
       await page.screenshot({path:path.join(out,network+'-settings-360x640-light.png')});
       const cancelResponse = page.waitForResponse(r => r.url().endsWith('/connectors/'+network+'/cancel') && r.request().method()==='POST');

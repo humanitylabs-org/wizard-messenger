@@ -129,7 +129,7 @@
         } else if (params.type === 'nothing') {
           root.append(element('p', 'helper', result.instructions || 'Approve the login in the app on your phone.'));
         } else throw new Error('Unsupported login display type');
-        const wait = element('p', 'helper'); wait.append(element('span', 'spinner'), element('span', '', 'Waiting for your phone…'));
+        const wait = element('p', 'helper loading-line'); wait.append(element('span', 'spinner'), element('span', '', 'Waiting for your phone…'));
         root.append(wait);
         if (network === 'telegram') button(root, 'I scanned it', async () => {
           const status = await request(network, 'status');
@@ -225,7 +225,7 @@
       }
       else if (provider.state === 'unavailable') section.append(element('p', 'helper', 'The private bridge is not responding. Try again in a minute.'));
       [...flows].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
-        const name = FLOW_LABEL[flow.id] || flow.name;
+        const name = (provider.network === 'telegram' && flow.id === 'qr' ? TELEGRAM_LABEL.qr : FLOW_LABEL[flow.id]) || flow.name;
         button(section, name, async () => start(provider.network, flow.id), i === 0 ? 'primary wide' : 'secondary wide').setAttribute('aria-label', name + ' for ' + provider.label);
       });
       return section;
@@ -244,5 +244,6 @@
     }
     return {show, start, close: async () => { root.replaceChildren(); await cancel(); }};
   };
+  global.MessengerConnectors.qrCanvas = qrCanvas;
 
 })(window);

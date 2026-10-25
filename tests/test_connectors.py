@@ -133,6 +133,16 @@ class ConnectorTests(unittest.TestCase):
                 p.status(name)
             self.assertEqual(caught.exception.code, 'unknown_network')
 
+    def test_telegram_pending_step_is_owner_view_only_not_machine_status(self):
+        setup_connectors(self.root, ('signal',))
+        inbox = ConnectorInbox(self.root, Mock(), sender=Mock())
+        inbox.connectors.remember('telegram', {'login_id': 'local', 'step_id': 'code', 'type': 'user_input', 'user_input': {'fields': []}})
+        self.assertNotIn('pending_login', inbox.telegram_status())
+        view = inbox.dispatch('GET', '/api/unified/telegram/status', {})
+        self.assertEqual(view['pending_login']['login_id'], 'local')
+        self.assertNotIn('local', json.dumps(inbox.connectors.health()))
+        inbox.close()
+
     def test_metadata_allowlist_and_ambiguous_rejection(self):
         event = lambda network, bot=None: {'type': 'm.bridge', 'sender': '@%sbot:messenger.internal' % (bot or network), 'content': {'protocol': {'id': network}}}
         for name in MATRIX_NETWORKS: self.assertEqual(room_network([event(name)]), name)

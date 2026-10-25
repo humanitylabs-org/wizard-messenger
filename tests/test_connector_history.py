@@ -49,6 +49,17 @@ class ConnectorHistory(unittest.TestCase):
         self.inbox.ingest(self.a, {}, reaction)
         self.assertEqual(len(self.store.messages(self.a['person_id'])[0]['reactions']),1)
 
+    def test_owner_ghost_recovery_uses_shared_history_for_both_networks(self):
+        for identity, ghost in ((self.a, '@signal_abc:messenger.internal'), (self.b, '@whatsapp_15550000000:messenger.internal')):
+            event = self.event('$own-' + identity['id'])
+            event['sender'] = ghost
+            self.inbox.ingest(identity, {}, event)
+            self.assertFalse(self.store.messages(identity['person_id'])[0]['outgoing'])
+            with self.store.db() as db:
+                db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', (identity['address'], '{}'))
+            self.store.claim_own(ghost)
+            self.assertTrue(self.store.messages(identity['person_id'])[0]['outgoing'])
+
     def test_connector_incoming_voice_uses_shared_warm_queue(self):
         event = self.event('$voice')
         event['content'] = {'msgtype':'m.audio','body':'voice.ogg','url':'mxc://fixture/voice',

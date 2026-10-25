@@ -349,12 +349,12 @@ class PeopleStore:
         return inserted
 
     def claim_own(self, ghost):
-        """Lines the owner wrote in the Telegram app were stored as incoming; mark them outgoing, chats read up to them."""
+        """Lines written in the owner’s linked apps become outgoing; mark chats read up to them."""
         with self.db() as db:
             rooms = [(r[0], json.loads(r[1]).get('names', {}).get(ghost)) for r in db.execute('SELECT room,json FROM room_meta')]
             changed = 0
             for room, name in rooms:
-                row = db.execute("SELECT id FROM identity WHERE network='telegram' AND address=?", (room,)).fetchone()
+                row = db.execute("SELECT id FROM identity WHERE network IN ('telegram','whatsapp','signal') AND address=?", (room,)).fetchone()
                 if not row:
                     continue
                 senders = [ghost] + ([name] if name else [])
