@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
@@ -84,7 +85,21 @@ def sniff(data):
     if data[:4] == b'OggS': return 'audio/ogg'
     if data[:4] == b'\x1a\x45\xdf\xa3': return 'audio/webm'
     if data[4:8] == b'ftyp': return 'audio/mp4' if data[8:11] in (b'M4A', b'mp4', b'iso') and b'M4A' in data[8:32] else 'video/mp4'
+    if data[:5] == b'%PDF-': return 'application/pdf'
+    if data[:4] in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'): return 'application/zip'
     return None
+
+
+def file_name(name):
+    # Any-file uploads keep a display name, never a path (James, 26 Oct 2026).
+    name = re.split(r'[/\\]', name if isinstance(name, str) else '')[-1]
+    name = ''.join(c for c in name if unicodedata.category(c) not in ('Cc', 'Cf', 'Cs'))
+    name = ' '.join(name.split()).lstrip(' .') or 'file'
+    suffix = Path(name).suffix
+    # Reserve a stem character even for a pathological extension over 118 chars.
+    ext = suffix[:119]
+    stem = name[:-len(suffix)] if suffix else name
+    return stem[:120 - len(ext)].rstrip() + ext
 
 
 MIGRATIONS = [
@@ -1185,7 +1200,12 @@ class UnifiedInbox:
         with self.store.db() as db:
             done = db.execute('SELECT m.id FROM message m JOIN identity i ON i.id=m.identity_id WHERE m.client_id=? AND i.person_id=?', (client_id, person_id)).fetchone()
         if done:
-            return {'state': 'sent', 'event_id': done[0], 'message': self.row(done[0]), 'messages': self.album_rows(done[0])}
+            rows = self.album_rows(done[0])
+            with self.store.db() as db:
+                caption = db.execute('SELECT id FROM message WHERE client_id=? AND identity_id=(SELECT identity_id FROM message WHERE id=?)', (client_id + '.caption', done[0])).fetchone()
+            if caption:
+                rows.append(self.row(caption[0]))
+            return {'state': 'sent', 'event_id': done[0], 'message': self.row(done[0]), 'messages': rows}
         person, identity = self.channel(person_id, payload.get('identity_id'))
         upload_ids = payload.get('upload_ids')
         gallery = None
@@ -1200,7 +1220,7 @@ class UnifiedInbox:
             if any(u['kind'] != 'image' or u['mime'] not in ('image/jpeg', 'image/png', 'image/webp') for u in gallery):
                 fail('invalid_album', 'Albums contain still photos only')
         upload = gallery[0] if gallery else self.uploads.get(payload.get('upload_id')) if payload.get('upload_id') else None
-        if payload.get('upload_id') and (not upload or upload['person_id'] != person_id):
+        if payload.get('upload_id') and (not upload or upload['person_id'] != person_id or upload['expires'] <= time.time()):
             fail('upload_expired', 'Attach the file again', 409)
         body = payload.get('text') or ''
         if body:
@@ -1212,7 +1232,7 @@ class UnifiedInbox:
         reply_to = self.reply_target(identity, payload.get('reply_to'))
         if identity['network'] not in MATRIX_NETWORKS:
             if upload:
-                fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
+                fail('media_unsupported', 'Photos, voice notes and files are not available on Messenger yet', 409)
             result = self.engine.send(identity['address'], {'text': body, 'request_id': client_id[:64]})
             event = 'messenger:' + result['message_ids'][0]
             self.store.add_message(event, identity, self.owner, True, body, int(time.time() * 1000), client_id=client_id)
@@ -1233,6 +1253,26 @@ class UnifiedInbox:
         result = self.mx(self.room(identity['address']) + '/send/m.room.message/' + client_id, 'PUT', content)
         self.timing('send', started)
         event = result['event_id']
+        if msgtype == 'm.file':
+            # Bridges use m.file body as the filename; text follows separately (James, 26 Oct 2026).
+            # Keep the handle until BOTH receipts; deterministic transactions make partial retries safe.
+            caption_id = client_id + '.caption'
+            caption = self.mx(self.room(identity['address']) + '/send/m.room.message/' + caption_id, 'PUT',
+                              {'msgtype': 'm.text', 'body': body}) if body else None
+            stamp = int(time.time() * 1000)
+            with self.store.db() as db:
+                if not db.in_transaction:
+                    db.execute('BEGIN')
+                self.store.add_message(event, identity, self.owner, True, '', stamp,
+                                       msgtype=msgtype, media=media, reply_to=reply_to, client_id=client_id)
+                if caption:
+                    self.store.add_message(caption['event_id'], identity, self.owner, True, body, stamp + 1, client_id=caption_id)
+                # Sync may have inserted either event before the send receipts.
+                for key, txn in [(event, client_id)] + ([(caption['event_id'], caption_id)] if caption else []):
+                    db.execute('UPDATE message SET client_id=COALESCE(client_id,?) WHERE id=?', (txn, key))
+            self.uploads.pop(payload.get('upload_id'), None)
+            rows = [self.row(event)] + ([self.row(caption['event_id'])] if caption else [])
+            return {'state': 'sent', 'event_id': event, 'message': rows[0], 'messages': rows}
         if gallery:
             self.store_gallery(event, identity, self.owner, True, content, int(time.time() * 1000), reply_to=reply_to, client_id=client_id)
             for key in upload_ids:
@@ -1277,6 +1317,10 @@ class UnifiedInbox:
 
     def media_content(self, upload, caption, payload):
         info = {'mimetype': upload['mime'], 'size': upload['size']}
+        if upload['kind'] == 'file':
+            media = {k: upload[k] for k in ('mxc', 'mime', 'size', 'filename')}
+            content = {'msgtype': 'm.file', 'body': upload['filename'], 'filename': upload['filename'], 'url': upload['mxc'], 'info': info}
+            return 'm.file', content, media
         meta = payload.get('media') if isinstance(payload.get('media'), dict) else {}
         for key in ('w', 'h', 'duration'):
             if isinstance(meta.get(key), int) and 0 < meta[key] < 10 ** 8:
@@ -1297,29 +1341,38 @@ class UnifiedInbox:
         content = {'msgtype': 'm.image', 'body': caption or upload['filename'], 'filename': upload['filename'], 'url': upload['mxc'], 'info': info}
         return 'm.image', content, {k: v for k, v in media.items() if v is not None}
 
-    def upload(self, person_id, kind, data):
-        """Owner upload (already size-capped by the view server) → Synapse media repo. Returns an opaque id."""
-        if kind not in ('image', 'voice'):
-            fail('invalid_upload', 'Choose a photo or a voice note')
+    def upload(self, person_id, kind, data, name=''):
+        """Owner upload → Synapse media repo. Returns an opaque, person-bound id."""
+        if kind not in ('image', 'voice', 'file'):
+            fail('invalid_upload', 'Choose a photo, voice note or file')
         _, identity = self.channel(person_id)
         if identity['network'] not in MATRIX_NETWORKS:
-            fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
+            fail('media_unsupported', 'Photos, voice notes and files are not available on Messenger yet', 409)
+        if not 0 < len(data) <= UPLOAD_MAX:
+            fail('too_large', 'Files up to 25 MB can be sent', 413)
         mime = sniff(data)
-        if kind == 'voice' and mime == 'video/mp4':
-            mime = 'audio/mp4'  # Safari records voice into an mp4 container
-        ok = {'image': ('image/jpeg', 'image/png', 'image/gif', 'image/webp'), 'voice': ('audio/ogg', 'audio/webm', 'audio/mp4')}[kind]
-        if mime not in ok:
-            fail('invalid_upload', 'That file type is not supported here', 415)
-        ext = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/mp4': 'm4a'}[mime]
-        filename = ('voice-message.' if kind == 'voice' else 'photo.') + ext
+        if kind == 'file':
+            # Original names stay in the message, not the upload URL (James, 26 Oct 2026).
+            mime, filename = mime or 'application/octet-stream', file_name(name)
+        else:
+            if kind == 'voice' and mime == 'video/mp4':
+                mime = 'audio/mp4'  # Safari records voice into an mp4 container
+            ok = {'image': ('image/jpeg', 'image/png', 'image/gif', 'image/webp'), 'voice': ('audio/ogg', 'audio/webm', 'audio/mp4')}[kind]
+            if mime not in ok:
+                fail('invalid_upload', 'That file type is not supported here', 415)
+            ext = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/mp4': 'm4a'}[mime]
+            filename = ('voice-message.' if kind == 'voice' else 'photo.') + ext
         started = time.time()
-        mxc = self.matrix_upload(data, filename, mime)['content_uri']
+        mxc = self.matrix_upload(data, 'attachment' if kind == 'file' else filename, mime)['content_uri']
         self.timing('upload', started)
         upload_id = secrets.token_hex(16)
         now = time.time()
         self.uploads = {k: v for k, v in self.uploads.items() if v['expires'] > now}
         self.uploads[upload_id] = {'mxc': mxc, 'mime': mime, 'size': len(data), 'kind': kind, 'filename': filename, 'person_id': person_id, 'expires': now + 3600}
-        return {'upload_id': upload_id, 'mime': mime, 'size': len(data)}
+        result = {'upload_id': upload_id, 'mime': mime, 'size': len(data)}
+        if kind == 'file':
+            result['name'] = filename
+        return result
 
     def matrix_upload(self, data, filename, mime):
         req = Request(self.matrix.rstrip('/') + '/_matrix/media/v3/upload?' + urlencode({'filename': filename}), data=data, method='POST',
@@ -1522,7 +1575,7 @@ class UnifiedInbox:
                 if method == 'POST':
                     return self.store.update(person_id, payload)
             if len(suffix) == 3 and method == 'PUT' and suffix[2] == 'upload':
-                return self.upload(person_id, q('kind', 'image'), raw or b'')
+                return self.upload(person_id, q('kind', 'image'), raw or b'', q('name', ''))
             if len(suffix) == 3 and method == 'POST':
                 action = suffix[2]
                 if action == 'merge': return self.store.merge(person_id, text(payload.get('source_id'), 24))

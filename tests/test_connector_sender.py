@@ -47,6 +47,42 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(self.invoke('/_matrix/media/v3/upload?filename=photo.png', body=b'test', content_type='image/png')['bytes'], 4)
         self.assertEqual(len(self.calls), 3)
 
+    def test_james_any_file_fixed_upload_name_and_strict_mime(self):
+        for mime in ('application/pdf', 'application/zip', 'application/octet-stream', 'image/svg+xml'):
+            with self.subTest(mime=mime):
+                self.assertEqual(self.invoke('/_matrix/media/v3/upload?filename=attachment', body=b'data', content_type=mime)['bytes'], 4)
+        self.assertEqual(len(self.calls), 4)
+
+    def test_james_file_upload_does_not_open_arbitrary_names_or_content_types(self):
+        for name in ('report.pdf', 'attachment.pdf', 'attachment/evil', 'attachment%2Epdf', 'attachment&other=x', 'attachment&filename=attachment', ''):
+            with self.subTest(name=name), self.assertRaises(EngineError) as err:
+                self.invoke('/_matrix/media/v3/upload?filename=' + name, body=b'data', content_type='application/pdf')
+            self.assertEqual(err.exception.code, 'sender_route_denied')
+        for mime in (None, '', 'application/PDF', 'application/pdf; charset=utf-8', 'application/pdf\r\nX-Evil: yes', 'application/pdf\n',
+                     'application/' + 'a' * 81, 'text/with space', 'application', 'app1/pdf', '*/*'):
+            with self.subTest(mime=mime), self.assertRaises(EngineError):
+                self.invoke('/_matrix/media/v3/upload?filename=attachment', body=b'data', content_type=mime)
+        for name in ('photo.jpg', 'voice-message.ogg'):
+            with self.subTest(name=name), self.assertRaises(EngineError):
+                self.invoke('/_matrix/media/v3/upload?filename=' + name, body=b'data', content_type='application/pdf')
+        with self.assertRaises(EngineError):
+            self.invoke('/_matrix/media/v3/upload?filename=attachment', body={'not': 'bytes'}, content_type='application/pdf')
+        self.assertFalse(self.calls)
+
+    def test_james_connector_inbox_uses_neutral_file_upload(self):
+        import tempfile
+        from unittest.mock import Mock
+        from connector_inbox import ConnectorInbox
+        sender = Mock(return_value={'content_uri': 'mxc://messenger.internal/file'})
+        with tempfile.TemporaryDirectory() as root:
+            inbox = ConnectorInbox(root, Mock(), sender=sender)
+            inbox.store.put('matrix_token', 'test-token')
+            peer = inbox.store.identity('telegram', '!peer', 'Peer')
+            up = inbox.upload(peer['person_id'], 'file', b'%PDF-1.7\ndata', '../../report.pdf')
+            sender.assert_called_once_with(network='matrix', base=inbox.matrix, path='/_matrix/media/v3/upload?filename=attachment',
+                                           method='POST', body=b'%PDF-1.7\ndata', token='test-token', content_type='application/pdf', timeout=60)
+            self.assertEqual(up['name'], 'report.pdf')
+
     def test_no_generic_forwarding_or_arbitrary_admin(self):
         for path in ['/evil', '/rooms/a/receipt/m.read/b', '/_synapse/admin/v1/users', '/_matrix/client/v3/createRoom', '/_matrix/client/v3/rooms/a/state/m.room.power_levels', '/_matrix/client/v3/rooms/a/send/m.room.message/x?user_id=other', '//other/evil', '/_matrix/client/v3/rooms/%2e%2e/send/m.room.message/x']:
             with self.assertRaises(EngineError): self.invoke(path)
