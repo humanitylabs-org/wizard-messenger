@@ -786,20 +786,17 @@
       img.src = m.local || mediaURL(m.id, 'thumb'); box.append(img);
       if (m.msgtype === 'm.sticker') box.classList.add('sticker');
     }
-    if (!m.pending) box.onclick = () => viewer(m); else box.append(node('span', 'u-spin'));
+    box.message = m;
+    if (!m.pending) box.onclick = () => viewer(m, box); else box.append(node('span', 'u-spin'));
     return box;
   }
-  function viewer(m) {
-    closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Photo';
-    const layer = node('div', 'u-overlay u-viewer'); layer.id = 'u-overlay'; layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-label', 'Photo');
-    const bar = node('header'); const save = node('a', 'icon-button u-save'); save.href = mediaURL(m.id); save.download = ''; save.setAttribute('aria-label', 'Save'); save.append(icon('download'));
-    bar.append(iconButton('close', 'Close', closeOverlay), node('span', 'u-viewer-who', m.outgoing ? 'You' : nameOf(m.sender)), save);
-    let media;
-    if (m.msgtype === 'm.video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.src = mediaURL(m.id); }
-    else { media = node('img'); media.alt = m.original || 'Photo'; media.src = mediaURL(m.id); }
-    layer.append(bar, media); if (m.original) layer.append(node('p', 'u-viewer-cap', m.original));
-    layer.onclick = e => { if (e.target === layer || e.target === media && media.tagName === 'IMG') closeOverlay(); };
-    $('messenger').append(layer); hold();
+  // Tapping a photo or video opens Wizard's own media viewer, the one Chats uses: pinch and double-tap zoom, pan,
+  // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Messenger keeps no viewer.
+  function viewer(m, box) {
+    const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && b.message.msgtype !== 'm.sticker');
+    const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
+    const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
+    window.WizardApp?.media?.view(list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at);
   }
   function voice(m) {
     const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
