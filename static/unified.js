@@ -653,7 +653,7 @@
     }
     else if (visual) b.append(visualMedia(m));
     else if (m.msgtype === 'm.audio') b.append(voice(m));
-    else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
+    else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); if (!m.pending && !m.failed) a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
     else if (m.msgtype === 'm.location') { const geo = /^geo:([-\d.]+),([-\d.]+)/.exec(m.media?.geo || ''); const a = node('a', 'u-file', '📍 ' + (m.original || 'Location')); if (geo) { a.href = 'https://www.openstreetmap.org/?mlat=' + geo[1] + '&mlon=' + geo[2] + '#map=16/' + geo[1] + '/' + geo[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; } b.append(a); }
     if (!m.deleted && m.original && m.msgtype !== 'm.location') {
       if (ctx.auto || m.outgoing) {
@@ -963,8 +963,8 @@
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => ['telegram', 'whatsapp', 'signal'].includes(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
-    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.multiple = true; file.hidden = true;
-    const attach = iconButton('plus', 'Attach photos', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
+    const file = node('input'); file.type = 'file'; file.multiple = true; file.hidden = true; // any file: photos go as photos, the rest as files (James, 26 Oct 2026)
+    const attach = iconButton('plus', 'Attach photos or files', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
     const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
     const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
     const field = node('div', 'u-field'); field.append(draft);
@@ -976,7 +976,8 @@
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
-      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const ph of a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = ph.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(ph.url); view.attach = a.filter(x => x !== ph); if (!view.attach.length) view.attach = null; paintBar(); grow(); })); strip.append(chip); } bar.append(strip); }
+      // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); }})); bar.append(strip); }
     };
     const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
     // The thread rebuilds its composer once the person loads: keep photos/reply already in the tray visible.
@@ -991,20 +992,17 @@
     // Several selected photos are one post and one Telegram media group (up to 10).
     // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
     const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
-    const addPhotos = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); if (s.person !== id) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); } catch (e) { error(e); } };
-    file.onchange = () => { const picked = [...file.files]; file.value = ''; addPhotos(picked); };
-    const takePhotos = files => {
+    const addFiles = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB'); continue; } ready.push(PHOTO.test(f.type) ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); } catch (e) { error(e); } };
+    file.onchange = () => { const picked = [...file.files]; file.value = ''; if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats'); addFiles(picked); };
+    const takeFiles = files => {
       if (!files.length || view.edit) return;
-      const photos = files.filter(f => PHOTO.test(f.type));
-      if (!telegramOnly) return toast('Photos can be sent in Telegram, WhatsApp and Signal chats');
-      if (!photos.length) return toast('Only photos can be attached here');
-      if (photos.length < files.length) toast('Only photos were attached');
-      addPhotos(photos);
+      if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats');
+      addFiles(files);
     };
     // Paste and drop of files, dictation-safe text paste (Wispr Flow), the drag highlight and Enter / Shift+Enter /
     // Ctrl|Cmd+Enter are Wizard's one composer implementation, the same code as Chats (James, 25 Oct 2026: "one
     // implementation, shared by many apps"). Messenger only decides what an attached file becomes.
-    window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takePhotos, onSubmit: () => submit(), notice: msg => toast(msg)});
+    window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takeFiles, onSubmit: () => submit(), notice: msg => toast(msg)});
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
       const text = draft.value.trim(), a = view.attach || [];
@@ -1013,9 +1011,13 @@
       if (reviewed && !a.length) return reviewSend(id, p, text, channel.value);
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
+      // Photos go first as one post (album) with the text; every other file follows as its own message. With only
+      // files, the text rides with the first one (sent right after it, as bridges show a file's body as its name).
+      const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
       if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
-      else if (a.length === 1) queueSend(id, {text, photo: a[0], reply, identity_id: channel.value});
-      else queueSend(id, {text, photos: a, reply, identity_id: channel.value});
+      else if (photos.length === 1) queueSend(id, {text, photo: photos[0], reply, identity_id: channel.value});
+      else if (photos.length) queueSend(id, {text, photos, reply, identity_id: channel.value});
+      files.forEach((f, i) => queueSend(id, {text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -1158,10 +1160,10 @@
     const original = f.type === 'image/gif' ? f : blob;
     return {blob: original, albumBlob: blob, url: URL.createObjectURL(original), w, h};
   }
-  async function upload(id, kind, blob) {
+  async function upload(id, kind, blob, name = '') {
     // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
     if (kind === 'voice') blob = await toOggOpus(blob);
-    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind + (name ? '&name=' + encodeURIComponent(name) : ''), {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
       headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
     let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
     if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Upload failed. Tap to retry.');
@@ -1173,10 +1175,11 @@
     const t = store.threads[id]; if (!t) return;
     const client_id = 'w' + uid();
     const m = {id: 'pending:' + client_id, client_id, outgoing: true, pending: true, original: job.text || '', timestamp: Date.now(), network: t.person.identities?.[0]?.network || 'telegram',
-      msgtype: job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
+      msgtype: job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : job.file ? 'm.file' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
       reply: job.reply ? {id: job.reply.id, sender: job.reply.sender, outgoing: job.reply.outgoing, text: job.reply.original, msgtype: job.reply.msgtype, voice: job.reply.media?.voice} : null};
     if (job.photos) { m.album = 'pending:' + client_id; m.photos = job.photos.map((photo, i) => ({...m, photos: undefined, id: m.id + ':' + i, original: i ? '' : m.original, local: photo.url, media: {w: photo.w, h: photo.h, mime: 'image/jpeg'}})); m.media = m.photos[0].media; }
     if (job.photo) { m.local = job.photo.url; m.media = {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'}; }
+    if (job.file) m.media = {filename: job.file.name, size: job.file.bytes, mime: job.file.blob.type || 'application/octet-stream'};
     if (job.voice) { m.local = job.voice.url; m.media = {voice: true, duration: job.voice.duration, waveform: job.voice.waveform.map(v => Math.round(v / 10.24))}; }
     t.messages.push(m); store.pending++; hold();
     if (s.person === id) paintThread(true);
@@ -1189,6 +1192,7 @@
           for (const photo of job.photos) { upload_ids.push((await upload(id, 'image', photo.albumBlob || photo.blob)).upload_id); media.push({w: photo.w, h: photo.h}); }
         }
         if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
+        if (job.file) upload_id = (await upload(id, 'file', job.file.blob, job.file.name)).upload_id;
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
         const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
         if (r.message) mergeMessages(id, r.messages || [r.message]);
