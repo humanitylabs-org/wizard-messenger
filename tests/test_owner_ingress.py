@@ -76,6 +76,13 @@ class GatewayTests(unittest.TestCase):
         expected=hmac.new(self.key,'\n'.join(('wizard-messenger-owner-v1',timestamp,nonce,'GET',data['path'])).encode(),hashlib.sha256).hexdigest()
         self.assertEqual(signature,expected)
         self.assertFalse(any(k.lower().startswith(('tailscale-','x-wizard-','cf-access-','x-forwarded-')) for k in headers))
+    def test_unix_serve_authority_is_restored_and_scrubbed(self):
+        code,data=self.request(headers={'Host':'localhost','X-Forwarded-Host':'wizard.example:8444'})
+        self.assertEqual(code,200)
+        self.assertEqual(data['headers']['Host'],'wizard.example:8444')
+        self.assertNotIn('X-Forwarded-Host',data['headers'])
+        self.assertEqual(self.request(headers={'Host':'localhost','X-Forwarded-Host':'evil.invalid'})[0],403)
+        self.assertEqual(self.request(headers={'Host':'localhost'})[0],403)
     def test_anonymous_other_owner_tagged_service_rejected(self):
         for who in ('','stranger@example.invalid','tag:agent'):
             with self.subTest(who=who):self.assertEqual(self.request(headers={'Tailscale-User-Login':who})[0],403)

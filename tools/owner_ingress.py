@@ -76,7 +76,9 @@ class Gateway(BaseHTTPRequestHandler):
         def one(name):
             values = self.headers.get_all(name, [])
             return values[0] if len(values) == 1 else None
-        host = one('Host')
+        # Unix Serve rewrites Host to localhost. Its kernel-authenticated proxy
+        # overwrites X-Forwarded-Host with the original TLS request authority.
+        host = one('X-Forwarded-Host') if one('Host') == 'localhost' else one('Host')
         login = one('Tailscale-User-Login')
         if host not in cfg['hosts'] or login != cfg['owner_login']:
             return self.deny(403,'authenticated_owner_required')
@@ -106,6 +108,7 @@ class Gateway(BaseHTTPRequestHandler):
             if low in HOP | connection_tokens or low.startswith(('tailscale-','x-messenger-','x-wizard-','cf-access-','x-forwarded-')) or low in {'forwarded','x-real-ip','remote-user','proxy'}:
                 continue
             headers[k] = v
+        headers['Host'] = host
         timestamp, nonce = str(int(time.time())), secrets.token_hex(24)
         message = '\n'.join((DOMAIN,timestamp,nonce,self.command,self.path)).encode()
         headers['X-Messenger-Owner-Proof'] = '.'.join((timestamp,nonce,hmac.new(self.server.key,message,hashlib.sha256).hexdigest()))
