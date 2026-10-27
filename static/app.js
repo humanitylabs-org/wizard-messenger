@@ -731,7 +731,17 @@
     onScreenWait = fn;
     if (whenOnScreen.io) return;
     const gateEl = $('gate'); let seen = false;
-    const fire = () => { if (!seen || document.visibilityState !== 'visible' || !onScreenWait) return; const f = onScreenWait; onScreenWait = null; stop(); f(); };
+    // Also ask Wizard (it knows which window is in front, which an overlay or a restoring reload hides from the
+    // observer), and require it to hold for a moment.
+    const front = () => seen && document.visibilityState === 'visible' && window.WizardApp?.view?.isVisible?.() !== false;
+    let steady = null;
+    const fire = () => {
+      if (!onScreenWait) return;
+      if (!front()) { clearTimeout(steady); steady = null; return; }
+      if (steady) return;
+      steady = setTimeout(() => { steady = null; if (!onScreenWait || !front()) return; const f = onScreenWait; onScreenWait = null; stop(); f(); }, 600);
+    };
+    const poll = setInterval(() => { if (!whenOnScreen.io) clearInterval(poll); else fire(); }, 300);
     const stop = () => { whenOnScreen.io?.disconnect(); whenOnScreen.io = null; document.removeEventListener('visibilitychange', fire); };
     if (!window.IntersectionObserver) { seen = true; document.addEventListener('visibilitychange', fire); whenOnScreen.io = {disconnect() {}}; return fire(); }
     // Half the unlock card in view: a desk parked just past the edge still counts as "intersecting" with zero area.
@@ -800,6 +810,8 @@
           if (await unlockWith(password, signal)) { phone.typed = password; window.MessengerUnified?.authenticated(); await snapshot(signal); }
         } catch (error) {
           if (error.name === 'AbortError') return;
+          // Wizard holds the prompt until Messenger is in front; if you never opened it, ask again when you do.
+          if (error.code === 'not_in_front') { phone.tried = false; refreshPhoneVault(); return; }
           if (error.code === 'vault_unlock_failed' || error.code === 'invalidated' || error.code === 'not_saved') { await vault().forget(); phone.saved = false; renderPasskey(); }
           $('setup-error').textContent = error.code === 'cancelled' ? '' : error.code === 'vault_unlock_failed' ? 'Your password changed. Type it once and your fingerprint takes over again.'
             : error.code === 'invalidated' ? 'Your phone\'s fingerprints changed. Type your password once to turn fingerprint back on.' : error.code ? "Fingerprint didn't work. Type your password." : friendly(error);
