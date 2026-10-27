@@ -17,7 +17,7 @@ async function setup(mode='pending'){
  await p.setContent('<div id="root"></div><p id="hidden-error" hidden></p>');
  await p.evaluate(mode=>{window.calls={start:0,cancel:0,stop:0,attach:0,ack:0};window.active=false;window.sent=null;
  const session={id:'take-fixture',onLevel:()=>()=>{},getInfo:()=>({startedAt:Date.now()-1500}),cancel:async()=>{calls.cancel++;active=false;},stop:async()=>{calls.stop++;active=false;return{id:'take-fixture',durationMs:1500,blob:new Blob(['synthetic-audio'],{type:'audio/ogg'})};}};
- window.WizardApp={update:{hold:()=>({release(){}})},capture:{current:()=>active?{id:session.id,meta:{person:'synthetic'}}:null,attach:async()=>{calls.attach++;return session;},ack:async()=>{calls.ack++;},start:()=>{calls.start++;if(mode==='fail')return Promise.reject(new Error('Microphone held by Recorder'));return new Promise(resolve=>{window.resolveStart=()=>{active=true;resolve(session);};});}}};
+ window.WizardApp={update:{hold:()=>({release(){}})},capture:{current:()=>active?{id:session.id,meta:{person:'synthetic'}}:null,attach:async()=>{if(!active)return null;calls.attach++;return session;},ack:async()=>{calls.ack++;},start:()=>{calls.start++;if(mode==='fail')return Promise.reject(new Error('Microphone held by Recorder'));return new Promise(resolve=>{window.resolveStart=()=>{active=true;resolve(session);};});}}};
  },mode); await p.evaluate(fixture);
 }
 const visible=()=>p.locator('.u-recording').isVisible();

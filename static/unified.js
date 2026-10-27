@@ -1056,7 +1056,7 @@
       if (!capture) { if (!recoverOnly) voiceNotice('Voice recording is unavailable. Reload Messenger and try again.'); return; }
       let own;
       try { own = capture.current?.(); } catch (e) { if (!recoverOnly) voiceNotice(e.message); return; }
-      if (recoverOnly && !own) return;
+      if (recoverOnly && !own && !capture.attach) return;
       const r = {phase: 'starting', levels: [], started: Date.now(), cancelled: false};
       view.recording = r; view.voiceNotice = ''; hold();
       const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
@@ -1084,13 +1084,17 @@
       view.paintRecording?.();
       r.deadline = setTimeout(() => { voiceNotice('The microphone took too long to start. Cancelling the recording…'); r.cancel(); }, 8000);
       try {
+        const attached = capture.attach ? await capture.attach() : null;
+        own = capture.current?.() || own;
+        if (!attached && recoverOnly && !own) { close(); return; }
+        if (r.cancelled && !attached) { close(); return; }
         r.person = own?.meta?.person || id; r.identity = own?.meta?.identity || channel.value; r.reply = view.reply;
-        r.session = own && capture.attach ? await capture.attach() : await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
+        r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
         if (!r.session) throw new Error('That recording has already stopped. Tap the microphone to start again.');
         clearTimeout(r.deadline);
         if (r.cancelled) { await r.session.cancel(); close(); return; }
         r.phase = 'recording';
-        const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now();
+        const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
         let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
         r.tick = setInterval(() => {
           if (r.phase !== 'recording') return;
