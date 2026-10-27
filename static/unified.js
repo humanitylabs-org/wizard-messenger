@@ -1433,12 +1433,15 @@
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); } });
   // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.
+  // An open chat re-fetches itself when shown, so it looked instant while the list waited for the feed to catch up
+  // (James, 27 Oct 2026). The list now does the same: one direct fetch on return, at most every 2 s.
+  let woke = 0;
   function wake() {
-    if (!s.ready) return;
+    if (!s.ready || Date.now() - woke < 2000) return; woke = Date.now();
     if (store.seq) feed();
-    else if (!s.person && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
+    if (!s.person && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
   }
-  addEventListener('online', wake); addEventListener('pageshow', e => { if (e.persisted) wake(); });
+  addEventListener('online', wake); addEventListener('focus', wake); addEventListener('pageshow', e => { if (e.persisted) wake(); });
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   // After a reload, come back to the same tab and chat (saved on pagehide).
