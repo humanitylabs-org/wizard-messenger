@@ -718,7 +718,26 @@
   async function refreshPhoneVault() {
     try { Object.assign(phone, await vault()?.has() || {}); } catch { phone.available = false; }
     renderPasskey();
-    if (phone.saved && state.mode === 'locked' && !phone.tried) { if (isBusy()) setTimeout(refreshPhoneVault, 400); else { phone.tried = true; $('fingerprint-unlock').click(); } }
+    if (phone.saved && state.mode === 'locked' && !phone.tried) whenOnScreen(() => {
+      if (phone.tried || state.mode !== 'locked') return;
+      if (isBusy()) setTimeout(refreshPhoneVault, 400); else { phone.tried = true; $('fingerprint-unlock').click(); }
+    });
+  }
+  // The fingerprint prompt waits until you can actually see Messenger. Wizard loads apps in the background
+  // after a reload; a prompt for an app you never opened is noise (James, 27 Oct 2026). On screen means the tab
+  // is visible and at least half the unlock card is in the real viewport (IntersectionObserver sees through the shell's frame).
+  let onScreenWait = null;
+  function whenOnScreen(fn) {
+    onScreenWait = fn;
+    if (whenOnScreen.io) return;
+    const gateEl = $('gate'); let seen = false;
+    const fire = () => { if (!seen || document.visibilityState !== 'visible' || !onScreenWait) return; const f = onScreenWait; onScreenWait = null; stop(); f(); };
+    const stop = () => { whenOnScreen.io?.disconnect(); whenOnScreen.io = null; document.removeEventListener('visibilitychange', fire); };
+    if (!window.IntersectionObserver) { seen = true; document.addEventListener('visibilitychange', fire); whenOnScreen.io = {disconnect() {}}; return fire(); }
+    // Half the unlock card in view: a desk parked just past the edge still counts as "intersecting" with zero area.
+    whenOnScreen.io = new IntersectionObserver(entries => { seen = entries.some(e => e.isIntersecting && e.intersectionRatio >= 0.5); fire(); }, {threshold: [0, 0.5, 1]});
+    whenOnScreen.io.observe(gateEl);
+    document.addEventListener('visibilitychange', fire);
   }
   async function savePhoneFingerprint(password) {
     try { await vault().seal(password, 'Unlock Messenger with your fingerprint'); phone.saved = true; localStorage.removeItem('messenger.fingerprint.declined'); return true; }
