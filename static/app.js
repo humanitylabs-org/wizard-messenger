@@ -460,11 +460,12 @@
       node.className = 'message' + (outgoing ? ' sent' : '') + (delivery === 'failed' ? ' not-sent' : '');
       if (!node.dataset.selectionBound && item.message.message_id) {
         node.dataset.selectionBound = '1'; const messageId = item.message.message_id;
-        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => state.selection, id: messageId, menu: () => {
+        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => state.selection, id: messageId, menu: (opts = {}) => {
           if (state.selection?.active) return;
           window.MessengerUnified.actionMenu(node, 'Message', [
             {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection.forward([messageId])},
-            {label: 'Copy', icon: 'copy', run: () => navigator.clipboard?.writeText(cacheFor(state.group).messages.find(m => m.message_id === messageId)?.text || '').catch(() => {})}
+            {label: 'Copy', icon: 'copy', run: () => navigator.clipboard?.writeText(cacheFor(state.group).messages.find(m => m.message_id === messageId)?.text || '').catch(() => {})},
+            ...(opts.select ? [{label: 'Select', icon: 'check', run: opts.select}] : [])
           ]);
         }});
       }

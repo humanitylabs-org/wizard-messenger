@@ -29,7 +29,7 @@
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
-    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
+    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
@@ -266,8 +266,14 @@
       if (!s.ready || ctl.signal.aborted) return;
       try {
         // Long-poll: answers the moment anything changes; jitter keeps two views from syncing up.
-        apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: ctl.signal}));
-      } catch (e) { if (ctl.signal.aborted) return; await sleep(3000); }
+        // A phone that slept or changed network can leave this request hanging forever on a dead connection, and the
+        // list then never moves again (James, 26 Oct 2026: chats sent from the PC never showed on the phone). Each
+        // poll gives up after 35 s and asks again; waking the phone restarts the feed at once (see wake below).
+        const one = new AbortController(), giveUp = setTimeout(() => one.abort(), 35000), stop = () => one.abort();
+        ctl.signal.addEventListener('abort', stop, {once: true});
+        try { apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: one.signal})); }
+        finally { clearTimeout(giveUp); ctl.signal.removeEventListener('abort', stop); }
+      } catch (e) { if (ctl.signal.aborted) return; await sleep(1500); }
     }
   }
 
@@ -847,11 +853,14 @@
   function messageGestures(row, bubble, {selection, id, menu, reply, album}) {
     const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
     const holdInteractive = album ? 'a,button:not(.u-media),input,textarea,select,video,audio,.u-reply,.u-wave,.reply-quote' : interactive;
-    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false;
+    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false, touch = false;
+    // With a mouse there is no long-press, so the menu offers Select to start picking several messages; on a phone
+    // holding a message already does that, so its menu stays as it is (James, 26 Oct 2026).
+    const open = () => menu(touch ? {} : {select: () => { window.getSelection()?.removeAllRanges(); selection()?.begin(id); }});
     const cancel = () => { clearTimeout(timer); timer = null; };
     bubble.addEventListener('selectstart', e => { if (!selection()?.active || firstHold) e.preventDefault(); });
     bubble.addEventListener('pointerdown', e => {
-      firstHold = false; suppressTap = false;
+      firstHold = false; suppressTap = false; touch = e.pointerType === 'touch';
       if (selection()?.active || e.button > 0 || e.target.closest(holdInteractive)) return;
       cancel(); x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
       if (e.pointerType !== 'touch') return;
@@ -876,20 +885,20 @@
     bubble.addEventListener('click', e => {
       if (suppressTap) { suppressTap = false; e.preventDefault(); e.stopPropagation(); return; }
       if (selection()?.active || e.target.closest(interactive)) return;
-      e.stopPropagation(); menu();
+      e.stopPropagation(); open();
     });
     bubble.addEventListener('contextmenu', e => {
       // The first hold selects messages; the next hold is left entirely to native text selection.
       if (selection()?.active && !firstHold) return;
       if (e.target.closest(holdInteractive)) return;
       e.preventDefault(); cancel();
-      if (!selection()?.active) menu();
+      if (!selection()?.active) open();
     });
   }
   function gestures(row, b, m) {
-    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: () => menu(m, b), reply: () => startReply(m)});
+    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: o => menu(m, b, o), reply: () => startReply(m)});
   }
-  function menu(m, b) {
+  function menu(m, b, opts = {}) {
     const t = store.threads[view.id]; if (!t) return;
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Message';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
@@ -909,6 +918,7 @@
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
+    if (opts.select && !m.deleted && !m.pending) item('Select', 'check', opts.select);
     item('Delete for me', 'trash', () => del(m, false), 'danger');
     if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
     panel.append(list); layer.append(panel);
@@ -1421,7 +1431,14 @@
   }
   function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); } });
+  // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.
+  function wake() {
+    if (!s.ready) return;
+    if (store.seq) feed();
+    else if (!s.person && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
+  }
+  addEventListener('online', wake); addEventListener('pageshow', e => { if (e.persisted) wake(); });
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   // After a reload, come back to the same tab and chat (saved on pagehide).
