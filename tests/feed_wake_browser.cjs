@@ -48,6 +48,12 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
     served++; const seq = Number(new URL(route.request().url()).searchParams.get('since')) + 1;
     return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result: {seq, people: served === 1 ? [fresh.row] : [], messages: {}, typing: {}, removed: []}})});
   });
+  // The list's own fetch on wake sees the same new chat the PC started.
+  await ctx.route(/api\/unified\/people(\?|$)/, async route => {
+    if (!fresh.row || route.request().method() !== 'GET') return route.fallback();
+    const res = await route.fetch(); const j = await res.json(); fresh.listed = (fresh.listed || 0) + 1;
+    j.result.people = [fresh.row, ...j.result.people]; return route.fulfill({response: res, body: JSON.stringify(j)});
+  });
   const page = await ctx.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
   diagnosticPage = page;
   page.on('console', m => { if (m.type() === 'error') console.error('browser:', m.text()); });
@@ -71,6 +77,9 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   // Phone wakes: the page becomes visible again.
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => false}); document.dispatchEvent(new Event('visibilitychange')); });
   await page.locator('.u-person', {hasText: 'Ana from the PC'}).waitFor({timeout: 8000});
+  await page.waitForTimeout(1500);
+  assert.ok(fresh.listed >= 1, 'waking re-fetches the list directly');
+  assert.equal(await page.locator('.u-person', {hasText: 'Ana from the PC'}).count(), 1, 'the new chat shows once');
   await page.screenshot({path: ev + '/after-wake.png'});
   assert.deepEqual(errors, []);
   console.log('pass feed_wake_browser'); await browser.close();
