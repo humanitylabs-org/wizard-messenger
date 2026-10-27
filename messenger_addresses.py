@@ -11,7 +11,18 @@ from engine import EngineError
 
 HEX = re.compile(r'[0-9a-f]{64}\Z')
 USER = re.compile(r'[a-zA-Z0-9_.-]{1,64}\Z')
-DOMAIN = re.compile(r'(?=.{1,253}\Z)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}\Z')
+LABEL = re.compile(r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z')
+TLD = re.compile(r'[a-zA-Z]{2,63}\Z')
+
+class _Domain:
+    # Label by label, so a long hostile string can't make the pattern backtrack (CodeQL, 27 Oct 2026).
+    @staticmethod
+    def fullmatch(value):
+        if not isinstance(value, str) or not 1 <= len(value) <= 253: return False
+        *labels, tld = value.split('.')
+        return bool(labels) and all(LABEL.match(l) for l in labels) and bool(TLD.match(tld))
+
+DOMAIN = _Domain()
 
 def npub_encode(key):
     if not isinstance(key,str) or not HEX.fullmatch(key):
