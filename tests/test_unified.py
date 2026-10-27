@@ -531,6 +531,144 @@ class SignalMvpTests(unittest.TestCase):
         self.assertEqual(content['info']['duration'], 3000)
         self.assertTrue(out['message']['media']['voice'])
 
+    def file_upload(self, data=b'%PDF-1.7\ncontent', name='report.pdf'):
+        with patch.object(self.inbox, 'matrix_upload', return_value={'content_uri': 'mxc://messenger.internal/file'}) as upload:
+            result = self.inbox.dispatch('PUT', '/api/unified/people/%s/upload' % self.pid, {},
+                                         {'kind': ['file'], 'name': [name]}, data)
+        upload.assert_called_once_with(data, 'attachment', result['mime'])
+        return result
+
+    def test_james_any_file_pdf_upload_and_send(self):
+        up = self.file_upload(name='../../private\\..\\... report\x00  final.pdf')
+        self.assertEqual(set(up), {'upload_id', 'mime', 'size', 'name'})
+        self.assertEqual((up['name'], up['mime']), ('report final.pdf', 'application/pdf'))
+        self.inbox.mx = Mock(return_value={'event_id': '$file'})
+        out = self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'file-12345678', 'media': {'w': 500, 'duration': 100}})
+        self.assertEqual(self.inbox.mx.call_args.args[2], {
+            'msgtype': 'm.file', 'body': 'report final.pdf', 'filename': 'report final.pdf',
+            'url': 'mxc://messenger.internal/file', 'info': {'mimetype': 'application/pdf', 'size': up['size']}})
+        stored = self.inbox.store.message('$file')
+        self.assertEqual(stored['msgtype'], 'm.file')
+        self.assertEqual(json.loads(stored['media']), {'mxc': 'mxc://messenger.internal/file', 'mime': 'application/pdf', 'size': up['size'], 'filename': up['name']})
+        self.assertEqual(out['message']['media']['filename'], up['name'])
+        self.assertNotIn('mxc', out['message']['media'])
+        self.assertNotIn(up['upload_id'], self.inbox.uploads)
+
+    def test_james_file_names_strip_paths_controls_and_keep_extension(self):
+        for name, want in [('../../etc/passwd', 'passwd'), ('C:\\private\\.secret\r\n\x7f\x85.pdf', 'secret.pdf'),
+                           ('... .hidden   name.pdf', 'hidden name.pdf'), ('\u202eevil\ud800.pdf', 'evil.pdf'),
+                           ('', 'file'), ('...\x00 ', 'file'), ('/tmp/', 'file'),
+                           ('a' * 200 + '.pdf', 'a' * 116 + '.pdf')]:
+            with self.subTest(name=repr(name)):
+                self.assertEqual(self.file_upload(name=name)['name'], want)
+        self.assertLessEqual(len(self.file_upload(name='a.' + 'x' * 200)['name']), 120)
+
+    def test_james_unknown_bytes_are_octet_stream_regardless_of_name(self):
+        self.assertEqual(self.file_upload(b'not a real PDF', 'looks.pdf')['mime'], 'application/octet-stream')
+        self.assertEqual(self.file_upload(b'PK\x03\x04zip', 'archive.zip')['mime'], 'application/zip')
+        self.assertEqual(self.file_upload(b'\x89PNG\r\n\x1a\nimage', 'pic.bin')['mime'], 'image/png')
+        with patch.object(self.inbox, 'matrix_upload', return_value={'content_uri': 'mxc://messenger.internal/file'}):
+            up = self.inbox.upload(self.pid, 'file', b'unknown')
+        self.assertEqual(up['name'], 'file')
+
+    def test_james_files_cannot_be_sent_as_photo_album_even_with_image_bytes(self):
+        file = self.file_upload(b'\x89PNG\r\n\x1a\nimage', 'pic.png')
+        with patch.object(self.inbox, 'matrix_upload', return_value={'content_uri': 'mxc://messenger.internal/photo'}):
+            photo = self.inbox.upload(self.pid, 'image', b'\x89PNG\r\n\x1a\nimage')
+        self.assertEqual(set(photo), {'upload_id', 'mime', 'size'})
+        self.inbox.mx = Mock()
+        with self.assertRaises(EngineError) as err:
+            self.inbox.send(self.pid, {'upload_ids': [photo['upload_id'], file['upload_id']], 'client_id': 'album-12345678'})
+        self.assertEqual((err.exception.code, err.exception.status), ('invalid_album', 400))
+        self.inbox.mx.assert_not_called()
+
+    def test_james_file_caption_follows_filename_and_retries_without_duplicates(self):
+        up = self.file_upload()
+        payload = {'upload_id': up['upload_id'], 'client_id': 'caption-12345678', 'text': 'Here is the report'}
+        self.inbox.mx = Mock(side_effect=[{'event_id': '$file'}, {'event_id': '$caption'}])
+        out = self.inbox.send(self.pid, payload)
+        self.assertEqual(self.inbox.mx.call_args_list[0].args[2]['body'], 'report.pdf')
+        self.assertEqual(self.inbox.mx.call_args_list[1].args[2], {'msgtype': 'm.text', 'body': payload['text']})
+        self.assertTrue(self.inbox.mx.call_args_list[1].args[0].endswith('/caption-12345678.caption'))
+        self.assertEqual([r['msgtype'] for r in out['messages']], ['m.file', 'm.text'])
+        self.assertEqual(self.inbox.store.message('$caption')['original'], payload['text'])
+        again = self.inbox.send(self.pid, payload)
+        self.assertEqual(again, out)
+        self.assertEqual(self.inbox.mx.call_count, 2)
+
+    def test_james_file_caption_failure_can_retry_after_sync_wins_receipt(self):
+        up = self.file_upload()
+        payload = {'upload_id': up['upload_id'], 'client_id': 'retry-12345678', 'text': 'Report'}
+        paths = []
+        fail_caption = True
+        def send(path, method, content):
+            paths.append(path)
+            caption = path.endswith('.caption')
+            if caption and fail_caption:
+                raise EngineError('upstream_unavailable', 'Unavailable', 503)
+            event = '$caption' if caption else '$file'
+            self.ingest(self.event(event, content, sender=self.inbox.owner))
+            return {'event_id': event}
+        self.inbox.mx = send
+        with self.assertRaises(EngineError): self.inbox.send(self.pid, payload)
+        self.assertIn(up['upload_id'], self.inbox.uploads)
+        fail_caption = False
+        out = self.inbox.send(self.pid, payload)
+        self.assertEqual(paths[:2], paths[2:])
+        self.assertEqual(self.inbox.send(self.pid, payload), out)
+        self.assertEqual(len(paths), 4)
+        self.assertEqual(len(self.inbox.timeline(self.pid)['messages']), 2)
+
+    def test_james_file_upload_limit_person_binding_expiry_and_networks(self):
+        self.inbox.matrix_upload = Mock(return_value={'content_uri': 'mxc://messenger.internal/file'})
+        with patch('unified.UPLOAD_MAX', 5):
+            self.inbox.upload(self.pid, 'file', b'12345', 'limit.bin')
+            for data in (b'', b'123456'):
+                with self.assertRaises(EngineError) as err: self.inbox.upload(self.pid, 'file', data)
+                self.assertEqual((err.exception.code, err.exception.status), ('too_large', 413))
+        for network in ('whatsapp', 'signal'):
+            peer = self.inbox.store.identity(network, '!' + network, network)
+            up = self.inbox.upload(peer['person_id'], 'file', b'data', 'x.bin')
+            self.inbox.mx = Mock(return_value={'event_id': '$' + network})
+            self.assertEqual(self.inbox.send(peer['person_id'], {'upload_id': up['upload_id'], 'client_id': network + '-12345678'})['message']['msgtype'], 'm.file')
+        up = self.file_upload()
+        peer = self.inbox.store.identity('telegram', '!other', 'Other')
+        with self.assertRaises(EngineError) as err:
+            self.inbox.send(peer['person_id'], {'upload_id': up['upload_id'], 'client_id': 'other-12345678'})
+        self.assertEqual(err.exception.code, 'upload_expired')
+        self.inbox.uploads[up['upload_id']]['expires'] = time.time() - 1
+        with self.assertRaises(EngineError) as err:
+            self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'expired-12345678'})
+        self.assertEqual((err.exception.code, err.exception.status), ('upload_expired', 409))
+        marmot = self.inbox.store.identity('messenger', 'abc', 'Marmot')
+        with self.assertRaises(EngineError) as err: self.inbox.upload(marmot['person_id'], 'file', b'x')
+        self.assertEqual((err.exception.code, err.exception.status), ('media_unsupported', 409))
+        self.assertIn('files', str(err.exception))
+        up = self.file_upload()
+        with self.inbox.store.db() as db:
+            db.execute("UPDATE identity SET network='messenger' WHERE id=?", (self.a['id'],))
+        with self.assertRaises(EngineError) as err:
+            self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'network-12345678'})
+        self.assertEqual(err.exception.code, 'media_unsupported')
+
+    def test_james_uploaded_active_content_is_attachment_only(self):
+        import io
+        for n, (data, mime) in enumerate([(b'<html><script>alert(1)</script>', 'text/html'),
+                                         (b'<svg onload="alert(1)">', 'image/svg+xml'),
+                                         (b'alert(1)', 'application/javascript'), (b'%PDF-1.7\ndata', 'application/pdf')]):
+            with self.subTest(mime=mime):
+                up = self.file_upload(data, 'active.html')
+                # Different media per send avoids a previous iteration's cache.
+                self.inbox.uploads[up['upload_id']]['mxc'] += str(n)
+                self.inbox.mx = Mock(return_value={'event_id': '$file%d' % n})
+                out = self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'active-12345678-%d' % n})
+                response = io.BytesIO(data)
+                response.headers = {'Content-Type': mime}
+                with patch('unified.urlopen', return_value=response):
+                    blob = self.inbox.media(out['event_id'], 'full')
+                self.assertEqual((blob.mime, blob.inline), ('application/octet-stream', False))
+                self.assertEqual(blob.path.read_bytes(), data)
+
     def test_read_marks_chat_read_and_posts_receipt(self):
         self.ingest(self.event('$1', {'msgtype': 'm.text', 'body': 'a'}, ts=10), self.event('$2', {'msgtype': 'm.text', 'body': 'b'}, ts=20))
         self.assertEqual(self.inbox.store.people()[0]['unread'], 2)

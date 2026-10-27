@@ -29,7 +29,7 @@
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
-    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'],
+    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
@@ -56,14 +56,17 @@
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
   // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
-  // Drafts are kept in sessionStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
+  // Drafts are kept in localStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
   function hold() {
     const reason = view.recording ? 'Recording' : store.pending > 0 ? 'Sending' : s.busy ? 'Saving' : '';
     if (updateHold && updateHold.reason !== reason) { updateHold.h.release(); updateHold = null; }
     if (reason && !updateHold) updateHold = {reason, h: window.WizardApp.update.hold(reason)};
   }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
+  let connectorUI = null;
   function closeOverlay() {
+    const controller = connectorUI; connectorUI = null;
+    controller?.close().catch(error);
     const answered = s.answer; s.answer = null; answered?.(false);
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
   }
@@ -263,8 +266,14 @@
       if (!s.ready || ctl.signal.aborted) return;
       try {
         // Long-poll: answers the moment anything changes; jitter keeps two views from syncing up.
-        apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: ctl.signal}));
-      } catch (e) { if (ctl.signal.aborted) return; await sleep(3000); }
+        // A phone that slept or changed network can leave this request hanging forever on a dead connection, and the
+        // list then never moves again (James, 26 Oct 2026: chats sent from the PC never showed on the phone). Each
+        // poll gives up after 35 s and asks again; waking the phone restarts the feed at once (see wake below).
+        const one = new AbortController(), giveUp = setTimeout(() => one.abort(), 35000), stop = () => one.abort();
+        ctl.signal.addEventListener('abort', stop, {once: true});
+        try { apply(await api('api/unified/updates?since=' + store.seq + '&hold=' + (20 + Math.random() * 3).toFixed(1), {signal: one.signal})); }
+        finally { clearTimeout(giveUp); ctl.signal.removeEventListener('abort', stop); }
+      } catch (e) { if (ctl.signal.aborted) return; await sleep(1500); }
     }
   }
 
@@ -650,7 +659,7 @@
     }
     else if (visual) b.append(visualMedia(m));
     else if (m.msgtype === 'm.audio') b.append(voice(m));
-    else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
+    else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); if (!m.pending && !m.failed) a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
     else if (m.msgtype === 'm.location') { const geo = /^geo:([-\d.]+),([-\d.]+)/.exec(m.media?.geo || ''); const a = node('a', 'u-file', '📍 ' + (m.original || 'Location')); if (geo) { a.href = 'https://www.openstreetmap.org/?mlat=' + geo[1] + '&mlon=' + geo[2] + '#map=16/' + geo[1] + '/' + geo[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; } b.append(a); }
     if (!m.deleted && m.original && m.msgtype !== 'm.location') {
       if (ctx.auto || m.outgoing) {
@@ -783,20 +792,17 @@
       img.src = m.local || mediaURL(m.id, 'thumb'); box.append(img);
       if (m.msgtype === 'm.sticker') box.classList.add('sticker');
     }
-    if (!m.pending) box.onclick = () => viewer(m); else box.append(node('span', 'u-spin'));
+    box.message = m;
+    if (!m.pending) box.onclick = () => viewer(m, box); else box.append(node('span', 'u-spin'));
     return box;
   }
-  function viewer(m) {
-    closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Photo';
-    const layer = node('div', 'u-overlay u-viewer'); layer.id = 'u-overlay'; layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-label', 'Photo');
-    const bar = node('header'); const save = node('a', 'icon-button u-save'); save.href = mediaURL(m.id); save.download = ''; save.setAttribute('aria-label', 'Save'); save.append(icon('download'));
-    bar.append(iconButton('close', 'Close', closeOverlay), node('span', 'u-viewer-who', m.outgoing ? 'You' : nameOf(m.sender)), save);
-    let media;
-    if (m.msgtype === 'm.video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.src = mediaURL(m.id); }
-    else { media = node('img'); media.alt = m.original || 'Photo'; media.src = mediaURL(m.id); }
-    layer.append(bar, media); if (m.original) layer.append(node('p', 'u-viewer-cap', m.original));
-    layer.onclick = e => { if (e.target === layer || e.target === media && media.tagName === 'IMG') closeOverlay(); };
-    $('messenger').append(layer); hold();
+  // Tapping a photo or video opens Wizard's own media viewer, the one Chats uses: pinch and double-tap zoom, pan,
+  // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Messenger keeps no viewer.
+  function viewer(m, box) {
+    const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && b.message.msgtype !== 'm.sticker');
+    const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
+    const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
+    window.WizardApp?.media?.view(list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at);
   }
   function voice(m) {
     const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
@@ -847,11 +853,14 @@
   function messageGestures(row, bubble, {selection, id, menu, reply, album}) {
     const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
     const holdInteractive = album ? 'a,button:not(.u-media),input,textarea,select,video,audio,.u-reply,.u-wave,.reply-quote' : interactive;
-    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false;
+    let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false, touch = false;
+    // With a mouse there is no long-press, so the menu offers Select to start picking several messages; on a phone
+    // holding a message already does that, so its menu stays as it is (James, 26 Oct 2026).
+    const open = () => menu(touch ? {} : {select: () => { window.getSelection()?.removeAllRanges(); selection()?.begin(id); }});
     const cancel = () => { clearTimeout(timer); timer = null; };
     bubble.addEventListener('selectstart', e => { if (!selection()?.active || firstHold) e.preventDefault(); });
     bubble.addEventListener('pointerdown', e => {
-      firstHold = false; suppressTap = false;
+      firstHold = false; suppressTap = false; touch = e.pointerType === 'touch';
       if (selection()?.active || e.button > 0 || e.target.closest(holdInteractive)) return;
       cancel(); x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
       if (e.pointerType !== 'touch') return;
@@ -876,25 +885,25 @@
     bubble.addEventListener('click', e => {
       if (suppressTap) { suppressTap = false; e.preventDefault(); e.stopPropagation(); return; }
       if (selection()?.active || e.target.closest(interactive)) return;
-      e.stopPropagation(); menu();
+      e.stopPropagation(); open();
     });
     bubble.addEventListener('contextmenu', e => {
       // The first hold selects messages; the next hold is left entirely to native text selection.
       if (selection()?.active && !firstHold) return;
       if (e.target.closest(holdInteractive)) return;
       e.preventDefault(); cancel();
-      if (!selection()?.active) menu();
+      if (!selection()?.active) open();
     });
   }
   function gestures(row, b, m) {
-    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: () => menu(m, b), reply: () => startReply(m)});
+    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: o => menu(m, b, o), reply: () => startReply(m)});
   }
-  function menu(m, b) {
+  function menu(m, b, opts = {}) {
     const t = store.threads[view.id]; if (!t) return;
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Message';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
     const panel = node('div', 'u-menu'); panel.setAttribute('role', 'menu');
-    const telegram = m.network === 'telegram';
+    const telegram = ['telegram', 'whatsapp', 'signal'].includes(m.network);
     if (telegram) {
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
@@ -909,6 +918,7 @@
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
+    if (opts.select && !m.deleted && !m.pending) item('Select', 'check', opts.select);
     item('Delete for me', 'trash', () => del(m, false), 'danger');
     if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
     panel.append(list); layer.append(panel);
@@ -961,10 +971,10 @@
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
     for (const i of p.identities || []) { const opt = node('option', '', 'via ' + cap(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
-    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => i.network === 'telegram');
+    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => ['telegram', 'whatsapp', 'signal'].includes(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
-    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/gif,image/webp'; file.multiple = true; file.hidden = true;
-    const attach = iconButton('plus', 'Attach photos', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
+    const file = node('input'); file.type = 'file'; file.multiple = true; file.hidden = true; // any file: photos go as photos, the rest as files (James, 26 Oct 2026)
+    const attach = iconButton('plus', 'Attach photos or files', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
     const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
     const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
     const field = node('div', 'u-field'); field.append(draft);
@@ -976,9 +986,12 @@
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
-      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const ph of a) { const chip = node('div', 'u-attach-chip'); const img = node('img'); img.src = ph.url; img.alt = 'Photo to send'; chip.append(img, iconButton('close', 'Remove photo', () => { URL.revokeObjectURL(ph.url); view.attach = a.filter(x => x !== ph); if (!view.attach.length) view.attach = null; paintBar(); grow(); })); strip.append(chip); } bar.append(strip); }
+      // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); }})); bar.append(strip); }
     };
     const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
+    // The thread rebuilds its composer once the person loads: keep photos/reply already in the tray visible.
+    if (view.attach?.length || view.reply) queueMicrotask(() => { paintBar(); grow(); });
     let typingAt = 0, idle = null;
     const typing = on => { if (!telegramOnly) return; call('people/' + id + '/typing', {typing: on}).catch(() => {}); };
     draft.oninput = () => {
@@ -986,9 +999,20 @@
       if (draft.value && Date.now() - typingAt > 4000) { typingAt = Date.now(); typing(true); }
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
-    draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) { e.preventDefault(); submit(); } };
     // Several selected photos are one post and one Telegram media group (up to 10).
-    file.onchange = async () => { const picked = [...file.files]; file.value = ''; if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 photos at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) ready.push(await preparePhoto(f)); view.attach = [...(view.attach || []), ...ready]; paintBar(); grow(); draft.focus(); } catch (e) { error(e); } };
+    // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
+    const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
+    const addFiles = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB'); continue; } ready.push(PHOTO.test(f.type) ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); } catch (e) { error(e); } };
+    file.onchange = () => { const picked = [...file.files]; file.value = ''; if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats'); addFiles(picked); };
+    const takeFiles = files => {
+      if (!files.length || view.edit) return;
+      if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats');
+      addFiles(files);
+    };
+    // Paste and drop of files, dictation-safe text paste (Wispr Flow), the drag highlight and Enter / Shift+Enter /
+    // Ctrl|Cmd+Enter are Wizard's one composer implementation, the same code as Chats (James, 25 Oct 2026: "one
+    // implementation, shared by many apps"). Messenger only decides what an attached file becomes.
+    window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takeFiles, onSubmit: () => submit(), notice: msg => toast(msg)});
     form.onsubmit = e => { e.preventDefault(); submit(); };
     function submit() {
       const text = draft.value.trim(), a = view.attach || [];
@@ -997,9 +1021,13 @@
       if (reviewed && !a.length) return reviewSend(id, p, text, channel.value);
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
+      // Photos go first as one post (album) with the text; every other file follows as its own message. With only
+      // files, the text rides with the first one (sent right after it, as bridges show a file's body as its name).
+      const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
       if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
-      else if (a.length === 1) queueSend(id, {text, photo: a[0], reply, identity_id: channel.value});
-      else queueSend(id, {text, photos: a, reply, identity_id: channel.value});
+      else if (photos.length === 1) queueSend(id, {text, photo: photos[0], reply, identity_id: channel.value});
+      else if (photos.length) queueSend(id, {text, photos, reply, identity_id: channel.value});
+      files.forEach((f, i) => queueSend(id, {text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -1111,7 +1139,24 @@
     await enc.flush(); enc.close(); if (err) throw err; if (!packets.length) throw new Error('Voice note was empty');
     return new Blob([oggFromOpus(packets, 1)], {type: 'audio/ogg'});
   }
-  function saveDrafts() { try { sessionStorage.setItem('messenger-unified-drafts', JSON.stringify(s.drafts)); } catch { /* drafts stay in memory */ } }
+  // Unsent drafts survive closing Messenger or a reload, like Chats' drafts: per person, newest 50, kept 30 days.
+  const DRAFTS_KEY = 'messenger-drafts-v2', DRAFT_DAYS = 30, DRAFTS_KEPT = 50;
+  let draftAt = {};
+  function saveDrafts() {
+    const now = Date.now();
+    for (const [k, v] of Object.entries(s.drafts)) { if (v) draftAt[k] = draftAt[k] && draftAt[k].text === v ? draftAt[k] : {text: v, at: now}; else delete draftAt[k]; }
+    for (const k of Object.keys(draftAt)) if (!s.drafts[k]) delete draftAt[k];
+    draftAt = Object.fromEntries(Object.entries(draftAt).sort((x, y) => y[1].at - x[1].at).slice(0, DRAFTS_KEPT));
+    try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(draftAt)); } catch { /* storage full or blocked: drafts stay in memory */ }
+  }
+  function loadDrafts() {
+    let kept = {}; try { kept = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}') || {}; } catch { kept = {}; }
+    const fresh = Date.now() - DRAFT_DAYS * 864e5; draftAt = {};
+    for (const [k, v] of Object.entries(kept)) if (v?.text && v.at > fresh) draftAt[k] = v;
+    // One-time move from the old per-tab drafts.
+    try { const old = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}') || {}; for (const [k, v] of Object.entries(old)) if (v && !draftAt[k]) draftAt[k] = {text: v, at: Date.now()}; sessionStorage.removeItem('messenger-unified-drafts'); } catch { /* none */ }
+    return Object.fromEntries(Object.entries(draftAt).map(([k, v]) => [k, v.text]));
+  }
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
     // Albums use still JPEG photos, including the first frame of an animated image.
@@ -1125,10 +1170,10 @@
     const original = f.type === 'image/gif' ? f : blob;
     return {blob: original, albumBlob: blob, url: URL.createObjectURL(original), w, h};
   }
-  async function upload(id, kind, blob) {
+  async function upload(id, kind, blob, name = '') {
     // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
     if (kind === 'voice') blob = await toOggOpus(blob);
-    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind + (name ? '&name=' + encodeURIComponent(name) : ''), {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
       headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
     let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
     if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Upload failed. Tap to retry.');
@@ -1140,10 +1185,11 @@
     const t = store.threads[id]; if (!t) return;
     const client_id = 'w' + uid();
     const m = {id: 'pending:' + client_id, client_id, outgoing: true, pending: true, original: job.text || '', timestamp: Date.now(), network: t.person.identities?.[0]?.network || 'telegram',
-      msgtype: job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
+      msgtype: job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : job.file ? 'm.file' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
       reply: job.reply ? {id: job.reply.id, sender: job.reply.sender, outgoing: job.reply.outgoing, text: job.reply.original, msgtype: job.reply.msgtype, voice: job.reply.media?.voice} : null};
     if (job.photos) { m.album = 'pending:' + client_id; m.photos = job.photos.map((photo, i) => ({...m, photos: undefined, id: m.id + ':' + i, original: i ? '' : m.original, local: photo.url, media: {w: photo.w, h: photo.h, mime: 'image/jpeg'}})); m.media = m.photos[0].media; }
     if (job.photo) { m.local = job.photo.url; m.media = {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'}; }
+    if (job.file) m.media = {filename: job.file.name, size: job.file.bytes, mime: job.file.blob.type || 'application/octet-stream'};
     if (job.voice) { m.local = job.voice.url; m.media = {voice: true, duration: job.voice.duration, waveform: job.voice.waveform.map(v => Math.round(v / 10.24))}; }
     t.messages.push(m); store.pending++; hold();
     if (s.person === id) paintThread(true);
@@ -1156,6 +1202,7 @@
           for (const photo of job.photos) { upload_ids.push((await upload(id, 'image', photo.albumBlob || photo.blob)).upload_id); media.push({w: photo.w, h: photo.h}); }
         }
         if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
+        if (job.file) upload_id = (await upload(id, 'file', job.file.blob, job.file.name)).upload_id;
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
         const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
         if (r.message) mergeMessages(id, r.messages || [r.message]);
@@ -1249,11 +1296,8 @@
   const qrLink = c => /^[a-z][a-z0-9+.-]*:/i.test(c.value) ? c.value : (QR_NETS[c.network] || QR_NETS.link).link(c.value.trim());
   const qrTitle = c => c.label || (QR_NETS[c.network] || QR_NETS.link).name;
   function qrCanvas(data) {
-    const qr = window.qrcode(0, 'M'); qr.addData(data); qr.make();
-    const canvas = node('canvas', 'u-qr u-myqr'), count = qr.getModuleCount(), scale = 10; canvas.width = canvas.height = (count + 8) * scale;
-    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
-    for (let y = 0; y < count; y++) for (let x = 0; x < count; x++) if (qr.isDark(y, x)) ctx.fillRect((x + 4) * scale, (y + 4) * scale, scale, scale);
-    canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'QR code for ' + data); return canvas;
+    const canvas = window.MessengerConnectors.qrCanvas(data); canvas.classList.add('u-myqr');
+    canvas.setAttribute('aria-label', 'QR code for ' + data); return canvas;
   }
   async function myCodes(pick) {
     const sheet = overlay('My QR codes'); sheet.classList.add('tall', 'u-myqr-sheet');
@@ -1307,16 +1351,17 @@
     if (!codes.length) requestAnimationFrame(() => addRow().focus());
   }
   async function accounts() {
-    const sheet = overlay('Settings'); sheet.append(node('h3', '', 'Telegram'));
-    try {
-      const status = await call('telegram/status'); if (s.overlay !== 'Settings') return;
-      if (status.pending_login) { localStorage.setItem(LOGIN_FLAG, '1'); return loginStep(status.pending_login, true); }
-      const line = node('p', 'u-status ' + (status.logins?.length ? 'on' : 'off'), status.message + (status.state === 'disconnected' ? ' · Not connected' : '')); sheet.append(line);
-      if (status.state === 'not_configured') sheet.append(node('p', 'helper', 'Add TELEGRAM_API_ID and TELEGRAM_API_HASH in the app’s installation settings. Your phone number and login code stay inside this private Messenger.'));
-      if (!status.logins?.length) for (const [flow, label] of [['qr','Connect with QR'],['phone','Connect with phone']]) { const b = button(label, () => action(async () => loginStep(await call('telegram/start', {flow}))), flow === 'qr' ? 'primary wide' : 'secondary wide'); b.disabled = status.state === 'not_configured' || status.state === 'unavailable'; sheet.append(b); }
-      if (status.logins?.length) sheet.append(button('Disconnect Telegram', () => action(async () => { await call('telegram/disconnect', {}); await accounts(); }), 'secondary wide danger'));
-    } catch (e) { error(e); }
-    agentAccess(sheet);
+    const sheet = overlay('Settings');
+    const box = node('section', 'u-connectors'); sheet.append(box);
+    connectorUI = window.MessengerConnectors(box, (path, method, body) => api(path.replace(/^\//, ''), {method, ...(body === undefined ? {} : {body})}), {
+      button, phoneField,
+      onPending: (network, pending) => { if (network === 'telegram') { if (pending) localStorage.setItem(LOGIN_FLAG, '1'); else localStorage.removeItem(LOGIN_FLAG); } },
+      onChange: refresh,
+      onCancel: closeOverlay,
+      onDone: () => { closeOverlay(); refresh(); },
+    });
+    try { await connectorUI.show(); } catch (e) { error(e); }
+    if (s.overlay === 'Settings') agentAccess(sheet);
   }
   async function agentAccess(sheet) {
     const box = node('section', 'u-agent-access'); sheet.append(box);
@@ -1338,6 +1383,14 @@
     try { const st = await api('api/view/agent-access'); if (s.overlay === 'Settings') paint(st); } catch (e) { error(e); }
   }
   const LOGIN_FLAG = 'messenger-telegram-login';
+  async function resumeLogin() {
+    if (!s.ready || s.overlay || s.busy || !localStorage.getItem(LOGIN_FLAG)) return;
+    try {
+      const status = await call('telegram/status');
+      if (status.pending_login) accounts();
+      else localStorage.removeItem(LOGIN_FLAG);
+    } catch { /* Only the owner's authenticated session can resume. */ }
+  }
   // Region code, dialling code, name. Built from libphonenumber + ISO 3166 names.
   const COUNTRIES = 'AF93,Afghanistan|AL355,Albania|DZ213,Algeria|AD376,Andorra|AO244,Angola|AI1,Anguilla|AG1,Antigua & Barbuda|AR54,Argentina|AM374,Armenia|AW297,Aruba|AU61,Australia|AT43,Austria|AZ994,Azerbaijan|BS1,Bahamas|BH973,Bahrain|BD880,Bangladesh|BB1,Barbados|BY375,Belarus|BE32,Belgium|BZ501,Belize|BJ229,Benin|BM1,Bermuda|BT975,Bhutan|BO591,Bolivia|BA387,Bosnia & Herzegovina|BW267,Botswana|BR55,Brazil|GB44,Britain (UK)|IO246,British Indian Ocean Territory|BN673,Brunei|BG359,Bulgaria|BF226,Burkina Faso|BI257,Burundi|KH855,Cambodia|CM237,Cameroon|CA1,Canada|CV238,Cape Verde|BQ599,Caribbean NL|KY1,Cayman Islands|CF236,Central African Rep.|TD235,Chad|CL56,Chile|CN86,China|CX61,Christmas Island|CC61,Cocos (Keeling) Islands|CO57,Colombia|KM269,Comoros|CD243,Congo (Dem. Rep.)|CG242,Congo (Rep.)|CK682,Cook Islands|CR506,Costa Rica|HR385,Croatia|CU53,Cuba|CW599,Curaçao|CY357,Cyprus|CZ420,Czech Republic|CI225,Côte d’Ivoire|DK45,Denmark|DJ253,Djibouti|DM1,Dominica|DO1,Dominican Republic|TL670,East Timor|EC593,Ecuador|EG20,Egypt|SV503,El Salvador|GQ240,Equatorial Guinea|ER291,Eritrea|EE372,Estonia|SZ268,Eswatini (Swaziland)|ET251,Ethiopia|FK500,Falkland Islands|FO298,Faroe Islands|FJ679,Fiji|FI358,Finland|FR33,France|GF594,French Guiana|PF689,French Polynesia|GA241,Gabon|GM220,Gambia|GE995,Georgia|DE49,Germany|GH233,Ghana|GI350,Gibraltar|GR30,Greece|GL299,Greenland|GD1,Grenada|GP590,Guadeloupe|GU1,Guam|GT502,Guatemala|GG44,Guernsey|GN224,Guinea|GW245,Guinea-Bissau|GY592,Guyana|HT509,Haiti|HN504,Honduras|HK852,Hong Kong|HU36,Hungary|IS354,Iceland|IN91,India|ID62,Indonesia|IR98,Iran|IQ964,Iraq|IE353,Ireland|IM44,Isle of Man|IL972,Israel|IT39,Italy|JM1,Jamaica|JP81,Japan|JE44,Jersey|JO962,Jordan|KZ7,Kazakhstan|KE254,Kenya|KI686,Kiribati|KP850,Korea (North)|KR82,Korea (South)|KW965,Kuwait|KG996,Kyrgyzstan|LA856,Laos|LV371,Latvia|LB961,Lebanon|LS266,Lesotho|LR231,Liberia|LY218,Libya|LI423,Liechtenstein|LT370,Lithuania|LU352,Luxembourg|MO853,Macau|MG261,Madagascar|MW265,Malawi|MY60,Malaysia|MV960,Maldives|ML223,Mali|MT356,Malta|MH692,Marshall Islands|MQ596,Martinique|MR222,Mauritania|MU230,Mauritius|YT262,Mayotte|MX52,Mexico|FM691,Micronesia|MD373,Moldova|MC377,Monaco|MN976,Mongolia|ME382,Montenegro|MS1,Montserrat|MA212,Morocco|MZ258,Mozambique|MM95,Myanmar (Burma)|NA264,Namibia|NR674,Nauru|NP977,Nepal|NL31,Netherlands|NC687,New Caledonia|NZ64,New Zealand|NI505,Nicaragua|NE227,Niger|NG234,Nigeria|NU683,Niue|NF672,Norfolk Island|MK389,North Macedonia|MP1,Northern Mariana Islands|NO47,Norway|OM968,Oman|PK92,Pakistan|PW680,Palau|PS970,Palestine|PA507,Panama|PG675,Papua New Guinea|PY595,Paraguay|PE51,Peru|PH63,Philippines|PL48,Poland|PT351,Portugal|PR1,Puerto Rico|QA974,Qatar|RO40,Romania|RU7,Russia|RW250,Rwanda|RE262,Réunion|AS1,Samoa (American)|WS685,Samoa (western)|SM378,San Marino|ST239,Sao Tome & Principe|SA966,Saudi Arabia|SN221,Senegal|RS381,Serbia|SC248,Seychelles|SL232,Sierra Leone|SG65,Singapore|SK421,Slovakia|SI386,Slovenia|SB677,Solomon Islands|SO252,Somalia|ZA27,South Africa|SS211,South Sudan|ES34,Spain|LK94,Sri Lanka|BL590,St Barthelemy|SH290,St Helena|KN1,St Kitts & Nevis|LC1,St Lucia|SX1,St Maarten (Dutch)|MF590,St Martin (French)|PM508,St Pierre & Miquelon|VC1,St Vincent|SD249,Sudan|SR597,Suriname|SJ47,Svalbard & Jan Mayen|SE46,Sweden|CH41,Switzerland|SY963,Syria|TW886,Taiwan|TJ992,Tajikistan|TZ255,Tanzania|TH66,Thailand|TG228,Togo|TK690,Tokelau|TO676,Tonga|TT1,Trinidad & Tobago|TN216,Tunisia|TR90,Turkey|TM993,Turkmenistan|TC1,Turks & Caicos Is|TV688,Tuvalu|UG256,Uganda|UA380,Ukraine|AE971,United Arab Emirates|US1,United States|UY598,Uruguay|UZ998,Uzbekistan|VU678,Vanuatu|VA39,Vatican City|VE58,Venezuela|VN84,Vietnam|VG1,Virgin Islands (UK)|VI1,Virgin Islands (US)|WF681,Wallis & Futuna|EH212,Western Sahara|YE967,Yemen|ZM260,Zambia|ZW263,Zimbabwe|AX358,Åland Islands'.split('|').map(x => { const [, r, c, n] = x.match(/^([A-Z]{2})(\d+),(.*)$/); return {r, c, n}; });
   const flag = r => String.fromCodePoint(...[...r].map(ch => 0x1f1e6 + ch.charCodeAt(0) - 65));
@@ -1372,68 +1425,20 @@
         if (pick.value !== 'IT') digits = digits.replace(/^0+/, ''); // drop the national trunk 0 (Thai 08… → +66 8…)
         return '+' + code() + digits;
       },
+      clear: () => { number.value = ''; },
       focus: () => number.focus(),
     };
   }
-  async function resumeLogin() {
-    // The owner leaves the app to read the Telegram code; bring the waiting step back on return.
-    if (!s.ready || s.overlay || s.busy || !localStorage.getItem(LOGIN_FLAG)) return;
-    try {
-      const status = await call('telegram/status');
-      if (status.pending_login && !s.overlay) loginStep(status.pending_login, true);
-      else if (!status.pending_login) localStorage.removeItem(LOGIN_FLAG);
-    } catch { /* status is retried on the next return */ }
-  }
-  function loginStep(result, resumed = false) {
-    // bridgev2 embeds the LoginStep fields alongside login_id.
-    s.login = null; const sheet = overlay('Connect Telegram'); s.login = result;
-    const step = result.step || result;
-    if (step.type === 'complete') localStorage.removeItem(LOGIN_FLAG); else localStorage.setItem(LOGIN_FLAG, '1');
-    if (resumed) sheet.append(node('p', 'helper', 'Picking up where you left off.'));
-    sheet.append(node('p', 'helper', step.instructions || 'Continue on Telegram'));
-    const problem = node('p', 'error'); problem.setAttribute('role', 'alert');
-    const advance = fields => action(async () => {
-      const current = s.login; problem.textContent = '';
-      try {
-        const next = await call('telegram/step', {login_id: result.login_id, step_id: step.step_id, type: step.type, fields});
-        if (s.login === current) loginStep(next);
-      } catch (e) { problem.textContent = e.message || 'Telegram did not accept that. Try again.'; }
-    });
-    if (step.type === 'user_input') {
-      const form = node('form'); form.autocomplete = 'off'; const inputs = {};
-      for (const field of step.user_input.fields) {
-        if (/phone/.test(field.type) || field.id === 'phone_number') { inputs[field.id] = phoneField(form); continue; }
-        const label = node('label', '', field.name); const input = node('input');
-        input.type = /password/.test(field.type) ? 'password' : /phone/.test(field.type) ? 'tel' : 'text';
-        if (/code/.test(field.type) || /code/i.test(field.id)) { input.inputMode = 'numeric'; input.autocomplete = 'one-time-code'; }
-        else input.autocomplete = /password/.test(field.type) ? 'current-password' : 'off';
-        if (field.description) label.append(node('span', 'helper', field.description));
-        input.required = !field.optional; label.append(input); form.append(label); inputs[field.id] = input;
-      }
-      form.append(problem, button('Continue', () => form.requestSubmit(), 'primary wide'));
-      form.onsubmit = e => { e.preventDefault(); const fields = Object.fromEntries(Object.entries(inputs).map(([id, input]) => [id, input.value])); advance(fields); };
-      sheet.append(form);
-      requestAnimationFrame(() => Object.values(inputs)[0]?.focus());
-    } else if (step.type === 'display_and_wait') {
-      const display = step.display_and_wait;
-      if (display.type === 'qr' && window.qrcode) {
-        const qr = window.qrcode(0, 'M'); qr.addData(display.data); qr.make();
-        const canvas = node('canvas', 'u-qr'); const count = qr.getModuleCount(), scale = 6; canvas.width = canvas.height = (count + 8) * scale;
-        const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
-        for (let y=0;y<count;y++) for (let x=0;x<count;x++) if (qr.isDark(y,x)) ctx.fillRect((x+4)*scale,(y+4)*scale,scale,scale); sheet.append(canvas);
-      } else sheet.append(node('p', 'u-preview', display.data || 'Waiting for Telegram approval'));
-      sheet.append(problem, button('I scanned it', () => advance({}), 'primary wide'));
-    } else if (step.type === 'complete') { s.login = null; sheet.append(node('p', '', 'Telegram connected. Your chats appear in Chats and Groups shortly.'), button('Done', () => { closeOverlay(); refresh(); }, 'primary wide')); return; }
-    else sheet.append(node('p', 'error', 'This Telegram login step is not supported yet. Cancel and try again.'));
-    sheet.append(button('Cancel', () => action(async () => {
-      localStorage.removeItem(LOGIN_FLAG);
-      await call('telegram/cancel', {login_id: result.login_id}).catch(() => {});
-      closeOverlay();
-    }), 'secondary wide'));
-  }
   function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { resumeLogin(); markRead(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); } });
+  // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.
+  function wake() {
+    if (!s.ready) return;
+    if (store.seq) feed();
+    else if (!s.person && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
+  }
+  addEventListener('online', wake); addEventListener('pageshow', e => { if (e.persisted) wake(); });
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   // After a reload, come back to the same tab and chat (saved on pagehide).
@@ -1480,7 +1485,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // The Messenger tab's own conversations (invites + unread chats) count on its tab and the desk badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; try { s.drafts = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}'); } catch { s.drafts = {}; } for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { api = options.api; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Saved chats paint at once; the session handshake and the server's copy follow behind.
     paintSaved() {
       if (s.ready || !restore()) return false; $('inbox-tabs').hidden = false;

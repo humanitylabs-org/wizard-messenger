@@ -265,17 +265,14 @@ button { touch-action: manipulation; }
 .u-compose-row[hidden] { display: none; }
 .u-field { flex: 1; min-width: 0; display: flex; }
 .u-field textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; line-height: 20px; padding: 12px 18px; border-radius: 22px; overflow-y: auto; background: var(--raised); border: 0; }
+.u-composer.is-file-drag .u-field textarea { background: color-mix(in srgb, var(--accent) 15%, var(--raised)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .u-attach, .u-mic { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 50%; color: var(--ink-2); }
 .u-mic { background: var(--accent); color: #fff; }
 .u-attach[hidden], .u-mic[hidden], .u-send[hidden] { display: none; }
 .u-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .u-bar[hidden] { display: none; }
 .u-bar .u-quote { flex: 1; min-width: 0; margin: 0; background: var(--surface); }
-.u-attach-strip .u-attach-chip .icon-button { left: auto; right: 2px; width: 26px; min-width: 0; height: 26px; }
-.u-attach-strip { display: flex; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
-.u-attach-chip { flex: 0 0 auto; position: relative; width: 72px; height: 72px; border-radius: 12px; overflow: hidden; }
-.u-attach-chip img { width: 100%; height: 100%; object-fit: cover; }
-.u-attach-chip .icon-button { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; min-height: 0; background: rgba(0,0,0,.6); border-radius: 50%; padding: 4px; }
+.u-attach-strip { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
 .u-recording { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 2px 0 4px; }
 .u-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; animation: u-pulse 1s infinite; }
 .u-rec-time { font-size: 15px; min-width: 40px; }
@@ -298,11 +295,6 @@ button { touch-action: manipulation; }
 .u-act.danger { color: #ff8a8a; }
 .u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: var(--wz-surface-raised, #3a3a40); color: var(--wz-text, var(--ink)); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
 /* photo viewer */
-.u-viewer { background: #000; flex-direction: column; align-items: stretch; justify-content: center; animation: none; }
-.u-viewer header { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; background: linear-gradient(rgba(0,0,0,.6), transparent); z-index: 2; color: #fff; }
-.u-viewer-who { flex: 1; font-weight: 600; }
-.u-viewer img, .u-viewer video { max-width: 100%; max-height: 100%; object-fit: contain; margin: auto; display: block; }
-.u-viewer-cap { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 16px 18px max(16px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.7)); color: #fff; }
 .u-save { display: grid; place-items: center; color: #fff; }
 .u-save svg { width: 22px; height: 22px; }
 
@@ -332,3 +324,13 @@ button { touch-action: manipulation; }
 .u-myqr-sheet > .wide, .u-myqr-body > .wide { margin-top: 8px; }
 .u-myqr-sheet header h2 { flex: 1; }
 .u-myqr-row .icon-button:disabled { opacity: .3; }
+
+/* Account linking uses the existing Settings sheet, status rows and buttons. */
+.u-connector-card { padding: 8px 0 16px; border-bottom: 1px solid var(--line); }
+.u-connector-text > strong { display: block; margin: 6px 0; }
+.u-connectors .u-status { margin: 6px 0; padding: 8px 12px; }
+.u-connector-qr .u-qr { width: min(100%, 240px); margin: 10px auto; padding: 0; border-radius: 0; }
+.u-connectors ol { padding-left: 20px; font-size: 13px; line-height: 1.4; }
+.u-connectors .u-connector-heading h3 { margin-top: 0; }
+
+.u-connectors .helper { color: var(--ink-2); }

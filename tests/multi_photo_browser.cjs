@@ -37,6 +37,9 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
 `]);
   let mediaFetches = 0;
   await ctx.route(/api\/unified\/media\/%24v[12]/, route => {mediaFetches++; return route.fulfill({status: 200, contentType: 'audio/wav', body: wav});});
+  // Serve this checkout's view files so the shared preview container is not touched.
+  if (process.env.STATIC_DIR) await ctx.route(/\/(unified\.js|unified\.css)(\?|$)/, route => { const f = new URL(route.request().url()).pathname.split('/').pop(); return route.fulfill({status: 200, contentType: f.endsWith('.js') ? 'text/javascript' : 'text/css', body: fs.readFileSync(process.env.STATIC_DIR + '/' + f)}); });
+  if (process.env.SHELL_DIR) await ctx.route(/\/wizard-os-home\/core\/(app-client|composer-input|attach-chip)\.(js|css)(\?|$)/, route => { const f = new URL(route.request().url()).pathname.split('/').pop(); return route.fulfill({status: 200, contentType: f.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(process.env.SHELL_DIR + '/web/core/' + f)}); });
   const page = await ctx.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
   diagnosticPage = page;
   page.on('console', m => { if (m.type() === 'error') console.error('browser:', m.text()); });
@@ -60,12 +63,12 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   const input = page.locator('.u-compose-row input[type=file]');
   assert.equal(await input.getAttribute('multiple'), '', 'picker allows several photos');
   await input.setInputFiles(shots.map((bytes, i) => ({name: 'p' + i + '.png', mimeType: 'image/png', buffer: Buffer.from(bytes)})));
-  await page.locator('.u-attach-chip').nth(2).waitFor({timeout: 10000});
-  assert.equal(await page.locator('.u-attach-chip').count(), 3);
-  await page.locator('.u-attach-chip').nth(1).getByRole('button', {name: 'Remove photo'}).click();
-  assert.equal(await page.locator('.u-attach-chip').count(), 2, 'remove one photo keeps the others');
+  await page.locator('.u-attach-strip .ch-att').nth(2).waitFor({timeout: 10000});
+  assert.equal(await page.locator('.u-attach-strip .ch-att').count(), 3);
+  await page.locator('.u-attach-strip .ch-att').nth(1).getByRole('button', {name: 'Remove'}).click();
+  assert.equal(await page.locator('.u-attach-strip .ch-att').count(), 2, 'remove one photo keeps the others');
   await input.setInputFiles([{name: 'p3.png', mimeType: 'image/png', buffer: Buffer.from(shots[1])}]);
-  await page.locator('.u-attach-chip').nth(2).waitFor({timeout: 10000});
+  await page.locator('.u-attach-strip .ch-att').nth(2).waitFor({timeout: 10000});
   await page.locator('.u-composer textarea').fill('three photos');
   await page.screenshot({path: ev + '/multi-photo.png'});
   await page.locator('.u-send').click();
@@ -74,7 +77,7 @@ s.add_message('$v2',a,'You',True,'',1792869960000,msgtype='m.audio',media={'voic
   assert.equal(sends[0].text, 'three photos', 'one caption');
   assert.deepEqual(sends[0].upload_ids, ['u1', 'u2', 'u3']);
   assert.equal(sends[0].upload_id, undefined);
-  assert.equal(await page.locator('.u-attach-chip').count(), 0, 'tray cleared');
+  assert.equal(await page.locator('.u-attach-strip .ch-att').count(), 0, 'tray cleared');
   assert.deepEqual(errors, []);
   fs.writeFileSync(ev + '/receipt.json', JSON.stringify({uploads, sends}, null, 1));
   console.log('pass multi_photo_browser'); await browser.close();

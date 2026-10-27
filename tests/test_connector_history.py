@@ -1,0 +1,72 @@
+"""The real multi-network subclass must preserve base history isolation and voice warming."""
+import tempfile
+import time
+import unittest
+from unittest.mock import Mock
+from connector_inbox import ConnectorInbox
+
+
+class ConnectorHistory(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.inbox = ConnectorInbox(self.tmp.name, Mock())
+        self.store = self.inbox.store
+        self.a = self.store.identity('signal', '!signal:messenger.internal', 'Signal fixture')
+        self.b = self.store.identity('whatsapp', '!wa:messenger.internal', 'WhatsApp fixture')
+
+    def tearDown(self):
+        self.inbox.close()
+        self.store._conn.close()
+        self.tmp.cleanup()
+
+    def event(self, mid, body='needle'):
+        return {'type':'m.room.message','event_id':mid,'sender':'@peer:messenger.internal',
+                'origin_server_ts':int(time.time()*1000),'content':{'msgtype':'m.text','body':body}}
+
+    def test_connector_mutations_cannot_cross_thread(self):
+        self.inbox.ingest(self.a, {}, self.event('$one'))
+        edit = self.event('$edit')
+        edit['content'] = {'m.relates_to':{'rel_type':'m.replace','event_id':'$one'},
+                           'm.new_content':{'msgtype':'m.text','body':'replacement'}}
+        self.inbox.ingest(self.b, {}, edit)
+        self.assertEqual(self.store.messages(self.a['person_id'])[0]['original'],'needle')
+        self.inbox.ingest(self.b, {}, {'type':'m.room.redaction','redacts':'$one'})
+        self.assertEqual(self.store.messages(self.a['person_id'])[0]['original'], 'needle')
+        self.inbox.ingest(self.a, {}, edit)
+        self.assertFalse(any(m['original'] == 'needle' and not m['deleted'] for m in self.store.messages(self.a['person_id'])))
+        self.assertEqual(self.store.messages(self.a['person_id'])[0]['original'], 'replacement')
+        self.inbox.ingest(self.a, {}, {'type':'m.room.redaction','redacts':'$one'})
+        self.assertTrue(self.store.messages(self.a['person_id'])[0]['deleted'])
+        self.inbox.ingest(self.a, {}, self.event('$one'))
+        self.assertFalse(any(m['original'] == 'needle' and not m['deleted'] for m in self.store.messages(self.a['person_id'])))
+
+    def test_connector_reactions_cannot_cross_thread(self):
+        self.inbox.ingest(self.a, {}, self.event('$one'))
+        reaction = {'type':'m.reaction','event_id':'$reaction','sender':'@peer:messenger.internal',
+                    'content':{'m.relates_to':{'rel_type':'m.annotation','event_id':'$one','key':'OK'}}}
+        self.inbox.ingest(self.b, {}, reaction)
+        self.assertEqual(self.store.messages(self.a['person_id'])[0]['reactions'],[])
+        self.inbox.ingest(self.a, {}, reaction)
+        self.assertEqual(len(self.store.messages(self.a['person_id'])[0]['reactions']),1)
+
+    def test_owner_ghost_recovery_uses_shared_history_for_both_networks(self):
+        for identity, ghost in ((self.a, '@signal_abc:messenger.internal'), (self.b, '@whatsapp_15550000000:messenger.internal')):
+            event = self.event('$own-' + identity['id'])
+            event['sender'] = ghost
+            self.inbox.ingest(identity, {}, event)
+            self.assertFalse(self.store.messages(identity['person_id'])[0]['outgoing'])
+            with self.store.db() as db:
+                db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', (identity['address'], '{}'))
+            self.store.claim_own(ghost)
+            self.assertTrue(self.store.messages(identity['person_id'])[0]['outgoing'])
+
+    def test_connector_incoming_voice_uses_shared_warm_queue(self):
+        event = self.event('$voice')
+        event['content'] = {'msgtype':'m.audio','body':'voice.ogg','url':'mxc://fixture/voice',
+                            'info':{'mimetype':'audio/ogg','size':10}}
+        self.inbox.ingest(self.a, {}, event)
+        self.assertEqual(self.inbox.warm_queue.get_nowait(),'$voice')
+
+
+if __name__ == '__main__':
+    unittest.main()

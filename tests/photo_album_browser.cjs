@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
   const person = {id: 'album-fixture', display_name: 'Album preview', identities: [{id: 'album-id', network: 'telegram'}], last: {text: 'Photos', timestamp: 1000}, unread: 0};
   let rows = [], uploads = [], sends = []; const shares = [], reactions = [];
   await ctx.exposeBinding('__albumShare', (_, data) => {shares.push(data); return 'sent';});
-  await ctx.addInitScript(() => {let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) {app = Object.freeze({...v, share: {...v.share, wizard: async data => window.__albumShare({files: data.files.length, text: data.text})}});}});});
+  await ctx.addInitScript(() => {let app; Object.defineProperty(window, 'WizardApp', {configurable: true, get: () => app, set(v) {app = Object.freeze({...v, media: {view: (items, i) => { window.__viewed = {items, i}; return true; }}, share: {...v.share, wizard: async data => window.__albumShare({files: data.files.length, text: data.text})}});}});});
   const ok = result => ({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
   await ctx.route(/api\/unified\//, async route => {
     const path = new URL(route.request().url()).pathname.replace(/^.*api\/unified\//, '');
@@ -31,6 +31,8 @@ const assert = require('node:assert/strict');
     if (/(read|typing)$/.test(path)) return route.fulfill(ok({}));
     return route.continue();
   });
+  // Test this checkout's view files, never the preview container's.
+  if (process.env.STATIC_DIR) await ctx.route(/\/(unified\.js|unified\.css)(\?|$)/, route => { const f = new URL(route.request().url()).pathname.split('/').pop(); return route.fulfill({status: 200, contentType: f.endsWith('.js') ? 'text/javascript' : 'text/css', body: require('fs').readFileSync(process.env.STATIC_DIR + '/' + f)}); });
   const page = await ctx.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
   const ticket = JSON.parse(execFileSync('curl', ['-sf','-X','POST','-H','Authorization: Bearer ' + process.env.MESSENGER_API_TOKEN,'-H','Content-Type: application/json','-d','{"bootstrap":true}','http://127.0.0.1:19252/api/view/ticket'])).result.ticket;
   await page.goto(base + '#ticket=' + ticket); await page.waitForTimeout(1000);
@@ -70,9 +72,10 @@ const assert = require('node:assert/strict');
     await show(n);
     if (n === 3) {
       await page.locator('.u-album .u-media').nth(1).click();
-      await page.locator('.u-viewer').waitFor();
-      assert.match(await page.locator('.u-viewer img').getAttribute('src'), /photo-1/);
-      await page.locator('.u-viewer [aria-label="Close"]').click();
+      // A tap hands the chat's photos to Wizard's media viewer (tests/photo_viewer_browser.cjs drives the real one).
+      const viewed = await page.evaluate(() => window.__viewed);
+      assert.equal(viewed.items.length, 3); assert.equal(viewed.i, 1); assert.match(viewed.items[1].url, /photo-1/);
+      await page.evaluate(() => { window.__viewed = null; });
       const tile = page.locator('.u-album .u-media').nth(2), box = await tile.boundingBox();
       const touch = await ctx.newCDPSession(page);
       await touch.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [{x: box.x+20, y: box.y+20}]});
@@ -81,7 +84,7 @@ const assert = require('node:assert/strict');
       await page.locator('.u-selection strong').waitFor();
       assert.equal(await page.locator('.u-selection strong').innerText(), '1 selected', 'long hold selects the album once');
       assert.equal(await page.locator('.u-row.u-selected').count(), 1);
-      assert.equal(await page.locator('.u-viewer').count(), 0, 'hold does not open viewer');
+      assert.equal(await page.evaluate(() => window.__viewed), null, 'hold does not open viewer');
       await page.screenshot({path: out + '/album-selected-dark.png'});
       await page.getByRole('button', {name: 'Forward to Wizard', exact: true}).click();
       for (let i=0; i<50 && shares.length===0; i++) await page.waitForTimeout(50);

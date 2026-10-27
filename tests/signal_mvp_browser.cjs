@@ -81,11 +81,10 @@ const assert = require('node:assert/strict');
   await page.locator('.u-row.outgoing .u-voice .u-vplay').last().click();
   await page.locator('.u-voice.playing .u-wave i.on').first().waitFor({timeout: 5000}); // playback progresses
   await page.locator('.u-row.outgoing .u-voice').last().screenshot({path: ev + '/10-voice-playing.png'});
-  // Photo viewer + Back closes viewer, then thread
+  // Photos open in Wizard's media viewer (tests/photo_viewer_browser.cjs); here the photo is handed over with its URL.
+  await page.evaluate(() => { window.__viewed = null; const real = window.WizardApp; window.WizardApp = Object.freeze({...real, media: {view: (items, i) => { window.__viewed = {items, i}; return true; }}}); });
   await page.locator('.u-row .u-message:not(.pending) .u-media').last().click();
-  await page.locator('.u-viewer img').waitFor(); await shot('05-viewer');
-  await page.goBack(); await page.locator('.u-viewer').waitFor({state: 'detached'});
-  assert.equal(await page.locator('.u-timeline').count(), 1, 'Back closes viewer only');
+  assert.ok((await page.evaluate(() => window.__viewed))?.items?.length >= 1, 'photo tap opens the media viewer');
   await page.locator('.u-timeline').evaluate(el => el.scrollTop = el.scrollHeight);
   await page.waitForTimeout(300);
   await shot('06-thread-after');
