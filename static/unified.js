@@ -1061,12 +1061,13 @@
       view.recording = r; view.voiceNotice = ''; hold();
       const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
       const failed = e => { voiceNotice(e?.message || 'Could not start recording. Try again.'); };
+      const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
       r.cancel = async () => {
         if (r.phase === 'stopping') return;
         r.cancelled = true; r.phase = 'stopping'; view.paintRecording?.();
         if (!r.session) return; // the pending start cancels its late result before clearing the hold
         try { await r.session.cancel(); close(); }
-        catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error('Could not discard the recording:' + ' ' + e.message + ' Try Discard again.')); }
+        catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error(discardFailure(e))); }
       };
       r.stop = async () => {
         if (r.phase !== 'recording') return;
