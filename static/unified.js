@@ -1032,35 +1032,93 @@
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
     // elsewhere it is the shared browser recorder with the same external-mic guard. Messenger never opens the mic itself.
-    async function record() {
-      if (!window.WizardApp?.capture) return error(new Error('Voice notes need Wizard. Open Messenger from Wizard and try again.'));
-      let session;
-      try { session = await WizardApp.capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576}); }
-      catch (e) { return error(new Error(e?.code === 'busy' ? 'The microphone is busy with another Wizard recording.' : e?.message || 'Could not start recording.')); }
-      const levels = [], started = Date.now(); let done = false;
-      const panel = node('div', 'u-recording'); const clock = node('span', 'u-rec-time', '0:00'); const live = node('div', 'u-wave live');
-      const close = () => { done = true; clearInterval(tick); offLevel?.(); panel.remove(); row.hidden = false; view.recording = null; hold(); };
-      let last = 0; const offLevel = session.onLevel?.(v => { last = v; });
-      const tick = setInterval(() => {
-        const level = Math.round(Math.min(1, last * 1.6) * 1024); levels.push(level); clock.textContent = fmtDur(Date.now() - started);
-        const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); while (live.children.length > 40) live.firstChild.remove();
-      }, 100);
-      const cancel = async () => { if (done) return; close(); try { await session.cancel(); } catch (e) { error(new Error('Could not discard the recording: ' + (e.message || e))); } };
-      const finish = async () => {
-        if (done) return; close();
-        let take; try { take = await session.stop(); } catch (e) { return error(new Error('Recording kept on this device; try again. ' + (e.message || ''))); }
-        const duration = take.durationMs || Date.now() - started;
-        if (duration < 600 || !take.blob?.size) { toast('Hold on a little longer to record'); WizardApp.capture.ack(take.id).catch(() => {}); return; }
-        const step = Math.max(1, levels.length / 64); const waveform = Array.from({length: Math.min(64, levels.length)}, (_, i) => levels[Math.floor(i * step)]);
-        const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
-        const reply = view.reply; view.reply = null; paintBar();
-        queueSend(id, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply, identity_id: channel.value});
+    // The recorder is state, not a promise's old DOM closure: openPerson builds this form twice.
+    const notice = node('p', 'u-voice-notice'); notice.setAttribute('role', 'alert');
+    let panel;
+    const paintRecording = () => {
+      panel?.remove(); panel = null;
+      notice.textContent = view.voiceNotice || ''; notice.hidden = !notice.textContent;
+      const r = view.recording; row.hidden = !!r; mic.disabled = !!r;
+      if (!r) return;
+      panel = node('div', 'u-recording'); panel.setAttribute('role', 'status');
+      const clock = node('span', 'u-rec-time', r.phase === 'starting' ? 'Starting…' : r.phase === 'stopping' ? 'Stopping…' : fmtDur(Date.now() - r.started));
+      const live = node('div', 'u-wave live');
+      for (const level of r.levels.slice(-40)) { const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); }
+      const cancel = iconButton('trash', 'Discard recording', () => r.cancel(), 'u-rec-cancel'); cancel.title = 'Cancel recording'; cancel.disabled = r.phase === 'stopping';
+      panel.append(cancel, node('span', 'u-rec-dot'), clock, live);
+      if (r.phase === 'recording') panel.append(iconButton('send', 'Send voice message', () => r.stop(), 'u-send'));
+      form.append(panel);
+    };
+    const voiceNotice = message => { view.voiceNotice = message; view.paintRecording?.(); };
+    async function record(recoverOnly = false) {
+      if (view.recording) return;
+      const capture = window.WizardApp?.capture;
+      if (!capture) { if (!recoverOnly) voiceNotice('Voice recording is unavailable. Reload Messenger and try again.'); return; }
+      let own;
+      try { own = capture.current?.(); } catch (e) { if (!recoverOnly) voiceNotice(e.message); return; }
+      if (recoverOnly && !own && !capture.attach) return;
+      const r = {phase: 'starting', levels: [], started: Date.now(), cancelled: false};
+      view.recording = r; view.voiceNotice = ''; hold();
+      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
+      const failed = e => { voiceNotice(e?.message || 'Could not start recording. Try again.'); };
+      const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
+      r.cancel = async () => {
+        if (r.phase === 'stopping') return;
+        r.cancelled = true; r.phase = 'stopping'; view.paintRecording?.();
+        if (!r.session) return; // the pending start cancels its late result before clearing the hold
+        try { await r.session.cancel(); close(); }
+        catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error(discardFailure(e))); }
       };
-      panel.append(iconButton('trash', 'Cancel recording', cancel, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', finish, 'u-send'));
-      row.hidden = true; form.append(panel); view.recording = {stop: finish, cancel}; hold();
+      r.stop = async () => {
+        if (r.phase !== 'recording') return;
+        r.phase = 'stopping'; view.paintRecording?.();
+        let take;
+        try { take = await r.session.stop(); }
+        catch (e) { r.phase = 'recording'; failed(new Error('Recording kept on this device. Try Send or Discard again. ' + e.message)); return; }
+        close();
+        const duration = take.durationMs || Date.now() - r.started;
+        if (duration < 600 || !take.blob?.size) { voiceNotice('Hold on a little longer to record'); capture.ack(take.id).catch(() => {}); return; }
+        const step = Math.max(1, r.levels.length / 64), waveform = Array.from({length: Math.min(64, r.levels.length)}, (_, i) => r.levels[Math.floor(i * step)]);
+        const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
+        queueSend(r.person, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply: r.reply, identity_id: r.identity});
+      };
+      view.paintRecording?.();
+      r.deadline = setTimeout(() => { voiceNotice('The microphone took too long to start. Cancelling the recording…'); r.cancel(); }, 8000);
+      try {
+        const attached = capture.attach ? await capture.attach() : null;
+        own = capture.current?.() || own;
+        if (!attached && recoverOnly && !own) { close(); return; }
+        if (r.cancelled && !attached) { close(); return; }
+        r.person = own?.meta?.person || id; r.identity = own?.meta?.identity || channel.value; r.reply = view.reply;
+        r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
+        if (!r.session) throw new Error('That recording has already stopped. Tap the microphone to start again.');
+        clearTimeout(r.deadline);
+        if (r.cancelled) { await r.session.cancel(); close(); return; }
+        r.phase = 'recording';
+        const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
+        let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
+        r.tick = setInterval(() => {
+          if (r.phase !== 'recording') return;
+          const level = Math.round(Math.min(1, last * 1.6) * 1024); r.levels.push(level);
+          if (r.levels.length > 9600) r.levels.splice(0, 3200);
+          view.paintRecordingTick?.(r, level);
+        }, 100);
+        view.paintRecording?.();
+      } catch (e) {
+        // Listener/bridge setup can throw after start succeeded: keep custody but stop the physical mic.
+        if (r.session) { try { await r.session.stop(); } catch (_) { r.phase = 'recording'; failed(e); return; } }
+        close(); failed(e);
+      }
     }
-    Object.assign(view, {draft, grow, paintBar});
-    form.append(bar, channel, row); grow(); paintBar();
+    const paintRecordingTick = (r, level) => {
+      if (!panel?.isConnected) return;
+      panel.querySelector('.u-rec-time').textContent = fmtDur(Date.now() - r.started);
+      const wave = panel.querySelector('.u-wave'), i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; wave.append(i);
+      while (wave.children.length > 40) wave.firstChild.remove();
+    };
+    Object.assign(view, {draft, grow, paintBar, paintRecording, paintRecordingTick});
+    form.append(bar, channel, row, notice); grow(); paintBar(); paintRecording();
+    queueMicrotask(() => { if (form.isConnected && !view.recording) record(true); });
     return form;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
