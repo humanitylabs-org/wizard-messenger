@@ -21,6 +21,7 @@ async function setup(mode='pending'){
  },mode); await p.evaluate(fixture);
 }
 const visible=()=>p.locator('.u-recording').isVisible();
+if(process.env.PROVE_OLD_REBUILD){await setup();await p.getByRole('button',{name:'Record voice message'}).click();await p.evaluate(()=>{rebuild();resolveStart();});await p.waitForFunction(()=>active);await p.waitForTimeout(100);assert.equal(await p.locator('.u-recording').count(),0);assert.equal(await p.evaluate(()=>active),true);console.log('CONFIRMED old composer rebuild: physical take active, recording panel detached and invisible');return;}
 await setup();await p.getByRole('button',{name:'Record voice message'}).click();
 assert.ok(await visible(),'James: recording panel visible immediately while start is pending');
 assert.match(await p.locator('.u-recording').innerText(),/Starting/);
