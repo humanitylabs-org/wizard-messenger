@@ -334,3 +334,10 @@ button { touch-action: manipulation; }
 .u-connectors .u-connector-heading h3 { margin-top: 0; }
 
 .u-connectors .helper { color: var(--ink-2); }
+/* One-phone linking (James, 28 Oct 2026): same-phone routes first, big copyable code. */
+.u-connectors-title { margin: 4px 0 2px; }
+a.u-connector-open { display: flex; align-items: center; justify-content: center; border-radius: 22px; text-decoration: none; }
+.u-connector-code { font: 600 30px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-align: center; margin: 14px 0 4px; padding: 14px 8px; border-radius: 14px; background: var(--raised-2); user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
+.u-connector-copied { text-align: center; min-height: 18px; margin: 0; }
+.u-connector-other { margin-top: 14px; }
+.u-connector-other summary { min-height: 44px; display: flex; align-items: center; color: var(--ink-2); cursor: pointer; }
