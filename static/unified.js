@@ -1044,7 +1044,7 @@
       const clock = node('span', 'u-rec-time', r.phase === 'starting' ? 'Starting…' : r.phase === 'stopping' ? 'Stopping…' : fmtDur(Date.now() - r.started));
       const live = node('div', 'u-wave live');
       for (const level of r.levels.slice(-40)) { const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); }
-      const cancel = iconButton('trash', 'Discard recording', () => r.cancel(), 'u-rec-cancel'); cancel.disabled = r.phase === 'stopping';
+      const cancel = iconButton('trash', 'Discard recording', () => r.cancel(), 'u-rec-cancel'); cancel.title = 'Cancel recording'; cancel.disabled = r.phase === 'stopping';
       panel.append(cancel, node('span', 'u-rec-dot'), clock, live);
       if (r.phase === 'recording') panel.append(iconButton('send', 'Send voice message', () => r.stop(), 'u-send'));
       form.append(panel);
@@ -1066,7 +1066,7 @@
         r.cancelled = true; r.phase = 'stopping'; view.paintRecording?.();
         if (!r.session) return; // the pending start cancels its late result before clearing the hold
         try { await r.session.cancel(); close(); }
-        catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error('Could not discard recording. Try Discard again. ' + e.message)); }
+        catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error('Could not discard the recording:' + ' ' + e.message + ' Try Discard again.')); }
       };
       r.stop = async () => {
         if (r.phase !== 'recording') return;
