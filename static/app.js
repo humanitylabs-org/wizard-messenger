@@ -361,7 +361,7 @@
   function button(text, className, action) {
     const el = element('button', className, text); el.type = 'button'; el.addEventListener('click', action); return el;
   }
-  function timeLabel(value) { const ms = stamp(value); return ms ? new Date(ms).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : ''; }
+  function timeLabel(value) { const ms = stamp(value); return ms ? new Date(ms).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : ''; }
   function row(dm, invite = false) {
     const name = peerName(dm), messages = cacheFor(dm.group_id).messages, last = messages.at(-1), record = readRecord(dm.group_id);
     const unread = !invite && last?.direction === 'received' && record.seen !== last.message_id;
@@ -407,6 +407,7 @@
     if (!state.group || state.mode !== 'ready') return;
     const dm = dmById(state.group); if (!dm) return;
     $('chat-name').textContent = peerName(dm);
+    paintChatFace(peerName(dm));
     const pending = isIncoming(dm), sent = readRecord(state.group).invite_sent;
     $('chat-subline').textContent = state.reconnecting ? 'Reconnecting…' : pending ? 'Invite pending' : sent ? 'Invite sent' : '';
     $('chat-subline').classList.toggle('reconnecting', state.reconnecting);
@@ -418,6 +419,13 @@
     $('accept-invite').classList.toggle('pending', operation?.action === 'accept'); $('decline-invite').classList.toggle('pending', operation?.action === 'decline');
     $('copy-peer').disabled = !publicAddress(peerOf(dm, state.identity));
     $('load-older').hidden = pending || !cacheFor(state.group).cursor;
+  }
+  // Header face for a private chat: the person's initial with the Private (shield) badge, like bridged threads.
+  function paintChatFace(name) {
+    const face = $('chat-avatar'), initial = (name || '?').trim().slice(0, 1).toUpperCase() || '?';
+    if (face.dataset.name === name) return; face.dataset.name = name; face.replaceChildren();
+    face.append(element('span', 'avatar small', initial));
+    const badge = window.MessengerConnectors?.badge?.('private', 'u-net'); if (badge) face.append(badge);
   }
   function updateComposer() {
     const dm = dmById(state.group), disabled = state.mode !== 'ready' || !dm || isIncoming(dm);
@@ -448,6 +456,10 @@
     items.sort((a,b) => stamp(a.message.created_at) - stamp(b.message.created_at) || a.key.localeCompare(b.key));
     const lastOutgoing = items.findLast(x => x.message.direction === 'sent');
     const live = new Set(); let lastDay = '';
+    // Consecutive messages from the same side within five minutes form one run (like the bridged thread view).
+    const dayOf = item => { const ms = stamp(item?.message.created_at); return ms ? new Date(ms).toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'}) : ''; };
+    const joins = (a, b) => !!a && !!b && a.message.direction === b.message.direction && dayOf(a) === dayOf(b) && Math.abs(stamp(b.message.created_at) - stamp(a.message.created_at)) < 3e5;
+    items.forEach((item, i) => { const jp = joins(items[i - 1], item), jn = joins(item, items[i + 1]); item.pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single'; });
     for (const item of items) {
       const ms = stamp(item.message.created_at), day = ms ? new Date(ms).toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'}) : '';
       if (day && day !== lastDay) {
@@ -457,7 +469,8 @@
       let node = state.nodes.get(item.key);
       if (!node) { node = element('article', 'message'); node.append(element('div', 'bubble'), element('time', 'message-time'), element('div', 'message-status')); state.nodes.set(item.key, node); }
       live.add(item.key); const outgoing = item.message.direction === 'sent', delivery = item.attempt?.state;
-      node.className = 'message' + (outgoing ? ' sent' : '') + (delivery === 'failed' ? ' not-sent' : '');
+      node.className = 'message' + (outgoing ? ' sent' : ' received') + ' pos-' + item.pos + (delivery === 'failed' ? ' not-sent' : '');
+      node.dataset.direction = outgoing ? 'out' : 'in';
       if (!node.dataset.selectionBound && item.message.message_id) {
         node.dataset.selectionBound = '1'; const messageId = item.message.message_id;
         window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => state.selection, id: messageId, menu: (opts = {}) => {
