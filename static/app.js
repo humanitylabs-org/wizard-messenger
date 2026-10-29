@@ -495,7 +495,7 @@
       }
       node.dataset.messageId = item.message.message_id || ''; node.dataset.requestId = item.attempt?.request_id || '';
       paintBubble(node.children[0], item.message, outgoing);
-      node.children[1].textContent = timeLabel(item.message.created_at) + (item.message.edited && !item.message.deleted ? ' · edited' : ''); if (ms) node.children[1].dateTime = new Date(ms).toISOString();
+      node.children[1].textContent = timeLabel(item.message.created_at); if (ms) node.children[1].dateTime = new Date(ms).toISOString();
       paintReactions(node, group, item.message);
       const status = node.children[2]; status.replaceChildren(); status.className = 'message-status';
       if (outgoing && delivery && (item === lastOutgoing || ['checking', 'failed', 'queued', 'sending'].includes(delivery))) {
@@ -526,7 +526,8 @@
   function paintBubble(bubble, m, outgoing) {
     const quote = m.reply && !m.deleted ? (m.reply.deleted ? 'Deleted message' : m.reply.text || (m.reply.missing ? 'Earlier message' : '')) : null;
     const text = m.deleted ? (outgoing ? 'You deleted this message' : 'This message was deleted') : m.text;
-    const sig = JSON.stringify([quote, m.reply?.outgoing, text, !!m.deleted]);
+    const edited = !!m.edited && !m.deleted;
+    const sig = JSON.stringify([quote, m.reply?.outgoing, text, !!m.deleted, edited]);
     if (bubble.dataset.sig === sig) return; bubble.dataset.sig = sig; bubble.replaceChildren();
     bubble.classList.toggle('deleted', !!m.deleted);
     if (quote !== null) {
@@ -535,6 +536,7 @@
       bubble.append(q);
     }
     bubble.append(element('span', 'bubble-text', text || ''));
+    if (edited) bubble.append(element('span', 'bubble-edited', 'edited'));
   }
   function paintReactions(node, group, m) {
     let strip = node.reactionStrip;
