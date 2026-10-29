@@ -334,3 +334,81 @@ button { touch-action: manipulation; }
 .u-connectors .u-connector-heading h3 { margin-top: 0; }
 
 .u-connectors .helper { color: var(--ink-2); }
+/* ---------- Clarity pass: sent vs received, real platform icons, platform filters ---------- */
+:root { --bubble-in-ink: var(--ink); --bubble-out-ink: var(--on-accent); --badge-ring: var(--bg); --chip-on: var(--ink); --chip-on-ink: var(--bg); }
+/* Platform badges: the brand glyph in ink on a raised disc, readable in every skin. */
+.net-badge { display: inline-grid; place-items: center; flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--raised-2); color: var(--ink); overflow: hidden; }
+.net-badge.text { font-weight: 700; font-size: .5625rem; line-height: 1; letter-spacing: -.03em; }
+.brand-icon { width: 100%; height: 100%; fill: currentColor; stroke: none; }
+.net-badge .brand-icon { width: 68%; height: 68%; }
+.net-badge[data-network=private] { background: var(--accent); }
+.net-badge[data-network=private] { color: var(--on-accent); }
+.u-av-wrap { position: relative; display: block; flex: 0 0 48px; width: 48px; height: 48px; }
+.u-av-wrap.small { flex: 0 0 36px; width: 36px; height: 36px; }
+.u-av-wrap .u-net { position: absolute; right: -3px; bottom: -3px; width: 20px; height: 20px; box-shadow: 0 0 0 2.5px var(--badge-ring); font-size: .5rem; }
+.u-av-wrap.small .u-net { width: 16px; height: 16px; right: -3px; bottom: -3px; box-shadow: 0 0 0 2px var(--badge-ring); }
+/* Filter chips: one scrollable row; platforms carry their icon; Direct/Groups/labels are quieter. */
+.u-chips { display: flex; align-items: center; gap: 6px; padding: 0 12px 10px; overflow-x: auto; scroll-padding-inline: 12px; -webkit-overflow-scrolling: touch; mask-image: linear-gradient(90deg, black calc(100% - 18px), transparent); }
+.u-chips::-webkit-scrollbar { display: none; }
+.u-chip { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 36px; padding: 0 14px; border-radius: 18px; background: var(--raised); color: var(--ink-2); font-size: .875rem; font-weight: 500; }
+.u-chip.net { padding-left: 6px; }
+.u-chip.net::before { content: none; }
+.u-chip .u-chip-icon { width: 24px; height: 24px; box-shadow: none; }
+.u-chip[aria-pressed=true] { background: var(--chip-on); color: var(--chip-on-ink); }
+.u-chip-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: .6875rem; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.u-chip-count[hidden] { display: none; }
+.u-chip.sub { min-height: 32px; padding: 0 12px; background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); font-size: .8125rem; }
+.u-chip.sub[aria-pressed=true] { background: var(--chip-on); color: var(--chip-on-ink); box-shadow: none; }
+.u-chip-divider { flex: 0 0 1px; align-self: stretch; margin: 6px 2px; background: var(--line-2); }
+/* Inbox preview: "You:" in muted ink so own last messages are obvious at a glance. */
+.u-snippet-who { color: var(--ink-3); font-weight: 500; }
+.u-person.unread .u-snippet-who { color: var(--ink-2); }
+/* Thread: received = left, neutral; sent = right, accent. Runs group tightly; runs from different sides breathe. */
+.u-timeline { padding: 0 12px 12px; }
+.u-row { margin-top: 12px; }
+.u-row.pos-mid, .u-row.pos-last { margin-top: 2px; }
+.u-row.incoming { align-items: flex-start; }
+.u-row.outgoing { align-items: flex-end; }
+.u-message { max-width: min(78%, 520px); padding: 7px 12px 6px; }
+.u-row.incoming .u-message { background: var(--bubble-in); color: var(--bubble-in-ink); border-bottom-left-radius: 18px; }
+.u-row.outgoing .u-message { background: var(--bubble-out); color: var(--bubble-out-ink); }
+.u-row.incoming.pos-single .u-message, .u-row.incoming.pos-last .u-message { border-bottom-left-radius: 6px; }
+.u-row.outgoing.pos-single .u-message, .u-row.outgoing.pos-last .u-message { border-bottom-right-radius: 6px; }
+.u-row.outgoing .u-message footer { color: color-mix(in srgb, var(--bubble-out-ink) 72%, transparent); }
+.u-row.incoming .u-message footer { color: var(--ink-3); }
+/* Group chats: a small sender face at the end of each incoming run, names above the run. */
+.u-row.in-group { padding-left: 34px; position: relative; }
+.u-row-av { position: absolute; left: 0; bottom: 0; }
+.u-avatar.tiny { flex-basis: 26px; width: 26px; height: 26px; font-size: .6875rem; }
+.u-row.in-group .u-reactions { margin-left: 0; }
+.u-message .u-sender { font-size: .8125rem; font-weight: 600; margin: 0 0 2px; }
+.u-quote.mine strong { opacity: .9; }
+.u-via { display: inline-flex; }
+.u-via .u-via-icon { width: 14px; height: 14px; }
+.u-day { font-size: .75rem; font-weight: 500; letter-spacing: .01em; color: var(--ink-2); background: color-mix(in srgb, var(--surface) 94%, transparent); margin: 16px 0 6px; padding: 4px 12px; }
+/* Thread header: avatar + platform badge, name, platform/subtitle */
+.u-who .u-av-wrap.small .u-net { right: -4px; bottom: -4px; }
+/* Private (native) thread: same visual language as bridged threads */
+.chat-avatar { display: block; }
+.chat-avatar .avatar.small { width: 36px; height: 36px; flex-basis: 36px; font-size: .875rem; }
+.chat-header { gap: 10px; }
+.messages { gap: 0; }
+.message { margin-top: 12px; max-width: 100%; }
+.message.pos-mid, .message.pos-last { margin-top: 2px; }
+.message .bubble { max-width: min(78%, 520px); border-radius: 18px; }
+.message.received .bubble { background: var(--bubble-in); color: var(--bubble-in-ink); }
+.message.sent .bubble { background: var(--bubble-out); color: var(--bubble-out-ink); }
+.message.received.pos-first .bubble, .message.received.pos-mid .bubble { border-bottom-left-radius: 4px; }
+.message.received.pos-mid .bubble, .message.received.pos-last .bubble { border-top-left-radius: 4px; }
+.message.sent.pos-first .bubble, .message.sent.pos-mid .bubble { border-bottom-right-radius: 4px; }
+.message.sent.pos-mid .bubble, .message.sent.pos-last .bubble { border-top-right-radius: 4px; }
+.message.received.pos-single .bubble, .message.received.pos-last .bubble { border-bottom-left-radius: 6px; }
+.message.sent.pos-single .bubble, .message.sent.pos-last .bubble { border-bottom-right-radius: 6px; }
+.message.pos-first .message-time, .message.pos-mid .message-time { display: none; }
+.message-status:empty { display: none; }
+.date-separator { font-weight: 500; margin: 16px 0 6px; }
+
+/* Accounts sheet: each network card leads with its platform badge. */
+.u-connector-top { display: flex; align-items: center; gap: 12px; }
+.u-connector-top .u-connector-text { flex: 1; min-width: 0; }
+.net-badge.u-connector-mark { width: 32px; height: 32px; box-shadow: 0 0 0 1px var(--line-2); }
