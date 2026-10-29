@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.7}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.12.0}
     pull_policy: never
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
@@ -16,7 +16,7 @@ services:
       - ${APP_DATA_DIR}/data:/data
     restart: "no"
   messenger:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.7}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.12.0}
     pull_policy: never
     read_only: true
     cap_drop: [ALL]
@@ -35,6 +35,8 @@ services:
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
       UNIFIED_ENABLED: "1"
+      CONNECTORS_ENABLED: "1"
+      MESSENGER_CONNECTOR_SENDER_MODE: local-owner
       MATRIX_URL: http://matrix:8008
       TELEGRAM_BRIDGE_URL: http://telegram:29317
       TRANSLATION_URL: http://translation:8766
@@ -44,6 +46,7 @@ services:
     depends_on:
       unified-init: {condition: service_completed_successfully}
       matrix: {condition: service_healthy}
+      connector-init: {condition: service_completed_successfully}
     networks: [matrix-lane, model-lane, relay-egress]
     # Loopback-only host port for the Wizard gateway, as in 0.1.x.
     ports:
@@ -66,6 +69,7 @@ services:
       - ${APP_DATA_DIR}/data/matrix:/data
     depends_on:
       unified-init: {condition: service_completed_successfully}
+      connector-init: {condition: service_completed_successfully}
     networks: [matrix-lane]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=4)"]
@@ -74,8 +78,9 @@ services:
       retries: 10
     restart: unless-stopped
   telegram:
-    # Official bridgev2 Go rewrite v0.2610.0, not the legacy Python bridge.
-    image: dock.mau.dev/mautrix/telegram@sha256:ed3f3b39289fae425a875311d8875729271c24f88ba03209bd1bfbaf31e6c78f
+    # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
+    image: ${TELEGRAM_IMAGE:-wizard-telegram-bridge:0.2610.0-albums1}
+    pull_policy: never
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -99,7 +104,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.11.7}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.12.0}
     pull_policy: never
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
@@ -122,10 +127,108 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+  connector-init:
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.12.0}
+    pull_policy: never
+    user: 0:0
+    entrypoint:
+    - python3
+    - /app/connector_setup.py
+    network_mode: none
+    read_only: true
+    cap_drop:
+    - ALL
+    cap_add:
+    - CHOWN
+    - DAC_OVERRIDE
+    - FOWNER
+    security_opt:
+    - no-new-privileges:true
+    environment:
+      MESSENGER_CONNECTORS: ${MESSENGER_CONNECTORS:-}
+    volumes:
+    - ${APP_DATA_DIR}/data:/data
+    depends_on:
+      unified-init:
+        condition: service_completed_successfully
+    restart: 'no'
+  whatsapp:
+    image: dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-whatsapp -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/whatsapp:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29318/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  signal:
+    image: dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-signal -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/signal:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29328/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 networks:
   matrix-lane: {internal: true}
   model-lane: {internal: true}
   telegram-egress: {}
+  connector-egress: {}
   model-egress: {}
   # Existing Marmot relay traffic is preserved. Matrix has no egress network.
   relay-egress: {}

@@ -43,6 +43,16 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .tone-4 { background: #a35a2a; } .tone-5 { background: #3f7d4e; } .tone-6 { background: #2f6db0; } .tone-7 { background: #8a4f9e; }
 .tone-8 { background: #23866a; } .tone-9 { background: #b0543f; } .tone-10 { background: #5a5fa8; } .tone-11 { background: #7f6a24; }
 
+/* Album tiles share the existing bubble, viewer, and selection surface. */
+.u-message.has-album { width: 304px; max-width: 100%; padding: 3px 3px 6px; }
+.u-album { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px; overflow: hidden; border-radius: 15px 15px 5px 5px; background: var(--wz-surface, var(--surface)); }
+.u-album .u-media { width: 100%; height: 132px; min-width: 0; margin: 0; padding: 0; border-radius: 0; overflow: hidden; aspect-ratio: auto; }
+.u-album .u-media img { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; object-fit: cover; border-radius: 0; }
+.u-album.n-3 .u-media:first-child { grid-row: span 2; height: 267px; }
+.u-album.n-5 .u-media:last-child, .u-album.n-7 .u-media:last-child, .u-album.n-9 .u-media:last-child { grid-column: span 2; }
+.u-message.has-album > .u-text { padding: 7px 8px 0; }
+.u-message.has-album > footer { padding: 0 8px; }
+.u-message.has-album > .u-sender { margin: 4px 8px; }
 /* Chat list */
 .u-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 96px; }
 .u-person { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 10px 18px; text-align: left; border-radius: 0; color: var(--ink); }
@@ -234,6 +244,19 @@ button { touch-action: manipulation; }
 .u-dur { font-size: 12px; opacity: .8; min-width: 32px; }
 .u-speed { display: none; flex: 0 0 auto; white-space: nowrap; min-width: 0; min-height: 0; height: 22px; padding: 0 7px; border-radius: 11px; background: rgba(255,255,255,.18); color: inherit; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .u-voice.playing .u-speed { display: inline-block; }
+/* Transcript and selection extend existing message bubbles, not a second message renderer. */
+.u-voice-note { min-width: 0; max-width: 100%; }
+.u-message .u-transcript { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: inherit; -webkit-user-select: inherit; color: inherit; }
+.u-transcribe { display: block; margin-top: 2px; padding: 4px 0; min-height: 32px; min-width: 0; font-size: 13px; color: var(--wz-accent, var(--accent)); }
+.outgoing .u-transcribe { color: inherit; text-decoration: underline; }
+.u-selection { display: flex; align-items: center; flex: 0 0 auto; gap: 8px; padding: 8px 10px; background: var(--wz-chrome, var(--surface)); color: var(--wz-text, var(--ink)); border-bottom: 1px solid var(--wz-border, var(--line)); }
+.u-selection strong { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; }
+.u-selection button { min-height: 44px; padding: 0 10px; font-size: 13px; white-space: nowrap; }
+.u-selection .primary { background: var(--wz-accent, var(--accent)); color: var(--wz-on-accent, var(--on-accent)); }
+.u-selecting { position: relative; padding-left: 28px; }
+.u-selection-check { position: absolute; left: 3px; top: 12px; font-size: 19px; color: var(--wz-accent, var(--accent)); pointer-events: none; }
+.u-selected > .u-message, .u-selected > .bubble { outline: 2px solid var(--wz-accent, var(--accent)); outline-offset: 2px; }
+.u-selecting .u-message, .u-selecting .bubble { cursor: pointer; }
 /* reactions */
 .u-reactions { display: flex; gap: 4px; margin: -6px 8px 0; position: relative; z-index: 1; flex-wrap: wrap; }
 .u-react { min-height: 26px; min-width: 0; padding: 0 8px; border-radius: 13px; font-size: 14px; background: var(--raised-2); border: 2px solid var(--bg); color: var(--ink); }
@@ -247,15 +270,14 @@ button { touch-action: manipulation; }
 .u-compose-row[hidden] { display: none; }
 .u-field { flex: 1; min-width: 0; display: flex; }
 .u-field textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; line-height: 20px; padding: 12px 18px; border-radius: 22px; overflow-y: auto; background: var(--raised); border: 0; }
+.u-composer.is-file-drag .u-field textarea { background: color-mix(in srgb, var(--accent) 15%, var(--raised)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .u-attach, .u-mic { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 50%; color: var(--ink-2); }
 .u-mic { background: var(--accent); color: #fff; }
 .u-attach[hidden], .u-mic[hidden], .u-send[hidden] { display: none; }
 .u-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .u-bar[hidden] { display: none; }
 .u-bar .u-quote { flex: 1; min-width: 0; margin: 0; background: var(--surface); }
-.u-attach-chip { position: relative; width: 72px; height: 72px; border-radius: 12px; overflow: hidden; }
-.u-attach-chip img { width: 100%; height: 100%; object-fit: cover; }
-.u-attach-chip .icon-button { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; min-height: 0; background: rgba(0,0,0,.6); border-radius: 50%; padding: 4px; }
+.u-attach-strip { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
 .u-recording { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 2px 0 4px; }
 .u-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; animation: u-pulse 1s infinite; }
 .u-rec-time { font-size: 15px; min-width: 40px; }
@@ -269,19 +291,15 @@ button { touch-action: manipulation; }
 .u-qr-btn { width: 44px; height: 44px; min-height: 0; min-width: 0; padding: 0; border-radius: 50%; font-size: 24px; background: none; }
 .u-qr-btn.mine { background: var(--accent-soft); }
 .u-qr-btn.more { font-size: 20px; color: var(--ink-2); background: var(--raised-2); }
-.u-grid { display: grid; grid-template-columns: repeat(8, 44px); gap: 2px; padding: 8px; border-radius: 20px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-width: calc(100vw - 24px); overflow: auto; }
+.u-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 44px)); gap: 2px; padding: 8px; border-radius: 20px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); box-sizing: border-box; width: min(382px, calc(100vw - 24px)); overflow-y: auto; overflow-x: hidden; }
+.u-grid .u-qr-btn { width: 100%; min-width: 0; }
 .u-actions { display: flex; flex-direction: column; min-width: 220px; padding: 6px 0; border-radius: 16px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); align-self: flex-start; }
 .u-menu.right .u-quick, .u-menu.right .u-actions { align-self: flex-end; }
 .u-act { display: flex; align-items: center; gap: 14px; min-height: 46px; padding: 0 18px; border-radius: 0; justify-content: flex-start; background: none; color: var(--ink); font-size: 15px; }
 .u-act svg { width: 20px; height: 20px; }
 .u-act.danger { color: #ff8a8a; }
-.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: #3a3a40; color: var(--ink); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: var(--wz-surface-raised, #3a3a40); color: var(--wz-text, var(--ink)); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
 /* photo viewer */
-.u-viewer { background: #000; flex-direction: column; align-items: stretch; justify-content: center; animation: none; }
-.u-viewer header { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; background: linear-gradient(rgba(0,0,0,.6), transparent); z-index: 2; color: #fff; }
-.u-viewer-who { flex: 1; font-weight: 600; }
-.u-viewer img, .u-viewer video { max-width: 100%; max-height: 100%; object-fit: contain; margin: auto; display: block; }
-.u-viewer-cap { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 16px 18px max(16px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.7)); color: #fff; }
 .u-save { display: grid; place-items: center; color: #fff; }
 .u-save svg { width: 22px; height: 22px; }
 
@@ -474,3 +492,33 @@ html[data-color-scheme=light] .u-fab, html[data-color-scheme=light] .u-down { bo
 html[data-color-scheme=light] .net-badge:not([data-network=private]) { box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
 html[data-color-scheme=light] .u-av-wrap .u-net { box-shadow: 0 0 0 2.5px var(--badge-ring); }
 html[data-color-scheme=light] .c-mark.has-icon { box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+
+/* Telegram message gestures: the initial hold is message selection, the next is native text. */
+.u-message, .message .bubble { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.u-row.u-selecting .u-message, .message.u-selecting .bubble { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }
+/* My QR codes */
+.u-myqr-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
+.u-myqr-chips { padding: 2px 0 8px; }
+.u-myqr-card { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 0 12px; touch-action: pan-y; }
+.u-sheet .u-myqr-name { margin: 6px 0 0; font-size: 17px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.u-myqr { width: min(100%, 300px, max(160px, calc(92dvh - 290px))); margin: 6px auto 10px; padding: 0; border-radius: 16px; image-rendering: pixelated; }
+.u-myqr-value { margin: 0 0 10px; color: var(--ink-2); font-size: 15px; word-break: break-all; }
+.u-myqr-actions { display: flex; gap: 10px; justify-content: center; }
+.u-myqr-actions button { min-width: 120px; }
+.u-myqr-edit { display: flex; flex-direction: column; gap: 14px; margin: 8px 0 14px; }
+.u-myqr-row { display: grid; grid-template-columns: 1fr 44px 44px 44px; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.u-myqr-row input { grid-column: 1 / -1; }
+.u-myqr-remove { align-self: center; }
+.u-myqr-sheet > .wide, .u-myqr-body > .wide { margin-top: 8px; }
+.u-myqr-sheet header h2 { flex: 1; }
+.u-myqr-row .icon-button:disabled { opacity: .3; }
+
+/* Account linking uses the existing Settings sheet, status rows and buttons. */
+.u-connector-card { padding: 8px 0 16px; border-bottom: 1px solid var(--line); }
+.u-connector-text > strong { display: block; margin: 6px 0; }
+.u-connectors .u-status { margin: 6px 0; padding: 8px 12px; }
+.u-connector-qr .u-qr { width: min(100%, 240px); margin: 10px auto; padding: 0; border-radius: 0; }
+.u-connectors ol { padding-left: 20px; font-size: 13px; line-height: 1.4; }
+.u-connectors .u-connector-heading h3 { margin-top: 0; }
+
+.u-connectors .helper { color: var(--ink-2); }

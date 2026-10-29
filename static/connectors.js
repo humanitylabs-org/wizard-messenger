@@ -77,6 +77,18 @@
   const isQR = flow => /(^|[._])qr($|[._])/.test(flow.id);
   const SECRET = /password|pass|code|otp|token|cookie|secret|2fa/i;
 
+  function qrCanvas(data) {
+    if (typeof global.qrcode !== 'function') throw new Error('QR renderer unavailable');
+    const qr = global.qrcode(0, 'M'); qr.addData(data); qr.make();
+    // Render QR modules directly; never insert upstream HTML or open a QR URI.
+    const n = qr.getModuleCount(), scale = 8, canvas = document.createElement('canvas'); canvas.width = canvas.height = (n + 8) * scale;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + 4) * scale, (r + 4) * scale, scale, scale);
+    canvas.className = 'c-qr';
+    canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Login QR code. Scan it with the app on your phone.');
+    return canvas;
+  }
+
   global.MessengerConnectors = function (root, api, options = {}) {
     let generation = 0, active = null, providers = [];
     const element = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -96,16 +108,6 @@
       const b = element('button', cls, text); b.type = 'button'; parent.append(b);
       b.onclick = async () => { b.disabled = true; try { await run(); } catch (e) { if (root.contains(b)) problem(e); } finally { b.disabled = false; } };
       return b;
-    }
-    function qrCanvas(data) {
-      if (typeof global.qrcode !== 'function') throw new Error('QR renderer unavailable');
-      const qr = global.qrcode(0, 'M'); qr.addData(data); qr.make();
-      // Render QR modules directly; never insert upstream HTML or open a QR URI.
-      const n = qr.getModuleCount(), scale = 8, canvas = element('canvas', 'c-qr'); canvas.width = canvas.height = (n + 8) * scale;
-      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#000';
-      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + 4) * scale, (r + 4) * scale, scale, scale);
-      canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Login QR code. Scan it with the app on your phone.');
-      return canvas;
     }
     function heading(network, title) {
       const head = element('div', 'c-step-head'); head.append(mark(network, 'big'), element('h3', '', title || 'Connect ' + label(network))); return head;
@@ -308,14 +310,30 @@
       for (const provider of [...usable].sort((a, b) => order(a) - order(b))) root.append(card(provider));
       if (later.length) {
         const more = element('details', 'c-later'); more.append(element('summary', '', 'More networks'));
-        for (const p of later) { const row = element('p', 'c-later-row'); row.append(mark(p.network, 'small'), element('span', '', p.label + ' · ' + (STATE[p.state] || [p.state])[0])); more.append(row); }
+        for (const p of later) {
+          const row = element('p', 'c-later-row'); row.append(mark(p.network, 'small'), element('span', '', p.label + ' · ' + (STATE[p.state] || [p.state])[0])); more.append(row);
+          // Dormant WhatsApp/Signal workers start only after the owner enables the network.
+          if (p.supported && p.state === 'not_configured' && ['whatsapp', 'signal'].includes(p.network)) button(more, 'Enable ' + p.label, async () => {
+            await request(p.network, 'enable', {});
+            for (let attempt = 0; attempt < 30; attempt++) {
+              await new Promise(resolve => global.setTimeout(resolve, 500));
+              if (!root.contains(more)) return;
+              const status = await request(p.network, 'status');
+              if (status.state !== 'unavailable') break;
+            }
+            await show({focus: p.network});
+          }, 'c-link').setAttribute('aria-label', 'Enable ' + p.label);
+        }
         root.append(more);
       }
+      const resumed = providers.find(p => p.pending_login);
+      if (resumed) step(resumed.network, 'phone', resumed.pending_login, mine);
       if (focus) root.querySelector('[data-network="' + focus + '"] .primary')?.focus();
       return providers;
     }
     return {show, start, close: async () => { root.replaceChildren(); await cancel(); }};
   };
+  global.MessengerConnectors.qrCanvas = qrCanvas;
   global.MessengerConnectors.BRAND = BRAND;
   global.MessengerConnectors.brandIcon = brandIcon;
   global.MessengerConnectors.badge = badge;

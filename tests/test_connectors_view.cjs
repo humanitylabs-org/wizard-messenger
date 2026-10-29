@@ -11,6 +11,7 @@ class Element {
 }
 const window = {qrcode: () => ({addData() {}, make() {}, getModuleCount: () => 1, isDark: () => true})};
 vm.runInNewContext(fs.readFileSync('static/connectors.js','utf8'), {window, document: {createElement: tag => new Element(tag)}});
+assert.equal(typeof window.MessengerConnectors.qrCanvas, 'function', 'My QR codes and linking share the exported renderer');
 const nodes = root => [root, ...root.children.flatMap(nodes)];
 const texts = root => nodes(root).map(x => x.textContent).filter(Boolean);
 const tick = () => new Promise(r => setTimeout(r, 0));

@@ -127,6 +127,7 @@ class Connectors:
         self.root, self.owner = Path(root), owner
         self.reader, self.writer, self.ensure_owner = reader, writer, ensure_owner
         self.pending = {}
+        self.telegram_resume = None
         self._lock = threading.RLock()
         self._jobs = {}
         self._starting = set()
@@ -219,6 +220,8 @@ class Connectors:
             if txn_id and (not isinstance(txn_id, str) or not TOKEN.fullmatch(txn_id)):
                 fail('invalid_upstream_step', 'Invalid upstream login transaction', 502)
             self.pending[network] = (time.monotonic() + 900, tuple(values), txn_id)
+        if network == 'telegram':
+            self.telegram_resume = None if result['type'] == 'complete' else (time.monotonic() + 900, dict(result))
         # Only the owner's authenticated, no-store view receives this short-lived data.
         allowed = ('login_id', 'step_id', 'txn_id', 'type', 'instructions', 'user_input', 'display_and_wait')
         if result['type'] in ('cookies', 'webauthn', 'client_http'):
@@ -271,6 +274,24 @@ class Connectors:
             self._jobs.pop(network, None)
             return self.remember(network, job['result'])
 
+    def enable(self, network):
+        if network not in ('whatsapp', 'signal'):
+            fail('invalid_network', 'This network uses installation settings', 409)
+        from unified_setup import write
+        with self._lock:
+            try:
+                path = self.root / 'connectors.json'
+                configs = json.loads(path.read_text())
+                folder = self.root.parent / network
+                if not (folder / 'config.yaml').is_file() or network not in configs:
+                    raise ValueError()
+                configs[network]['enabled'] = True
+                write(path, configs)
+                (folder / 'configured').touch(mode=0o600)
+            except (OSError, ValueError):
+                fail('connector_not_configured', 'Bridge installation is incomplete', 409)
+        return {'enabled': True, 'network': network}
+
     def dispatch(self, method, suffix, payload):
         """Mount AFTER existing owner auth, CSRF/origin and agent-mode checks.
 
@@ -278,7 +299,10 @@ class Connectors:
         POST .../<network>/{start,step,cancel,disconnect}.
         """
         if suffix == [] and method == 'GET':
-            return {'providers': [self.status(n) for n in PROVIDERS]}
+            providers = [self.status(n) for n in PROVIDERS]
+            if self.telegram_resume and self.telegram_resume[0] > time.monotonic():
+                next(p for p in providers if p['network'] == 'telegram')['pending_login'] = self.telegram_resume[1]
+            return {'providers': providers}
         if len(suffix) != 2:
             fail('not_found', 'Unknown connector route', 404)
         network, action = suffix
@@ -289,6 +313,10 @@ class Connectors:
             fail('not_found', 'Unknown connector route', 404)
         if not isinstance(payload, dict):
             fail('invalid_input', 'Expected an object')
+        if action == 'enable':
+            if self.writer is None:
+                fail('sender_required', 'An authorized owner sender is required', 403)
+            return self.enable(network)
         # Gate before owner bootstrap, which itself may mutate Matrix.
         self.config(network)
         if self.writer is None:
@@ -336,6 +364,8 @@ class Connectors:
                 fail('invalid_step', 'Login transaction changed; use the current step', 409)
             return self.advance(network, pending, values, fields, txn_id)
         if action == 'cancel':
+            if network == 'telegram':
+                self.telegram_resume = None
             pending = self.pending.get(network)
             if not pending or payload.get('login_id') != pending[1][0]:
                 fail('invalid_step', 'No matching login', 409)

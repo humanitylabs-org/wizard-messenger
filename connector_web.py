@@ -13,7 +13,7 @@ class ConnectorViewHandler(ViewHandler):
         path = urlsplit(self.path).path
         if (path == '/api/unified/connectors' or path.startswith('/api/unified/connectors/')
                 or path.startswith('/api/unified/telegram/')):
-            if not self._session():
+            if self.headers.get('Authorization') or not self._session():
                 raise EngineError('owner_required', 'Only an owner browser session may administer network accounts', 403)
             # Parent also checks Origin/CSRF for POST before dispatching to inbox.
         return super()._dispatch(method)

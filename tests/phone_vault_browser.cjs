@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
   const container = process.env.PREVIEW_CONTAINER || 'messenger-mvp-preview-messenger-1';
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const pw = 'preview-only-passphrase-' + Date.now();
-  const browser = await chromium.launch({headless: true});
+  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, ignoreHTTPSErrors: true});
   await ctx.addInitScript(() => {
     const db = () => JSON.parse(localStorage.getItem('__fakeVault') || '{}'), put = v => localStorage.setItem('__fakeVault', JSON.stringify(v));

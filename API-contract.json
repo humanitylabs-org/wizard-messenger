@@ -53,6 +53,49 @@
     {"method":"POST","path":"/api/drafts/{id}/send","auth":"owner cookie + Origin + CSRF only","body":{"revision":"exact reviewed integer","send_original":"explicit true only for original fallback"},"result":"draft and delivery; idempotent server preview. Recipient/body overrides ignored. No send on create/update/preview. Ambiguous submissions retain sending state and cannot be edited."},
     {"method":"DELETE","path":"/api/drafts/{id}","auth":"owner cookie + Origin + CSRF only","body":{"revision":"exact current integer"},"result":"deleted; in-flight drafts cannot be deleted"},
     {
+      "method": "PUT",
+      "path": "/api/unified/people/{person_id}/upload",
+      "query": {
+        "kind": "image (default) | voice | file",
+        "name": "URL-encoded original filename, used only for kind=file; optional, defaults to file"
+      },
+      "body": "Raw bytes, 1..26214400 bytes (25 MiB); Content-Length required, no Transfer-Encoding",
+      "result_fields": ["upload_id", "mime", "size"],
+      "file_result_fields": ["upload_id", "mime", "size", "name"],
+      "notes": "Any-file support requested by James, 26 Oct 2026. Files keep the basename after / or backslash, remove Unicode control/format/surrogate characters and leading spaces/dots, collapse whitespace, and cap the name at 120 characters while retaining the final extension (an extension alone over 119 characters is truncated). Empty names become file. MIME comes from magic bytes (including PDF and ZIP), never the client Content-Type or extension; unknown bytes use application/octet-stream. Synapse receives the fixed filename attachment. Telegram, WhatsApp and Signal only. Handles are person-bound, expire after one hour and are consumed on send. Existing image/voice results are unchanged.",
+      "errors": {
+        "invalid_upload": "400 for an unknown kind; 415 for unsupported image/voice bytes",
+        "too_large": "413 for an empty or oversized body",
+        "media_unsupported": "409 on a non-Matrix network",
+        "invalid_length": "400 for an invalid Content-Length or a truncated body",
+        "invalid_request": "400 for Transfer-Encoding"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/people/{person_id}/send",
+      "body": {
+        "client_id": "Required, 8..64 characters matching [A-Za-z0-9_-]",
+        "upload_id": "Single file, photo or voice upload handle",
+        "text": "Optional text; for files sent immediately after the file as a separate m.text, with deterministic transaction client_id + .caption",
+        "upload_ids": "Alternative to upload_id: 2..10 distinct still-photo handles only; files (even image bytes) and voice handles rejected",
+        "identity_id": "Optional channel in this person's identities",
+        "reply_to": "Optional message in this channel; files carry the reply relation"
+      },
+      "result_fields": ["state", "event_id", "message"],
+      "file_result_fields": ["state", "event_id", "message", "messages"],
+      "notes": "Files send m.file with body=filename=name, url=mxc and info={mimetype,size}; stored file media has mxc,mime,size,filename. Public rows omit mxc. messages contains the file followed by any separate caption. Duplicate sends return the existing rows. Partial caption failures retain the upload handle for an idempotent retry. Non-inline types (HTML, SVG, JS, PDF, etc.) stay application/octet-stream attachment downloads with nosniff and sandbox CSP.",
+      "errors": {
+        "invalid_client_id": "400 for missing or invalid client_id",
+        "upload_expired": "409 for missing, expired or another person's handle",
+        "invalid_album": "400 for invalid album shape or any non-photo handle",
+        "media_unsupported": "409 on a non-Matrix network",
+        "invalid_reply": "400 for a reply in another channel",
+        "invalid_identity": "400 for another person's channel",
+        "invalid_input": "400 for invalid text"
+      }
+    },
+    {
       "method": "GET",
       "path": "/healthz",
       "auth": false,

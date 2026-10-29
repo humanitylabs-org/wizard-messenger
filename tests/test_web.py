@@ -44,7 +44,7 @@ class ViewBoundary(unittest.TestCase):
     def request(self,method,path,body=None,headers=None):
         conn=http.client.HTTPConnection('127.0.0.1',self.server.server_port,timeout=3)
         h={'Connection':'close', **(headers or {})}
-        if body is not None: h['Content-Type']='application/json'; body=json.dumps(body)
+        if body is not None and not isinstance(body,bytes): h['Content-Type']='application/json'; body=json.dumps(body)
         conn.request(method,path,body,headers=h); response=conn.getresponse()
         result=response.read(); status=response.status; result_headers=dict(response.getheaders()); conn.close()
         return status,result_headers,json.loads(result) if result_headers.get('Content-Type','').startswith('application/json') else result
@@ -76,6 +76,49 @@ class ViewBoundary(unittest.TestCase):
         status, _, _ = self.request('POST', '/api/unified/sync', {}, {'Cookie': cookie, 'Origin': ORIGIN, 'X-Messenger-CSRF': csrf})
         self.assertEqual(status, 200)
         unified.dispatch.assert_called_with('POST', '/api/unified/sync', {}, {}, None)
+
+    def test_james_owner_any_file_raw_upload_send_and_attachment_download(self):
+        import io
+        from urllib.parse import quote
+        from unittest.mock import Mock
+        from unified import UnifiedInbox
+        inbox=UnifiedInbox(Path(self.temp.name)/'unified',self.server.engine)
+        self.server.unified=inbox
+        inbox.matrix_token=lambda:'test-token'
+        inbox.matrix_upload=Mock(return_value={'content_uri':'mxc://messenger.internal/file'})
+        peer=inbox.store.identity('telegram','!peer','Peer')
+        path='/api/unified/people/%s/upload?kind=file&name='%peer['person_id']+quote('../../... final\x00  report.pdf',safe='')
+        data=b'%PDF-1.7\ncontent'
+        self.assertEqual(self.request('PUT',path,data,{'Origin':ORIGIN})[0],401)
+        cookie,csrf=self.session()
+        self.assertEqual(self.request('PUT',path,data,{'Cookie':cookie,'Origin':ORIGIN})[0],403)
+        headers={'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf,'Content-Type':'image/png'}
+        status,_,body=self.request('PUT',path,data,headers)
+        self.assertEqual(status,200)
+        up=body['result']
+        self.assertEqual((up['mime'],up['name'],up['size']),('application/pdf','final report.pdf',len(data)))
+        inbox.matrix_upload.assert_called_once_with(data,'attachment','application/pdf')
+        inbox.mx=Mock(return_value={'event_id':'$file'})
+        status,_,sent=self.request('POST','/api/unified/people/%s/send'%peer['person_id'],
+                                   {'upload_id':up['upload_id'],'client_id':'http-file-12345678'},headers)
+        self.assertEqual(status,200)
+        self.assertEqual(sent['result']['message']['msgtype'],'m.file')
+        response=io.BytesIO(data)
+        response.headers={'Content-Type':'application/pdf'}
+        with patch('unified.urlopen',return_value=response):
+            status,download_headers,content=self.request('GET','/api/unified/media/%24file',headers={'Cookie':cookie})
+        self.assertEqual((status,content),(200,data))
+        self.assertTrue(download_headers['Content-Disposition'].startswith('attachment;'))
+        self.assertEqual(download_headers['Content-Type'],'application/octet-stream')
+        self.assertEqual(download_headers['X-Content-Type-Options'],'nosniff')
+        self.assertIn('sandbox',download_headers['Content-Security-Policy'])
+        status,_,body=self.request('PUT',path,b'<html>not a PDF',dict(headers,**{'Content-Type':'application/pdf'}))
+        self.assertEqual((status,body['result']['mime']),(200,'application/octet-stream'))
+        # View rejects oversized or empty raw bodies before calling the transport.
+        for payload,h in [(b'',headers),(b'x',dict(headers,**{'Content-Length':str(25*1024*1024+1)}))]:
+            status,_,body=self.request('PUT',path,payload,h)
+            self.assertEqual((status,body['error']['code']),(413,'too_large'))
+        self.assertEqual(inbox.matrix_upload.call_count,2)
 
     def test_machine_key_cannot_read_or_send_messages_without_owner_grant(self):
         bearer={'Authorization':'Bearer '+TOKEN}

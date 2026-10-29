@@ -1,8 +1,8 @@
-"""Opt-in multi-network inbox; baseline UnifiedInbox remains unchanged.
+"""Owner-only bridge adapter, extending the live shared inbox algorithms.
 
-Methods adapted from the local MIT unified.py; shared algorithms are deliberately
-kept in sync with baseline 490abc8. Parent integration selects this class after
-owner/agent boundary wiring. No writer means NO Matrix/provisioning writes.
+Extra networks (Slack, LINE, Instagram) reuse the shared send/upload/react paths;
+this class adds provider classification, DM naming from the other participant,
+own-name learning and silent first-discovery history import.
 """
 from unified import *
 from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
@@ -66,13 +66,24 @@ class ConnectorInbox(UnifiedInbox):
         if parts[:3] == ['api', 'unified', 'connectors']:
             return self.connectors.dispatch(method, parts[3:], payload)
         if parts[:3] == ['api', 'unified', 'telegram']:
-            return self.connectors.dispatch(method, ['telegram'] + parts[3:], payload)
+            result = self.connectors.dispatch(method, ['telegram'] + parts[3:], payload)
+            if method == 'GET' and parts[3:] == ['status']:
+                pending = self.connectors.telegram_resume
+                result['pending_login'] = pending[1] if pending and pending[0] > time.monotonic() else None
+            return result
         return super().dispatch(method, path, payload, query, raw)
 
     def telegram_status(self):
         # General status is available to a machine key: never include pending QR
         # provisioning data, even when the owner is currently linking a device.
-        return self.connectors.status('telegram')
+        status = self.connectors.status('telegram')
+        # Keep Telegram profile fields used by live My QR codes suggestions.
+        if status['state'] not in ('not_configured', 'unavailable'):
+            try:
+                status['logins'] = self.connectors.request('telegram', '/whoami').get('logins') or []
+            except EngineError:
+                pass
+        return status
 
     def provision(self, path, method='GET', body=None):
         # Preserve the legacy Telegram routes, but all writes use the sender.
@@ -122,36 +133,12 @@ class ConnectorInbox(UnifiedInbox):
         return meta
 
     def ingest(self, identity, meta, event, *, live=False):
-        etype, content = event.get('type'), event.get('content') or {}
-        sender = event.get('sender', '')
-        outgoing = self.is_me(sender)
-        relates = content.get('m.relates_to') or {}
-        if etype == 'm.room.redaction' or etype == 'm.reaction' or (etype == 'm.room.message' and relates.get('rel_type') == 'm.replace'):
-            # Share the authoritative thread-scoped mutation/tombstone rules.
-            # A connector must not reintroduce cross-thread edits or redactions.
-            return super().ingest(identity, meta, event, live=live)
-        if sender == '@' + identity['network'] + 'bot:messenger.internal':
-            # Bridge error notices are not chat lines: mark our newest recent outgoing message as failed.
-            if content.get('msgtype') == 'm.notice':
-                stamp = event.get('origin_server_ts', 0)
-                with self.store.db() as db:
-                    row = db.execute('SELECT id FROM message WHERE identity_id=? AND outgoing=1 AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC LIMIT 1',
-                                     (identity['id'], stamp - 120000, stamp + 5000)).fetchone()
-                if row:
-                    self.store.bump(row[0], ',failed=?', (PROVIDERS[identity['network']].label + ' did not accept this message',))
-            return
-        parts = message_parts(event)
-        if parts is None:
-            return
-        msgtype, body, media, reply_to = parts
-        stamp = event.get('origin_server_ts', 0)
         # Backfilled history keeps its original timestamp: it never notifies.
+        stamp = event.get('origin_server_ts', 0)
         live = live and stamp >= time.time() * 1000 - LIVE_WINDOW_MS
-        inserted = self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                                          stamp, msgtype=msgtype, media=media, reply_to=reply_to, push_live=live)
-        if inserted and not outgoing:
+        super().ingest(identity, meta, event, live=live)
+        if event.get('type') in ('m.room.message', 'm.sticker') and not self.is_me(event.get('sender', '')):
             self.store.mark_history_read(identity['id'], stamp)
-        self.warm_voice(event['event_id'], msgtype, outgoing, media, stamp)
 
     def learn_me(self):
         """Own ghosts and names from every connected bridge's provisioning /whoami (read-only).
@@ -188,6 +175,14 @@ class ConnectorInbox(UnifiedInbox):
             if not self.store.get('own_fixed:' + ghost):
                 self.store.claim_own(ghost)
                 self.store.put('own_fixed:' + ghost, '1')
+
+    def matrix_upload(self, data, filename, mime):
+        if self.sender is None:
+            fail('sender_required', 'An authorized owner sender is required for uploads', 403)
+        return self.sender(network='matrix', base=self.matrix,
+                           path='/_matrix/media/v3/upload?' + urlencode({'filename': filename}),
+                           method='POST', body=data, token=self.matrix_token(),
+                           content_type=mime, timeout=60)
 
     def rescan_dropped(self):
         """Once per META_VERSION: rooms an older release cached as non-bridged (LINE,
@@ -249,28 +244,6 @@ class ConnectorInbox(UnifiedInbox):
                     if not token or not page.get('chunk'):
                         break
 
-    def ephemeral(self, identity, events):
-        for event in events:
-            if event.get('type') == 'm.typing':
-                users = [u for u in (event.get('content') or {}).get('user_ids', []) if not self.is_me(u)]
-                names = self.rooms.get(identity['address'], {}).get('names', {})
-                now = [names.get(u) or 'Someone' for u in users]
-                if self.typing.get(identity['person_id'], {}).get('names') != now:
-                    self.typing[identity['person_id']] = {'names': now, 'until': time.time() + 30}
-                    self.store.touch_identity(identity['id'])
-            elif event.get('type') == 'm.receipt':
-                for event_id, kinds in (event.get('content') or {}).items():
-                    for kind in ('m.read', 'm.read.private'):
-                        for user in (kinds.get(kind) or {}):
-                            with self.store.db() as db:
-                                row = db.execute('SELECT timestamp FROM message WHERE id=?', (event_id,)).fetchone()
-                            if not row:
-                                continue
-                            if self.is_me(user):
-                                self.store.touch_identity(identity['id'], last_read_ts=row[0])
-                            elif user != '@' + identity['network'] + 'bot:messenger.internal':
-                                self.store.touch_identity(identity['id'], peer_read_ts=row[0])
-
     def sync(self, timeout_ms=0):
         if not self.sync_lock.acquire(blocking=False):
             return {'state': 'syncing'}
@@ -312,222 +285,3 @@ class ConnectorInbox(UnifiedInbox):
             return {'state': 'unavailable', 'error': error.message}
         finally:
             self.sync_lock.release()
-
-    def backfill_media(self, identity):
-        """Rows stored before media support carry only "[Photo] caption"; re-read recent room history once
-        and upgrade those rows in place so the pictures appear a moment after the thread opens."""
-        room = identity['address']
-        if room in self.backfilled or identity['network'] not in MATRIX_NETWORKS:
-            return
-        self.backfilled.add(room)
-    
-        def run():
-            try:
-                meta = self.room_meta(room, {})
-                token = None
-                for _ in range(3):
-                    query = {'dir': 'b', 'limit': 100}
-                    if token:
-                        query['from'] = token
-                    page = self.mx(self.room(room) + '/messages?' + urlencode(query))
-                    for event in page.get('chunk', []):
-                        if event.get('type') in ('m.room.message', 'm.sticker', 'm.reaction', 'm.room.redaction'):
-                            self.ingest(identity, meta, event)
-                    token = page.get('end')
-                    if not token or not page.get('chunk'):
-                        break
-            except Exception:
-                self.backfilled.discard(room)
-        threading.Thread(target=run, name='media-backfill', daemon=True).start()
-
-    def confirm(self, person_id, payload):
-        with self.lock:
-            with self.store.db() as db:
-                row = db.execute('SELECT * FROM preview WHERE id=? AND person_id=?', (payload.get('preview_id'), person_id)).fetchone()
-                if not row:
-                    fail('invalid_preview', 'Preview this message before sending')
-                p = dict(row)
-                if p['status'] in ('sent', 'queued'):
-                    return {'state': p['status'], 'event_id': p['event_id']}
-                if p['status'] == 'preview' and p['expires'] < time.time():
-                    fail('preview_expired', 'Preview expired. Review the text again.', 409)
-                identity = db.execute('SELECT * FROM identity WHERE id=? AND person_id=?', (p['identity_id'], person_id)).fetchone()
-                if not identity:
-                    fail('identity_changed', 'The person’s channels changed. Preview again.', 409)
-                send_original = payload.get('send_original') is True
-                if p['error'] and not send_original:
-                    fail('translation_failed', 'Translation failed. Explicitly choose Send original.', 409)
-                if p['status'] != 'preview' and p['send_original'] != int(send_original):
-                    fail('request_id_conflict', 'A retry must preserve the confirmed text.', 409)
-                db.execute("UPDATE preview SET status='sending',send_original=? WHERE id=?", (int(send_original), p['id']))
-            body = p['original'] if send_original else p['translated']
-            reply_to = self.reply_target(identity, payload.get('reply_to'))
-            # Stable transaction ID makes even ambiguous Matrix retries idempotent.
-            delivery = 'sent'
-            if identity['network'] in MATRIX_NETWORKS:
-                content = {'msgtype': 'm.text', 'body': body}
-                if reply_to:
-                    content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
-                result = self.mx(self.room(identity['address']) + '/send/m.room.message/' + p['id'], 'PUT', content)
-                event = result['event_id']
-            else:
-                result = self.engine.send(identity['address'], {'text': body, 'request_id': p['id']})
-                event = 'messenger:' + result['message_ids'][0]
-                delivery = 'sent' if result['published'] else 'queued'
-            self.store.add_message(event, identity, self.owner, True, body, int(time.time() * 1000), p['original'] if body != p['original'] else None,
-                                   reply_to=reply_to, client_id=payload.get('client_id'))
-            with self.store.db() as db:
-                db.execute('UPDATE preview SET status=?,event_id=? WHERE id=?', (delivery, event, p['id']))
-                # A sync may have received our event before the confirm receipt.
-                db.execute('UPDATE message SET translated=? WHERE id=?', (p['original'] if body != p['original'] else None, event))
-            return {'state': delivery, 'event_id': event, 'message': self.row(event)}
-
-    def send(self, person_id, payload):
-        """One-call send for chats that need no translation review; the client id is the Matrix
-        transaction id, so a retried tap can never produce a second message."""
-        if payload.get('preview_id'):
-            return self.confirm(person_id, payload)
-        client_id = payload.get('client_id')
-        if not isinstance(client_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', client_id):
-            fail('invalid_client_id', 'Missing message id')
-        with self.store.db() as db:
-            done = db.execute('SELECT id FROM message WHERE client_id=?', (client_id,)).fetchone()
-        if done:
-            return {'state': 'sent', 'event_id': done[0], 'message': self.row(done[0])}
-        person, identity = self.channel(person_id, payload.get('identity_id'))
-        upload = self.uploads.get(payload.get('upload_id')) if payload.get('upload_id') else None
-        if payload.get('upload_id') and (not upload or upload['person_id'] != person_id):
-            fail('upload_expired', 'Attach the file again', 409)
-        body = payload.get('text') or ''
-        if body:
-            body = text(body)
-        elif not upload:
-            fail('invalid_input', 'Please enter valid text')
-        if body and not upload and person['language'] and person['language'] != 'en':
-            fail('review_required', 'This chat translates before sending', 409)
-        reply_to = self.reply_target(identity, payload.get('reply_to'))
-        if identity['network'] not in MATRIX_NETWORKS:
-            if upload:
-                fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
-            result = self.engine.send(identity['address'], {'text': body, 'request_id': client_id[:64]})
-            event = 'messenger:' + result['message_ids'][0]
-            self.store.add_message(event, identity, self.owner, True, body, int(time.time() * 1000), client_id=client_id)
-            return {'state': 'sent' if result['published'] else 'queued', 'event_id': event, 'message': self.row(event)}
-        msgtype, media = 'm.text', None
-        if upload:
-            msgtype, content, media = self.media_content(upload, body, payload)
-        else:
-            content = {'msgtype': 'm.text', 'body': body}
-        if reply_to:
-            content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
-        started = time.time()
-        result = self.mx(self.room(identity['address']) + '/send/m.room.message/' + client_id, 'PUT', content)
-        self.timing('send', started)
-        event = result['event_id']
-        self.store.add_message(event, identity, self.owner, True, body if upload is None else (body or ''), int(time.time() * 1000),
-                               msgtype=msgtype, media=media, reply_to=reply_to, client_id=client_id)
-        if upload:
-            self.uploads.pop(payload.get('upload_id'), None)
-        return {'state': 'sent', 'event_id': event, 'message': self.row(event)}
-
-    def upload(self, person_id, kind, data):
-        """Owner upload (already size-capped by the view server) → Synapse media repo. Returns an opaque id."""
-        if kind not in ('image', 'voice'):
-            fail('invalid_upload', 'Choose a photo or a voice note')
-        _, identity = self.channel(person_id)
-        if identity['network'] not in MATRIX_NETWORKS:
-            fail('media_unsupported', 'Photos and voice notes are not available on Messenger yet', 409)
-        mime = sniff(data)
-        if kind == 'voice' and mime == 'video/mp4':
-            mime = 'audio/mp4'  # Safari records voice into an mp4 container
-        ok = {'image': ('image/jpeg', 'image/png', 'image/gif', 'image/webp'), 'voice': ('audio/ogg', 'audio/webm', 'audio/mp4')}[kind]
-        if mime not in ok:
-            fail('invalid_upload', 'That file type is not supported here', 415)
-        ext = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/mp4': 'm4a'}[mime]
-        filename = ('voice-message.' if kind == 'voice' else 'photo.') + ext
-        started = time.time()
-        if self.sender is None:
-            fail('sender_required', 'An authorized owner sender is required for uploads', 403)
-        result = self.sender(network='matrix', base=self.matrix,
-                             path='/_matrix/media/v3/upload?' + urlencode({'filename': filename}),
-                             method='POST', body=data, token=self.store.get('matrix_token'),
-                             content_type=mime, timeout=60)
-        mxc = result['content_uri']
-        self.timing('upload', started)
-        upload_id = secrets.token_hex(16)
-        now = time.time()
-        self.uploads = {k: v for k, v in self.uploads.items() if v['expires'] > now}
-        self.uploads[upload_id] = {'mxc': mxc, 'mime': mime, 'size': len(data), 'kind': kind, 'filename': filename, 'person_id': person_id, 'expires': now + 3600}
-        return {'upload_id': upload_id, 'mime': mime, 'size': len(data)}
-
-    def react(self, message_id, payload):
-        message = self.store.message(message_id)
-        key = payload.get('key')
-        if not isinstance(key, str) or not key or len(key) > 32:
-            fail('invalid_input', 'Choose a reaction')
-        if message['network'] not in MATRIX_NETWORKS:
-            fail('unsupported', 'Reactions are not available on Messenger yet', 409)
-        room = self.room(message['address'])
-        with self.store.db() as db:
-            mine = db.execute('SELECT event_id,key FROM reaction WHERE message_id=? AND outgoing=1', (message_id,)).fetchall()
-        # Telegram allows one reaction per person here: replace any previous one (Signal behaves the same).
-        for row in mine:
-            self.mx(room + '/redact/' + quote(row[0], safe='') + '/' + secrets.token_hex(8), 'PUT', {})
-            self.store.redact(row[0])
-        if payload.get('remove') is True or any(r[1] == key for r in mine):
-            return {'message': self.row(message_id)}
-        result = self.mx(room + '/send/m.reaction/' + secrets.token_hex(12), 'PUT',
-                         {'m.relates_to': {'rel_type': 'm.annotation', 'event_id': message_id, 'key': key}})
-        self.store.react(result['event_id'], message_id, self.owner, key, True)
-        return {'message': self.row(message_id)}
-
-    def edit(self, message_id, payload):
-        message = self.store.message(message_id)
-        new = text(payload.get('text'))
-        if not message['outgoing'] or message['deleted'] or message['network'] not in MATRIX_NETWORKS or message['msgtype'] != 'm.text':
-            fail('not_editable', 'Only your own text messages can be edited', 409)
-        self.mx(self.room(message['address']) + '/send/m.room.message/' + secrets.token_hex(12), 'PUT',
-                {'msgtype': 'm.text', 'body': '* ' + new, 'm.new_content': {'msgtype': 'm.text', 'body': new},
-                 'm.relates_to': {'rel_type': 'm.replace', 'event_id': message_id}})
-        self.store.bump(message_id, ',original=?,translated=NULL,edited=1', (new,))
-        return {'message': self.row(message_id)}
-
-    def delete(self, message_id, payload):
-        message = self.store.message(message_id)
-        everyone = payload.get('everyone') is True
-        if everyone:
-            if not message['outgoing'] or message['network'] not in MATRIX_NETWORKS:
-                fail('not_deletable', 'Only your own messages can be deleted for everyone', 409)
-            self.mx(self.room(message['address']) + '/redact/' + quote(message_id, safe='') + '/' + secrets.token_hex(8), 'PUT', {})
-        self.store.redact(message_id)
-        return {'message': self.row(message_id)}
-
-    def read(self, person_id, payload):
-        person = self.store.person(person_id)
-        stamp = payload.get('timestamp')
-        if not isinstance(stamp, int) or stamp < 0:
-            fail('invalid_input', 'Missing read position')
-        for identity in person['identities']:
-            with self.store.db() as db:
-                row = db.execute('SELECT id,timestamp FROM message WHERE identity_id=? AND outgoing=0 AND timestamp<=? ORDER BY timestamp DESC LIMIT 1',
-                                 (identity['id'], stamp)).fetchone()
-            if not row or row[1] <= identity['last_read_ts']:
-                continue
-            self.store.touch_identity(identity['id'], last_read_ts=row[1])
-            if identity['network'] in MATRIX_NETWORKS:
-                event_id = row[0]
-    
-                def receipt(address=identity['address'], event_id=event_id):
-                    try:
-                        self.mx(self.room(address) + '/receipt/m.read/' + quote(event_id, safe=''), 'POST', {})
-                    except EngineError:
-                        pass
-                threading.Thread(target=receipt, daemon=True).start()
-        return {'ok': True}
-
-    def set_typing(self, person_id, payload):
-        _, identity = self.channel(person_id)
-        if identity['network'] in MATRIX_NETWORKS:
-            on = payload.get('typing') is True
-            self.mx(self.room(identity['address']) + '/typing/' + quote(self.owner, safe=''), 'PUT', {'typing': on, 'timeout': 6000} if on else {'typing': False})
-        return {'ok': True}

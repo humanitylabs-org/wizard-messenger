@@ -77,7 +77,7 @@ class LocalOwnerSender:
                 method == 'PUT' and re.fullmatch(r'/rooms/[^/]+/(?:send/(?:m\.room\.message|m\.reaction)/[^/]+|redact/[^/]+/[^/]+|typing/%40owner%3Amessenger\.internal)', route)
                 or method == 'POST' and re.fullmatch(r'/(?:join/[^/]+|rooms/[^/]+/receipt/m\.read/[^/]+)', route)
                 or method == 'POST' and u.path in ('/_synapse/admin/v1/register', '/_matrix/client/v3/login')
-                or method == 'POST' and u.path == '/_matrix/media/v3/upload' and set(q) == {'filename'} and q['filename'] in (['photo.jpg'], ['photo.png'], ['photo.gif'], ['photo.webp'], ['voice-message.ogg'], ['voice-message.webm'], ['voice-message.m4a'])
+                or method == 'POST' and u.path == '/_matrix/media/v3/upload' and set(q) == {'filename'} and q['filename'] in (['photo.jpg'], ['photo.png'], ['photo.gif'], ['photo.webp'], ['voice-message.ogg'], ['voice-message.webm'], ['voice-message.m4a'], ['attachment'])
             )
             if u.path == '/_synapse/admin/v1/register' and (not isinstance(body, dict) or body.get('username') != 'owner' or body.get('admin') is not False):
                 allowed = False
@@ -99,11 +99,17 @@ class LocalOwnerSender:
         if token:
             headers['Authorization'] = 'Bearer ' + token
         if isinstance(body, bytes):
-            if u.path != '/_matrix/media/v3/upload' or content_type not in ('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/webm', 'audio/mp4'):
+            # Any-file MIME is allowed only with the fixed neutral name (James, 26 Oct 2026).
+            mime_ok = content_type in ('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/webm', 'audio/mp4')
+            if q.get('filename') == ['attachment']:
+                mime_ok = isinstance(content_type, str) and re.fullmatch(r'[a-z]+/[a-z0-9.+-]{1,80}', content_type)
+            if u.path != '/_matrix/media/v3/upload' or not isinstance(content_type, str) or not mime_ok:
                 fail('sender_route_denied', 'Unapproved upload', 403)
             encoded = body
             headers['Content-Type'] = content_type
         else:
+            if u.path == '/_matrix/media/v3/upload' and q.get('filename') == ['attachment']:
+                fail('sender_route_denied', 'Unapproved upload', 403)
             encoded = json.dumps(body).encode()
             headers['Content-Type'] = 'application/json'
         login_route = network != 'matrix' and route.startswith('/login/')

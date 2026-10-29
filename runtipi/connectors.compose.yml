@@ -1,6 +1,6 @@
 services:
   connector-init:
-    image: ${MESSENGER_IMAGE:?Set an integrated Messenger image containing connector_setup.py}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.12.0}
     pull_policy: never
     user: 0:0
     entrypoint:
@@ -24,29 +24,14 @@ services:
       unified-init:
         condition: service_completed_successfully
     restart: 'no'
-  matrix:
-    depends_on:
-      connector-init:
-        condition: service_completed_successfully
-  messenger:
-    image: ${MESSENGER_IMAGE:?Set an integrated Messenger image containing connector_sender.py}
-    environment:
-      CONNECTORS_ENABLED: '1'
-      MESSENGER_CONNECTOR_SENDER_MODE: ${MESSENGER_CONNECTOR_SENDER_MODE:-}
-    depends_on:
-      connector-init:
-        condition: service_completed_successfully
   whatsapp:
     image: dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391
-    profiles:
-    - connectors
     user: 1000:1000
     entrypoint:
     - /bin/sh
     - -c
     command:
-    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-whatsapp -c /data/config.yaml;
-      else printf "%s\n" "whatsapp disabled"; exec sleep infinity; fi
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-whatsapp -c /data/config.yaml
     read_only: true
     cap_drop:
     - ALL
@@ -77,15 +62,12 @@ services:
     restart: unless-stopped
   signal:
     image: dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a
-    profiles:
-    - connectors
     user: 1000:1000
     entrypoint:
     - /bin/sh
     - -c
     command:
-    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-signal -c /data/config.yaml;
-      else printf "%s\n" "signal disabled"; exec sleep infinity; fi
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-signal -c /data/config.yaml
     read_only: true
     cap_drop:
     - ALL
@@ -116,8 +98,6 @@ services:
     restart: unless-stopped
   slack:
     image: dock.mau.dev/mautrix/slack@sha256:0de822d47926b7077322a4fa9f349cd024af13107ab4bc63a0962dc53ef72a63
-    profiles:
-    - connectors
     user: 1000:1000
     entrypoint:
     - /bin/sh
@@ -155,8 +135,6 @@ services:
     restart: unless-stopped
   line:
     image: ${MESSENGER_LINE_IMAGE:-sha256:9a47f439a7e634017cc7a0a3f743a670ccef3d93b49d445a786742baa42997e4}
-    profiles:
-    - connectors
     user: 1000:1000
     entrypoint:
     - /bin/sh
@@ -195,8 +173,6 @@ services:
     pull_policy: never
   instagram:
     image: dock.mau.dev/mautrix/meta@sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26
-    profiles:
-    - connectors
     user: 1000:1000
     entrypoint:
     - /bin/sh

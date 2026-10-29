@@ -51,10 +51,6 @@ def setup_connectors(root, enabled=()):
         folder.mkdir(mode=0o700, exist_ok=True)
         os.chmod(folder, 0o700)
         marker = folder / 'configured'
-        if name not in enabled:
-            marker.unlink(missing_ok=True)
-            configs[name] = {'enabled': False}
-            continue
         if name not in keys:
             keys[name] = {k: secrets.token_urlsafe(48) for k in ('as_token', 'hs_token', 'provisioning')}
         private = keys[name]
@@ -87,8 +83,11 @@ def setup_connectors(root, enabled=()):
             'de.sorunome.msc2409.push_ephemeral': True,
         })
         registrations.append('/data/' + name + '-registration.yaml')
-        configs[name] = {'enabled': True, 'url': url}
-        marker.touch(mode=0o600)
+        configs[name] = {'enabled': name in enabled, 'url': url}
+        if name in enabled:
+            marker.touch(mode=0o600)
+        else:
+            marker.unlink(missing_ok=True)
     matrix['app_service_config_files'] = registrations
     write(matrix_path, matrix)
     # Telegram uses its existing provisioning secret; this adds a common provider view.
@@ -107,5 +106,11 @@ def setup_connectors(root, enabled=()):
 if __name__ == '__main__':
     os.umask(0o077)
     # Explicit opt-in only. Merely installing does not contact account services.
-    setup_connectors(os.environ.get('MESSENGER_DATA', '/data'),
-                     filter(None, os.environ.get('MESSENGER_CONNECTORS', '').split(',')))
+    root = Path(os.environ.get('MESSENGER_DATA', '/data'))
+    try:
+        saved = json.loads((root / 'unified' / 'connectors.json').read_text())
+    except (OSError, ValueError):
+        saved = {}
+    enabled = {n for n in EXTRA_NETWORKS if saved.get(n, {}).get('enabled') is True}
+    enabled.update(filter(None, os.environ.get('MESSENGER_CONNECTORS', '').split(',')))
+    setup_connectors(root, enabled)
