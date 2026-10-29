@@ -169,7 +169,7 @@
   const fmtDur = ms => { const t = Math.max(0, Math.round((ms || 0) / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
   const fmtSize = b => !b ? '' : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
   const QUICK = ['❤️', '👍', '👎', '😂', '😮', '😢'];
-  const MORE = ['🙏', '🔥', '🎉', '👏', '😍', '🤔', '😅', '🙌', '💯', '😎', '🥲', '😡', '🤯', '🤝', '👀', '✅', '😘', '🥰', '😆', '😬', '🤣', '😭', '🤗', '😴', '💪', '👌', '🙃', '😇', '🤩', '😱', '💔', '⭐', '🌹', '☕', '🍻', '🎂', '🚀', '💡', '📌', '❓', '❗', '👋'];
+  const MORE = ['😁', '😀', '😃', '😄', '😊', '🙂', '😉', '🥹', '😋', '😜', '🤪', '🤭', '🫡', '🤷', '🤦', '😔', '😞', '😤', '😩', '😳', '🤨', '😐', '😑', '🤢', '🙏', '🔥', '🎉', '👏', '😍', '🤔', '😅', '🙌', '💯', '😎', '🥲', '😡', '🤯', '🤝', '👀', '✅', '😘', '🥰', '😆', '😬', '🤣', '😭', '🤗', '😴', '💪', '👌', '🙃', '😇', '🤩', '😱', '💔', '⭐', '🌹', '☕', '🍻', '🎂', '🚀', '💡', '📌', '❓', '❗', '👋'];
   // Saved copy on this device: the list and recent threads paint before the session handshake; Lock erases it.
   const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
   let saveTimer = null, savedOrder = [];
@@ -234,7 +234,8 @@
   function mergeMessages(pid, rows) {
     const t = store.threads[pid]; if (!t) return;
     const oldest = t.messages.find(m => !m.pending)?.timestamp ?? 0;
-    for (const m of rows) {
+    for (const incoming of rows) {
+      const m = pendingReactions(pid, incoming);
       const i = t.messages.findIndex(x => x.id === m.id || (m.client_id && x.client_id === m.client_id));
       if (i >= 0) { const local = t.messages[i].local; t.messages[i] = m; if (local) m.local = local; }
       else if (!t.has_more || m.timestamp >= oldest) t.messages.push(m);
@@ -524,7 +525,7 @@
     if (!s.ready) return;
     try {
       const r = await call('people/' + id + '?limit=60');
-      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, warning: r.history_warning};
+      store.threads[id] = {person: r.person, messages: r.messages.map(m => pendingReactions(id, m)), has_more: r.has_more, warning: r.history_warning};
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
       persist();
@@ -908,7 +909,8 @@
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
       for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn' + (mine === k ? ' mine' : '')));
-      strip.append(button('＋', () => { panel.replaceChildren(grid(m)); }, 'u-qr-btn more'));
+      const more = button('＋', () => { panel.replaceChildren(grid(m)); panel.querySelector('button')?.focus(); }, 'u-qr-btn more');
+      more.setAttribute('aria-label', 'More reactions'); strip.append(more);
       panel.append(strip);
     }
     const list = node('div', 'u-actions');
@@ -945,17 +947,60 @@
       panel.append(node('p', 'helper', body), pair); pair.lastChild.focus();
     });
   }
+  const reactionEdits = new Map();
+  const reactionSlot = (pid, id) => JSON.stringify([pid, id]);
+  function toggledReactions(reactions, key) {
+    const had = reactions.some(r => r.mine && r.key === key);
+    // Copy every entry: increasing an existing count must not mutate the rollback snapshot.
+    const next = reactions.map(r => ({...r, count: r.count - (r.mine ? 1 : 0), mine: false})).filter(r => r.count > 0);
+    if (!had) { const r = next.find(r => r.key === key); if (r) { r.count++; r.mine = true; } else next.push({key, count: 1, mine: true}); }
+    return next;
+  }
+  function pendingReactions(pid, message) {
+    const edit = reactionEdits.get(reactionSlot(pid, message.id));
+    if (!edit || edit.threads !== store.threads) return message;
+    return {...message, reactions: edit.queue.reduce((rs, op) => toggledReactions(rs, op.key), edit.confirmed)};
+  }
   async function react(m, key) {
+    const pid = view.id, t = store.threads[pid]; if (!t) return;
     recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
-    const t = store.threads[view.id]; const before = m.reactions;
-    const target = m.photos?.find(p => p.reactions?.some(r => r.mine && r.key === key)) || m;
-    // Optimistic: one reaction per person, tapping your own again removes it.
-    const others = (m.reactions || []).map(r => r.mine ? {...r, count: r.count - 1, mine: false} : r).filter(r => r.count > 0);
-    const had = (m.reactions || []).some(r => r.mine && r.key === key);
-    if (!had) { const e = others.find(r => r.key === key); if (e) { e.count++; e.mine = true; } else others.push({key, count: 1, mine: true}); }
-    m.reactions = others; paintThread();
-    try { const r = await call('messages/' + encodeURIComponent(target.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
-    catch (e) { m.reactions = before; paintThread(); error(e); }
+    // Album posts are projections, not store rows. Change the canonical part, including
+    // an own reaction on a later photo, so paintThread's next projection sees it now.
+    const parts = (m.photos || [m]).map(p => t.messages.find(row => row.id === p.id)).filter(Boolean);
+    const target = parts.find(p => reactionEdits.has(reactionSlot(pid, p.id))) || parts.find(p => p.reactions?.some(r => r.mine && r.key === key)) || parts.find(p => p.reactions?.some(r => r.mine)) || parts[0];
+    if (!target) return;
+    const slot = reactionSlot(pid, target.id);
+    let edit = reactionEdits.get(slot);
+    if (!edit || edit.threads !== store.threads) {
+      edit = {threads: store.threads, confirmed: target.reactions || [], queue: []}; reactionEdits.set(slot, edit);
+    }
+    const done = new Promise(resolve => edit.queue.push({key, resolve}));
+    target.reactions = pendingReactions(pid, target).reactions;
+    paintThread(); // Before the first await or HTTP call, even on a slow bridge.
+    if (edit.queue.length > 1) return done;
+    while (edit.queue.length) {
+      const op = edit.queue[0]; let failure;
+      try {
+        const r = await call('messages/' + encodeURIComponent(target.id) + '/react', {key: op.key});
+        edit.confirmed = r.message.reactions || [];
+        if (edit.threads === store.threads) mergeMessages(pid, [r.message]);
+      } catch (e) { failure = e; }
+      if (edit.threads !== store.threads) {
+        if (reactionEdits.get(slot) === edit) reactionEdits.delete(slot);
+        for (const queued of edit.queue) queued.resolve();
+        return done; // Sign-out/reset must not send queued reactions into a new session.
+      }
+      edit.queue.shift();
+      if (reactionEdits.get(slot) === edit && !edit.queue.length) reactionEdits.delete(slot);
+      if (edit.threads === store.threads) {
+        const row = store.threads[pid]?.messages.find(row => row.id === target.id);
+        if (row) row.reactions = edit.queue.reduce((rs, next) => toggledReactions(rs, next.key), edit.confirmed);
+        // A late completion belongs to its original thread, never the thread now open.
+        if (view.id === pid && s.person === pid) { paintThread(); if (failure) error(failure); }
+      }
+      op.resolve();
+    }
+    return done;
   }
   async function del(m, everyone) {
     if (everyone && !confirm('Delete this message for everyone?')) return;
