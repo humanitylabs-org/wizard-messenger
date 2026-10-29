@@ -58,7 +58,7 @@
   const ABOUT = {
     whatsapp: 'Links like WhatsApp Web. Your phone stays the main device.',
     telegram: 'Links as a new Telegram device.',
-    slack: 'Signs in with your work email. Slack emails you a code.',
+    slack: 'Signs in as you, like the Slack desktop app. Use your browser sign-in (works with Google and SSO), or your email if Slack can send you a code.',
     line: 'Links as a LINE desktop device. LINE may show a PIN to confirm.',
     instagram: 'Signs in for your Instagram DMs. Instagram may ask you to approve the new login.',
     signal: 'Links as a Signal linked device.',
@@ -71,7 +71,7 @@
     signal: ['Open Signal on your phone', 'Go to Settings → Linked devices', 'Tap + and point your camera here'],
   };
   const FLOW_LABEL = {
-    qr: 'Show QR code', phone: 'Use a pairing code instead', email: 'Sign in with email',
+    qr: 'Show QR code', phone: 'Use a pairing code instead', email: 'Sign in with email', token: 'Use my browser sign-in',
     'dev.highest.matrix.line.qr_login': 'Show QR code', 'dev.highest.matrix.line.email_login': 'Sign in with email & password',
     android: 'Sign in with username & password', 'instagram-password': 'Try the web sign-in instead',
   };
@@ -208,6 +208,14 @@
         button(root, 'Start again', async () => start(network, flow), 'primary wide'); back();
       } else if (result.type === 'user_input') {
         if (result.instructions) root.append(element('p', 'helper', result.instructions));
+        if (network === 'slack' && flow === 'token') {
+          const how = element('ol', 'c-steps');
+          for (const t of ['On a computer, open your workspace at app.slack.com in Chrome and sign in.',
+            'Press F12 (or ⌥⌘I), open Console, type  JSON.parse(localStorage.localConfig_v2).teams  and press Enter. Open your team and copy its "token" (starts with xoxc-).',
+            'Open the Application tab → Cookies → https://app.slack.com and copy the value of the cookie named "d" (starts with xoxd-).',
+            'Paste both below. They stay on your Wizard and are never shown again. Signing out of Slack in that browser ends this login.']) how.append(element('li', '', t));
+          root.append(how);
+        }
         const form = element('form', 'c-form'), inputs = {}; form.autocomplete = 'off';
         for (const field of (result.user_input || {}).fields || []) {
           const wrap = element('label', '', field.name || field.id);

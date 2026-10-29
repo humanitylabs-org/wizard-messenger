@@ -36,8 +36,9 @@ PROVIDERS = {p.id: p for p in (
     Provider('telegram', 'Telegram', 29317, ('qr', 'phone')),
     Provider('whatsapp', 'WhatsApp', 29318, ('qr', 'phone')),
     Provider('signal', 'Signal', 29328, ('qr',)),
-    # Personal email/code/workspace flow from the pinned upstream; app is bot-only.
-    Provider('slack', 'Slack', 29335, ('email',)),
+    # Personal email/code flow, plus the browser token & cookie login (what Beeper uses; works with
+    # Google/SSO workspaces where the emailed code never comes). 'app' is bot-only and stays off.
+    Provider('slack', 'Slack', 29335, ('token', 'email')),
     Provider('line', 'LINE', 29322, ('dev.highest.matrix.line.qr_login', 'dev.highest.matrix.line.email_login')),
     Provider('instagram', 'Instagram DMs', 29330, ('android', 'instagram-password')),
     Provider('kakaotalk', 'KakaoTalk', reason='No maintained compatible bridge selected; personal-account bridge support is unverified.'),

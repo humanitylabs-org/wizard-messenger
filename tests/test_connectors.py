@@ -130,7 +130,7 @@ class ConnectorTests(unittest.TestCase):
         setup_connectors(self.root, ('slack',))
         writer = Mock()
         p = Connectors(self.root / 'unified', writer=writer)
-        for flow in ('app', 'token', 'qr'):
+        for flow in ('app', 'qr'):  # token & cookie is a personal login (browser sign-in); app is bot-only
             with self.assertRaises(EngineError): p.dispatch('POST', ['slack', 'start'], {'flow': flow})
         writer.assert_not_called()
 
