@@ -68,6 +68,9 @@ def setup_connectors(root, enabled=()):
             config['network']['qr_login'] = True
         if name == 'twitter':
             config['network']['x'] = True  # call it X in bridge notices; the protocol id stays 'twitter'
+        if name == 'dots':
+            # Upstream refuses to start otherwise (chatgpt-dots docs/README.md).
+            config['bridge'].update(split_portals=True, async_events=False, portal_event_buffer=0)
         if name == 'gmessages':
             config['network']['device_meta']['os'] = 'Wizard Messenger'  # the name on the phone's paired devices
         config['database'].update(type='sqlite3-fk-wal', uri='file:/data/%s.db?_txlock=immediate' % name, max_open_conns=1, max_idle_conns=1)
