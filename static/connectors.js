@@ -275,7 +275,7 @@
         const re = /(?:-H|--header|-b|--cookie)\s+(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.|\^")*)"|\^"((?:[^"^]|\^.)*)\^")/g; let m;
         while ((m = re.exec(raw))) {
           const flag = m[0].trim().split(/\s/)[0], v = (m[1] ?? m[2] ?? m[3] ?? '').replace(/\^(.)/g, '$1').replace(/\\(.)/g, '$1');
-          if (flag === '-b' || flag === '--cookie') { addCookies(v); continue; }
+          if (flag === '-b' || flag === '--cookie') { headers.cookie = headers.cookie ? headers.cookie + '; ' + v : v; continue; }
           const i = v.indexOf(':'); if (i > 0) headers[v.slice(0, i).trim().toLowerCase()] = v.slice(i + 1).trim();
         }
       } else if (!Object.keys(json).length) {
@@ -305,6 +305,10 @@
         'On a computer, sign in at chatgpt.com in your browser.',
         'In the same browser, open chatgpt.com/api/auth/session (link below). It shows a block of text.',
         'Select all of it (Ctrl+A or ⌘A), copy, and paste it below.']},
+      linkedin: {steps: host => [
+        'On a computer, open a private window, go to linkedin.com and sign in as usual.',
+        'Press F12 (⌥⌘I on a Mac), open the Network tab, type voyager in its filter box, then click Messaging on the page.',
+        'Right-click any request in the list → Copy → Copy as cURL, and paste it below. Then just close that window (don\u2019t sign out).']},
       gmessages: {steps: host => [
         'On a computer, open a private window in Firefox (Chrome may block this) and sign in with the Google account your phone uses for Messages.',
         'Stay on the messages.google.com page it opens. Press F12 (⌥⌘I on a Mac), open the Network tab and reload.',

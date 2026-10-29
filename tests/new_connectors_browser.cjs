@@ -96,7 +96,6 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
     await page.getByRole('button', {name: 'Continue'}).click();
     await page.getByText('X connected').waitFor();
 
-    // A bare Cookie header and LinkedIn-style request headers parse too (unit-level, through the page's own parser path).
     await page.getByRole('button', {name: 'Done'}).click();
     await page.locator('.c-card[data-network=twitter]').waitFor();
     await page.locator('.u-sheet .u-acct-dot.on[data-network=twitter]').waitFor(); await shot('connected');
