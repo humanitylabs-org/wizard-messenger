@@ -5,6 +5,7 @@
     if (state.overlay) return {...state, overlay: null, handled: true};
     if (state.person) return {...state, person: null, handled: true};
     if (state.search != null) return {...state, search: null, handled: true};
+    if (state.low) return {...state, low: false, handled: true}; // Low priority folder → Inbox
     return {...state, handled: false}; // Shared WizardApp owns the root guard.
   }
   async function fetchOlder(t, id, call) {
@@ -62,7 +63,7 @@
   if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
-  const s = {tab: 'people', person: null, overlay: null, search: null, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
+  const s = {tab: 'people', person: null, overlay: null, search: null, low: false, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
   let api, timer, lastFocus, updateHold, connectorController, native;
   let nativeRows = [], nativeFocus = null;
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
@@ -85,6 +86,7 @@
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
+    lowpri: ['M3 4h18v4H3z', 'M5 8v11h14V8', 'M10 12h4'], inbox: ['M3 13h5l2 3h4l2-3h5', 'M5.5 5h13L21 13v6H3v-6z'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -138,7 +140,8 @@
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
     else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); renderList(); }
-    else { s.search = null; s.epoch++; renderList(); }
+    else if (s.search != null) { s.search = null; s.epoch++; renderList(); }
+    else { s.low = false; s.epoch++; renderList(); }
     return true;
   }
   function overlay(title) {
@@ -254,9 +257,9 @@
     } catch { return false; }
   }
   // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
-  const unreadById = {}, kindById = {}, mutedById = {}; let nativeUnread = 0;
+  const unreadById = {}, kindById = {}, mutedById = {}, lowById = {}; let nativeUnread = 0;
   let badgeShown = -1;
-  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; } }
+  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; lowById[p.id] = !!p.low_priority; } }
   // Each bottom tab carries its own unread count (Chats, Groups, Messenger), like Signal's tab badges.
   function paintTabBadges(counts) {
     for (const [tab, n] of Object.entries(counts)) {
@@ -270,7 +273,7 @@
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
     const counts = {people: nativeUnread, groups: 0};
-    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id]) counts.people += n; // one Inbox: groups count there too
+    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id] && !lowById[id]) counts.people += n; // one Inbox: groups count there too; Low priority never counts
     paintTabBadges(counts);
     const n = counts.people + counts.groups;
     if (n === badgeShown) return; badgeShown = n;
@@ -311,7 +314,7 @@
     store.seq = Math.max(store.seq, r.seq);
     for (const id of r.removed || []) {
       for (const k of ['people', 'groups']) if (store.lists[k]) store.lists[k] = store.lists[k].filter(p => p.id !== id);
-      delete unreadById[id]; delete mutedById[id]; delete kindById[id];
+      delete unreadById[id]; delete mutedById[id]; delete lowById[id]; delete kindById[id];
     }
     if (r.removed?.length) syncBadge();
     if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
@@ -425,12 +428,14 @@
         if (kind && !divided) { divided = true; const d = node('span', 'u-chip-divider'); d.setAttribute('aria-hidden', 'true'); chips.append(d); }
         const chip = button('', () => { try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip' + (kind ? ' ' + kind : ''));
         chip.dataset.filter = value; chip.setAttribute('aria-label', text);
+        // Platforms are icon-only (the name lives in the label and tooltip): the row stays compact.
         if (value.startsWith('net:')) { chip.classList.add('net'); chip.append(netBadge(value.slice(4), 'u-chip-icon')); }
-        chip.append(node('span', 'u-chip-text', text), node('span', 'u-chip-count'));
+        else chip.append(node('span', 'u-chip-text', text));
+        chip.append(node('span', 'u-chip-count'));
         chips.append(chip);
       }
     }
-    // Unread chats per chip (muted chats do not count), cheap enough to recompute on every paint.
+    // Unread chats per chip (muted and Low priority chats do not count), cheap enough to recompute on every paint.
     for (const c of chips.querySelectorAll('.u-chip')) {
       const f = c.dataset.filter, n = f === 'all' ? 0 : all.filter(p => p.unread > 0 && !p.muted && matchesFilter(p, f)).length;
       const count = c.querySelector('.u-chip-count'), show = f !== 'all' && !c.classList.contains('sub') && n > 0;
@@ -502,10 +507,16 @@
       return;
     }
     const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
-    const people = [...(store.lists.people || []), ...(store.lists.groups || []), ...nativeRows]
+    const everyone = [...(store.lists.people || []), ...(store.lists.groups || []), ...nativeRows]
       .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
-    const filter = paintFilters(people) || 'all';
+    // Low priority (Beeper's name; WhatsApp's Archive): out of the Inbox, chips, unread counts and notifications,
+    // and a new message never brings a chat back. They live in one folder reached from the top of the Inbox.
+    const low = everyone.filter(isLow), people = s.low ? low : everyone.filter(p => !isLow(p));
+    root.classList.toggle('u-in-low', s.low);
+    const filter = s.low ? 'all' : paintFilters(people) || 'all';
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
+    if (s.low) frag.append(lowHeader());
+    else if (low.length && filter === 'all') frag.append(lowFolderRow(low));
     for (const p of people.filter(p => matchesFilter(p, filter) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
       const groups = listKey(p) === 'groups';
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
@@ -527,13 +538,14 @@
         if (who) line.append(node('span', 'u-snippet-who', who + ': '));
         line.append(snippet(p.last) || ''); bottom.append(line);
       }
-      if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
+      if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted || isLow(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
       else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
       info.append(top, bottom);
       const extra = networksOf(p).length > 1 ? networksOf(p).map(netLabel) : []; // labels live in the filter chips
       if (extra.length) info.append(node('span', 'u-tags', extra.join(' · ')));
       card.append(info); frag.append(card);
     }
+    if (s.low && frag.children.length === 1) frag.append(node('p', 'u-empty', 'Nothing in Low priority. Hold or right-click a chat to move it here.'));
     if (!frag.children.length) {
       const empty = node('div', 'u-empty');
       if (q || filter !== 'all') empty.append(node('p', '', q ? 'No matches' : 'Nothing here with this filter'));
@@ -546,7 +558,25 @@
     list.replaceChildren(frag);
   }
 
-  // Long-press (or right-click) a chat row: Mute / Unmute. A held press never also opens the chat.
+  const isLow = p => !!p.low_priority;
+  // The quiet first row of the Inbox: opens the Low priority folder. Its count is chats with something unread.
+  function lowFolderRow(low) {
+    const unread = low.filter(p => p.unread > 0).length;
+    const row = button('', () => { s.low = true; s.epoch++; drawList(); $('unified-inbox').querySelector('.u-list')?.scrollTo?.(0, 0); }, 'u-person u-low-row');
+    const mark = node('span', 'u-low-mark'); mark.append(icon('lowpri'));
+    const info = node('span', 'u-person-info'), top = node('span', 'u-chat-top');
+    top.append(node('strong', '', 'Low priority'));
+    if (unread) top.append(node('span', 'u-badge muted', unread > 99 ? '99+' : String(unread)));
+    info.append(top, node('span', 'u-snippet', low.length === 1 ? '1 chat' : low.length + ' chats'));
+    row.append(mark, info); row.setAttribute('aria-label', 'Low priority, ' + low.length + ' chats' + (unread ? ', ' + unread + ' unread' : ''));
+    return row;
+  }
+  function lowHeader() {
+    const bar = node('div', 'u-low-head');
+    bar.append(iconButton('back', 'Back to Inbox', back), node('strong', '', 'Low priority'), node('span', 'u-low-note', 'Quiet: no unread counts or notifications'));
+    return bar;
+  }
+  // Long-press (or right-click) a chat row: Mute / Unmute, Low priority / Inbox. A held press never also opens the chat.
   // A phone turns the finger lifting off a long-press into a click, which lands on the menu's backdrop and closes
   // it at once. Swallow exactly that click.
   function swallowRelease() {
@@ -598,7 +628,21 @@
     panel.querySelector('button')?.focus(); hold();
   }
   const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
-  function chatMenu(p, card) { actionMenu(card, p.display_name, [muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted))]); }
+  const lowAction = (low, run) => ({label: low ? 'Move to Inbox' : 'Move to Low priority', icon: low ? 'inbox' : 'lowpri', run});
+  function chatMenu(p, card) {
+    actionMenu(card, p.display_name, [
+      muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted)),
+      lowAction(isLow(p), () => setLow(p, !isLow(p))),
+    ]);
+  }
+  // The row leaves the list in place (no extra screen); hold it again in the other folder to move it back.
+  async function setLow(p, low) {
+    if (p.native) { p.setLowPriority(low); p.low_priority = low; syncBadge(); drawList(); toast(low ? 'Moved to Low priority' : 'Moved to Inbox'); return; }
+    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.low_priority = v; p.low_priority = v; drawList(); syncBadge(); };
+    flip(low);
+    try { await call('people/' + encodeURIComponent(p.id), {low_priority: low}); toast(low ? 'Moved to Low priority' : 'Moved to Inbox'); persist(); }
+    catch (e) { flip(!low); toast(e.message || 'Could not move this chat', 3000); }
+  }
   async function setMuted(p, muted) {
     const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
     flip(muted);
@@ -1856,7 +1900,7 @@
       focus: () => number.focus(),
     };
   }
-  function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
+  function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; s.low = false; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); } });
   // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.
@@ -1933,7 +1977,7 @@
   }
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative,
-    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted ? 0 : p.unread), 0); syncBadge(); if (!s.native && !s.person) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
+    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority ? 0 : p.unread), 0); syncBadge(); if (!s.native && !s.person) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
     receiveShare, shareTargetRows,
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
@@ -1941,11 +1985,11 @@
     mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
-      if (!s.ready || !restore()) return false; $('inbox-tabs').hidden = false;
+      if (!s.ready || !restore()) return false;
       resume(); return true;
     },
     authenticated() {
-      if (s.ready) return; s.ready = true; restore(); $('inbox-tabs').hidden = false;
+      if (s.ready) return; s.ready = true; restore();
       const painted = document.documentElement.dataset.inboxTab;
       if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
@@ -1954,7 +1998,7 @@
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
-    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null), back,
+    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low), back,
     signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

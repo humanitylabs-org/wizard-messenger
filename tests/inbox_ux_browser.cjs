@@ -67,7 +67,7 @@ let providers = [
     assert.equal(order[1].trim(), 'Family', 'groups interleave by recency');
     assert.equal(await page.locator('#inbox-tabs [data-tab="groups"]').count(), 0, 'no separate Groups tab');
     assert.match(await page.locator('.u-acct-text').textContent(), /1 of 5 connected/);
-    const chips = await page.locator('#u-filters .u-chip .u-chip-text').allTextContents(); // label only; unread counts live in .u-chip-count
+    const chips = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => e.getAttribute('aria-label'))); // platform chips are icon-only; the name is the accessible label
     for (const c of ['All', 'Unread', 'Direct', 'Groups', 'WhatsApp', 'LINE', 'Slack', 'Telegram', 'Instagram', 'Family']) assert.ok(chips.includes(c), 'chip ' + c + ' in ' + chips);
     assert.ok(await page.locator('.u-person .u-net').count() >= rows, 'every row wears its network badge');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);

@@ -133,7 +133,7 @@
     if (!state.records.has(group)) {
       let saved = {};
       try { saved = JSON.parse(localStorage.getItem(storagePrefix() + group) || '{}'); } catch { /* A draft failure never permits an untracked send. */ }
-      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null, muted: saved?.muted === true};
+      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null, muted: saved?.muted === true, low_priority: saved?.low_priority === true};
       for (const attempt of record.attempts) if (attempt.state === 'sending') attempt.state = 'checking';
       state.records.set(group, record);
       syncUpdateHold();
@@ -389,17 +389,18 @@
   }
   function renderList() {
     if (state.mode !== 'ready') return;
-    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted])]);
+    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted,r.low_priority])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
     // Adapter rows only: native history, invite and send handling stay in this engine.
     const nativeRows = [...state.invites, ...state.dms.filter(dm => !isIncoming(dm))].map(dm => {
       const record = readRecord(dm.group_id), last = cacheFor(dm.group_id).messages.at(-1), invite = isIncoming(dm);
       return {id: 'private:' + dm.group_id, native: true, group_id: dm.group_id, display_name: peerName(dm),
-        identities: [{network: 'private', kind: 'person'}], muted: !!record.muted,
+        identities: [{network: 'private', kind: 'person'}], muted: !!record.muted, low_priority: !!record.low_priority,
         unread: invite || (last?.direction === 'received' && record.seen !== last.message_id) ? 1 : 0,
         last: {text: invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet'),
           timestamp: stamp(last?.created_at), outgoing: last?.direction === 'sent'},
-        setMuted: () => { record.muted = !record.muted; persist(dm.group_id); state.listSignature = ''; renderList(); }};
+        setMuted: () => { record.muted = !record.muted; persist(dm.group_id); state.listSignature = ''; renderList(); },
+        setLowPriority: v => { record.low_priority = !!v; persist(dm.group_id); state.listSignature = ''; renderList(); }};
     });
     window.MessengerUnified?.setNativeRows?.(nativeRows);
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();

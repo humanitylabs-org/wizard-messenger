@@ -118,11 +118,11 @@ const providers = [
     const chips = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => [e.dataset.filter, e.getAttribute('aria-label'), e.classList.contains('sub'), !!e.querySelector('svg.brand-icon path'), e.querySelector('.u-chip-count')?.textContent || '']));
     const order = chips.map(c => c[1]);
     assert.deepEqual(order.slice(0, 2), ['All', 'Unread']);
-    for (const n of ['WhatsApp', 'Telegram', 'LINE', 'Slack', 'Instagram', 'Signal', 'Private']) {
+    for (const n of ['WhatsApp', 'Telegram', 'LINE', 'Slack', 'Instagram', 'Signal', 'Wizard']) {
       const c = chips.find(x => x[1] === n); assert.ok(c, 'chip ' + n + ' in ' + order); assert.equal(c[3], true, n + ' chip shows its icon'); assert.equal(c[2], false);
     }
     for (const n of ['Direct', 'Groups', 'Family']) assert.equal(chips.find(x => x[1] === n)?.[2], true, n + ' is a secondary chip');
-    assert.ok(order.indexOf('Private') < order.indexOf('Direct'), 'platform chips before Direct/Groups');
+    assert.ok(order.indexOf('Wizard') < order.indexOf('Direct'), 'platform chips before Direct/Groups');
     assert.equal(chips.find(c => c[1] === 'Unread')[4], '4', 'Unread chip counts unread chats');
     assert.equal(chips.find(c => c[1] === 'Telegram')[4], '1');
     assert.equal(chips.find(c => c[1] === 'WhatsApp')[4], '1');
@@ -137,7 +137,7 @@ const providers = [
     await shot('inbox');
 
     // Platform chips filter rows to that platform only.
-    for (const [chip, net, count] of [['Telegram', 'telegram', 1], ['WhatsApp', 'whatsapp', 2], ['Private', 'private', 1], ['Slack', 'slack', 1]]) {
+    for (const [chip, net, count] of [['Telegram', 'telegram', 1], ['WhatsApp', 'whatsapp', 2], ['Wizard', 'private', 1], ['Slack', 'slack', 1]]) {
       await page.getByRole('button', {name: chip, exact: true}).click();
       const nets = await page.locator('.u-person').evaluateAll(els => els.map(e => e.dataset.network));
       assert.equal(nets.length, count, chip + ' rows'); assert.ok(nets.every(n => n === net), chip + ' shows only ' + net);

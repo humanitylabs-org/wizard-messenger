@@ -59,6 +59,30 @@ class PeopleTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'muted': 'yes'})
 
+    def test_low_priority_persists_keeps_unread_and_never_notifies(self):
+        a = self.store.identity('telegram', '!deals', 'Deals', 'group')
+        b = self.store.identity('telegram', '!amy', 'Amy')
+        self.store.push_enabled = True
+        self.store.add_message('$d1', a, 'shop', False, 'sale', int(time.time() * 1000), push_live=True)
+        before = self.store.seq
+        self.store.update(a['person_id'], {'low_priority': True})
+        self.assertGreater(self.store.seq, before)  # the change feed carries it to every open view
+        p = self.store.people('group')[0]
+        self.assertEqual((p['low_priority'], p['unread']), (1, 1))
+        # A new message keeps it in Low priority (no un-archiving) and queues no notification.
+        self.store.add_message('$d2', a, 'shop', False, 'another sale', int(time.time() * 1000), push_live=True)
+        self.store.add_message('$b1', b, 'amy', False, 'hi', int(time.time() * 1000), push_live=True)
+        self.store.update(b['person_id'], {'muted': True})
+        self.store.add_message('$b2', b, 'amy', False, 'muted too', int(time.time() * 1000), push_live=True)
+        self.assertEqual(self.store.people('group')[0]['low_priority'], 1)
+        with self.store.db() as db:
+            queued = sorted(r[0] for r in db.execute('SELECT message FROM push_intent'))
+        self.assertEqual(queued, ['matrix:$b1', 'matrix:$d1'])
+        self.store.update(a['person_id'], {'low_priority': False})
+        self.assertEqual(self.store.people('group')[0]['low_priority'], 0)
+        with self.assertRaises(Exception):
+            self.store.update(a['person_id'], {'low_priority': 1})
+
     def test_auto_create_deduplicates_and_preserves_rename(self):
         a = self.store.identity('telegram', '!one', 'Alice')
         self.store.update(a['person_id'], {'display_name': 'Alice Thai', 'language': 'th'})

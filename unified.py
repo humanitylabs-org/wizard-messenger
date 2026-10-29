@@ -122,6 +122,8 @@ MIGRATIONS = [
     ('identity', 'seq', 'INTEGER NOT NULL DEFAULT 0'),
     # 1 once the owner renamed the person: synced network names never overwrite it.
     ('person', 'name_locked', 'INTEGER NOT NULL DEFAULT 0'),
+    # 1 = the owner moved this chat to Low priority: it leaves the Inbox, unread counts and notifications.
+    ('person', 'low_priority', 'INTEGER NOT NULL DEFAULT 0'),
 ]
 
 # Matches the bridges' backfill.unread_hours_threshold: older history is read.
@@ -415,7 +417,7 @@ class PeopleStore:
     def update(self, person_id, payload):
         self.person(person_id)
         with self.db() as db:
-            for key in ('display_name', 'language', 'preferred_identity', 'muted'):
+            for key in ('display_name', 'language', 'preferred_identity', 'muted', 'low_priority'):
                 if key not in payload:
                     continue
                 value = payload[key]
@@ -423,9 +425,9 @@ class PeopleStore:
                     if value and not db.execute('SELECT 1 FROM identity WHERE id=? AND person_id=?', (value, person_id)).fetchone():
                         fail('invalid_identity', 'Choose an identity belonging to this person')
                     value = value or None
-                elif key == 'muted':
+                elif key in ('muted', 'low_priority'):
                     if not isinstance(value, bool):
-                        fail('invalid_input', 'muted is true or false')
+                        fail('invalid_input', key + ' is true or false')
                     value = int(value)
                 elif key == 'language':
                     if value not in ('', 'en', 'th', 'ja', 'zh', 'es', 'fr', 'de'):
@@ -488,7 +490,10 @@ class PeopleStore:
                              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                              (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id, album, source_event))
             inserted = cur.rowcount == 1
-            if inserted and not outgoing and push_live and self.push_enabled:
+            # Muted and Low priority chats never notify (the person may have been merged since: join on the identity).
+            quiet = db.execute('SELECT 1 FROM identity i JOIN person p ON p.id=i.person_id WHERE i.id=? AND (p.muted=1 OR p.low_priority=1)',
+                               (identity['id'],)).fetchone()
+            if inserted and not outgoing and push_live and self.push_enabled and not quiet:
                 db.execute('INSERT OR IGNORE INTO push_intent(message,created) VALUES(?,?)',
                            (event_id if event_id.startswith('messenger:') else 'matrix:' + event_id, time.time()))
             if not inserted and msgtype != 'm.text':

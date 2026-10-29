@@ -18,7 +18,7 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 #inbox-tabs button[aria-selected=true] { color: var(--ink); }
 #inbox-tabs button { position: relative; }
 #inbox-tabs .tab-badge { position: absolute; top: 0; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent, #fff); font: 600 11px/18px system-ui, sans-serif; text-align: center; pointer-events: none; box-shadow: 0 0 0 2px var(--bg); }
-#inbox-tabs button[aria-selected=true] svg { background: var(--accent-soft); color: #9dbbff; }
+#inbox-tabs button[aria-selected=true] svg { background: var(--accent-soft); color: var(--link); }
 
 #unified-inbox { order: 1; position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 760px; margin: 0 auto; overflow: hidden; }
 #unified-inbox > .error { margin: 0 18px 8px; flex-shrink: 0; }
@@ -67,7 +67,7 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-empty { color: var(--ink-3); text-align: center; line-height: 1.6; margin: 56px auto; max-width: 300px; padding: 0 18px; }
 .u-chips { display: flex; gap: 8px; padding: 2px 18px 10px; overflow-x: auto; flex-shrink: 0; scrollbar-width: none; }
 .u-chip { min-height: 34px; padding: 0 14px; border-radius: 17px; background: var(--raised); color: var(--ink-2); font-size: 14px; white-space: nowrap; }
-.u-chip[aria-pressed=true] { background: var(--accent-soft); color: #9dbbff; }
+.u-chip[aria-pressed=true] { background: var(--accent-soft); color: var(--link); }
 .u-fab { position: absolute; right: 18px; bottom: 18px; width: 56px; height: 56px; border-radius: 18px; background: var(--raised-2); color: var(--ink); box-shadow: 0 6px 20px rgba(0,0,0,.45); z-index: 2; }
 .u-fab:not(:disabled):hover, .u-fab:not(:disabled):active { background: #3b3b41; }
 
@@ -81,12 +81,12 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-message.joined-next:not(.outgoing) { border-bottom-left-radius: 5px; } .u-message.joined-prev:not(.outgoing) { border-top-left-radius: 5px; }
 .u-message.outgoing.joined-next { border-bottom-right-radius: 5px; } .u-message.outgoing.joined-prev { border-top-right-radius: 5px; }
 .u-message p { margin: 0; font-size: 15px; line-height: 1.4; white-space: pre-wrap; }
-.u-message .u-sender { font-size: 13px; font-weight: 600; color: #9dbbff; margin-bottom: 2px; }
+.u-message .u-sender { font-size: 13px; font-weight: 600; color: var(--link); margin-bottom: 2px; }
 .u-message .u-original, .u-original { font-size: 13px; color: var(--ink-2); margin-top: 6px; line-height: 1.45; white-space: pre-wrap; }
 .u-message.outgoing .u-original { color: rgba(255,255,255,.75); }
 .u-message footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; font-size: 11px; color: var(--ink-3); }
 .u-message.outgoing footer { color: rgba(255,255,255,.72); }
-.u-message .u-translate { display: block; background: none; padding: 0; margin-top: 4px; min-height: 0; min-width: 0; border-radius: 0; font-size: 13px; color: #9dbbff; }
+.u-message .u-translate { display: block; background: none; padding: 0; margin-top: 4px; min-height: 0; min-width: 0; border-radius: 0; font-size: 13px; color: var(--link); }
 .u-message .u-translate:hover { background: none; text-decoration: underline; }
 
 /* Composer */
@@ -94,7 +94,7 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-channel { align-self: flex-start; width: auto; max-width: 100%; min-height: 32px; padding: 4px 30px 4px 12px; border-radius: 16px; font-size: 13px; color: var(--ink-2); }
 .u-compose-row { display: flex; align-items: flex-end; gap: 8px; }
 .u-compose-row textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; line-height: 20px; padding: 12px 18px; border-radius: 22px; overflow-y: auto; }
-.u-send { flex: 0 0 44px; background: var(--accent); color: #fff; }
+.u-send { flex: 0 0 44px; background: var(--accent); color: var(--on-accent); }
 .u-send svg { width: 20px; height: 20px; margin-left: -1px; }
 .u-send:not(:disabled):hover, .u-send:not(:disabled):active { background: var(--accent-press); }
 .u-send:disabled { background: var(--raised); color: var(--ink-3); opacity: 1; }
@@ -161,13 +161,13 @@ button { touch-action: manipulation; }
 .u-muted-mark { width: 14px; height: 14px; margin-left: 6px; vertical-align: -2px; opacity: .6; }
 .u-chat-bottom { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .u-chat-bottom .u-snippet { flex: 1; min-width: 0; }
-.u-snippet.typing { color: #9dbbff; font-style: italic; }
+.u-snippet.typing { color: var(--link); font-style: italic; }
 .u-person.unread .u-chat-top strong { font-weight: 700; }
-.u-person.unread .u-when { color: #9dbbff; }
+.u-person.unread .u-when { color: var(--link); }
 .u-person.unread .u-snippet { color: var(--ink); }
-.u-badge { flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+.u-badge { flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
 .u-ticks { flex-shrink: 0; font-size: 12px; color: var(--ink-3); letter-spacing: -2px; }
-.u-ticks.read { color: #9dbbff; }
+.u-ticks.read { color: var(--link); }
 .u-when, .u-message footer, .u-dur, .u-rec-time { font-variant-numeric: tabular-nums; }
 /* skeletons instead of "Loading…" */
 .u-skeleton { padding: 4px 0; }
@@ -188,7 +188,7 @@ button { touch-action: manipulation; }
 .u-row { display: flex; flex-direction: column; align-items: flex-start; margin-top: 10px; transition: transform .12s; touch-action: pan-y; }
 .u-row.outgoing { align-items: flex-end; }
 .u-row.pos-mid, .u-row.pos-last { margin-top: 2px; }
-.u-row.arm .u-message { box-shadow: -4px 0 0 #9dbbff; }
+.u-row.arm .u-message { box-shadow: -4px 0 0 var(--link); }
 .u-row.flash .u-message { animation: u-flash 1.2s; }
 @keyframes u-flash { 30% { filter: brightness(1.6); } }
 .u-row.lifted .u-message { filter: brightness(1.25); }
@@ -215,7 +215,7 @@ button { touch-action: manipulation; }
 .tone-text-4 { color: #f0a46a !important; } .tone-text-5 { color: #7fd08f !important; } .tone-text-6 { color: #6fb0f5 !important; } .tone-text-7 { color: #d39bea !important; }
 .tone-text-8 { color: #5ed6b2 !important; } .tone-text-9 { color: #f2977f !important; } .tone-text-10 { color: #a2a7f2 !important; } .tone-text-11 { color: #dcc56a !important; }
 /* quotes */
-.u-quote { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-height: 0; margin: 2px 0 6px; padding: 6px 10px; border-radius: 10px; border-left: 3px solid #9dbbff; background: rgba(0,0,0,.22); text-align: left; color: inherit; }
+.u-quote { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-height: 0; margin: 2px 0 6px; padding: 6px 10px; border-radius: 10px; border-left: 3px solid var(--link); background: rgba(0,0,0,.22); text-align: left; color: inherit; }
 .u-quote strong { font-size: 13px; font-weight: 600; }
 .u-quote span { font-size: 13px; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .outgoing .u-quote { border-left-color: #fff; background: rgba(0,0,0,.18); }
@@ -283,7 +283,7 @@ button { touch-action: manipulation; }
 .u-field textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; line-height: 20px; padding: 12px 18px; border-radius: 22px; overflow-y: auto; background: var(--raised); border: 0; }
 .u-composer.is-file-drag .u-field textarea { background: color-mix(in srgb, var(--accent) 15%, var(--raised)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .u-attach, .u-mic { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 50%; color: var(--ink-2); }
-.u-mic { background: var(--accent); color: #fff; }
+.u-mic { background: var(--accent); color: var(--on-accent); }
 .u-attach[hidden], .u-mic[hidden], .u-send[hidden] { display: none; }
 .u-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .u-bar[hidden] { display: none; }
@@ -331,11 +331,11 @@ button { touch-action: manipulation; }
 .u-acct-dot.on { color: #fff; }
 .u-acct-dot.warn { background: var(--warn); color: #222; }
 .u-acct-text { flex: 1; min-width: 0; font-size: 14px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.u-acct-cta { flex-shrink: 0; font-size: 14px; font-weight: 600; color: #9dbbff; }
+.u-acct-cta { flex-shrink: 0; font-size: 14px; font-weight: 600; color: var(--link); }
 .u-chips { padding: 0 12px 10px; }
 .u-chip { min-height: 34px; padding: 0 14px; font-weight: 500; transition: background-color 120ms, color 120ms; }
 .u-chip.net::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--net, var(--ink-3)); vertical-align: 1px; }
-.u-chip[aria-pressed=true] { background: var(--ink); color: var(--bg); }
+.u-chip[aria-pressed=true] { background: var(--chip-on); color: var(--chip-on-ink); }
 .u-av-wrap { position: relative; flex: 0 0 48px; display: block; }
 .u-net { position: absolute; right: -3px; bottom: -3px; display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; color: #fff; font: 700 10px/1 system-ui, sans-serif; box-shadow: 0 0 0 2.5px var(--bg); }
 .u-person { border-radius: 14px; margin: 0 6px; width: calc(100% - 12px); padding: 10px 12px; }
@@ -360,7 +360,7 @@ button { touch-action: manipulation; }
 .c-pill { flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--raised-2); color: var(--ink-2); }
 .c-pill.on { background: rgba(79,194,138,.16); color: var(--ok); }
 .c-pill.warn { background: rgba(242,183,75,.16); color: var(--warn); }
-.c-link { display: block; width: 100%; min-height: 40px; margin-top: 4px; font-size: 14px; color: #9dbbff; border-radius: 12px; }
+.c-link { display: block; width: 100%; min-height: 40px; margin-top: 4px; font-size: 14px; color: var(--link); border-radius: 12px; }
 .c-link.danger { color: var(--err); }
 .c-step-head { display: flex; align-items: center; gap: 14px; margin: 6px 0 10px; }
 .c-step-head h3 { font-size: 19px; font-weight: 600; color: var(--ink); text-transform: none; letter-spacing: 0; margin: 0; }
@@ -380,8 +380,8 @@ button { touch-action: manipulation; }
 .u-chips .u-chip { flex: 0 0 auto; min-width: 0; }
 .u-chat-top strong { font-weight: 500; }
 .u-person.unread .u-chat-top strong { font-weight: 700; }
-.u-person.unread .u-when { color: #9dbbff; }
-.u-fab { background: var(--accent); color: #fff; box-shadow: 0 8px 24px rgba(44,107,237,.35); }
+.u-person.unread .u-when { color: var(--link); }
+.u-fab { background: var(--accent); color: var(--on-accent); box-shadow: 0 8px 24px rgba(44,107,237,.35); }
 .u-fab:not(:disabled):hover, .u-fab:not(:disabled):active { background: var(--accent-press); }
 .u-acct-dot { font-size: 10px; letter-spacing: -.02em; }
 .u-net { font-size: 8px; letter-spacing: -.03em; }
@@ -392,7 +392,7 @@ body { font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","
 
 
 /* ---------- Clarity pass: sent vs received, real platform icons, platform filters ---------- */
-:root { --bubble-in-ink: var(--ink); --bubble-out-ink: #fff; --link: #9dbbff; --badge-ring: var(--bg); --chip-on: var(--ink); --chip-on-ink: var(--bg); }
+:root { --bubble-in-ink: var(--ink); --bubble-out-ink: #fff; --link: color-mix(in srgb, var(--accent) 62%, var(--ink)); --badge-ring: var(--bg); --chip-on: var(--accent); --chip-on-ink: var(--on-accent); }
 /* Platform badges: brand glyph on a light disc, so every mark reads on dark and light skins alike. */
 .net-badge { display: inline-grid; place-items: center; flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #fff; overflow: hidden; }
 .net-badge.text { font: 700 9px/1 system-ui, sans-serif; letter-spacing: -.03em; }
@@ -421,7 +421,7 @@ body { font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","
 .u-chip.net::before { content: none; }
 .u-chip .u-chip-icon { width: 24px; height: 24px; box-shadow: none; }
 .u-chip[aria-pressed=true] { background: var(--chip-on); color: var(--chip-on-ink); }
-.u-chip-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font: 600 11px/18px system-ui, sans-serif; text-align: center; font-variant-numeric: tabular-nums; }
+.u-chip-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font: 600 11px/18px system-ui, sans-serif; text-align: center; font-variant-numeric: tabular-nums; }
 .u-chip-count[hidden] { display: none; }
 .u-chip.sub { min-height: 32px; padding: 0 12px; background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; }
 .u-chip.sub[aria-pressed=true] { background: var(--chip-on); color: var(--chip-on-ink); box-shadow: none; }
@@ -477,11 +477,11 @@ body { font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","
 html[data-private-view] .chat-header { border-bottom: 1px solid var(--line); }
 /* Light skins: the Wizard shell marks html[data-color-scheme=light]; the same tokens re-map, layout is unchanged. */
 html[data-color-scheme=light] {
-  --bg: #ffffff; --surface: #f2f3f5; --raised: #e9eaee; --raised-2: #dcdee3;
-  --ink: #16171a; --ink-2: #4f525a; --ink-3: #7c7f87;
-  --line: rgba(0,0,0,.07); --line-2: rgba(0,0,0,.13);
-  --accent-soft: rgba(44,107,237,.12);
-  --bubble-in: #eceef1; --bubble-out: #2c6bed; --bubble-in-ink: #16171a; --link: #2559c8;
+  --bg: var(--wz-canvas, #ffffff); --surface: var(--wz-surface, #f2f3f5); --raised: var(--wz-surface-raised, #e9eaee); --raised-2: var(--wz-surface-raised, #dcdee3);
+  --ink: var(--wz-text, #16171a); --ink-2: var(--wz-text-secondary, #4f525a); --ink-3: var(--wz-text-muted, #7c7f87);
+  --line: var(--wz-border, rgba(0,0,0,.07)); --line-2: var(--wz-border, rgba(0,0,0,.13));
+  --accent-soft: var(--wz-accent-soft, rgba(44,107,237,.12));
+  --bubble-in: color-mix(in srgb, var(--ink) 8%, var(--wz-base, #fff)); --bubble-out: #2c6bed; --bubble-in-ink: var(--ink); --link: color-mix(in srgb, var(--accent) 80%, var(--ink));
   color-scheme: light;
 }
 html[data-color-scheme=light] .u-day { background: rgba(242,243,245,.95); }
@@ -533,3 +533,28 @@ html[data-color-scheme=light] .c-mark.has-icon { box-shadow: inset 0 0 0 1px rgb
 .u-connectors .u-connector-heading h3 { margin-top: 0; }
 
 .u-connectors .helper { color: var(--ink-2); }
+
+/* ---------- Skin-safe colours (Oct 2026): hosted canvases are transparent, so nothing may use --bg as ink ---------- */
+button:not(:disabled):hover { background-color: color-mix(in srgb, var(--ink) 6%, transparent); }
+button:not(:disabled):active { background-color: color-mix(in srgb, var(--ink) 10%, transparent); }
+.u-person:active { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* One Inbox needs no bottom tab bar. */
+#inbox-tabs { display: none !important; }
+/* Platform chips are icon-only: a round target with the brand mark, count beside it when unread. */
+.u-chips { gap: 6px; }
+.u-chip.net { min-width: 40px; height: 40px; padding: 0 8px; justify-content: center; gap: 4px; }
+.u-chip.net .u-chip-icon { width: 24px; height: 24px; }
+.u-chips .u-chip[aria-pressed=true], .u-chips .u-chip[aria-pressed=true]:not(:disabled):hover { background: var(--chip-on); color: var(--chip-on-ink); box-shadow: none; }
+.u-chips .u-chip.net[aria-pressed=true], .u-chips .u-chip.net[aria-pressed=true]:not(:disabled):hover { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); color: var(--ink); }
+.u-chip.net .u-chip-count:not([hidden]) { margin-right: 2px; }
+/* Low priority: the quiet folder row at the top of the Inbox and the folder's own header. */
+.u-low-row { min-height: 56px; }
+.u-low-row .u-low-mark { display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; border-radius: 50%; background: var(--raised); color: var(--ink-2); }
+.u-low-row .u-low-mark svg { width: 22px; height: 22px; }
+.u-low-row .u-chat-top { justify-content: flex-start; gap: 8px; }
+.u-low-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 2px 8px 8px 4px; }
+.u-low-head strong { font-size: 17px; }
+.u-low-head .u-low-note { flex-basis: 100%; padding-left: 50px; margin-top: -10px; color: var(--ink-3); font-size: 13px; }
+#unified-inbox.u-in-low #u-filters { display: none; }
+.u-badge.muted { background: var(--raised-2); color: var(--ink-2); }
+.u-chips .u-chip[aria-pressed=true]:not(.net) .u-chip-count { background: var(--on-accent); color: var(--accent); }
