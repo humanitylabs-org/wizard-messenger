@@ -66,6 +66,12 @@ def setup_connectors(root, enabled=()):
         config['appservice']['username_template'] = name + '_{{.}}'
         if name == 'line':
             config['network']['qr_login'] = True
+        if name in ('whatsapp', 'twitter', 'linkedin'):
+            # No "(WA)"/"(Twitter)"/"(LinkedIn)" tag on every name: the Inbox shows the network's icon.
+            tpl = config['network'].get('displayname_template') or ''
+            for tag in (' (WA)', ' (Twitter)', ' (LinkedIn)'):
+                tpl = tpl.replace(tag, '')
+            config['network']['displayname_template'] = tpl
         if name == 'twitter':
             config['network']['x'] = True  # call it X in bridge notices; the protocol id stays 'twitter'
         if name == 'dots':

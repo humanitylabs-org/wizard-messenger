@@ -63,7 +63,7 @@
   if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
-  const s = {tab: 'people', person: null, overlay: null, search: null, low: false, ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
+  const s = {tab: 'people', person: null, overlay: null, search: null, low: (() => { try { return sessionStorage.getItem('messenger-inbox-low') === '1'; } catch { return false; } })(), ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
   let api, timer, lastFocus, updateHold, connectorController, native;
   let nativeRows = [], nativeFocus = null;
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
@@ -143,7 +143,7 @@
     if (s.overlay) closeOverlay();
     else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); renderList(); }
     else if (s.search != null) { s.search = null; s.epoch++; renderList(); }
-    else { s.low = false; s.epoch++; renderList(); }
+    else { setLowView(false); s.epoch++; renderList(); }
     return true;
   }
   function overlay(title) {
@@ -234,7 +234,8 @@
   const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 32);
   const listKey = p => (p.identities || []).some(i => i.kind === 'group') ? 'groups' : 'people';
   const mediaURL = (id, kind) => 'api/unified/media/' + encodeURIComponent(id) + (kind ? '?kind=' + kind : '');
-  const nameOf = sender => !sender ? '' : sender.startsWith('@') ? sender.slice(1).split(':')[0] : sender;
+  // Bridges tag names with their network ("Mike (WA)"); the chat already says which network it is.
+  const nameOf = sender => !sender ? '' : sender.startsWith('@') ? sender.slice(1).split(':')[0] : sender.replace(/ \((WA|Twitter|LinkedIn)\)$/, '');
   const fmtDur = ms => { const t = Math.max(0, Math.round((ms || 0) / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
   const fmtSize = b => !b ? '' : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
   const QUICK = ['❤️', '👍', '👎', '😂', '😮', '😢'];
@@ -419,20 +420,21 @@
     return chips;
   }
   // One row of chips: All, Unread, one chip per platform (with its icon), then quieter Direct/Groups and labels.
-  function paintFilters(all) {
+  function paintFilters(all, shown = all, lowCount = 0) {
     const chips = $('u-filters'); if (!chips) return;
     const connected = (accountsSeen || []).filter(p => p.state === 'connected' || p.state === 'degraded').map(p => p.network);
     const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private' && n !== 'messenger').sort((a, b) => netLabel(a).localeCompare(netLabel(b)));
     const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
     const options = [['all', 'All'], ['unread', 'Unread'], ...nets.map(n => ['net:' + n, netLabel(n)]), ['net:private', 'Wizard'],
       ['direct', 'Direct', 'sub'], ['groups', 'Groups', 'sub'], ...labels.map(l => ['label:' + l, l, 'sub label'])];
+    if (lowCount || s.low) options.push(['low', 'Low priority', 'sub low']);
     const sig = options.map(o => o.join('=')).join('|');
     let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
     if (chips.dataset.sig !== sig) {
       chips.dataset.sig = sig; chips.replaceChildren(); let divided = false;
       for (const [value, text, kind] of options) {
         if (kind && !divided) { divided = true; const d = node('span', 'u-chip-divider'); d.setAttribute('aria-hidden', 'true'); chips.append(d); }
-        const chip = button('', () => { try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip' + (kind ? ' ' + kind : ''));
+        const chip = button('', () => { if (value === 'low') setLowView(!s.low); else try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip' + (kind ? ' ' + kind : ''));
         chip.dataset.filter = value; chip.setAttribute('aria-label', text);
         // Platforms are icon-only (the name lives in the label and tooltip): the row stays compact.
         if (value.startsWith('net:')) { chip.classList.add('net'); chip.append(netBadge(value.slice(4), 'u-chip-icon')); }
@@ -443,7 +445,9 @@
     }
     // Unread chats per chip (muted and Low priority chats do not count), cheap enough to recompute on every paint.
     for (const c of chips.querySelectorAll('.u-chip')) {
-      const f = c.dataset.filter, n = f === 'all' ? 0 : all.filter(p => p.unread > 0 && !p.muted && matchesFilter(p, f)).length;
+      const f = c.dataset.filter;
+      if (f === 'low') { c.setAttribute('aria-pressed', String(s.low)); c.querySelector('.u-chip-count').hidden = true; continue; }
+      const n = f === 'all' ? 0 : shown.filter(p => p.unread > 0 && !p.muted && matchesFilter(p, f)).length;
       const count = c.querySelector('.u-chip-count'), show = f !== 'all' && !c.classList.contains('sub') && n > 0;
       count.textContent = show ? (n > 99 ? '99+' : String(n)) : ''; count.hidden = !show;
       c.title = show ? c.getAttribute('aria-label') + ' · ' + n + ' unread' : c.getAttribute('aria-label');
@@ -517,12 +521,13 @@
       .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
     // Low priority (Beeper's name; WhatsApp's Archive): out of the Inbox, chips, unread counts and notifications,
     // and a new message never brings a chat back. They live in one folder reached from the top of the Inbox.
-    const low = everyone.filter(isLow), people = s.low ? low : everyone.filter(p => !isLow(p));
-    root.classList.toggle('u-in-low', s.low);
-    const filter = s.low ? 'all' : paintFilters(people) || 'all';
+    // A quiet "Low priority" toggle at the end of the chips swaps the list to those chats, and every other chip
+    // (a platform, Direct, Groups, Unread) still narrows it: Instagram + Low priority = Instagram's quiet chats.
+    const low = everyone.filter(isLow);
+    if (s.low && !low.length) setLowView(false);
+    const people = s.low ? low : everyone.filter(p => !isLow(p));
+    const filter = paintFilters(everyone, people, low.length) || 'all';
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
-    if (s.low) frag.append(lowHeader());
-    else if (low.length && filter === 'all') frag.append(lowFolderRow(low));
     for (const p of people.filter(p => matchesFilter(p, filter) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
       const groups = listKey(p) === 'groups';
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
@@ -551,10 +556,10 @@
       if (extra.length) info.append(node('span', 'u-tags', extra.join(' · ')));
       card.append(info); frag.append(card);
     }
-    if (s.low && frag.children.length === 1) frag.append(node('p', 'u-empty', 'Nothing in Low priority. Hold or right-click a chat to move it here.'));
     if (!frag.children.length) {
       const empty = node('div', 'u-empty');
-      if (q || filter !== 'all') empty.append(node('p', '', q ? 'No matches' : 'Nothing here with this filter'));
+      if (s.low) empty.append(node('p', '', 'No low priority chats here'));
+      else if (q || filter !== 'all') empty.append(node('p', '', q ? 'No matches' : 'Nothing here with this filter'));
       else {
         empty.append(node('p', '', 'No chats yet. Connect WhatsApp, Telegram, Slack, LINE or Instagram and their chats land here.'));
         empty.append(button('Connect an account', () => accounts('accounts'), 'primary'));
@@ -565,23 +570,8 @@
   }
 
   const isLow = p => !!p.low_priority;
-  // The quiet first row of the Inbox: opens the Low priority folder. Its count is chats with something unread.
-  function lowFolderRow(low) {
-    const unread = low.filter(p => p.unread > 0).length;
-    const row = button('', () => { s.low = true; s.epoch++; drawList(); $('unified-inbox').querySelector('.u-list')?.scrollTo?.(0, 0); }, 'u-person u-low-row');
-    const mark = node('span', 'u-low-mark'); mark.append(icon('lowpri'));
-    const info = node('span', 'u-person-info'), top = node('span', 'u-chat-top');
-    top.append(node('strong', '', 'Low priority'));
-    if (unread) top.append(node('span', 'u-badge muted', unread > 99 ? '99+' : String(unread)));
-    info.append(top, node('span', 'u-snippet', low.length === 1 ? '1 chat' : low.length + ' chats'));
-    row.append(mark, info); row.setAttribute('aria-label', 'Low priority, ' + low.length + ' chats' + (unread ? ', ' + unread + ' unread' : ''));
-    return row;
-  }
-  function lowHeader() {
-    const bar = node('div', 'u-low-head');
-    bar.append(iconButton('back', 'Back to Inbox', back), node('strong', '', 'Low priority'), node('span', 'u-low-note', 'Quiet: no unread counts or notifications'));
-    return bar;
-  }
+  const LOW_KEY = 'messenger-inbox-low';
+  function setLowView(on) { s.low = !!on; try { if (on) sessionStorage.setItem(LOW_KEY, '1'); else sessionStorage.removeItem(LOW_KEY); } catch { /* memory only */ } }
   // Long-press (or right-click) a chat row: Mute / Unmute, Low priority / Inbox. A held press never also opens the chat.
   // A phone turns the finger lifting off a long-press into a click, which lands on the menu's backdrop and closes
   // it at once. Swallow exactly that click.
@@ -841,7 +831,7 @@
   function nearBottom() { const sc = view.scroll; return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
   function paintThread(toBottom = false) {
     const t = store.threads[view.id], scroll = view.scroll; if (!t || !scroll) return;
-    const follow = toBottom || nearBottom(), p = t.person, auto = reviewedOf(p), multi = networksOf(p).length > 1, group = (p.identities || []).some(i => i.kind === 'group');
+    const follow = toBottom || nearBottom(), p = t.person, auto = reviewedOf(p), multi = networksOf(p).length > 1, group = (p.identities || []).some(i => i.kind === 'group') || new Set(t.messages.filter(m => !m.outgoing && m.sender).map(m => m.sender)).size > 1;
     const kids = [node('div', 'u-spacer')];
     if (t.has_more) kids.push(node('p', 'u-older', 'Loading earlier messages…'));
     let day = '';
@@ -1907,7 +1897,7 @@
       focus: () => number.focus(),
     };
   }
-  function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; s.low = false; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
+  function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); } });
   // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.

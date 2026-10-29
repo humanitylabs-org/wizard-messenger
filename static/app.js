@@ -201,6 +201,7 @@
       // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
       if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code) || code.startsWith('passkey_')) throw new APIError(code, 401);
       const unlockRequired = ['session_unlock_required', 'remembered_unlock_unavailable'].includes(code) || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
+      if (unlockRequired && trustedWizard) { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
     // A restarting release answers through the gateway with an empty or HTML body: say so, never surface a parser error.
@@ -243,7 +244,19 @@
     cancel(); eraseView(); state.csrf = null; state.authenticated = false;
     state.sessionLocked = unlockRequired; gate(unlockRequired ? 'locked' : 'reconnect');
   }
+  // On a Wizard that vouches for its owner there is no Messenger password, ever. A "locked" answer only means the
+  // server is still opening its vault after a restart: keep showing "Opening" and ask again; the session call
+  // unlocks it from the key Wizard holds. Never show a passphrase box here.
+  let trustedTries = 0, trustedTimer = null;
+  function recoverTrusted() {
+    clearTimeout(trustedTimer);
+    if (trustedTries >= 30) { trustedTries = 0; gate('reconnect'); $('gate-description').textContent = "Messenger couldn't open your messages. Tap Try again."; return; }
+    trustedTries++; gate('opening'); $('gate-description').textContent = 'Opening your messages…';
+    trustedTimer = setTimeout(() => boot(), Math.min(1000 * trustedTries, 4000));
+  }
   function gate(mode) {
+    if (mode === 'locked' && trustedWizard) return recoverTrusted();
+    if (mode === 'ready') trustedTries = 0;
     const changed = state.mode !== mode;
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
     if (['first_open', 'enrollment_ready', 'setup_required', 'locked'].includes(mode)) window.MessengerUnified?.signout();
@@ -1080,9 +1093,10 @@
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
-        bootTries = 0;
+        bootTries = 0; if (state.mode === 'ready') trustedTries = 0;
       } catch (error) {
-        if (error.name === 'AbortError' || ['session_unlock_required', 'remembered_unlock_unavailable'].includes(error.code)) return;
+        if (error.name === 'AbortError') return;
+        if (['session_unlock_required', 'remembered_unlock_unavailable', 'locked', 'vault_locked'].includes(error.code)) { if (trustedWizard) recoverTrusted(); return; }
         // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
         // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
         if (transient(error) && bootTries < 40) {
@@ -1098,7 +1112,7 @@
   addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});
   window.MessengerUnified?.paintSaved();
-  $('reconnect').onclick = () => boot(true);
+  $('reconnect').onclick = () => { trustedTries = 0; boot(true); };
   refreshPasskey(); refreshPhoneVault();
   boot();
 })();

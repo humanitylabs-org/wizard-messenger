@@ -73,6 +73,17 @@ class Blob:
 # Served inline only for these; everything else (SVG, HTML, PDF...) is an attachment download.
 INLINE_MIME = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
                'audio/webm', 'audio/aac', 'audio/x-m4a', 'video/mp4', 'video/webm', 'video/quicktime'}
+# Bridges tag ghost names with their network ("Ana (WA)"); the Inbox already shows the network's icon.
+NAME_SUFFIX = {'whatsapp': ' (WA)', 'twitter': ' (Twitter)', 'linkedin': ' (LinkedIn)'}
+
+
+def plain_name(network, label):
+    tag = NAME_SUFFIX.get(network)
+    if isinstance(label, str) and tag and label.endswith(tag) and len(label) > len(tag):
+        return label[:-len(tag)].rstrip()
+    return label
+
+
 MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots'))
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
@@ -238,6 +249,19 @@ class PeopleStore:
                 # Earlier owner renames are the only way a single-channel person's name
                 # differs from all its channel labels: keep those names authoritative.
                 db.execute('UPDATE person SET name_locked=1 WHERE display_name NOT IN (SELECT label FROM identity WHERE person_id=person.id)')
+            # Idempotent: rooms the bridge reports as groups are groups, even if first filed as a person.
+            for room, meta in db.execute('SELECT room,json FROM room_meta').fetchall() if db.execute("SELECT 1 FROM sqlite_master WHERE name='room_meta'").fetchone() else []:
+                try:
+                    if json.loads(meta).get('kind') == 'group':
+                        db.execute("UPDATE identity SET kind='group' WHERE address=? AND kind!='group'", (room,))
+                except ValueError:
+                    pass
+            # Idempotent: drop network tags from synced names (owner renames are never touched).
+            for network, tag in NAME_SUFFIX.items():
+                n = len(tag)
+                db.execute('UPDATE person SET display_name=rtrim(substr(display_name,1,length(display_name)-?)) WHERE name_locked=0 AND length(display_name)>? AND substr(display_name,-?)=? '
+                           'AND id IN (SELECT person_id FROM identity WHERE network=?)', (n, n, n, tag, network))
+                db.execute('UPDATE identity SET label=rtrim(substr(label,1,length(label)-?)) WHERE network=? AND length(label)>? AND substr(label,-?)=?', (n, network, n, n, tag))
             if any(m[1] == 'last_read_ts' for m in missing):
                 # Existing chats start read: no wall of unread badges after the upgrade.
                 db.execute('UPDATE identity SET last_read_ts=(SELECT COALESCE(MAX(timestamp),0) FROM message WHERE identity_id=identity.id)')
@@ -305,9 +329,13 @@ class PeopleStore:
 
     def identity(self, network, address, label, kind='person'):
         """Find or create a channel; a better synced name replaces a weak or stale one."""
+        label = plain_name(network, label)
         with self.db() as db:
             row = db.execute('SELECT * FROM identity WHERE network=? AND address=?', (network, address)).fetchone()
             if row:
+                if kind == 'group' and row['kind'] != 'group':
+                    # A room first seen before its metadata arrived was filed as a person; the bridge now says group.
+                    db.execute('UPDATE identity SET kind=?,seq=? WHERE id=?', (kind, self.next_seq(), row['id']))
                 self.refresh_label(dict(row), label)
                 return dict(db.execute('SELECT * FROM identity WHERE id=?', (row['id'],)).fetchone())
             person_id, identity_id = secrets.token_hex(12), secrets.token_hex(12)
@@ -317,6 +345,7 @@ class PeopleStore:
             return dict(db.execute('SELECT * FROM identity WHERE id=?', (identity_id,)).fetchone())
 
     def refresh_label(self, identity, label):
+        label = plain_name(identity.get('network'), label)
         own = self.own_names()
         current = identity['label']
         if not isinstance(label, str) or label == current or label in own:

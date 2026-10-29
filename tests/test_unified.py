@@ -83,6 +83,20 @@ class PeopleTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'low_priority': 1})
 
+    def test_group_kind_upgrade_and_network_tags_dropped(self):
+        a = self.store.identity('whatsapp', '!g', 'Book club (WA)')
+        self.assertEqual(a['label'], 'Book club')
+        self.assertEqual(self.store.identity('whatsapp', '!g', 'Book club', 'group')['kind'], 'group')
+        b = self.store.identity('whatsapp', '!p', 'Ana')
+        self.store.refresh_label(b, 'Ana Souza (WA)')
+        self.assertEqual(self.store.person(b['person_id'])['display_name'], 'Ana Souza')
+        with self.store.db() as db:
+            db.execute("UPDATE person SET display_name='Kim (WA)' WHERE id=?", (b['person_id'],))
+            db.execute("INSERT OR REPLACE INTO room_meta(room,json) VALUES('!p', ?)", (json.dumps({'kind': 'group'}),))
+        self.store.migrate()
+        self.assertEqual(self.store.person(b['person_id'])['display_name'], 'Kim')
+        self.assertEqual(self.store.person(b['person_id'])['identities'][0]['kind'], 'group')
+
     def test_auto_create_deduplicates_and_preserves_rename(self):
         a = self.store.identity('telegram', '!one', 'Alice')
         self.store.update(a['person_id'], {'display_name': 'Alice Thai', 'language': 'th'})
