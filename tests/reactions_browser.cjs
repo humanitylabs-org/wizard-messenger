@@ -42,7 +42,8 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
       await open();const rect=await page.locator('.u-grid').boundingBox();assert(rect.x>=0&&rect.x+rect.width<=390&&rect.y+rect.height<=844);assert.equal(await page.locator('.u-grid button').count(),72);
       const label=`${skin}-${album?'album':'text'}`; await page.screenshot({path:path.join(out,label+'-picker.png')});
       // Outside and shared Back entry both close, without leaving the thread.
-      await page.mouse.click(385,15);assert.equal(await page.locator('#u-overlay').count(),0);await open();assert.equal(await page.evaluate(()=>MessengerUnified.back()),true);assert.equal(await page.locator('.u-message').count(),1);
+      await page.mouse.click(385,15);assert.equal(await page.locator('#u-overlay').count(),0);await page.waitForTimeout(450); // existing release-click guard expires after 400ms
+      await open();assert.equal(await page.evaluate(()=>MessengerUnified.back()),true);assert.equal(await page.locator('.u-message').count(),1);
       await open();const before=requests.length, start=Date.now();await page.getByRole('button',{name:'😁',exact:true}).click();
       await page.waitForFunction(()=>[...document.querySelectorAll('.u-react.mine')].some(e=>e.textContent.includes('😁')),{},{timeout:700});const elapsed=Date.now()-start; assert(pending>0,'HTTP is still delayed when DOM shows selected reaction');assert(elapsed<700);assert.deepEqual(requests[before],{id:album?'part-2':'text-1',key:'😁'});
       await page.screenshot({path:path.join(out,label+'-pending.png')});measurements.push({skin,album,paintMs:elapsed,httpDelayMs:2500});
