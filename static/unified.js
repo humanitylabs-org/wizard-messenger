@@ -106,7 +106,7 @@
   const networksOf = p => [...new Set((p.identities || []).map(i => i.network))];
   const cap = t => t ? t[0].toUpperCase() + t.slice(1) : '';
   // Brand-correct network names (WhatsApp, LINE, Instagram…) from connectors.js, falling back to Capitalised.
-  const brandOf = n => (window.MessengerConnectors?.BRAND || {})[n] || (n === 'private' ? {color: 'var(--accent)', mark: 'P', label: 'Private'} : null);
+  const brandOf = n => (window.MessengerConnectors?.BRAND || {})[n] || (n === 'private' ? {color: 'var(--accent)', mark: 'W', label: 'Wizard'} : null);
   const netLabel = n => brandOf(n)?.label || cap(n);
   // Round network badge (inline SVG glyph); a text mark only when connectors.js is missing.
   function netBadge(n, cls = '') {
@@ -202,7 +202,7 @@
     const sheet = overlay(title); sheet.classList.add('tall');
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
     const settled = shareText ? new Promise(resolve => { s.answer = () => resolve(true); }) : null;
-    if (!shareText) sheet.append(button('New private chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
+    if (!shareText) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
@@ -413,9 +413,9 @@
   function paintFilters(all) {
     const chips = $('u-filters'); if (!chips) return;
     const connected = (accountsSeen || []).filter(p => p.state === 'connected' || p.state === 'degraded').map(p => p.network);
-    const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private').sort((a, b) => netLabel(a).localeCompare(netLabel(b)));
+    const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private' && n !== 'messenger').sort((a, b) => netLabel(a).localeCompare(netLabel(b)));
     const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
-    const options = [['all', 'All'], ['unread', 'Unread'], ...nets.map(n => ['net:' + n, netLabel(n)]), ['net:private', 'Private'],
+    const options = [['all', 'All'], ['unread', 'Unread'], ...nets.map(n => ['net:' + n, netLabel(n)]), ['net:private', 'Wizard'],
       ['direct', 'Direct', 'sub'], ['groups', 'Groups', 'sub'], ...labels.map(l => ['label:' + l, l, 'sub label'])];
     const sig = options.map(o => o.join('=')).join('|');
     let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
@@ -1563,7 +1563,7 @@
   async function accounts(focus) {
     // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
-    sheet.append(button('Private account · address, unlock and lock', () => { closeOverlay(); showNative(); native?.settings(); }, 'secondary wide'));
+    sheet.append(button('Wizard Messenger · your address', () => { closeOverlay(); showNative(); native?.settings(); }, 'secondary wide'));
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
       connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, ...(body === undefined ? {} : {body})}), {

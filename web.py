@@ -534,6 +534,26 @@ class ViewHandler(Handler):
         except (BrokenPipeError,ConnectionResetError): pass
         except OSError: self._reply(500,{'ok':False,'error':{'code':'view_unavailable','message':'Could not load Messenger'}})
 
+def keep_unlocked(service, interval=60):
+    """Trusted-owner installs have no Messenger password: Wizard sign-in is the lock.
+    Open the vault at start (and again if it ever closes) from the remembered envelope, so
+    chats, notifications and the inbox mirror work before anyone opens the screen.
+    Agent access is still decided only by the owner's agent-access mode."""
+    while True:
+        try:
+            if service.auth.credential and service.trusted_owner.path.exists() \
+                    and service.engine.status().get('state') != 'ready':
+                with service.setup_lock:
+                    password = service.trusted_owner.password(service.auth.credential)
+                    if password is not None:
+                        service.auth.verify_password(password)
+                        if service.engine.status().get('state') != 'ready':
+                            service.engine.setup({'action': 'unlock', 'vault_password': password})
+        except Exception:
+            pass  # Never log or clear anything; the browser path can still unlock.
+        time.sleep(interval)
+
+
 def provision_owner_enrollment(service):
     """Trusted local operator hook, deliberately not reachable through HTTP/MCP.
 
@@ -566,6 +586,8 @@ if __name__=='__main__':
         provision_owner_enrollment(server)
     from owner_unix import start_owner_hop
     owner_hop = start_owner_hop(server)
+    if server.trusted_owner.enabled:
+        threading.Thread(target=keep_unlocked, args=(server,), daemon=True).start()
     def stop(*_):
         threading.Thread(target=server.shutdown,daemon=True).start()
         if owner_hop: threading.Thread(target=owner_hop.shutdown,daemon=True).start()

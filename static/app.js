@@ -128,6 +128,7 @@
     if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
     else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
   }
+  let trustedWizard = false; // set by boot from api/view/trusted-owner
   function readRecord(group) {
     if (!state.records.has(group)) {
       let saved = {};
@@ -248,11 +249,15 @@
     if (['first_open', 'enrollment_ready', 'setup_required', 'locked'].includes(mode)) window.MessengerUnified?.signout();
     const create = mode === 'setup_required', locked = mode === 'locked', enrollment = mode === 'enrollment_ready';
     $('gate-title').textContent = locked ? 'Unlock Messenger' : 'Messenger';
-    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : enrollment ? 'Your private setup link is ready. Continue here to create your Messenger address.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Finish setup using the private Messenger setup link in your Wizard chat.' : 'Opening your messages…';
+    // On a Wizard that vouches for its owner there is no Messenger password: Wizard sign-in is the lock.
+    const keyless = trustedWizard && create;
+    $('gate-description').textContent = locked ? (trustedWizard ? 'Enter your old Messenger passphrase one last time. Wizard remembers it, so you will not be asked again.' : 'Enter your passphrase to open your messages.') : keyless ? 'Create your Wizard Messenger address. Chats are end-to-end encrypted and go straight to the other person\'s Wizard.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : enrollment ? 'Your private setup link is ready. Continue here to create your Messenger address.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Finish setup using the private Messenger setup link in your Wizard chat.' : 'Opening your messages…';
     $('setup-form').hidden = !(create || locked); $('reconnect').hidden = !enrollment && mode !== 'reconnect' && mode !== 'first_open';
     $('reconnect').textContent = enrollment ? 'Continue setup' : 'Try again';
-    $('name-label').hidden = !create; $('confirm-label').hidden = !create; $('confirm-passphrase').required = create;
-    $('passphrase-help').hidden = !create; $('passphrase').minLength = locked ? 1 : 16;
+    $('name-label').hidden = !create; $('confirm-label').hidden = !create || keyless; $('confirm-passphrase').required = create && !keyless;
+    $('passphrase-label').hidden = keyless; $('passphrase').required = !keyless;
+    $('passphrase-help').hidden = !create || keyless; $('passphrase').minLength = locked ? 1 : keyless ? 0 : 16;
+    if ($('remember-wizard-label')) $('remember-wizard-label').hidden = true;
     if (changed) {
       $('passphrase').value = ''; $('confirm-passphrase').value = ''; $('setup-error').textContent = '';
       $('passphrase').type = 'password'; $('show-password').textContent = 'Show';
@@ -281,7 +286,7 @@
     $('setup-submit').classList.toggle('pending', pending);
     if (pending) { $('setup-submit').disabled = true; $('setup-submit').textContent = create ? 'Creating address…' : 'Unlocking…'; return; }
     $('setup-submit').textContent = create ? (state.setupFailed ? 'Try again' : 'Create address') : 'Unlock';
-    $('setup-submit').disabled = create ? passphraseLength(password) < 16 || password !== $('confirm-passphrase').value : !password.length;
+    $('setup-submit').disabled = create ? !trustedWizard && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value) : !password.length;
   }
   function ready(identity) {
     state.identity = identity; state.mode = 'ready'; $('gate').hidden = true; $('workspace').hidden = false;
@@ -810,8 +815,10 @@
   };
   $('setup-form').onsubmit = event => {
     event.preventDefault(); if ($('setup-submit').disabled || isBusy()) return;
-    const creating = state.mode === 'setup_required', password = $('passphrase').value, name = $('display-name').value;
-    if (creating && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value)) return;
+    const creating = state.mode === 'setup_required', name = $('display-name').value;
+    // Keyless setup: the vault still gets a strong random key, which only Wizard keeps (never shown, never typed).
+    const password = creating && trustedWizard ? b64u(crypto.getRandomValues(new Uint8Array(32))) : $('passphrase').value;
+    if (creating && !trustedWizard && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value)) return;
     if (new TextEncoder().encode(password).length > 1024 || password.includes('\0')) { $('setup-error').textContent = 'Choose a shorter passphrase.'; return; }
     if (new TextEncoder().encode(name).length > 160) { $('setup-error').textContent = 'Choose a shorter name.'; return; }
     $('setup-submit').disabled = true;
@@ -830,7 +837,7 @@
     });
   };
   async function unlockWith(password, signal, creating = false, name = '') {
-    const rememberWizard = trustedWizard && $('remember-wizard')?.checked === true;
+    const rememberWizard = trustedWizard; // Wizard sign-in is the lock: always remember on a trusted Wizard.
     if (state.sessionLocked) {
       const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
@@ -877,7 +884,7 @@
   function renderPasskey() {
     const usePhone = phone.available;
     $('fingerprint-unlock').hidden = !(state.mode === 'locked' && (usePhone ? phone.saved : passkeySupported && state.passkey));
-    $('fingerprint-toggle').hidden = !(usePhone || passkeySupported);
+    $('fingerprint-toggle').hidden = trustedWizard || !(usePhone || passkeySupported);
     $('fingerprint-toggle').textContent = (usePhone ? phone.saved : state.passkey) ? 'Turn off fingerprint unlock' : usePhone ? 'Unlock with fingerprint' : 'Unlock with fingerprint next time';
   }
   async function refreshPasskey() {
@@ -1059,7 +1066,8 @@
             trustedWizard = response.ok && (await response.json())?.result?.enabled === true;
           } catch { trustedWizard = false; }
         }
-        if ($('remember-wizard-label')) $('remember-wizard-label').hidden = !trustedWizard;
+        if ($('remember-wizard-label')) $('remember-wizard-label').hidden = true;
+        $('lock').hidden = trustedWizard; renderPasskey();
         let session;
         try {
           session = await api('api/view/session', ticket ? {method: 'POST', body: {ticket}, signal, session: true} : {signal, session: true});
@@ -1084,7 +1092,7 @@
       }
     }, false, true);
   }
-  let bootTries = 0, bootTimer = null, trustedWizard = false;
+  let bootTries = 0, bootTimer = null;
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
   addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});
