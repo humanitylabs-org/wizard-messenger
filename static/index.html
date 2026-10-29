@@ -58,7 +58,7 @@
           <p id="chat-error" class="error pane-error" role="status"></p>
           <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="Messages"><button id="load-older" class="secondary older" hidden>Earlier messages</button><p id="history-loading" class="loading-line history-loading" aria-hidden="true" hidden><span class="spinner"></span><span id="history-loading-text">Loading messages…</span></p><div id="messages" class="messages" role="log" aria-live="off"></div><p id="history-empty" class="helper history-empty" hidden>No messages yet.</p></div>
           <button id="new-messages" class="new-messages" hidden>New messages</button>
-          <form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12 20 4l-4 16-4-6.5L4 12z"/><path d="m12 13.5 8-9.5"/></svg></button></form>
+          <div id="compose-bar" class="u-bar compose-bar" hidden></div><form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12 20 4l-4 16-4-6.5L4 12z"/><path d="m12 13.5 8-9.5"/></svg></button></form>
           <p id="composer-error" class="error composer-error" role="alert"></p>
         </div>
       </section>

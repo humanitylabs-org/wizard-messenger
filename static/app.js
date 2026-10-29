@@ -534,13 +534,13 @@
       q.onclick = () => { const target = [...state.nodes.values()].find(n => n.dataset.messageId === m.reply.message_id); if (target) { target.scrollIntoView({block: 'center', behavior: 'smooth'}); target.classList.add('flash'); setTimeout(() => target.classList.remove('flash'), 1200); } };
       bubble.append(q);
     }
-    bubble.append(document.createTextNode(text || ''));
+    bubble.append(element('span', 'bubble-text', text || ''));
   }
   function paintReactions(node, group, m) {
-    let strip = node.querySelector(':scope > .u-reactions');
+    let strip = node.reactionStrip;
     const list = m.deleted ? [] : m.reactions || [];
-    if (!list.length) { strip?.remove(); return; }
-    if (!strip) { strip = element('div', 'u-reactions'); node.children[0].after(strip); }
+    if (!list.length) { if (strip) { strip.remove(); node.reactionStrip = null; } return; }
+    if (!strip) { strip = node.reactionStrip = element('div', 'u-reactions'); node.children[0].after(strip); }
     strip.replaceChildren(...list.map(r => { const b = button(r.key + (r.count > 1 ? ' ' + r.count : ''), 'u-react' + (r.mine ? ' mine' : ''), () => reactTo(group, m, r.key)); b.setAttribute('aria-label', (r.mine ? 'Remove your ' : 'React ') + r.key); return b; }));
   }
   // Long-press, right-click or tap a bubble: every action this chat supports, in one menu.
@@ -584,8 +584,7 @@
     paintComposeBar();
   }
   function paintComposeBar() {
-    let bar = $('compose-bar');
-    if (!bar) { bar = element('div', 'u-bar compose-bar'); bar.id = 'compose-bar'; $('composer').before(bar); }
+    const bar = $('compose-bar');
     const c = state.compose && state.compose.group === state.group ? state.compose : null;
     bar.hidden = !c; bar.replaceChildren(); if (!c) return;
     const q = element('div', 'u-quote in-bar'); q.append(element('strong', '', c.mode === 'edit' ? 'Edit message' : c.message.direction === 'sent' ? 'Reply to yourself' : 'Reply to ' + (peerName(dmById(state.group)) || 'them')), element('span', '', c.message.text || ''));
