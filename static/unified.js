@@ -1658,12 +1658,12 @@
     try { const st = await api('api/view/agents'); if (s.overlay === 'Settings') paint(st); } catch (e) { error(e); }
   }
   // Drafts an agent saved for this chat appear above the composer. The owner edits, sends or discards them; agents never send.
-  function agentDraftStrip(id) {
+  function agentDraftStrip(id, active = () => s.person === id) {
     const box = node('div', 'u-agent-drafts'); box.hidden = true;
     const paint = async () => {
       let list;
       try { list = ((await api('api/drafts')).drafts || []).filter(d => d.person_id === id && d.state === 'draft'); } catch { return; }
-      if (s.person !== id) return;
+      if (!active()) return;
       box.replaceChildren(); box.hidden = !list.length;
       for (const d of list) {
         const card = node('div', 'u-agent-draft');
@@ -1679,9 +1679,19 @@
         card.append(actions); box.append(card);
       }
     };
-    view.paintAgentDrafts = paint; paint();
-    const tick = setInterval(() => { if (s.person !== id) clearInterval(tick); else paint(); }, 30000);
+    Object.assign(view, {paintAgentDrafts: paint, agentStripActive: active}); paint();
+    const tick = setInterval(() => { if (!active() || !box.isConnected) clearInterval(tick); else paint(); }, 30000);
     return box;
+  }
+  // Wizard-to-Wizard chats open in the native thread: show the same agent drafts there, matched by the chat's group.
+  async function nativeAgentDrafts(group) {
+    document.getElementById('native-agent-drafts')?.remove();
+    let person;
+    try { const dir = await call('directory'); person = [...(dir.people || []), ...(dir.groups || [])].find(p => (p.identities || []).some(i => i.network === 'messenger' && i.address === group)); } catch { return; }
+    const bar = $('compose-bar');
+    if (!person || s.nativeGroup !== group || !bar) return;
+    const strip = agentDraftStrip(person.id, () => s.nativeGroup === group); strip.id = 'native-agent-drafts';
+    bar.before(strip);
   }
   async function sendAgentDraft(d, done) {
     const reviewed = (await api('api/drafts/' + d.id + '/preview', {method: 'POST', body: {revision: d.revision}})).draft;
@@ -1705,7 +1715,7 @@
     } catch (e) { sheet.append(node('p', 'error', e.message)); }
   }
   // Finishing a draft opened from a chat returns to that chat; from Settings, to the drafts list.
-  async function afterAgentDraft() { if (s.person && view.paintAgentDrafts) { closeOverlay(); await view.paintAgentDrafts(); } else await agentDrafts(); }
+  async function afterAgentDraft() { if (view.paintAgentDrafts && view.agentStripActive?.()) { closeOverlay(); await view.paintAgentDrafts(); } else await agentDrafts(); }
   async function reviewAgentDraft(initial) {
     const sheet = overlay('Review agent draft'); let draft = initial;
     const problem = node('p', 'error'); problem.setAttribute('role', 'status');
@@ -1879,11 +1889,11 @@
   }
   function openNative(group, card) {
     if (!s.ready || !native) return;
-    nativeFocus = card; s.nativeGroup = group; showNative(); native.open(group);
+    nativeFocus = card; s.nativeGroup = group; showNative(); native.open(group); nativeAgentDrafts(group);
   }
   function returnNative() {
     if (!s.native) return;
-    s.native = false; s.nativeGroup = null;
+    s.native = false; s.nativeGroup = null; document.getElementById('native-agent-drafts')?.remove();
     delete document.documentElement.dataset.privateView;
     $('unified-inbox').hidden = false; inChat(false); renderList();
     // List rendering is synchronous when cached; focus the same row after Back.
