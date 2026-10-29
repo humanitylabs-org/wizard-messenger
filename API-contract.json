@@ -13,7 +13,8 @@
     "browser_session": "HttpOnly, Secure, SameSite=Strict app-path cookie; cookie writes also require exact Origin and X-Messenger-CSRF. Machine bearer never appears in the view.",
     "initial_browser_access": "Trusted API caller issues a one-use ticket, exchanged via POST /api/view/session. Ticket belongs in the initial URL fragment only and is removed immediately. Empty-body exchanges never authenticate. Owner-bootstrap tickets can last seven days only before account setup.",
     "existing_browser_access": "POST /api/view/unlock proves the dedicated passphrase against a salted scrypt verifier and unlocks the provider; it cannot create/import an account. Six failed guesses per minute are rate-limited. No anonymous initial-account creation.",
-    "stored_browser_auth": "Only ticket/session hashes and a salted passphrase verifier are stored; no plaintext passphrase, cookie capability or message body. Atomic 0600 app-data file."
+    "stored_browser_auth": "Browser-auth stores only ticket/session hashes and a salted passphrase verifier; no plaintext passphrase, cookie capability or message body. Atomic 0600 app-data file. Optional local trusted-owner unlock stores a separate AES-GCM envelope, never plaintext.",
+    "local_trusted_wizard_owner": "Disabled unless MESSENGER_TRUST_WIZARD_OWNER=1 with separate private proof/wrapping key files outside data. Every non-machine API call additionally requires a short-lived one-use HMAC proof from the authenticated owner gateway. All bearer modes remain agent-only. One verified passphrase unlock with explicit remember_wizard:true seals a remembered unlock; signed GET /api/view/session can reopen the original encrypted vault after restart. Lock durably forgets it. No account or enrollment reset. See TRUSTED-WIZARD-OWNER.md."
   },
   "success": {
     "ok": true,
@@ -76,6 +77,7 @@
         "invalid_input": "400 for invalid text"
       }
     },
+    {"method":"GET","path":"/api/view/trusted-owner","auth":"explicit local opt-in + authenticated gateway HMAC proof, never a bearer","result":"enabled:true, remembered:boolean; no key, envelope or password readback"},
     {
       "method": "GET",
       "path": "/healthz",
