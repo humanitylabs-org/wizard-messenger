@@ -7,7 +7,8 @@ class OverlayReadable(unittest.TestCase):
         copies = [l for l in text.splitlines() if l.startswith('COPY ')]
         self.assertTrue(copies)
         for line in copies:
-            self.assertRegex(line, r'^COPY --chmod=a\+rX ', line)
+            # Use numeric modes: symbolic chmod was ignored by the forum builder.
+            self.assertRegex(line, r'^COPY --chmod=0644 ', line)
 
 if __name__ == '__main__':
     unittest.main()

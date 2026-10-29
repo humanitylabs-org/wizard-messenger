@@ -4,5 +4,5 @@ ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
       org.opencontainers.image.version="0.2.0-unified.12.12" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
-COPY --chmod=a+rX server.py /app/
-COPY --chmod=a+rX static/app.js static/unified.js static/unified.css /app/static/
+COPY --chmod=0644 server.py /app/
+COPY --chmod=0644 static/app.js static/unified.js static/unified.css /app/static/
