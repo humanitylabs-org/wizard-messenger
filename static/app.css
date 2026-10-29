@@ -159,3 +159,12 @@ button.pending::before { content: ''; display: inline-block; width: 12px; height
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Message actions: reply quote, tombstone, reactions and the reply/edit bar above the composer. */
+.bubble .u-quote { cursor: pointer; }
+.bubble.deleted { font-style: italic; opacity: .7; }
+.message .u-reactions { margin: -4px 6px 2px; }
+.message.sent .u-reactions { justify-content: flex-end; }
+.compose-bar { padding: 6px 12px 0; }
+.compose-bar .compose-cancel { flex: none; }
+.message.flash .bubble { outline: 2px solid var(--accent); outline-offset: 2px; }
