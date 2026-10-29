@@ -208,5 +208,186 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+  facebook:
+    image: dock.mau.dev/mautrix/meta@sha256:22bfa54084b6855188f5146b325ee007a298443a9617caead06cc5fc0ba0d687
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-meta -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/facebook:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29319/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  twitter:
+    image: dock.mau.dev/mautrix/twitter@sha256:7f70378b4bd00530f790c9282ff844cefd7900be955c998012b30ebbebc158cd
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-twitter -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/twitter:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29327/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  linkedin:
+    image: dock.mau.dev/mautrix/linkedin@sha256:db88d8c2c4a0397d00777f856771a7d3174ee4ec0436a1fd5f56330cb91cb6b0
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-linkedin -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/linkedin:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29341/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  gmessages:
+    image: dock.mau.dev/mautrix/gmessages@sha256:afeca2d14a01fac919c8fb94b04bf812db78e29425ceafe042508d7aea9e50a8
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-gmessages -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/gmessages:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29336/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  dots:
+    image: wizard-chatgpt-dots:265398a
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/chatgpt-dots -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/dots:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29349/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    pull_policy: never
 networks:
   connector-egress: {}

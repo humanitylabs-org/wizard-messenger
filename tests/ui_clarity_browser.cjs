@@ -97,7 +97,7 @@ const providers = [
     const settle = () => page.waitForTimeout(350);
     await page.goto('https://messenger.test/');
     await page.locator('.u-person', {hasText: 'Private Alice'}).waitFor({timeout: 15000});
-    await page.locator('.u-acct-dot').first().waitFor();
+    await page.locator('#u-filters .u-chip.net').first().waitFor(); // accounts loaded (status now lives in Settings)
     assert.equal(await page.locator('.u-person').count(), PEOPLE.length + GROUPS.length + 1, 'one unified Inbox: bridged, group and private');
 
     // Platform icons are inline SVG paths (no runtime image/CDN), on every row avatar, chip, strip and card.
@@ -130,10 +130,12 @@ const providers = [
     for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i][0] >= boxes[i - 1][1], 'chips do not overlap');
     assert.ok(boxes.every(b => b[3] && b[2] >= 32), 'chips are not clipped and stay tappable');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'no page overflow');
-    // Accounts strip: real glyphs, connected first, degraded flagged.
+    // Accounts strip (inside Settings): real glyphs, connected first, degraded flagged.
+    await page.locator('.u-settings-btn').click(); await page.locator('.u-sheet .u-acct-dot').first().waitFor();
     const strip = await page.locator('.u-acct-dot').evaluateAll(els => els.map(e => [e.dataset.network, e.className, !!e.querySelector('svg path')]));
     assert.ok(strip.every(s => s[2]), 'strip uses glyphs'); assert.ok(strip[0][1].includes(' on'), 'connected first');
     assert.ok(strip.find(s => s[0] === 'instagram')[1].includes('warn'));
+    await page.keyboard.press('Escape'); await page.locator('#u-overlay').waitFor({state: 'detached'}).catch(() => {}); if (await page.locator('#u-overlay').count()) await page.locator('#u-overlay .icon-button[aria-label=Close]').click();
     await shot('inbox');
 
     // Platform chips filter rows to that platform only.
@@ -198,7 +200,7 @@ const providers = [
     await page.locator('#chat-back').click();
 
     // Accounts sheet cards use the same glyphs.
-    await page.locator('.u-acct-open').click();
+    await page.locator('.u-settings-btn').click();
     await page.locator('.c-card').first().waitFor(); await page.waitForTimeout(450);
     const cards = await page.locator('.c-card').evaluateAll(els => els.map(e => [e.dataset.network, !!e.querySelector('.c-mark svg.brand-icon path')]));
     assert.ok(cards.length >= 6 && cards.every(c => c[1]), 'every account card has its glyph: ' + JSON.stringify(cards));

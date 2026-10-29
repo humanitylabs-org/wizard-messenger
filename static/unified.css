@@ -558,3 +558,12 @@ button:not(:disabled):active { background-color: color-mix(in srgb, var(--ink) 1
 #unified-inbox.u-in-low #u-filters { display: none; }
 .u-badge.muted { background: var(--raised-2); color: var(--ink-2); }
 .u-chips .u-chip[aria-pressed=true]:not(.net) .u-chip-count { background: var(--on-accent); color: var(--accent); }
+.u-settings-btn { position: relative; }
+.u-settings-btn.warn::after { content: ""; position: absolute; top: 9px; right: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--surface); }
+.u-sheet .u-accounts .u-acct-open { cursor: default; }
+.c-add-title { margin: 18px 0 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.c-add-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.c-add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 84px; padding: 10px 6px; border-radius: 14px; background: var(--raised); color: var(--ink); font-size: 12.5px; line-height: 1.2; text-align: center; white-space: normal; }
+.c-add .c-mark { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; }
+.c-add.busy { opacity: .6; cursor: progress; }
+.c-steps textarea, .c-form textarea { width: 100%; min-height: 72px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }

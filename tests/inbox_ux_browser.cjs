@@ -59,14 +59,14 @@ let providers = [
     });
     await page.goto('http://messenger.test/');
     await page.locator('.u-person').first().waitFor({timeout: 15000});
-    await page.locator('.u-acct-open').waitFor();
+    await page.locator('.u-settings-btn').waitFor();
     const rows = await page.locator('.u-person').count();
     assert.equal(rows, PEOPLE.length + GROUPS.length, 'one Inbox lists direct chats and groups together');
     const order = await page.locator('.u-person strong').allTextContents();
     assert.equal(order[0].trim(), 'Ana Souza', 'newest first across networks');
     assert.equal(order[1].trim(), 'Family', 'groups interleave by recency');
     assert.equal(await page.locator('#inbox-tabs [data-tab="groups"]').count(), 0, 'no separate Groups tab');
-    assert.match(await page.locator('.u-acct-text').textContent(), /1 of 5 connected/);
+    assert.equal(await page.locator('#unified-inbox .u-acct-open').count(), 0, 'account status lives in Settings, not the Inbox');
     const chips = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => e.getAttribute('aria-label'))); // platform chips are icon-only; the name is the accessible label
     for (const c of ['All', 'Unread', 'Direct', 'Groups', 'WhatsApp', 'LINE', 'Slack', 'Telegram', 'Instagram', 'Family']) assert.ok(chips.includes(c), 'chip ' + c + ' in ' + chips);
     assert.ok(await page.locator('.u-person .u-net').count() >= rows, 'every row wears its network badge');
@@ -85,12 +85,12 @@ let providers = [
     assert.equal(await page.locator('.u-person').count(), 2, 'Groups filter');
     await page.getByRole('button', {name: 'All', exact: true}).click();
     // Accounts sheet: one tap from the Inbox, QR first.
-    await page.locator('.u-acct-open').click();
+    await page.locator('.u-settings-btn').click();
     await page.locator('.c-card').first().waitFor();
     const cards = await page.locator('.c-card strong').allTextContents();
     assert.deepEqual(cards, ['Slack', 'LINE', 'Instagram DMs', 'Telegram', 'WhatsApp'], 'unconnected first, connected last');
     assert.equal(await page.locator('.c-card[data-network=line] .primary').textContent(), 'Show QR code', 'QR is LINE\'s primary action');
-    assert.match(await page.locator('.c-summary').textContent(), /1 of 5 accounts connected/);
+    assert.equal(await page.locator('.u-sheet', {hasText: /of \d+ (accounts )?connected/}).count(), 0, 'no x-of-y score');
     await page.waitForTimeout(450); // let the sheet finish sliding in
     await page.screenshot({path: path.join(out, `accounts-${label}.png`), fullPage: false});
     await page.locator('.c-card[data-network=line] .primary').click();

@@ -5,7 +5,7 @@ from pathlib import Path
 import secrets
 from unified_setup import write
 
-EXTRA_NETWORKS = ('whatsapp', 'signal', 'slack', 'line', 'instagram')
+EXTRA_NETWORKS = ('whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots')
 
 # bridgev2 backfill (pinned mautrix-go v0.32.0 keys). Forward backfill fills each
 # NEW portal and catches up after restarts on stock Synapse. The backward queue
@@ -66,6 +66,10 @@ def setup_connectors(root, enabled=()):
         config['appservice']['username_template'] = name + '_{{.}}'
         if name == 'line':
             config['network']['qr_login'] = True
+        if name == 'twitter':
+            config['network']['x'] = True  # call it X in bridge notices; the protocol id stays 'twitter'
+        if name == 'gmessages':
+            config['network']['device_meta']['os'] = 'Wizard Messenger'  # the name on the phone's paired devices
         config['database'].update(type='sqlite3-fk-wal', uri='file:/data/%s.db?_txlock=immediate' % name, max_open_conns=1, max_idle_conns=1)
         config['bridge']['permissions'] = {'*': 'block', '@owner:messenger.internal': 'admin'}
         config['matrix']['federate_rooms'] = False

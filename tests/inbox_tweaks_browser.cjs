@@ -82,7 +82,7 @@ const SKINS = {
     const rows = () => page.locator('.u-list > .u-person:not(.u-low-row) strong').allTextContents();
     await page.goto('https://messenger.test/');
     await page.locator('.u-person', {hasText: 'Private Alice'}).waitFor({timeout: 15000});
-    await page.locator('.u-acct-dot').first().waitFor();
+    await page.locator('#u-filters .u-chip.net').first().waitFor();
 
     // No bottom tab bar: one Inbox needs none.
     assert.equal(await page.locator('#inbox-tabs').isVisible(), false, 'bottom tab bar is gone');
@@ -100,7 +100,7 @@ const SKINS = {
     assert.equal(await page.locator('[data-filter=unread] .u-chip-count').textContent(), '4', 'Unread chip ignores Low priority (james, marco, fam, private)');
     assert.equal(await page.locator('[data-filter="net:telegram"] .u-chip-count').textContent(), '1', 'Telegram count ignores Low priority');
     await page.waitForTimeout(300);
-    assert.equal(badges.at(-1), 1 + 3 + 2 + 1, 'app badge ignores Low priority');
+    assert.equal(badges.at(-1), 4, 'app badge = unread chats (james, marco, fam, private), Low priority ignored');
     await page.locator('[data-filter=unread]').click(); await page.waitForTimeout(300); // chip colour transition; mouse stays hovering
     assert.equal(await page.locator('.u-low-row').count(), 0, 'folder row only on All');
     assert.ok(!(await rows()).includes('Deals Channel'), 'Unread never shows Low priority');
@@ -130,7 +130,7 @@ const SKINS = {
     await page.getByRole('menuitem', {name: 'Move to Low priority'}).click();
     assert.ok(!(await rows()).includes('Private Alice'));
     await page.waitForTimeout(300);
-    assert.equal(badges.at(-1), 1 + 3 + 2, 'badge drops the private chat');
+    assert.equal(badges.at(-1), 3, 'badge drops the private chat');
     await shot('inbox');
 
     // The folder: its own header, only quiet chats, gray badges, Back returns to the Inbox.

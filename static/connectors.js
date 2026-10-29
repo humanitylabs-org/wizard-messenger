@@ -20,6 +20,9 @@
     // Facebook Messenger (Meta) — only for a future bridged Facebook account, never for Wizard Messenger.
     facebook: 'M12 0C5.24 0 0 4.952 0 11.64c0 3.499 1.434 6.521 3.769 8.61a.96.96 0 0 1 .323.683l.065 2.135a.96.96 0 0 0 1.347.85l2.381-1.053a.96.96 0 0 1 .641-.046A13 13 0 0 0 12 23.28c6.76 0 12-4.952 12-11.64S18.76 0 12 0m6.806 7.44c.522-.03.971.567.63 1.094l-4.178 6.457a.707.707 0 0 1-.977.208l-3.87-2.504a.44.44 0 0 0-.49.007l-4.363 3.01c-.637.438-1.415-.317-.995-.966l4.179-6.457a.706.706 0 0 1 .977-.21l3.87 2.505c.15.097.344.094.491-.007l4.362-3.008a.7.7 0 0 1 .364-.13',
     slack: 'M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z',
+    // X and Google Messages: Simple Icons 16.35.0 (CC0). LinkedIn and OpenAI left Simple Icons; they use text marks.
+    twitter: 'M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z',
+    gmessages: 'M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zM4.911 7.089h11.456a2.197 2.197 0 0 1 2.165 2.19v5.863a2.213 2.213 0 0 1-2.177 2.178H8.04c-1.174 0-2.04-.99-2.04-2.178v-4.639L4.503 7.905c-.31-.42-.05-.816.408-.816zm3.415 2.19c-.347 0-.68.21-.68.544 0 .334.333.544.68.544h7.905c.346 0 .68-.21.68-.544 0-.334-.334-.545-.68-.545zm0 2.177c-.347 0-.68.21-.68.544 0 .334.333.544.68.544h7.905c.346 0 .68-.21.68-.544 0-.334-.334-.544-.68-.544zm-.013 2.19c-.346 0-.68.21-.68.544 0 .334.334.544.68.544h5.728c.347 0 .68-.21.68-.544 0-.334-.333-.545-.68-.545z',
     // Wizard Messenger (Wizard to Wizard, Marmot/Nostr, end-to-end encrypted): our own shield-and-lock mark.
     private: 'M12 .8 2.8 4.4v6.4c0 5.8 3.9 11 9.2 12.4 5.3-1.4 9.2-6.6 9.2-12.4V4.4zM8.4 11.2h7.2v6H8.4zM9.4 11.2V9.4a2.6 2.6 0 0 1 5.2 0v1.8h-1.5V9.4a1.1 1.1 0 0 0-2.2 0v1.8z',
   };
@@ -29,6 +32,8 @@
     slack: {color: '#4A154B', mark: 'S', label: 'Slack'}, line: {color: '#06C755', mark: 'L', label: 'LINE'},
     instagram: {color: '#FF0069', mark: 'IG', label: 'Instagram'}, signal: {color: '#3B45FD', mark: 'Si', label: 'Signal'},
     kakaotalk: {color: '#E0B400', mark: 'K', label: 'KakaoTalk'}, facebook: {color: '#0866FF', mark: 'f', label: 'Facebook Messenger'},
+    twitter: {color: '#000000', mark: 'X', label: 'X'}, linkedin: {color: '#0A66C2', mark: 'in', label: 'LinkedIn'},
+    gmessages: {color: '#1A73E8', mark: 'GM', label: 'Google Messages'}, dots: {color: '#10A37F', mark: '●', label: 'ChatGPT Dots'},
     private: {color: 'var(--accent)', mark: 'W', label: 'Wizard', title: 'Wizard Messenger · end-to-end encrypted, peer-to-peer'},
     // The inbox mirror files Wizard-to-Wizard chats under network "messenger": same mark and name as private.
     messenger: {color: 'var(--accent)', mark: 'W', label: 'Wizard', title: 'Wizard Messenger · end-to-end encrypted, peer-to-peer'},
@@ -62,6 +67,11 @@
     line: 'Links as a LINE desktop device. LINE may show a PIN to confirm.',
     instagram: 'Signs in for your Instagram DMs. Instagram may ask you to approve the new login.',
     signal: 'Links as a Signal linked device.',
+    facebook: 'Signs in like messenger.com in your browser. Facebook may ask for your encrypted-chats PIN.',
+    twitter: 'Signs in like x.com in your browser, then asks for your X Chat passcode (4 digits).',
+    linkedin: 'Signs in like linkedin.com in your browser.',
+    gmessages: 'Your texts (SMS and RCS) from your Android phone. The phone stays online and does the texting.',
+    dots: 'Your ChatGPT Dot as a chat. Needs an existing Dot on your ChatGPT account. Unofficial and experimental.',
   };
   // Where the owner scans on the phone.
   const SCAN = {
@@ -74,6 +84,7 @@
     qr: 'Show QR code', phone: 'Use a pairing code instead', email: 'Sign in with email', token: 'Use my browser sign-in',
     'dev.highest.matrix.line.qr_login': 'Show QR code', 'dev.highest.matrix.line.email_login': 'Sign in with email & password',
     android: 'Sign in with username & password', 'instagram-password': 'Try the web sign-in instead',
+    messenger: 'Sign in with your browser', facebook: 'Use facebook.com instead', cookies: 'Sign in with your browser', google: 'Sign in with Google',
   };
   const STATE = {
     connected: ['Connected', 'on'], disconnected: ['Not connected', 'off'], degraded: ['Needs reconnecting', 'warn'],
@@ -249,7 +260,94 @@
             failure(err, network, flow, mine);
           } finally { for (const key of Object.keys(fields)) delete fields[key]; }
         };
+      } else if (result.type === 'cookies') {
+        cookieForm(network, flow, result, payload, mine, back);
       } else throw new Error('Unsupported login step');
+    }
+    // Browser sign-in: the owner signs in on the real site in his own browser, then pastes one copied request
+    // ("Copy as cURL"), a Cookie header, or the JSON a page shows. Every field the bridge names is filled from it.
+    function parsePaste(text) {
+      const raw = String(text || '').trim(), headers = {}, jar = {}, json = {};
+      const addCookies = v => { for (const part of String(v).split(/;\s*/)) { const i = part.indexOf('='); if (i > 0) { const k = part.slice(0, i).trim(); if (k && !(k in jar)) jar[k] = part.slice(i + 1).trim(); } } };
+      if (/^\s*[{[]/.test(raw)) { try { const o = JSON.parse(raw); if (o && typeof o === 'object') Object.assign(json, o); } catch (_) { /* not JSON */ } }
+      if (/^\s*curl\s/i.test(raw)) {
+        // -H 'name: value' / -b 'cookie' / --cookie, in bash or cmd quoting.
+        const re = /(?:-H|--header|-b|--cookie)\s+(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.|\^")*)"|\^"((?:[^"^]|\^.)*)\^")/g; let m;
+        while ((m = re.exec(raw))) {
+          const flag = m[0].trim().split(/\s/)[0], v = (m[1] ?? m[2] ?? m[3] ?? '').replace(/\^(.)/g, '$1').replace(/\\(.)/g, '$1');
+          if (flag === '-b' || flag === '--cookie') { addCookies(v); continue; }
+          const i = v.indexOf(':'); if (i > 0) headers[v.slice(0, i).trim().toLowerCase()] = v.slice(i + 1).trim();
+        }
+      } else if (!Object.keys(json).length) {
+        // Raw request headers ("name: value" lines) or a bare cookie string.
+        const lines = raw.split(/\r?\n/).filter(Boolean);
+        if (lines.length > 1 || /^[A-Za-z][\w-]*:\s/.test(raw)) for (const l of lines) { const i = l.indexOf(':'); if (i > 0) headers[l.slice(0, i).trim().toLowerCase()] = l.slice(i + 1).trim(); }
+        else headers.cookie = raw.replace(/^\s*cookie\s*:\s*/i, '');
+      }
+      if (headers.cookie) addCookies(headers.cookie);
+      return {headers, jar, json};
+    }
+    function fromPaste(field, pasted) {
+      for (const src of field.sources || []) {
+        const name = src.name || '';
+        if (src.type === 'cookie' && pasted.jar[name] != null) return pasted.jar[name];
+        if (src.type === 'request_header' && pasted.headers[name.toLowerCase()] != null) return pasted.headers[name.toLowerCase()];
+        if (src.type === 'special' || src.type === 'local_storage') {
+          const key = name.split('.').pop(), camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+          for (const k of [key, camel, field.id]) if (typeof pasted.json[k] === 'string' && pasted.json[k]) return pasted.json[k];
+        }
+      }
+      return '';
+    }
+    // Where to look, per network: the page to copy from and what to copy.
+    const PASTE_HOW = {
+      dots: {page: 'https://chatgpt.com/api/auth/session', steps: host => [
+        'On a computer, sign in at chatgpt.com in your browser.',
+        'In the same browser, open chatgpt.com/api/auth/session (link below). It shows a block of text.',
+        'Select all of it (Ctrl+A or ⌘A), copy, and paste it below.']},
+      gmessages: {steps: host => [
+        'On a computer, open a private window in Firefox (Chrome may block this) and sign in with the Google account your phone uses for Messages.',
+        'Stay on the messages.google.com page it opens. Press F12 (⌥⌘I on a Mac), open the Network tab and reload.',
+        'Right-click the first request → Copy → Copy as cURL, and paste it below. Then keep your phone nearby: it will ask you to tap an emoji.']},
+    };
+    function cookieForm(network, flow, result, payload, mine, back) {
+      const params = result.cookies || {}, fields = params.fields || [], custom = PASTE_HOW[network];
+      let host = ''; try { host = new URL(params.url).hostname.replace(/^www\./, ''); } catch (_) { /* no url */ }
+      const how = element('ol', 'c-steps');
+      const tips = custom ? custom.steps(host) : [
+        params.url ? 'On a computer, open a private window, go to ' + host + ' and sign in as usual.' : 'On a computer, sign in to ' + label(network) + ' in a private browser window.',
+        'Press F12 (⌥⌘I on a Mac), open the Network tab and reload the page.',
+        'Right-click the first request to ' + (host || 'the site') + ' → Copy → Copy as cURL, and paste it below.',
+        'Then just close that window (don\u2019t sign out: that would end this login too).'];
+      for (const t of tips) how.append(element('li', '', t));
+      root.append(how);
+      const open = custom?.page || params.url;
+      if (open) { let h = ''; try { h = new URL(open).hostname.replace(/^www\./, '') + new URL(open).pathname.replace(/\/$/, ''); } catch (_) { /* skip */ } const a = element('a', 'c-link', 'Open ' + h); a.href = open; a.target = '_blank'; a.rel = 'noopener noreferrer'; root.append(a); }
+      const form = element('form', 'c-form'); form.autocomplete = 'off';
+      const pasteLabel = element('label', '', 'Paste here'), paste = element('textarea'); paste.rows = 4; paste.spellcheck = false; paste.autocomplete = 'off';
+      paste.placeholder = custom === PASTE_HOW.dots ? '{"user": …, "accessToken": …}' : "curl 'https://…' -H 'cookie: …'"; pasteLabel.append(paste); form.append(pasteLabel);
+      const inputs = {}, extra = element('details', 'c-later'); extra.append(element('summary', '', 'Enter values one by one'));
+      for (const f of fields) {
+        const names = (f.sources || []).map(x => x.name).filter(Boolean);
+        const wrap = element('label', '', names.join(' or ') || f.id), input = element('input'); input.type = 'password'; input.autocomplete = 'off'; input.spellcheck = false; input.name = f.id;
+        wrap.append(input); extra.append(wrap); inputs[f.id] = {input, f};
+      }
+      if (fields.length) form.append(extra);
+      const submit = element('button', 'primary wide', 'Connect'); submit.type = 'submit'; form.append(submit); root.append(form); back();
+      global.requestAnimationFrame?.(() => paste.focus?.());
+      form.onsubmit = async e => {
+        e.preventDefault(); if (submit.disabled || mine !== generation) return;
+        const pasted = parsePaste(paste.value), values = {};
+        for (const [id, {input, f}] of Object.entries(inputs)) { const v = input.value.trim() || fromPaste(f, pasted); if (v) values[id] = v; }
+        const missing = fields.filter(f => f.required && !values[f.id]).map(f => (f.sources || [])[0]?.name || f.id);
+        if (missing.length) { problem(new Error('Couldn\u2019t find ' + missing.join(', ') + ' in what you pasted. Copy it again while signed in.'), form); return; }
+        paste.value = ''; for (const {input} of Object.values(inputs)) input.value = '';
+        for (const k of Object.keys(pasted)) pasted[k] = null;
+        submit.disabled = true; submit.textContent = 'Checking with ' + label(network) + '…';
+        try { await step(network, flow, await advance(network, payload(), values, mine), mine); }
+        catch (err) { if (mine !== generation) return; failure(err, network, flow, mine); }
+        finally { for (const k of Object.keys(values)) delete values[k]; }
+      };
     }
     async function setupTelegram() {
       const mine = generation + 1;
@@ -318,30 +416,45 @@
       const usable = providers.filter(p => p.network === 'telegram' || (p.supported && p.state !== 'not_configured'));
       const later = providers.filter(p => !usable.includes(p));
       const connected = usable.filter(p => p.state === 'connected');
-      root.replaceChildren(element('p', 'c-summary', connected.length ? connected.length + ' of ' + usable.length + ' accounts connected' : 'Connect an account to bring its chats into your Inbox'));
+      // No "x of y connected" score: connecting every network is not the goal.
+      root.replaceChildren();
+      if (!connected.length) root.append(element('p', 'c-summary', 'Connect an account to bring its chats into your Inbox'));
       const order = p => p.state === 'connected' ? 2 : p.state === 'not_configured' ? 1 : 0;
       for (const provider of [...usable].sort((a, b) => order(a) - order(b))) root.append(card(provider));
-      if (later.length) {
-        const more = element('details', 'c-later'); more.append(element('summary', '', 'More networks'));
-        for (const p of later) {
-          const row = element('p', 'c-later-row'); row.append(mark(p.network, 'small'), element('span', '', p.label + ' · ' + (STATE[p.state] || [p.state])[0])); more.append(row);
-          // Dormant WhatsApp/Signal workers start only after the owner enables the network.
-          if (p.supported && p.state === 'not_configured' && ['whatsapp', 'signal'].includes(p.network)) button(more, 'Enable ' + p.label, async () => {
-            await request(p.network, 'enable', {});
-            for (let attempt = 0; attempt < 30; attempt++) {
-              await new Promise(resolve => global.setTimeout(resolve, 500));
-              if (!root.contains(more)) return;
-              const status = await request(p.network, 'status');
-              if (status.state !== 'unavailable') break;
-            }
-            await show({focus: p.network});
-          }, 'c-link').setAttribute('aria-label', 'Enable ' + p.label);
+      // Every other network sits dormant (no process work) until the owner picks it here.
+      const addable = later.filter(p => p.supported && p.state === 'not_configured');
+      if (addable.length) {
+        root.append(element('h3', 'c-add-title', 'Add an account'));
+        const grid = element('div', 'c-add-grid');
+        for (const p of addable.sort((a, b) => a.label.localeCompare(b.label))) {
+          const tile = element('button', 'c-add'); tile.type = 'button'; tile.dataset.network = p.network;
+          tile.append(mark(p.network), element('span', '', p.label)); tile.setAttribute('aria-label', 'Add ' + p.label);
+          tile.onclick = async () => {
+            if (tile.disabled) return; tile.disabled = true; tile.classList.add('busy');
+            try {
+              await request(p.network, 'enable', {});
+              for (let attempt = 0; attempt < 60; attempt++) {
+                await new Promise(resolve => global.setTimeout(resolve, 1000));
+                if (!root.contains(grid)) return;
+                const status = await request(p.network, 'status');
+                if (status.state !== 'unavailable' && status.state !== 'not_configured') break;
+              }
+              await show({focus: p.network});
+            } catch (e) { problem(e); tile.disabled = false; tile.classList.remove('busy'); }
+          };
+          grid.append(tile);
         }
+        root.append(grid);
+      }
+      const gone = later.filter(p => !p.supported);
+      if (gone.length) {
+        const more = element('details', 'c-later'); more.append(element('summary', '', 'Not available yet'));
+        for (const p of gone) { const row = element('p', 'c-later-row'); row.append(mark(p.network, 'small'), element('span', '', p.label + (p.message ? ' · ' + p.message : ''))); more.append(row); }
         root.append(more);
       }
       const resumed = providers.find(p => p.pending_login);
       if (resumed) step(resumed.network, 'phone', resumed.pending_login, mine);
-      if (focus) root.querySelector('[data-network="' + focus + '"] .primary')?.focus();
+      if (focus) { const c = root.querySelector('.c-card[data-network="' + focus + '"]'); c?.scrollIntoView?.({block: 'nearest'}); c?.querySelector('.primary')?.focus(); }
       return providers;
     }
     return {show, start, close: async () => { root.replaceChildren(); await cancel(); }};

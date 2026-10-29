@@ -110,6 +110,8 @@
   // Brand-correct network names (WhatsApp, LINE, Instagram…) from connectors.js, falling back to Capitalised.
   const brandOf = n => (window.MessengerConnectors?.BRAND || {})[n] || (n === 'private' ? {color: 'var(--accent)', mark: 'W', label: 'Wizard'} : null);
   const netLabel = n => brandOf(n)?.label || cap(n);
+  // Every account network rides the same bridge transport; only Wizard-to-Wizard chats use their own engine.
+  const bridged = n => !!n && n !== 'private' && n !== 'messenger';
   // Round network badge (inline SVG glyph); a text mark only when connectors.js is missing.
   function netBadge(n, cls = '') {
     const made = window.MessengerConnectors?.badge?.(n, cls);
@@ -170,7 +172,7 @@
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
-      head.append(node('h1', '', title), iconButton('qr', 'My QR codes', () => myCodes()), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', accounts));
+      head.append(node('h1', '', title), iconButton('qr', 'My QR codes', () => myCodes()), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', () => accounts(), 'u-settings-btn'));
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
@@ -273,7 +275,9 @@
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
     const counts = {people: nativeUnread, groups: 0};
-    for (const [id, n] of Object.entries(unreadById)) if (!mutedById[id] && !lowById[id]) counts.people += n; // one Inbox: groups count there too; Low priority never counts
+    // The app badge counts unread chats (the same number as the Unread chip), not messages: one busy group
+    // must not push it to 99+. Muted and Low priority chats never count.
+    for (const [id, n] of Object.entries(unreadById)) if (n > 0 && !mutedById[id] && !lowById[id]) counts.people += 1;
     paintTabBadges(counts);
     const n = counts.people + counts.groups;
     if (n === badgeShown) return; badgeShown = n;
@@ -357,7 +361,7 @@
   async function renderList() {
     const epoch = ++s.epoch;
     const root = listBase('Inbox');
-    if (s.search == null) { root.append(accountsBanner()); root.append(filterChips()); }
+    if (s.search == null) root.append(filterChips()); // account status lives in Settings, not on top of the Inbox
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
     if (s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
     refreshAccounts();
@@ -390,8 +394,11 @@
   }
   function accountsBanner() { const box = node('div', 'u-accounts'); box.id = 'u-accounts'; paintAccounts(box); return box; }
   function paintAccounts(box = $('u-accounts')) {
-    if (!box || !accountsSeen) return;
+    if (!accountsSeen) return;
     const on = accountsSeen.filter(p => p.state === 'connected'), broken = accountsSeen.filter(p => p.state === 'degraded');
+    // The Inbox only carries a small dot on Settings when an account needs reconnecting.
+    for (const b of document.querySelectorAll('.u-settings-btn')) { b.classList.toggle('warn', broken.length > 0); b.setAttribute('aria-label', broken.length ? 'Settings, ' + broken.map(p => p.label).join(', ') + ' needs reconnecting' : 'Settings'); }
+    if (!box) return;
     box.replaceChildren();
     const strip = node('div', 'u-acct-strip');
     // Connected accounts first, in full colour; the rest are dimmed so the strip reads as status at a glance.
@@ -400,10 +407,9 @@
       m.title = p.label + ': ' + (p.state === 'connected' ? 'connected' : p.state === 'degraded' ? 'needs reconnecting' : 'not connected'); strip.append(m);
     }
     const text = broken.length ? broken.map(p => p.label).join(', ') + ' needs reconnecting'
-      : on.length === accountsSeen.length ? 'All accounts connected' : on.length + ' of ' + accountsSeen.length + ' connected';
-    const open = button('', () => accounts('accounts'), 'u-acct-open' + (broken.length ? ' warn' : ''));
-    open.append(strip, node('span', 'u-acct-text', text), node('span', 'u-acct-cta', on.length === accountsSeen.length && !broken.length ? 'Manage' : 'Connect'));
-    open.setAttribute('aria-label', text + '. Open accounts');
+      : on.length ? on.map(p => p.label).join(', ') : 'No accounts connected yet';
+    const open = node('div', 'u-acct-open' + (broken.length ? ' warn' : ''));
+    open.append(strip, node('span', 'u-acct-text', text));
     box.append(open);
   }
   const FILTER_KEY = 'messenger-inbox-filter';
@@ -1157,7 +1163,7 @@
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Message';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
     const panel = node('div', 'u-menu'); panel.setAttribute('role', 'menu');
-    const telegram = ['telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram'].includes(m.network);
+    const telegram = bridged(m.network);
     if (telegram) {
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
@@ -1225,7 +1231,7 @@
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
     for (const i of p.identities || []) { const opt = node('option', '', 'via ' + netLabel(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
     channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
-    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => ['telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram'].includes(i.network));
+    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => bridged(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
     const file = node('input'); file.type = 'file'; file.multiple = true; file.hidden = true; // any file: photos go as photos, the rest as files (James, 26 Oct 2026)
     const attach = iconButton('plus', 'Attach photos or files', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
@@ -1607,6 +1613,7 @@
   async function accounts(focus) {
     // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
+    sheet.append(accountsBanner()); refreshAccounts();
     sheet.append(button('Wizard Messenger · your address', () => { closeOverlay(); showNative(); native?.settings(); }, 'secondary wide'));
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
@@ -1977,7 +1984,7 @@
   }
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative,
-    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority ? 0 : p.unread), 0); syncBadge(); if (!s.native && !s.person) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
+    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if (!s.native && !s.person) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
     receiveShare, shareTargetRows,
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.

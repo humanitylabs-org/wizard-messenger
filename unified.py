@@ -73,7 +73,7 @@ class Blob:
 # Served inline only for these; everything else (SVG, HTML, PDF...) is an attachment download.
 INLINE_MIME = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
                'audio/webm', 'audio/aac', 'audio/x-m4a', 'video/mp4', 'video/webm', 'video/quicktime'}
-MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram'))
+MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots'))
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
 
