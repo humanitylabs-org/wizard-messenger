@@ -302,6 +302,33 @@ class ViewHandler(Handler):
             code=str(error)
             raise EngineError('passkey_'+code,{'none':'Fingerprint unlock is not set up','expired':'That took too long. Try again.'}.get(code,'Fingerprint unlock did not work. Use your passphrase.'),401 if path.endswith('/unlock') else 400) from None
         raise EngineError('not_found','No such view route',404)
+    def _agents(self,method,path):
+        from agent_keys import AgentKeyError, LEVELS, LABELS, RECOMMENDED
+        keys=self.service.agent_keys
+        parts=path.split('/')[4:]
+        try:
+            if not parts and method=='POST':
+                created=keys.create(self._body().get('name'))
+                self.service.agent_access.record('OWNER','/agents','added '+created['agent']['name'])
+                return created
+            if len(parts)==1 and method=='POST':
+                body=self._body()
+                if parts[0]=='app-key':
+                    # The legacy machine key keeps its single global level.
+                    self.service.agent_access.configure({'mode':body.get('level')})
+                else:
+                    row=keys.set_level(parts[0],body.get('level'))
+                    self.service.agent_access.record('OWNER','/agents','%s → %s'%(row['name'],row['label']))
+            elif len(parts)==1 and method=='DELETE':
+                keys.remove(parts[0]); self.service.agent_access.record('OWNER','/agents','removed')
+            elif parts or method!='GET':
+                raise EngineError('not_found','No such agents route',404)
+        except AgentKeyError as e:
+            raise EngineError(e.code,e.message,e.status) from None
+        app_level=self.service.agent_access.effective_mode()
+        return {'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
+                'levels':[{'id':l,'label':LABELS[l],'recommended':l==RECOMMENDED} for l in LEVELS],
+                'log':self.service.agent_access.recent(30)}
     def _dispatch(self,method):
         self.pending_cookie=None
         self._trusted_owner_verified=False
@@ -376,16 +403,24 @@ class ViewHandler(Handler):
             if method=='GET': return 200,{'ok':True,'result':self.service.agent_access.state()}
             if method=='POST': return 200,{'ok':True,'result':self.service.agent_access.configure(self._body())}
             raise EngineError('not_found','No such view route',404)
+        if path == '/api/view/agents' or path.startswith('/api/view/agents/'):
+            # Owner-only: the signed-in browser session with Origin + CSRF. Bearers never.
+            if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can manage agents, from the Messenger view',403)
+            self._authorize()
+            return 200,{'ok':True,'result':self._agents(method,path)}
         if path == '/api/drafts' or path.startswith('/api/drafts/'):
             self._authorize()
             if self.service.unified is None:
                 raise EngineError('not_configured', 'Unified inbox is not enabled', 503)
             suffix = path.split('/')[3:]
+            caller = self._caller()
             result = self.service.drafts.dispatch(method, suffix, self._body() if method in ('POST', 'DELETE') else {},
                 self.service.unified, owner=not bool(self.headers.get('Authorization')),
                 authority=self.service.remote_authority,
                 remote_required=self.service.remote_required or bool(self.service.remote_authority.endpoint),
-                can_send=bool(self.headers.get('Authorization')) and self.service.agent_access.effective_mode() == 'draft_and_send')
+                # Each key's OWN level decides; Draft-only never reaches preview/send.
+                can_send=caller is not None and self._caller_mode(caller) == 'draft_and_send',
+                actor=None if caller is None else ({'id': 'agent:' + caller[1]['id'], 'name': caller[1]['name']} if caller[0] == 'agent' else None))
             return 200, {'ok': True, 'result': result}
         if path.startswith('/api/unified/'):
             self._authorize()
@@ -401,7 +436,7 @@ class ViewHandler(Handler):
             return 200, {'ok':True,'result':result}
         if path=='/api/view/ticket' and method=='POST':
             # Only a trusted API caller/proxy can mint an initial browser capability.
-            super()._authorize(); self._body()
+            super()._authorize(machine_only=True); self._body()
             bootstrap=False  # Machine callers cannot issue owner enrollment authority.
             return 200,{'ok':True,'result':{'ticket':self.service.auth.ticket(bootstrap),'expires_in':7*24*3600 if bootstrap else 300}}
         if path.startswith('/api/view/passkey'):

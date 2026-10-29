@@ -1,4 +1,4 @@
-# Messenger optional agent permissions (candidate, not deployed)
+# Messenger agent permissions
 
 Settings → Agent access offers **No access** (default), **Read-only**, **Draft-only**, and **Draft-and-send**. Optional expiry is 1–1440 minutes. Only an unlocked owner browser cookie, valid Origin and matching CSRF can change policy. A machine bearer cannot enroll an owner, mint an unlocked session, change modes, link accounts, provision bridges, merge people or administer the app in any mode.
 
@@ -8,6 +8,18 @@ Settings → Agent access offers **No access** (default), **Read-only**, **Draft
 - **Draft-and-send:** additionally permits explicit conversation message operations, including draft preview/send, react/edit/delete, typing/read receipts. Not account/admin access. Media upload, contacts administration, group metadata, invites and sync remain denied.
 
 The API accepts old `full_access` requests as a narrowed alias for `draft_and_send`; it never reports the broad label. Old **persisted** full-access grants are revoked rather than migrated. Unknown routes deny by default. Bearer plus owner cookie is still a bearer, not owner authority. Existing public MCP remains public status/identity only; the scoped UDS MCP supplies private tools.
+
+## Per-agent keys (current)
+
+Settings → **Agents** lists every agent with its own key and its own level: **No access**, **Read-only**, **Draft-only (Recommended)** or **Draft-and-send**. **Add agent** shows the new key once (`wzak_<id>_<secret>`; only its SHA-256 is stored in `/data/agent-keys.json`, mode 0600) and the agent starts at No access, so adding is never a grant. Removing an agent revokes its key at once. Only the owner's browser session (cookie + Origin + CSRF) can list, add, change or remove agents; every bearer is refused on `/api/view/agents*`.
+
+The server decides each request from the presenting key's level, through the same route table for HTTP and MCP (`permissions.capability_for`): reads need `read`, own-draft create/update/discard need `draft`, every provider write needs `send`. Draft-only has no `send`, so send, retry, message edit/delete/react, read receipts, typing, translate and draft preview/send are refused server-side for that key, whatever the shared app key's level is. Agents may change or discard only drafts they wrote and only while unsent and not under owner review. Drafts record `created_by`; they appear above the composer in their chat with **Send draft**, **Edit** and **Discard**. Sending is always the owner's click: there is no auto-send and no MCP send tool.
+
+MCP (`POST /mcp` with `Authorization: Bearer <agent key>`): `messenger_list_chats`, `messenger_read_thread` (pure read of the local mirror: no read receipts, typing, translation or media fetches), `messenger_list_drafts`, `messenger_create_draft`, `messenger_update_draft`, `messenger_delete_draft`. Without a key, or with the shared Wizard app key, `/mcp` still exposes only `messenger_status` and `messenger_public_identity`. The shared app key keeps its single global level (Settings → Agents → Wizard app key) for older integrations and can never mint owner sessions; agent keys cannot mint launcher tickets.
+
+`agent_keys.py` has no Messenger imports: a future Wizard Mail reuses it with its own file name and its own route/tool → capability map. Operators can register an agent inside the container with `python3 /app/agent_keys.py add --name <name>` (prints the key once; level stays No access until the owner picks one).
+
+Gap: the Wizard agent gateway does not yet forward a per-agent `Authorization` header to app MCP servers, so an agent reaches these tools by configuring Messenger's MCP URL with its key directly. Host-admin agents can still bypass app permissions.
 
 ## Normal owner review
 

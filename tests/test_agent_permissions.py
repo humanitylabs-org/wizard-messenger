@@ -26,6 +26,7 @@ MUTATIONS = [
  ('GET', '/api/unified/telegram/status'), ('GET', '/api/unified/status'),
  ('GET', '/api/unified/people/p/send'), ('POST', '/api/unified/people/p/send/'),
  ('POST', '/api/unified/people/p/%73end'), ('POST', '/api/unified/people/p/../send')]
+DRAFT_DISCARD = ('DELETE', '/api/drafts/d')
 READS = ['/api/contacts', '/api/invites', '/api/dms', '/api/dms/d/messages',
  '/api/unified/people', '/api/unified/groups', '/api/unified/directory',
  '/api/unified/updates', '/api/unified/people/p', '/api/unified/media/m', '/api/drafts']
@@ -52,6 +53,7 @@ class PermissionsHTTP(HTTPFixture):
         for mode in ('no_access','read_only','draft_only'):
             self.policy(mode)
             for method, path in MUTATIONS + ([('GET', p) for p in READS] if mode == 'no_access' else []):
+                if mode == 'draft_only' and (method, path) == DRAFT_DISCARD: continue  # own-draft discard, see AgentKeys tests
                 with self.subTest(mode=mode, method=method, path=path):
                     unified.reset_mock()
                     with patch.object(self.server.engine, 'setup') as setup:
@@ -110,6 +112,7 @@ class PermissionsHTTP(HTTPFixture):
         for mode in ('no_access', 'read_only', 'draft_only'):
             self.server.agent_access.configure({'mode': mode})
             for method, path in MUTATIONS:
+                if mode == 'draft_only' and (method, path) == DRAFT_DISCARD: continue
                 with self.subTest(mode=mode, method=method, path=path):
                     self.assertEqual(self.request(method, path, {} if method != 'GET' else None, self.bearer)[0], 403)
 
@@ -187,7 +190,7 @@ class DraftHTTP(HTTPFixture):
         self.assertEqual(self.request('POST',path+'/preview',{'revision':1},self.owner)[0],200)
         self.assertEqual(self.request('POST',path+'/send',{'revision':1,'send_original':True},self.owner)[0],200)
         self.assertEqual(self.inbox.mx.call_args.args[2]['body'],'Hello')
-        self.assertEqual(self.request('DELETE',path,{'revision':1},self.bearer)[0],403)
+        self.assertEqual(self.request('DELETE',path,{'revision':1},self.bearer)[0],409)  # sent: agents can never discard
         self.assertEqual(self.request('DELETE',path,{'revision':1},self.owner)[0],200)
         self.assertEqual(self.request('GET',path,headers=self.owner)[0],404)
         self.assertEqual(Drafts(self.temp.name).rows,{})

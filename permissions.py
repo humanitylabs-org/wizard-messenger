@@ -7,6 +7,7 @@ import re
 import threading
 import time
 from engine import EngineError
+from agent_keys import CAPABILITIES
 
 MODES = ('no_access', 'read_only', 'draft_only', 'draft_and_send')
 LABELS = dict(zip(MODES, ('No access', 'Read-only', 'Draft-only', 'Draft-and-send')))
@@ -20,7 +21,18 @@ WRITES = [r'/api/dms/[^/]+/(?:messages|retry)', r'/api/dms/[^/]+/messages/[0-9a-
           r'/api/unified/people/[^/]+/(?:preview|send|read|typing)',
           r'/api/unified/messages/[^/]+/(?:translate|react|edit|delete)',
           r'/api/drafts/[^/]+/(?:preview|send)']
-WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts preview send read typing merge unmerge translate react edit delete labels sync view session ticket agent-access'.split())
+# Draft routes an agent may use at Draft-only: create, update and discard its OWN draft
+# (ownership is checked in drafts.py). Preview/send stay 'send', never 'draft'.
+DRAFT_WRITES = [(r'POST', r'/api/drafts(?:/[^/]+)?'), (r'DELETE', r'/api/drafts/[^/]+')]
+
+def capability_for(method, path):
+    """Route -> 'read' | 'draft' | 'send' | None (None = never for any bearer)."""
+    if method == 'GET' and matches(path, READS): return 'read'
+    if any(method == m and re.fullmatch(p, path) for m, p in DRAFT_WRITES): return 'draft'
+    if method == 'POST' and matches(path, WRITES): return 'send'
+    return None
+
+WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts agents mcp preview send read typing merge unmerge translate react edit delete labels sync view session ticket agent-access'.split())
 def route_shape(path):
     return '/' + '/'.join(p if p in WORDS else ':id' for p in path.split('/') if p)
 
@@ -76,18 +88,15 @@ class AgentAccess:
                 os.replace(tmp, self.root / 'agent-access.json')
         self.record('OWNER', '/agent-access', 'changed')
         return self.state()
-    def permits(self, method, path):
+    def permits(self, method, path, mode=None):
+        """One table for every caller. `mode` is a per-agent key's level; None means the
+        legacy machine key, which uses the owner's global setting."""
         if (method, path) in PUBLIC:
             return True
-        mode = self.effective_mode()
-        if mode == 'no_access': return False
-        if method == 'GET' and matches(path, READS): return True
-        if mode in ('draft_only', 'draft_and_send') and method == 'POST' and re.fullmatch(r'/api/drafts(?:/[^/]+)?', path): return True
-        if mode == 'draft_and_send':
-            if method == 'POST' and matches(path, WRITES): return True
-        return False
-    def record(self, method, route, outcome):
+        return capability_for(method, path) in CAPABILITIES.get(self.effective_mode() if mode is None else mode, ())
+    def record(self, method, route, outcome, agent=None):
         entry = {'t': int(time.time()*1000), 'method': method, 'route': route, 'outcome': outcome}
+        if agent: entry['agent'] = agent
         with self.lock:
             if not self.root:
                 self.memory_log = (self.memory_log + [entry])[-500:]; return

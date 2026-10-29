@@ -43,6 +43,10 @@
   "setup_semantics": "No identity is created automatically. A dedicated vault passphrase of at least 16 characters is needed to create/unlock. Keyring remains encrypted at rest. Restart always relocks. account_configured reports whether an identity exists; ready may have identity=null when a new vault has only been unlocked. The one messaging key is separate from Wizard root signing.",
   "routes": [
     {"method":"GET","path":"/api/view/trusted-owner","auth":"explicit local opt-in + authenticated gateway HMAC proof, never a bearer","result":"enabled:true, remembered:boolean; no key, envelope or password readback"},
+    {"method":"GET","path":"/api/view/agents","auth":"owner cookie; every bearer refused","result":"agents (id, name, level, label, created, last_used, key_hint; never a key or hash), app_key level, levels with draft_only recommended, content-free log"},
+    {"method":"POST","path":"/api/view/agents","auth":"owner cookie + Origin + CSRF","body":{"name":"1..60 characters"},"result":"agent (level no_access) and key, returned once only"},
+    {"method":"POST","path":"/api/view/agents/{id|app-key}","auth":"owner cookie + Origin + CSRF","body":{"level":"no_access|read_only|draft_only|draft_and_send"},"result":"agents listing"},
+    {"method":"DELETE","path":"/api/view/agents/{id}","auth":"owner cookie + Origin + CSRF","result":"agents listing; the key stops working at once"},
     {"method":"GET","path":"/api/view/agent-access","auth":"owner cookie","result":"mode, enabled, until (milliseconds or null), content-free log, boundary"},
     {"method":"POST","path":"/api/view/agent-access","auth":"owner cookie + Origin + CSRF","body":{"mode":"no_access|read_only|draft_only|full_access","minutes":"optional expiry 1..1440"},"result":"persisted policy state"},
     {"method":"GET","path":"/api/drafts","auth":"owner or read_only/draft_only/full_access bearer","result":"drafts array"},
@@ -544,6 +548,7 @@
     ],
     "test_only_loopback": "WN_ALLOW_LOOPBACK_RELAYS=1; never enable in production"
   },
+  "agent_keys": {"format": "Authorization: Bearer wzak_<12 hex id>_<secret>", "storage": "/data/agent-keys.json, mode 0600, SHA-256 of the secret only", "levels": {"no_access": "status/identity only", "read_only": "read chats, threads and drafts", "draft_only": "read + create/update/discard own unsent drafts; every provider write (send, retry, edit, delete, react, read receipts, typing, draft preview/send) refused", "draft_and_send": "read, drafts and explicit message operations; never owner/admin routes"}, "mcp_tools": ["messenger_list_chats", "messenger_read_thread", "messenger_list_drafts", "messenger_create_draft", "messenger_update_draft", "messenger_delete_draft"], "mcp_auth": "Per-agent key in the Authorization header of POST /mcp. Without one (or with the shared Wizard app key) /mcp exposes only messenger_status and messenger_public_identity.", "sending": "No MCP send tool. Only the owner's signed-in browser session sends a draft (preview then send, revision-fenced).", "reuse": "agent_keys.py is app-agnostic (levels -> read/draft/send capabilities); another app supplies its own route/tool map."},
   "parent_owned": [
     "Wizard app-manager and private proxy deployment; view, session bridge and API now ship inside the same Messenger image"
   ],

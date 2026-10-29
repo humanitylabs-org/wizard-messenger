@@ -31,7 +31,13 @@ class Drafts:
     def check(self, row, payload):
         if type(payload.get('revision')) is not int or payload['revision'] != row['revision']:
             raise EngineError('draft_changed', 'Draft changed. Review it again before sending.', 409)
-    def dispatch(self, method, suffix, payload, unified, owner=False, authority=None, remote_required=False, can_send=False):
+    def mine(self, row, actor):
+        # Agents may change or discard only drafts they created; the owner may change any.
+        if (row.get('created_by') or {}).get('id') != (actor or {}).get('id'):
+            raise EngineError('not_your_draft', 'Only the agent that wrote this draft, or the owner, can change it', 403)
+    def dispatch(self, method, suffix, payload, unified, owner=False, authority=None, remote_required=False, can_send=False, actor=None):
+        if not owner and actor is None:
+            actor = {'id': 'machine', 'name': 'Wizard app key'}
         with self.lock:
             if not suffix and method == 'GET': return {'drafts': copy.deepcopy(list(self.rows.values()))}
             if not suffix and method == 'POST':
@@ -48,8 +54,15 @@ class Drafts:
                         raise EngineError('draft_frozen', 'Independent review outstanding; refresh independent terminal status first.', 409)
                     if row['state'] == 'sending': raise EngineError('draft_sending', 'Delivery may still be in progress', 409)
                     self.check(row, payload); del self.rows[ident]; self.save(); return {'deleted': True}
+                if method == 'DELETE' and not owner:
+                    # Discarding an unsent draft is a draft action, never a provider write.
+                    self.mine(row, actor); self.check(row, payload)
+                    if row['state'] != 'draft' or row.get('export') or row.get('preview'):
+                        raise EngineError('draft_closed', 'The owner is reviewing or has sent this draft', 409)
+                    del self.rows[ident]; self.save(); return {'deleted': True}
                 if method == 'POST':
                     if suffix: self.check(row, payload)
+                    if suffix and not owner: self.mine(row, actor)
                     if row['state'] != 'draft': raise EngineError('draft_closed', 'This draft is already submitted', 409)
                     fields = {}
                     for key, maximum in [('person_id', 300), ('identity_id', 300), ('text', 16384)]:
@@ -58,7 +71,10 @@ class Drafts:
                             raise EngineError('invalid_draft', 'Choose a recipient, channel and message', 400)
                         fields[key] = value
                     # No client supplied approval, preview, status, upload or send fields are ever retained.
-                    row = {**fields, 'id': ident, 'revision': row['revision'] + 1, 'state': 'draft'}
+                    created_by = row.get('created_by') or ({'id': 'owner', 'name': 'You'} if owner else
+                                                           {'id': str(actor['id'])[:80], 'name': str(actor['name'])[:60]})
+                    row = {**fields, 'id': ident, 'revision': row['revision'] + 1, 'state': 'draft', 'created_by': created_by,
+                           'updated': int(time.time() * 1000)}
                     self.rows[ident] = row; self.save(); return {'draft': copy.deepcopy(row)}
             if len(suffix) == 2 and method == 'POST' and (owner or (can_send and suffix[1] in ('preview', 'send'))):
                 self.check(row, payload)

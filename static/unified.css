@@ -122,6 +122,16 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-log summary { cursor: pointer; padding: 8px 0; }
 .u-access-log { list-style: none; padding: 0; margin: 4px 0 0; font-size: 12px; color: var(--ink-3); max-height: 180px; overflow: auto; }
 .u-access-log li { padding: 3px 0; } .u-access-log li.blocked { color: var(--err); }
+/* Agents (Settings) and agent drafts waiting in a chat */
+.u-agent { padding: 10px 0; border-top: 1px solid var(--line); }
+.u-agent-name { font-weight: 600; margin: 0 0 6px; }
+.u-agent-key { margin-top: 10px; display: grid; gap: 8px; }
+.u-agent-key .u-key { font-family: ui-monospace, monospace; font-size: 12px; width: 100%; }
+.u-agent-drafts { padding: 8px 12px 0; display: grid; gap: 8px; }
+.u-agent-drafts[hidden] { display: none; }
+.u-agent-draft { border: 1px dashed var(--accent); background: var(--accent-soft); border-radius: 14px; padding: 10px 12px; }
+.u-agent-draft-who { margin: 0 0 4px; font-size: 12px; color: var(--ink-2); }
+.u-agent-draft-text { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: auto; }
 .u-hero { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 4px 0 6px; }
 .u-hero strong { font-size: 20px; font-weight: 600; margin-top: 6px; overflow-wrap: anywhere; }
 .u-hero span:last-child { font-size: 13px; color: var(--ink-3); }
