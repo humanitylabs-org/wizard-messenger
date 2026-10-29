@@ -30,7 +30,9 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
     mkdir -p /app /data /run/messenger && chown 1000:1000 /data /run/messenger
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
+COPY owner_unix.py trusted_owner.py /app/
 COPY engine.py server.py web.py passkey.py messenger_addresses.py unified.py unified_setup.py translation.py API-contract.json /app/
+RUN apt-get update && apt-get install -y --no-install-recommends python3-cryptography && rm -rf /var/lib/apt/lists/*
 COPY connectors.py connector_setup.py connector_inbox.py connector_web.py connector_sender.py /app/
 COPY plumbing /app/plumbing
 COPY vendor /app/vendor
