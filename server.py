@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 import os
 import signal
 import threading
@@ -131,6 +132,10 @@ class Handler(BaseHTTPRequestHandler):
                 parts=path.split('/')
                 if len(parts)!=5: raise EngineError('not_found','No such API route',404)
                 result=engine.send(parts[3],payload)
+            elif path.startswith('/api/dms/') and re.fullmatch(r'/api/dms/[^/]+/messages/[0-9a-f]{64}/(?:edit|delete|react)',path):
+                parts=path.split('/')
+                payload={**payload,'message_id':parts[5]}
+                result={'edit':engine.edit,'delete':engine.delete,'react':engine.react}[parts[6]](parts[3],payload)
             elif path.startswith('/api/dms/') and path.endswith('/retry'):
                 parts=path.split('/')
                 if len(parts)!=5: raise EngineError('not_found','No such API route',404)
