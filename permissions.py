@@ -16,7 +16,7 @@ READS = [r'/api/(?:setup|contacts|invites|dms)', r'/api/dms/[^/]+/messages',
          r'/api/unified/(?:people|groups|directory|updates)',
          r'/api/unified/people/[^/]+', r'/api/unified/media/[^/]+',
          r'/api/drafts(?:/[^/]+)?']
-WRITES = [r'/api/dms/[^/]+/(?:messages|retry)',
+WRITES = [r'/api/dms/[^/]+/(?:messages|retry)', r'/api/dms/[^/]+/messages/[0-9a-f]{64}/(?:edit|delete|react)',
           r'/api/unified/people/[^/]+/(?:preview|send|read|typing)',
           r'/api/unified/messages/[^/]+/(?:translate|react|edit|delete)',
           r'/api/drafts/[^/]+/(?:preview|send)']

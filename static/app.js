@@ -486,20 +486,17 @@
       live.add(item.key); const outgoing = item.message.direction === 'sent', delivery = item.attempt?.state;
       node.className = 'message' + (outgoing ? ' sent' : ' received') + ' pos-' + item.pos + (delivery === 'failed' ? ' not-sent' : '');
       node.dataset.direction = outgoing ? 'out' : 'in';
-      if (!node.dataset.selectionBound && item.message.message_id) {
-        node.dataset.selectionBound = '1'; const messageId = item.message.message_id;
-        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => state.selection, id: messageId, menu: (opts = {}) => {
-          if (state.selection?.active) return;
-          window.MessengerUnified.actionMenu(node, 'Message', [
-            {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection.forward([messageId])},
-            {label: 'Copy', icon: 'copy', run: () => navigator.clipboard?.writeText(cacheFor(state.group).messages.find(m => m.message_id === messageId)?.text || '').catch(() => {})},
-            ...(opts.select ? [{label: 'Select', icon: 'check', run: opts.select}] : [])
-          ]);
-        }});
+      node.item = item;
+      if (!node.dataset.selectionBound) {
+        node.dataset.selectionBound = '1'; const messageId = item.message.message_id || null;
+        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => messageId ? state.selection : null, id: messageId,
+          reply: messageId ? () => { const m = node.item?.message; if (m && !m.deleted) startReply(m); } : null,
+          menu: (opts = {}) => { if (!state.selection?.active) messageMenu(group, node, opts); }});
       }
       node.dataset.messageId = item.message.message_id || ''; node.dataset.requestId = item.attempt?.request_id || '';
-      const bubble = node.children[0]; if (bubble.textContent !== item.message.text) bubble.textContent = item.message.text;
-      node.children[1].textContent = timeLabel(item.message.created_at); if (ms) node.children[1].dateTime = new Date(ms).toISOString();
+      paintBubble(node.children[0], item.message, outgoing);
+      node.children[1].textContent = timeLabel(item.message.created_at) + (item.message.edited && !item.message.deleted ? ' · edited' : ''); if (ms) node.children[1].dateTime = new Date(ms).toISOString();
+      paintReactions(node, group, item.message);
       const status = node.children[2]; status.replaceChildren(); status.className = 'message-status';
       if (outgoing && delivery && (item === lastOutgoing || ['checking', 'failed', 'queued', 'sending'].includes(delivery))) {
         if (delivery === 'checking') status.append(element('span', 'spinner'), element('span', '', 'Checking delivery'));
@@ -525,6 +522,101 @@
     state.selection?.paint();
     markSeen();
   }
+  // One message bubble: optional reply quote, then the text (or the delete tombstone). Text stays data, never markup.
+  function paintBubble(bubble, m, outgoing) {
+    const quote = m.reply && !m.deleted ? (m.reply.deleted ? 'Deleted message' : m.reply.text || (m.reply.missing ? 'Earlier message' : '')) : null;
+    const text = m.deleted ? (outgoing ? 'You deleted this message' : 'This message was deleted') : m.text;
+    const sig = JSON.stringify([quote, m.reply?.outgoing, text, !!m.deleted]);
+    if (bubble.dataset.sig === sig) return; bubble.dataset.sig = sig; bubble.replaceChildren();
+    bubble.classList.toggle('deleted', !!m.deleted);
+    if (quote !== null) {
+      const q = element('div', 'u-quote reply-quote'); q.append(element('strong', '', m.reply.outgoing ? 'You' : peerName(dmById(state.group)) || 'Them'), element('span', '', quote));
+      q.onclick = () => { const target = [...state.nodes.values()].find(n => n.dataset.messageId === m.reply.message_id); if (target) { target.scrollIntoView({block: 'center', behavior: 'smooth'}); target.classList.add('flash'); setTimeout(() => target.classList.remove('flash'), 1200); } };
+      bubble.append(q);
+    }
+    bubble.append(document.createTextNode(text || ''));
+  }
+  function paintReactions(node, group, m) {
+    let strip = node.querySelector(':scope > .u-reactions');
+    const list = m.deleted ? [] : m.reactions || [];
+    if (!list.length) { strip?.remove(); return; }
+    if (!strip) { strip = element('div', 'u-reactions'); node.children[0].after(strip); }
+    strip.replaceChildren(...list.map(r => { const b = button(r.key + (r.count > 1 ? ' ' + r.count : ''), 'u-react' + (r.mine ? ' mine' : ''), () => reactTo(group, m, r.key)); b.setAttribute('aria-label', (r.mine ? 'Remove your ' : 'React ') + r.key); return b; }));
+  }
+  // Long-press, right-click or tap a bubble: every action this chat supports, in one menu.
+  function messageMenu(group, node, opts = {}) {
+    const U = window.MessengerUnified, item = node.item; if (!U?.actionMenu || !item) return;
+    const m = item.message, outgoing = m.direction === 'sent', copy = text => navigator.clipboard?.writeText(text || '').then(() => U.toast?.('Copied')).catch(() => U.toast?.('Copy is not available here'));
+    if (!m.message_id) {
+      // A local bubble the server never confirmed (Not sent / Checking delivery). It lives only in this browser.
+      const attempt = item.attempt; if (!attempt) return;
+      U.actionMenu(node, 'Message', [
+        {label: 'Copy', icon: 'copy', run: () => copy(attempt.text)},
+        ...(attempt.state === 'failed' ? [{label: 'Try again', icon: 'send', run: () => submitAttempt(group, attempt)}] : []),
+        {label: 'Edit and resend', icon: 'compose', run: () => { discardAttempt(group, attempt); $('draft').value = attempt.text || ''; readRecord(group).draft = $('draft').value; persist(group); resizeDraft(); updateComposer(); $('draft').focus(); }},
+        {label: 'Discard', icon: 'trash', danger: true, run: () => discardAttempt(group, attempt)}
+      ], {side: 'right'});
+      return;
+    }
+    if (m.deleted) return;
+    const busy = isIncoming(dmById(group));
+    U.actionMenu(node, 'Message', [
+      ...(busy ? [] : [{label: 'Reply', icon: 'reply', run: () => startReply(m)}]),
+      {label: 'Copy', icon: 'copy', run: () => copy(m.text)},
+      {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection?.forward([m.message_id])},
+      ...(outgoing && !busy ? [{label: 'Edit', icon: 'compose', run: () => startEdit(m)}] : []),
+      ...(opts.select ? [{label: 'Select', icon: 'check', run: opts.select}] : []),
+      ...(outgoing && !busy ? [{label: 'Delete for everyone', icon: 'trash', danger: true, run: () => deleteForEveryone(group, m)}] : [])
+    ], {side: outgoing ? 'right' : 'left', quick: busy ? null : {mine: (m.reactions || []).find(r => r.mine)?.key, pick: key => reactTo(group, m, key)}});
+  }
+  function discardAttempt(group, attempt) {
+    const record = readRecord(group); record.attempts = record.attempts.filter(a => a !== attempt);
+    persist(group); if (group === state.group) { renderMessages(); renderList(); }
+  }
+  function startReply(m) { state.compose = {group: state.group, mode: 'reply', message: m}; paintComposeBar(); $('draft').focus(); }
+  function startEdit(m) {
+    state.compose = {group: state.group, mode: 'edit', message: m, saved: $('draft').value};
+    $('draft').value = m.text || ''; resizeDraft(); updateComposer(); paintComposeBar(); $('draft').focus();
+  }
+  function endCompose() {
+    const c = state.compose; state.compose = null;
+    if (c?.mode === 'edit') { readRecord(c.group).draft = c.saved || ''; persist(c.group); if (c.group === state.group) { $('draft').value = c.saved || ''; resizeDraft(); updateComposer(); } }
+    paintComposeBar();
+  }
+  function paintComposeBar() {
+    let bar = $('compose-bar');
+    if (!bar) { bar = element('div', 'u-bar compose-bar'); bar.id = 'compose-bar'; $('composer').before(bar); }
+    const c = state.compose && state.compose.group === state.group ? state.compose : null;
+    bar.hidden = !c; bar.replaceChildren(); if (!c) return;
+    const q = element('div', 'u-quote in-bar'); q.append(element('strong', '', c.mode === 'edit' ? 'Edit message' : c.message.direction === 'sent' ? 'Reply to yourself' : 'Reply to ' + (peerName(dmById(state.group)) || 'them')), element('span', '', c.message.text || ''));
+    const close = button('', 'icon-button compose-cancel', () => endCompose()); close.setAttribute('aria-label', 'Cancel'); close.title = 'Cancel';
+    const glyph = window.MessengerUnified?.icon?.('close'); if (glyph) close.append(glyph); else close.textContent = '×';
+    bar.append(q, close);
+  }
+  // Edit, delete and react publish a new encrypted event; refresh history to show what the relay accepted.
+  function messageAction(group, m, action, body, done) {
+    if (isBusy()) return;
+    act(async signal => {
+      try {
+        await api('api/dms/' + encodeURIComponent(group) + '/messages/' + encodeURIComponent(m.message_id) + '/' + action, {method: 'POST', body, signal});
+        done?.(); await refreshMessages(group, signal);
+      } catch (error) {
+        if (error.name !== 'AbortError') { $('composer-error').textContent = friendly(error); window.MessengerUnified?.toast?.(friendly(error), 3000); }
+      }
+      if (state.group === group) renderMessages();
+    });
+  }
+  function reactTo(group, m, key) {
+    const mine = (m.reactions || []).find(r => r.mine)?.key;
+    // One reaction per person: picking your current one again removes it, a new one replaces it.
+    if (mine === key) messageAction(group, m, 'react', {remove: true});
+    else messageAction(group, m, 'react', {emoji: key});
+  }
+  async function deleteForEveryone(group, m) {
+    const U = window.MessengerUnified;
+    const yes = U?.ask ? await U.ask({title: 'Delete for everyone?', body: 'You and ' + (peerName(dmById(group)) || 'they') + ' will see "This message was deleted" instead. It is hidden, not securely erased.', yes: 'Delete', no: 'Cancel'}) : true;
+    if (yes) messageAction(group, m, 'delete', {});
+  }
   function resizeDraft() {
     const draft = $('draft'), top = $('message-scroll').scrollTop;
     draft.style.height = '44px'; draft.style.height = Math.min(112, Math.max(44, draft.scrollHeight)) + 'px';
@@ -535,6 +627,7 @@
     if (state.group === group) { closeSheet(); return; }
     state.selection?.clear();
     cancel(); if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
+    state.compose = null; paintComposeBar();
     state.group = group; state.chatOpening = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
     $('chat-error').textContent = ''; $('composer-error').textContent = ''; $('new-messages').hidden = true;
     $('draft').value = readRecord(group).draft; $('no-selection').hidden = true; $('chat').hidden = false;
@@ -605,7 +698,7 @@
       updateComposer(); renderMessages();
       let accepted = false;
       try {
-        const receipt = await api('api/dms/' + encodeURIComponent(group) + '/messages', {method: 'POST', body: {text: attempt.text, request_id: attempt.request_id}, signal});
+        const receipt = await api('api/dms/' + encodeURIComponent(group) + '/messages', {method: 'POST', body: {text: attempt.text, request_id: attempt.request_id, ...(attempt.reply_to ? {reply_to: attempt.reply_to} : {})}, signal});
         if (receipt.request_id !== attempt.request_id) throw new APIError('send_outcome_unknown', 409);
         attempt.message_ids = receipt.message_ids; attempt.published = receipt.published; attempt.state = receiptState(receipt);
         accepted = true;
@@ -687,13 +780,21 @@
     resizeDraft(); updateComposer();
   };
   $('draft').onkeydown = event => {
+    if (event.key === 'Escape' && state.compose) { event.preventDefault(); event.stopPropagation(); endCompose(); return; }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && matchMedia('(pointer: fine)').matches) { event.preventDefault(); if (!$('send').disabled) $('composer').requestSubmit(); }
   };
   $('composer').onsubmit = event => {
     event.preventDefault(); const group = state.group, text = $('draft').value;
     if (!group || isBusy() || !text.trim() || isIncoming(dmById(group))) return;
     if (new TextEncoder().encode(text).length > 16384 || text.includes('\0')) { $('composer-error').textContent = 'This message is too long. Shorten it and try again.'; return; }
-    const record = readRecord(group), attempt = {request_id: crypto.randomUUID(), text, created_at: Date.now(), state: 'failed'};
+    const compose = state.compose?.group === group ? state.compose : null;
+    if (compose?.mode === 'edit') {
+      if (text === compose.message.text) { endCompose(); return; }
+      messageAction(group, compose.message, 'edit', {text}, () => endCompose());
+      return;
+    }
+    const record = readRecord(group), attempt = {request_id: crypto.randomUUID(), text, created_at: Date.now(), state: 'failed', ...(compose?.mode === 'reply' ? {reply_to: compose.message.message_id} : {})};
+    if (compose) { state.compose = null; paintComposeBar(); }
     const previousDraft = record.draft; record.attempts.push(attempt); record.draft = '';
     if (!persist(group)) { record.attempts.pop(); record.draft = previousDraft; $('composer-error').textContent = 'Draft storage is unavailable. Keep this window open and try again.'; return; }
     $('draft').value = ''; $('composer-error').textContent = ''; resizeDraft(); submitAttempt(group, attempt);

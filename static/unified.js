@@ -575,18 +575,27 @@
     layer.addEventListener('pointerdown', e => { if (inside(e.target)) return; e.preventDefault(); swallowRelease(); closeOverlay(); });
     layer.addEventListener('click', e => { if (!inside(e.target)) closeOverlay(); });
   }
-  function actionMenu(card, title, actions) {
+  // opts.quick = {mine, pick(key)} adds the same emoji strip (and ＋ grid) the bridged message menu shows;
+  // opts.side = 'right' lines the menu up under an outgoing bubble.
+  function actionMenu(card, title, actions, opts = {}) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
-    const panel = node('div', 'u-menu left'); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
+    const panel = node('div', 'u-menu ' + (opts.side === 'right' ? 'right' : 'left')); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
+    const pick = k => { recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); closeOverlay(); opts.quick.pick(k); };
+    if (opts.quick) {
+      const strip = node('div', 'u-quick');
+      for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => pick(k), 'u-qr-btn' + (opts.quick.mine === k ? ' mine' : '')));
+      strip.append(button('＋', () => { const box = node('div', 'u-grid'); for (const k of [...QUICK, ...MORE]) box.append(button(k, () => pick(k), 'u-qr-btn')); panel.replaceChildren(box); }, 'u-qr-btn more'));
+      panel.append(strip);
+    }
     const list = node('div', 'u-actions');
-    for (const a of actions) { const it = button('', () => { closeOverlay(); a.run(); }, 'u-act'); it.setAttribute('role', 'menuitem'); it.append(icon(a.icon), node('span', '', a.label)); list.append(it); }
+    for (const a of actions) { const it = button('', () => { closeOverlay(); a.run(); }, 'u-act' + (a.danger ? ' danger' : '')); it.setAttribute('role', 'menuitem'); it.append(icon(a.icon), node('span', '', a.label)); list.append(it); }
     panel.append(list); layer.append(panel);
     outsideCloses(layer, panel);
     $('messenger').append(layer);
     const r = card.getBoundingClientRect(), H = $('messenger').clientHeight;
-    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 40 - 50 * actions.length)) + 'px';
-    list.firstChild?.focus(); hold();
+    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 40 - 50 * actions.length - (opts.quick ? 64 : 0))) + 'px';
+    panel.querySelector('button')?.focus(); hold();
   }
   const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
   function chatMenu(p, card) { actionMenu(card, p.display_name, [muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted))]); }
