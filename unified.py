@@ -464,6 +464,7 @@ class PeopleStore:
                 'SELECT i.person_id,COUNT(*) FROM message m JOIN identity i ON i.id=m.identity_id '
                 'WHERE i.kind=? AND m.outgoing=0 AND m.deleted=0 AND m.timestamp>i.last_read_ts GROUP BY i.person_id', (kind,)).fetchall())
             pictures = self.room_pictures(db)
+            remote = self.room_accounts(db) if kind == 'person' else {}
         result = []
         for pid, ident in idents.items():
             if pid not in persons or (ids is not None and pid not in ids):
@@ -473,6 +474,8 @@ class PeopleStore:
             p = dict(persons[pid], identities=ident, labels=labels.get(pid, []))
             pic = next((pictures[i['address']] for i in ident if pictures.get(i['address'])), None)
             p['avatar'] = picture_tag(pic)
+            if remote:
+                p['accounts'] = [a for i in ident for a in remote.get(i['address'], [])]
             if pid in last:
                 r = last[pid]
                 media = json.loads(r['media']) if r['media'] else {}
@@ -488,6 +491,25 @@ class PeopleStore:
         else:
             result.sort(key=lambda p: p['display_name'].casefold())
         return result
+
+    @staticmethod
+    def room_accounts(db):
+        """The other person's account id per one-on-one room (their ghost's localpart), for Contacts."""
+        out = {}
+        for room, raw in db.execute("SELECT m.room,m.json FROM room_meta m JOIN identity i ON i.address=m.room WHERE i.kind='person'"):
+            try:
+                meta = json.loads(raw)
+            except ValueError:
+                continue
+            net, names = meta.get('network'), meta.get('names') or {}
+            if not net or not isinstance(names, dict):
+                continue
+            pre = '@' + net + '_'
+            ghosts = [(k, v) for k, v in names.items() if isinstance(k, str) and k.startswith(pre)]
+            if len(ghosts) > 1:  # the owner's own puppet can sit in the room too: prefer the one named like the chat
+                ghosts = [g for g in ghosts if plain_name(net, g[1]) == plain_name(net, meta.get('label') or '')] or ghosts[:1]
+            out[room] = [{'network': net, 'value': k[len(pre):].split(':')[0], 'label': plain_name(net, v or '')} for k, v in ghosts[:1]]
+        return out
 
     @staticmethod
     def room_pictures(db):

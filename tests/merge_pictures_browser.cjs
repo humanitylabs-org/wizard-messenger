@@ -14,15 +14,15 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
     let people = [
-      {id: 'ana-w', display_name: 'Ana Souza', identities: [ident('ana', 'whatsapp')], labels: [], unread: 1, avatar: 'abc123', last: {text: 'Oi!', timestamp: now - 2 * min, outgoing: false}},
+      {id: 'ana-w', display_name: 'Ana Souza', accounts: [{network: 'whatsapp', value: '5511999', label: 'Ana'}], identities: [ident('ana', 'whatsapp')], labels: [], unread: 1, avatar: 'abc123', last: {text: 'Oi!', timestamp: now - 2 * min, outgoing: false}},
       {id: 'ana-i', display_name: 'Ana Souza', identities: [ident('ana', 'instagram')], labels: [], unread: 0, avatar: null, last: {text: "> Replied to @Owner's story\n\n[https://www.instagram.com/stories/x/1](https://www.instagram.com/stories/x/1?reel_id=1)", msgtype: 'm.image', timestamp: now - 90 * min, outgoing: false}},
-      {id: 'bo', display_name: 'Bo Chen', identities: [ident('bo', 'telegram'), ident('bo', 'whatsapp')], labels: [], unread: 0, avatar: 'def456', last: {text: 'see you', timestamp: now - 30 * min, outgoing: false}},
+      {id: 'bo', display_name: 'Bo Chen', accounts: [{network: 'telegram', value: '42', label: 'Bo'}], identities: [ident('bo', 'telegram'), ident('bo', 'whatsapp')], labels: [], unread: 0, avatar: 'def456', last: {text: 'see you', timestamp: now - 30 * min, outgoing: false}},
     ];
     const groups = [{id: 'fam', display_name: 'Family', identities: [ident('fam', 'whatsapp', 'group')], labels: [], unread: 0, avatar: null, last: {text: 'Dinner?', timestamp: now - 5 * min, outgoing: false, sender: 'Pedro'}}];
     let suggestions = [{id: 'ana-i|ana-w', name: 'Ana Souza', people: [
       {id: 'ana-w', display_name: 'Ana Souza', avatar: 'abc123', networks: ['whatsapp'], last: people[0].last},
       {id: 'ana-i', display_name: 'Ana Souza', avatar: null, networks: ['instagram'], last: people[1].last}]}];
-    const posted = [], pics = [], inputs = [];
+    const posted = [], pics = [], inputs = [], saved = [];
     let frames = 0, signin = 'signing_in';
     const finishAfter = () => { signin = 'done'; };
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2});
@@ -41,6 +41,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
       if (p === 'api/unified/people') return ok({people, seq: 5});
       if (p === 'api/unified/groups') return ok({groups, seq: 5});
       if (p === 'api/unified/merge-suggestions') return ok({suggestions});
+      if (p === 'contacts/api/contacts') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contacts: [{id: 'c_1', name: 'Ana from Contacts', accounts: [{network: 'whatsapp', value: '5511999'}]}].concat(saved)})});
+      if (p === 'contacts/api/save') { const b = JSON.parse(req.postData()); saved.push({id: 'c_2', name: b.name, accounts: b.accounts}); posted.push(['save', b.accounts]); return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contact: {id: 'c_2', name: b.name}, created: true})}); }
       if (p === 'api/unified/merge-suggestions/dismiss') { posted.push(['dismiss', body.id]); suggestions = []; return ok({dismissed: true}); }
       let m = /^api\/unified\/people\/([^/]+)\/avatar$/.exec(p);
       if (m) { pics.push([decodeURIComponent(m[1]), url.searchParams.get('who')]); return route.fulfill({status: 200, contentType: 'image/png', body: PNG}); }
@@ -84,9 +86,14 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.ok(pics.some(x => x[0] === 'ana-w'));
     assert.equal(await page.locator('.u-person', {hasText: 'Bo Chen'}).locator('.u-net').count(), 2, 'merged chat shows both network badges');
     assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-net').count(), 1);
-    assert.match(await page.locator('.u-person', {hasText: 'Ana Souza'}).nth(1).textContent(), /Replied to your story/);
+    assert.match(await page.locator('.u-person', {hasText: 'Replied to your story'}).textContent(), /Ana Souza/);
     assert.equal(await page.locator('.u-person', {hasText: 'instagram.com'}).count(), 0, 'no raw links in previews');
     assert.equal(await page.locator('.u-chip', {hasText: 'Merged'}).count(), 1, 'Merged filter appears when a chat is merged');
+    await page.locator('.u-person', {hasText: 'Ana from Contacts'}).waitFor();
+    await page.locator('.u-person', {hasText: 'Bo Chen'}).click({button: 'right'});
+    await page.getByRole('menuitem', {name: 'Add to Contacts'}).click();
+    await page.waitForFunction(() => true); await page.waitForTimeout(400);
+    assert.ok(posted.some(x => x[0] === 'save' && x[1][0].network === 'telegram' && x[1][0].value === '42'), 'Add to Contacts sends the account');
     await shot('inbox');
 
     // First click into the window: a mouse press whose release never arrives must not open the row menu.
@@ -149,7 +156,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     await shot('previews');
     await page.locator('.u-thread-head .icon-button[aria-label="Chat options"]').click();
     await page.getByRole('menuitem', {name: 'Merge with…'}).click();
-    await page.locator('.u-pick-row', {hasText: 'Ana Souza'}).first().waitFor();
+    await page.locator('.u-pick-row', {hasText: 'Ana from Contacts'}).first().waitFor();
     await shot('merge-picker');
     if (await page.locator('#u-overlay .icon-button[aria-label=Close]').count()) await page.locator('#u-overlay .icon-button[aria-label=Close]').click();
     await page.locator('.u-thread-head .icon-button[aria-label="Chat options"]').click();

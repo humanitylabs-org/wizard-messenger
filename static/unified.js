@@ -543,6 +543,7 @@
     }
   }
   function drawList() {
+    if (contacts.ok) applyContacts();
     if (s.search != null) {
       if (searchView.query !== s.search) scheduleSearch(); else drawSearch();
       return;
@@ -676,6 +677,7 @@
       muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted)),
       lowAction(isLow(p), () => setLow(p, !isLow(p))),
       ...(p.native || listKey(p) === 'groups' ? [] : [{label: 'Merge with…', icon: 'merge', run: () => mergePicker(p)}]),
+      ...(contacts.ok && !p.native && listKey(p) !== 'groups' && !p.contact && p.accounts?.length ? [{label: 'Add to Contacts', icon: 'compose', run: () => action(async () => { const r = await saveToContacts(p); if (r) { toast('Added to Contacts'); drawList(); } })}] : []),
       ...(p.native || !p.last ? [] : [p.unread ? {label: 'Mark as read', icon: 'check', run: () => setUnread(p, false)} : {label: 'Mark as unread', icon: 'unread', run: () => setUnread(p, true)}]),
     ]);
   }
@@ -1598,6 +1600,57 @@
       if (preview.error || preview.translated !== preview.original) sheet.append(button('Send English original instead', () => confirmSend(true), 'secondary wide'));
     });
   }
+  // ---- Contacts app (same Wizard address, /contacts/): names, Add to Contacts, merge hints. Optional: absent app = no-op. ----
+  const CONTACTS = '/contacts/';
+  const contacts = {ok: null, map: new Map(), byId: new Map(), at: 0};
+  const accKey = (n, v) => n + '\n' + v;
+  async function loadContacts(force) {
+    if (contacts.ok === false && !force) return;
+    if (!force && Date.now() - contacts.at < 60000) return;
+    contacts.at = Date.now();
+    try {
+      const r = await fetch(CONTACTS + 'api/contacts', {credentials: 'same-origin'}); if (!r.ok) throw new Error();
+      const data = await r.json(); contacts.ok = true; contacts.map = new Map(); contacts.byId = new Map();
+      for (const c of data.contacts || []) { contacts.byId.set(c.id, c); for (const a of c.accounts || []) contacts.map.set(accKey(a.network, a.value), c); }
+      applyContacts(); if (!s.person && s.ready) drawList();
+    } catch { contacts.ok = contacts.ok === true; }
+  }
+  // A chat whose account is saved in Contacts shows the contact's name.
+  function applyContacts() {
+    for (const k of ['people', 'groups']) for (const p of store.lists[k] || []) {
+      const c = (p.accounts || []).map(a => contacts.map.get(accKey(a.network, a.value))).find(Boolean);
+      if (c) { p.messenger_name ??= p.display_name; p.contact = {id: c.id, name: c.name}; p.display_name = c.name; }
+      else if (p.contact) { p.display_name = p.messenger_name || p.display_name; delete p.contact; }
+    }
+  }
+  const listed = p => (store.lists.people || []).find(x => x.id === p.id) || p;
+  async function saveToContacts(p) {
+    p = listed(p);
+    const accounts = (p.accounts || []).map(a => ({network: a.network, value: a.value, label: a.label || p.display_name}));
+    const phones = accounts.filter(a => a.network === 'whatsapp' && /^\d{8,15}$/.test(a.value)).map(a => ({value: '+' + a.value, label: 'WhatsApp'}));
+    if (!accounts.length) { toast('This chat has no account Contacts can keep yet'); return null; }
+    let photo = '';
+    const url = pictureURL(p.id, p.avatar);
+    if (url) try { const b = await (await fetch(url)).blob(); if (b.size < 380000 && /^image\/(jpeg|png|webp)$/.test(b.type)) photo = await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); } catch { /* no photo */ }
+    const r = await fetch(CONTACTS + 'api/save', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: p.messenger_name || p.display_name, accounts, phones, ...(photo ? {photo} : {})})});
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Contacts could not save this person');
+    await loadContacts(true); return data;
+  }
+  function openContacts() { if (WizardApp?.nav?.openApp?.('contacts')) return; window.open(CONTACTS, '_blank', 'noopener'); }
+  function contactsRow(p) {
+    if (contacts.ok !== true || !p.identities.every(i => i.kind === 'person')) return null;
+    p = listed(p);
+    const box = node('div', 'u-contact-link');
+    if (p.contact) {
+      box.append(node('span', '', 'Saved in Contacts as ' + p.contact.name));
+      box.append(button('Open Contacts', openContacts, 'c-link'));
+    } else {
+      box.append(node('span', '', 'Not in your Contacts yet'));
+      box.append(button('Add to Contacts', () => action(async () => { const r = await saveToContacts(p); if (r) { toast(r.created ? 'Added to Contacts' : 'Added to ' + r.contact.name + ' in Contacts'); closeOverlay(); drawList(); } }), 'secondary'));
+    }
+    return box;
+  }
   function editPerson(p) {
     const sheet = overlay(p.identities.every(i => i.kind === 'person') ? 'Contact' : 'Group'); const form = node('form');
     const hero = node('div', 'u-hero'); hero.append(avatar(p.display_name, 'large'), node('strong', '', p.display_name), node('span', '', networksOf(p).map(netLabel).join(' · '))); sheet.append(hero);
@@ -1611,6 +1664,7 @@
     form.append(nameLabel, langLabel); if (p.identities.length > 1) form.append(preferredLabel);
     const save = () => action(async () => { await call('people/' + p.id, {display_name: name.value, language: lang.value, preferred_identity: preferred.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); });
     form.append(button('Save', save, 'primary wide'));
+    const linkBox = contactsRow(p); if (linkBox) sheet.append(linkBox);
     form.onsubmit = e => { e.preventDefault(); save(); }; sheet.append(form);
     if (p.identities.every(i => i.kind === 'person')) {
       const others = s.people.filter(x => x.id !== p.id);
@@ -1732,10 +1786,18 @@
     const list = node('div', 'u-merge-list'); sheet.append(list);
     let rows = [];
     try { rows = (await call('merge-suggestions')).suggestions || []; } catch (e) { error(e); return; }
+    // Two chats saved under one person in Contacts: the strongest hint, listed first.
+    if (contacts.ok) {
+      const by = new Map(); for (const x of store.lists.people || []) if (x.contact) { if (!by.has(x.contact.id)) by.set(x.contact.id, []); by.get(x.contact.id).push(x); }
+      const extra = [...by.values()].filter(g => g.length > 1).map(g => ({id: g.map(x => x.id).sort().join('|'), name: g[0].contact.name, why: 'Same person in Contacts',
+        people: g.map(x => ({id: x.id, display_name: x.messenger_name || x.display_name, avatar: x.avatar, networks: networksOf(x), last: x.last}))}));
+      rows = [...extra, ...rows.filter(r => !extra.some(e => e.id === r.id))];
+    }
     if (s.overlay !== 'Suggested merges') return;
     const empty = () => { if (!list.children.length) list.append(node('p', 'u-empty', 'No suggestions right now.')); };
     for (const sg of rows) {
       const card = node('section', 'u-merge-card'), pair = node('div', 'u-merge-pair');
+      if (sg.why) card.append(node('small', 'u-merge-why', sg.why));
       sg.people.forEach((x, i) => {
         if (i) pair.append(node('span', 'u-merge-plus', '+'));
         const who = node('div', 'u-merge-who'), txt = node('span');
@@ -2058,7 +2120,7 @@
   }
   function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
   function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); loadContacts(); } });
   // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.
   // An open chat re-fetches itself when shown, so it looked instant while the list waited for the feed to catch up
   // (James, 27 Oct 2026). The list now does the same: one direct fetch on return, at most every 2 s.
@@ -2145,7 +2207,7 @@
       resume(); return true;
     },
     authenticated() {
-      if (s.ready) return; s.ready = true; restore();
+      if (s.ready) return; s.ready = true; restore(); loadContacts();
       const painted = document.documentElement.dataset.inboxTab;
       if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }

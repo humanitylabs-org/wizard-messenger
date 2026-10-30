@@ -91,23 +91,11 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
     // Add X → it wakes, then the browser sign-in accepts a pasted "Copy as cURL" and fills ct0 + auth_token.
     await page.locator('.c-add[data-network=twitter]').click();
     await page.locator('.c-card[data-network=twitter] .primary').waitFor();
-    await page.locator('.c-card[data-network=twitter] .primary').click();
-    await page.locator('.c-form textarea').waitFor();
-    assert.match(await page.locator('.c-steps').textContent(), /Copy as cURL/);
-    await shot('paste');
-    const curl = "curl 'https://x.com/i/api/graphql/abc' \\\n  -H 'accept: */*' \\\n  -b 'guest_id=v1%3A1; auth_token=AUTH123abc; ct0=CT0xyz789; lang=en' \\\n  -H 'x-csrf-token: CT0xyz789'";
-    await page.locator('.c-form textarea').fill(curl);
-    await page.getByRole('button', {name: 'Connect', exact: true}).click();
-    await page.locator('input[name=pin]').waitFor();
-    assert.deepEqual(steps[0].fields, {ct0: 'CT0xyz789', auth_token: 'AUTH123abc'}, 'fields filled from the pasted request');
-    assert.equal(await page.locator('input[name=pin]').getAttribute('type'), 'password', 'passcode is masked');
-    await page.locator('input[name=pin]').fill('1234');
-    await page.getByRole('button', {name: 'Continue'}).click();
-    await page.getByText('X connected').waitFor();
+    // X signs in through the Wizard Browser, like Slack: no developer-tools paste step.
+    assert.equal((await page.locator('.c-card[data-network=twitter] .primary').textContent()).trim(), 'Sign in with your browser');
+    assert.equal(await page.locator('.c-card[data-network=twitter]', {hasText: /cURL|developer/i}).count(), 0);
+    await shot('connected');
 
-    await page.getByRole('button', {name: 'Done'}).click();
-    await page.locator('.c-card[data-network=twitter]').waitFor();
-    await page.locator('.c-group .c-card.c-row[data-network=twitter]').waitFor(); await shot('connected');
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(label);
     await ctx.close();
