@@ -611,6 +611,20 @@
   }
   // opts.quick = {mine, pick(key)} adds the same emoji strip (and ＋ grid) the bridged message menu shows;
   // opts.side = 'right' lines the menu up under an outgoing bubble.
+  let lastPointer = null;
+  document.addEventListener('contextmenu', e => { lastPointer = {x: e.clientX, y: e.clientY, t: performance.now(), mouse: !e.sourceCapabilities?.firesTouchEvents && (e.pointerType ? e.pointerType === 'mouse' : e.button === 2 || e.buttons === 2 || !('ontouchstart' in window))}; }, true);
+  // Coordinates relative to Messenger's own box (inside Wizard it is a window, not the page corner).
+  // A mouse right-click opens the menu at the pointer; on wide screens it sits under the bubble; phones keep the full-width sheet.
+  function placeMenu(panel, card, right) {
+    const host = $('messenger').getBoundingClientRect(), r = card.getBoundingClientRect(), H = host.height, W = host.width;
+    const at = lastPointer && performance.now() - lastPointer.t < 800 && lastPointer.mouse ? lastPointer : null;
+    if (at || W > 600) { panel.classList.remove('right', 'left'); panel.classList.add('at'); panel.style.right = 'auto'; }
+    const ph = panel.offsetHeight || 300, pw = Math.min(panel.offsetWidth || 300, W - 24);
+    const clampY = y => Math.max(12, Math.min(y, H - ph - 12)), clampX = x => Math.max(12, Math.min(x, W - pw - 12));
+    if (at) { panel.style.left = clampX(at.x - host.left) + 'px'; const y = at.y - host.top; panel.style.top = (y + ph > H - 12 ? clampY(y - ph) : clampY(y)) + 'px'; }
+    else if (W > 600) { panel.style.left = clampX((right ? r.right - pw : r.left) - host.left) + 'px'; panel.style.top = (r.bottom + 4 - host.top + ph > H - 12 ? clampY(r.top - host.top - ph - 4) : clampY(r.bottom + 4 - host.top)) + 'px'; }
+    else panel.style.top = clampY(r.bottom + 4 - host.top) + 'px';
+  }
   function actionMenu(card, title, actions, opts = {}) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
@@ -627,8 +641,7 @@
     panel.append(list); layer.append(panel);
     outsideCloses(layer, panel);
     $('messenger').append(layer);
-    const r = card.getBoundingClientRect(), H = $('messenger').clientHeight;
-    panel.style.top = Math.max(12, Math.min(r.bottom + 4, H - 40 - 50 * actions.length - (opts.quick ? 64 : 0))) + 'px';
+    placeMenu(panel, card, opts.side === 'right');
     panel.querySelector('button')?.focus(); hold();
   }
   const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
@@ -1182,9 +1195,7 @@
     panel.append(list); layer.append(panel);
     outsideCloses(layer, panel);
     $('messenger').append(layer);
-    const r = b.getBoundingClientRect(), H = $('messenger').clientHeight;
-    panel.style.top = Math.max(12, Math.min(r.bottom + 8, H - 16 - (telegram ? 380 : 320))) + 'px';
-    panel.classList.add(m.outgoing ? 'right' : 'left');
+    panel.classList.add(m.outgoing ? 'right' : 'left'); placeMenu(panel, b, m.outgoing);
     b.closest('.u-row')?.classList.add('lifted'); layer.addEventListener('remove', () => {}); view.lifted = b.closest('.u-row');
     panel.querySelector('button')?.focus(); hold();
   }

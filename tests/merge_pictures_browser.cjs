@@ -69,6 +69,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     });
     const shot = name => page.screenshot({path: path.join(out, `${name}-${label}.png`)});
     await page.goto('https://messenger.test/');
+    if (label === '1280') await page.addStyleTag({content: '#messenger { position: fixed !important; left: 240px !important; top: 90px !important; width: 900px !important; height: 740px !important; }'});
     await page.locator('.u-person', {hasText: 'Bo Chen'}).waitFor({timeout: 15000});
     // Pictures: rows with a picture load it; rows without keep initials.
     await page.waitForFunction(() => document.querySelectorAll('.u-person .u-avatar.has-img').length >= 2);
@@ -94,7 +95,15 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     const pill = page.locator('.u-via-pick');
     await pill.waitFor();
     assert.match(await pill.textContent(), /Replying on\s*Telegram/);
-    await page.locator('.u-row[data-id=b2] .bubble-text, .u-row[data-id=b2] .u-message').first().click({button: 'right'});
+    const target = page.locator('.u-row[data-id=b2] .bubble-text, .u-row[data-id=b2] .u-message').first();
+    const tb = await target.boundingBox();
+    await page.mouse.click(tb.x + 10, tb.y + 8, {button: 'right'});
+    const mb = await page.locator('.u-menu').boundingBox(), vh = viewport.height;
+    // Right-click menu opens at the pointer (inside the window, even when Messenger is offset on the page).
+    assert.ok(Math.abs(mb.x - (tb.x + 10)) < 40 || mb.x + mb.width <= viewport.width - 4, 'menu x near pointer: ' + mb.x + ' vs ' + (tb.x + 10));
+    assert.ok(mb.y >= 0 && mb.y + mb.height <= vh, 'menu inside the window');
+    if (label === '1280') assert.ok(Math.abs(mb.x - (tb.x + 10)) < 40 && (Math.abs(mb.y - (tb.y + 8)) < 20 || Math.abs(mb.y + mb.height - (tb.y + 8)) < 20), 'menu at pointer: ' + JSON.stringify(mb) + ' ' + JSON.stringify(tb));
+    await shot('menu-at-pointer');
     await page.getByRole('menuitem', {name: /Reply/}).click();
     assert.match(await pill.textContent(), /Replying on\s*WhatsApp/);
     await shot('reply-on');

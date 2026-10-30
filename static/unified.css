@@ -601,3 +601,4 @@ html:not([data-color-scheme=light]) .u-chips .net-badge.u-chip-icon[data-network
 .c-live-keys { display: flex; flex-wrap: wrap; gap: 6px; max-width: 430px; margin: 8px auto 0; }
 .c-live-type { flex: 1 1 100%; min-height: 44px; resize: none; }
 .c-live-key { flex: 1 1 auto; min-height: 38px; padding: 0 10px; font-size: 13px; }
+.u-menu.at { width: 300px; max-width: calc(100% - 24px); }
