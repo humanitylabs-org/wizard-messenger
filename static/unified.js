@@ -474,8 +474,10 @@
   }
   function netAvatar(p, size = '') {
     const wrap = node('span', 'u-av-wrap' + (size ? ' ' + size : '')); wrap.append(withPicture(avatar(p.display_name, size), pictureURL(p.id, p.avatar)));
-    const net = networksOf(p)[0];
-    if (net) wrap.append(netBadge(net, 'u-net'));
+    // Merged chats show every network's badge, overlapped (up to three).
+    const nets = networksOf(p).slice(0, 3);
+    nets.forEach((n, i) => { const b = netBadge(n, 'u-net' + (i ? ' u-net-' + i : '')); wrap.append(b); });
+    if (nets.length > 1) wrap.classList.add('multi');
     return wrap;
   }
   let searchTimer, searchGeneration = 0;

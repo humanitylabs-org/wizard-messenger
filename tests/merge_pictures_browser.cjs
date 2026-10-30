@@ -75,6 +75,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     await page.waitForFunction(() => document.querySelectorAll('.u-person .u-avatar.has-img').length >= 2);
     assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('img.u-av-img').count(), 0);
     assert.ok(pics.some(x => x[0] === 'ana-w'));
+    assert.equal(await page.locator('.u-person', {hasText: 'Bo Chen'}).locator('.u-net').count(), 2, 'merged chat shows both network badges');
+    assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-net').count(), 1);
     await shot('inbox');
 
     // Suggested merges live in Settings, merge on a tap and leave the list in place.
@@ -130,6 +132,13 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     await page.locator('.c-live-img').click({position: {x: 50, y: 60}});
     await page.locator('.c-live-type').pressSequentially('me@acme.com');
     await page.getByRole('button', {name: 'Enter ⏎'}).click();
+    const ib = await page.locator('.c-live-img').boundingBox();
+    await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height * .7); await page.mouse.down();
+    for (let k = 1; k <= 6; k++) await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height * .7 - k * 30);
+    await page.mouse.up(); await page.waitForTimeout(400);
+    const scrolled = inputs.filter(i => i.type === 'scroll').reduce((a, i) => a + i.dy, 0);
+    assert.ok(scrolled > 60, 'drag scrolls the page live: ' + scrolled);
+    assert.ok(ib.height <= viewport.height * .7, 'live page fits the window: ' + ib.height);
     await shot('slack-live'); finishAfter();
     await page.getByText('Slack connected').waitFor({timeout: 15000});
     assert.ok(inputs.some(i => i.type === 'tap' && i.x > 0 && i.x < 1), 'tap mapped to page coordinates');

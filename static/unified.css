@@ -602,3 +602,17 @@ html:not([data-color-scheme=light]) .u-chips .net-badge.u-chip-icon[data-network
 .c-live-type { flex: 1 1 100%; min-height: 44px; resize: none; }
 .c-live-key { flex: 1 1 auto; min-height: 38px; padding: 0 10px; font-size: 13px; }
 .u-menu.at { width: 300px; max-width: calc(100% - 24px); }
+/* Merged chats: overlapped network badges */
+.u-av-wrap .u-net { z-index: 3; }
+.u-av-wrap .u-net.u-net-1 { right: 11px; z-index: 2; }
+.u-av-wrap .u-net.u-net-2 { right: 25px; z-index: 1; }
+.u-av-wrap.small .u-net.u-net-1 { right: 8px; }
+.u-av-wrap.small .u-net.u-net-2 { right: 19px; }
+/* Calmer filter row: network icons in grey until chosen; counts as quiet text, not bright bubbles */
+.u-chip.net .u-chip-icon { filter: grayscale(1); opacity: .72; transition: filter 120ms, opacity 120ms; }
+.u-chip.net:hover .u-chip-icon, .u-chip.net[aria-pressed=true] .u-chip-icon { filter: none; opacity: 1; }
+.u-chips .u-chip .u-chip-count { min-width: 0; height: auto; padding: 0; background: none; color: var(--ink-3); font-weight: 600; }
+.u-chips .u-chip[aria-pressed=true] .u-chip-count { background: none; color: inherit; }
+/* Live sign-in: fit the window height, drag to scroll */
+.c-live { width: auto; height: min(66vh, 760px); max-width: 100%; }
+.c-live-img { touch-action: none; }

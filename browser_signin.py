@@ -16,7 +16,7 @@ import socket
 import struct
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
 from engine import EngineError
@@ -241,7 +241,8 @@ class Session:
             return None
         teams = json.loads(raw)
         cookies = self.cdp.send('Network.getCookies', {'urls': ['https://app.slack.com']}, session=self.session).get('cookies') or []
-        d = next((c['value'] for c in cookies if c.get('name') == 'd' and str(c.get('value', '')).startswith('xoxd-')), None)
+        # The browser keeps the d cookie percent-encoded (%2F, %3D); the bridge only accepts the decoded form.
+        d = next((unquote(c['value']) for c in cookies if c.get('name') == 'd' and str(c.get('value', '')).startswith('xoxd-')), None)
         return (teams, d) if teams and d else None
 
     def close(self):
@@ -287,7 +288,7 @@ class BrowserSignIn:
         sess.state = 'connecting'
         with sess.cond:
             sess.cond.notify_all()
-        done, failed = [], []
+        done, failed, why = [], [], ''
         for team in teams:
             try:
                 step = self.connectors.dispatch('POST', ['slack', 'start'], {'flow': 'token'})
@@ -300,12 +301,23 @@ class BrowserSignIn:
                         time.sleep(0.5)
                         step = self.connectors.advance('slack', pending, pending[1], {}, pending[2])
                 (done if step.get('type') == 'complete' else failed).append(team.get('name') or 'workspace')
-            except Exception:
-                failed.append(team.get('name') or 'workspace')
+            except EngineError as e:
+                failed.append(team.get('name') or 'workspace'); why = getattr(e, 'message', '') or str(e)
+            except Exception as e:
+                failed.append(team.get('name') or 'workspace'); why = type(e).__name__
+            finally:
+                try:
+                    pending = self.connectors.pending.get('slack')
+                    if pending and team is not teams[-1]:
+                        self.connectors.dispatch('POST', ['slack', 'cancel'], {'login_id': pending[1][0]})
+                except Exception:
+                    pass
+        # Kept for the owner's monitor: the bridge's reason, never the token values.
+        print('browser sign-in slack: connected=%d failed=%d %s' % (len(done), len(failed), why[:200]), flush=True)
         team = cookie = None
         sess.result = {'connected': done, 'failed': failed}
         sess.state = 'done' if done else 'failed'
-        sess.message = ('Connected ' + ', '.join(done)) if done else 'Slack did not accept this sign-in. Start again.'
+        sess.message = ('Connected ' + ', '.join(done)) if done else ('Slack did not accept this sign-in' + (': ' + why if why else '') + '. Start again.')
         sess.close()
 
     def dispatch(self, method, suffix, payload, query):

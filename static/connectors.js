@@ -372,13 +372,21 @@
       });
       typer.addEventListener('paste', e => { const t = e.clipboardData?.getData('text'); if (t) send({type: 'text', text: t}); e.preventDefault(); });
       const point = e => { const r = img.getBoundingClientRect(); return {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height}; };
-      let down = null;
-      img.addEventListener('pointerdown', e => { down = {x: e.clientX, y: e.clientY, at: point(e)}; img.setPointerCapture?.(e.pointerId); });
-      img.addEventListener('pointerup', e => {
-        if (!down) return; const dy = down.y - e.clientY, dx = down.x - e.clientX, at = down.at; down = null;
-        if (Math.hypot(dx, dy) < 10) { send({type: 'tap', ...at}); typer.focus({preventScroll: true}); }
-        else send({type: 'scroll', ...at, dy: dy * 2});
+      // Drag scrolls the page live, like a phone; a short touch is a tap.
+      let down = null, owed = 0, flushing = false;
+      const scale = () => (height || 720) / (img.getBoundingClientRect().height || 1);  // page pixels per screen pixel
+      const flush = async () => { if (flushing || !down || Math.abs(owed) < 1) return; flushing = true; const dy = owed; owed = 0; await send({type: 'scroll', ...down.at, dy}); flushing = false; flush(); };
+      img.addEventListener('pointerdown', e => { down = {x: e.clientX, y: e.clientY, last: e.clientY, at: point(e), moved: false}; img.setPointerCapture?.(e.pointerId); });
+      img.addEventListener('pointermove', e => {
+        if (!down) return;
+        if (!down.moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8) return;
+        down.moved = true; owed += (down.last - e.clientY) * scale(); down.last = e.clientY; flush();
       });
+      img.addEventListener('pointerup', () => {
+        if (!down) return; const d = down; if (!d.moved) { down = null; send({type: 'tap', ...d.at}); typer.focus({preventScroll: true}); return; }
+        flush().then(() => { down = null; });
+      });
+      img.addEventListener('pointercancel', () => { down = null; owed = 0; });
       img.addEventListener('wheel', e => { e.preventDefault(); send({type: 'scroll', ...point(e), dy: e.deltaY}); }, {passive: false});
       button(root, 'Cancel', async () => { const next = generation + 1; await cancel(); if (next === generation) await show(); });
       const width = Math.max(320, Math.min(430, Math.round(shell.clientWidth || 400))), height = Math.max(520, Math.min(860, Math.round(width * 1.7)));
