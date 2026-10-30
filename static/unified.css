@@ -774,3 +774,36 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 @media (hover: none) and (pointer: coarse) {
   input, textarea, select { font-size: 16px; }
 }
+
+/* ---- Desktop split (Miguel, 31 Oct 2026): the chat list on the left, the open chat on the right, like Chats'
+   session list beside its thread. unified.js sets html[data-split] from Messenger's own window width (900px and
+   up, see SPLIT_MIN), never the device; narrower windows keep the one-pane Inbox above unchanged.
+   The window is the page here: no max-width on the frame. Skin tokens only. */
+html[data-split] #messenger { --u-list-w: clamp(320px, 28cqi, 380px); }
+#unified-inbox[data-split] { flex-direction: row; max-width: none; margin: 0; border-left: 0; border-right: 0; }
+#unified-inbox[data-split] > .u-pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+#unified-inbox[data-split] > .u-pane-list { flex: 0 0 var(--u-list-w, 360px); border-right: 1px solid var(--line); }
+#unified-inbox[data-split] > .u-pane-thread { flex: 1 1 auto; }
+#unified-inbox[data-split] > .u-pane > .error { margin: 0 18px 8px; flex-shrink: 0; }
+#unified-inbox[data-split] > .u-pane > .error:empty { margin-bottom: 0; }
+/* The list is right there, so the thread header needs no Back. */
+#unified-inbox[data-split] .u-thread-head > .u-back { display: none; }
+#unified-inbox[data-split] .u-thread-head { padding-left: 12px; }
+/* The open chat's row stays highlighted while you read it. */
+#unified-inbox[data-split] .u-person.selected, #unified-inbox[data-split] .u-person.selected:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+#unified-inbox[data-split] .u-person.selected .u-when { color: var(--ink-2); }
+/* A very wide window keeps the conversation at a readable width in the middle of its pane. */
+#unified-inbox[data-split] .u-timeline, #unified-inbox[data-split] .u-composer { padding-left: max(12px, calc((100% - 1000px) / 2)); padding-right: max(12px, calc((100% - 1000px) / 2)); }
+/* Nothing open yet. */
+.u-pick { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 320px; padding: 24px; text-align: center; color: var(--ink-3); }
+.u-pick p { margin: 6px 0 0; font-size: 1.15em; font-weight: 600; color: var(--ink); }
+.u-pick .helper { font-size: .87em; line-height: 1.5; }
+.u-pick-mark { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--link); }
+.u-pick-mark svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* A native Wizard thread (app.js #workspace) takes the right side; the list stays on the left. */
+html[data-split][data-private-view] #messenger { flex-direction: row; }
+html[data-split][data-private-view] #unified-inbox { display: flex !important; flex: 0 0 var(--u-list-w, 360px); }
+html[data-split][data-private-view] #unified-inbox > .u-pane-list { flex: 1 1 auto; }
+html[data-split][data-private-view] #unified-inbox > .u-pane-thread { display: none; }
+html[data-split][data-private-view] #workspace { order: 2; min-width: 0; }
+html[data-split][data-private-view] #chat-back { display: none !important; }

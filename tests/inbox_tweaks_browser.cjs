@@ -146,8 +146,8 @@ const SKINS = {
     await shot('low-folder');
     // Opening a chat from the folder and coming back lands in the folder again.
     await page.locator('.u-person', {hasText: 'Deals Channel'}).click();
-    await page.getByRole('button', {name: 'Back', exact: true}).waitFor();
-    await page.getByRole('button', {name: 'Back', exact: true}).click();
+    if (viewport.width >= 900) { await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Deals Channel'}).waitFor(); await page.keyboard.press('Escape'); await page.locator('#u-pane-thread .u-pick').waitFor(); } // desktop split: Back (Escape) clears the chat
+    else { await page.getByRole('button', {name: 'Back', exact: true}).waitFor(); await page.getByRole('button', {name: 'Back', exact: true}).click(); }
     assert.equal(await lowChip.getAttribute('aria-pressed'), 'true', 'back from a chat keeps the Low priority view');
     // Move back to the Inbox from inside the folder.
     await page.locator('.u-person', {hasText: 'Kenji Tanaka'}).click({button: 'right'});
