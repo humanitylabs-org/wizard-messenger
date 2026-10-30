@@ -48,7 +48,31 @@ def timeline_row(m, me):
                'outgoing':bool(preview) and preview.get('sender')==me,'missing':preview is None}
     return {'message_id':m['message_id'],'group_id':m['group_id'],'author':m['from'],'author_name':m.get('from_display_name',''),
             'text':'' if m.get('deleted') else m.get('plaintext',''),'direction':m['direction'],'created_at':m.get('timeline_at') or m.get('received_at'),
-            'edited':bool(m.get('edit')),'deleted':bool(m.get('deleted')),'reactions':reactions,'reply':reply}
+            'edited':bool(m.get('edit')),'deleted':bool(m.get('deleted')),'reactions':reactions,'reply':reply,
+            'attachments':[] if m.get('deleted') else timeline_attachments(m)}
+
+HEX64 = re.compile(r'[0-9a-f]{64}\Z')
+
+def timeline_attachments(m):
+    """Encrypted-media (MIP-04) references carried as `imeta` tags on a kind-9 message.
+    Only the display fields leave the engine; locators, nonces and ciphertext hashes stay inside wnd,
+    which resolves them again from the group history when a file is downloaded by its plaintext hash."""
+    out=[]
+    for tag in ((m.get('media') or {}).get('imeta') or [])[:32]:
+        if not isinstance(tag,list): continue
+        fields={}
+        for f in tag[1:]:
+            if isinstance(f,str) and ' ' in f:
+                k,v=f.split(' ',1); fields.setdefault(k,v)
+        digest=fields.get('plaintext_sha256','')
+        if not HEX64.fullmatch(digest): continue
+        mime=fields.get('m','').strip().lower()
+        if not re.fullmatch(r'[a-z0-9.+-]+/[a-z0-9.+-]+',mime): mime='application/octet-stream'
+        item={'sha256':digest,'mime':mime,'filename':fields.get('filename','')[:200]}
+        dim=re.fullmatch(r'(\d{1,6})x(\d{1,6})',fields.get('dim',''))
+        if dim and all(0<int(x)<10**6 for x in dim.groups()): item['w'],item['h']=int(dim.group(1)),int(dim.group(2))
+        out.append(item)
+    return out
 
 
 def group_id(value):
@@ -99,7 +123,7 @@ class MarmotEngine:
     def status(self):
         ready = self.unlocked and self.daemon is not None and self.daemon.poll() is None
         state = 'ready' if ready else ('locked' if self.marker.exists() else 'setup_required')
-        return {'state': state, 'engine': 'marmot', 'mdk_version': '0.12.0', 'mdk_revision': MDK_REV, 'secret_store': 'keychain', 'vault_provider': 'gnome-secret-service', 'requires_unlock_after_restart': True, 'account_configured': self.marker.exists(), 'capabilities': ['encrypted_text', 'invites', 'dm'], 'unsupported': ['attachments', 'notifications', 'group_chats', 'key_export']}
+        return {'state': state, 'engine': 'marmot', 'mdk_version': '0.12.0', 'mdk_revision': MDK_REV, 'secret_store': 'keychain', 'vault_provider': 'gnome-secret-service', 'requires_unlock_after_restart': True, 'account_configured': self.marker.exists(), 'capabilities': ['encrypted_text', 'invites', 'dm', 'attachments'], 'unsupported': ['voice_notes', 'notifications', 'group_chats', 'key_export']}
 
     def _require_ready(self):
         if self.status()['state'] != 'ready':
@@ -123,13 +147,15 @@ class MarmotEngine:
         except (OSError, ValueError, KeyError, TypeError):
             raise EngineError('engine_unavailable', 'Marmot is unavailable; inspect status before retrying a send', 503) from None
 
-    def _execute(self, command, *, account=None, import_nsec=None):
+    def _execute(self, command, *, account=None, import_nsec=None, timeout=90, failure=None):
         cli = {'home':str(self.home), 'socket':None, 'relay':None, 'secret_store':'Keychain', 'keychain_service':self.service, 'account':account, 'json':True, 'command':command}
         request = {'cli':cli}
         if import_nsec is not None:
             request['import_nsec'] = import_nsec
-        data = json.loads(self._rpc({'Execute':request}))
+        data = json.loads(self._rpc({'Execute':request}, timeout))
         if not data.get('ok'):
+            error = data.get('error') if isinstance(data.get('error'), dict) else {}
+            if failure: failure(str(error.get('code') or ''), str(error.get('message') or ''))
             raise EngineError('marmot_operation_failed', 'Marmot could not complete this operation', 502)
         return data['result']
 
@@ -462,6 +488,67 @@ class MarmotEngine:
                 raise EngineError('invalid_message_id','Invalid message identifier',400)
             result=self._execute({'Messages':{'command':{'Retry':{'group_id':group,'event_id':event_id}}}})
             return {k:result[k] for k in ['group_id','target_event_id','retry_scope','published','message_ids','maintenance_disposition']}
+
+    # Failures wnd reports before anything is published: the encrypted blob never reached a Blossom
+    # server, or the reference was refused locally. Only these release the send intent for a retry.
+    MEDIA_PRE_PUBLISH = ('invalid_media_attachment','invalid_encrypted_media','media_reference_stale_epoch',
+                         'media_reference_epoch_unsettled','io_error')
+
+    def send_media(self, group, payload):
+        """Encrypt each file with the group's MIP-04 media key, upload the ciphertext to the group's
+        Blossom endpoints (engine defaults) and publish one kind-9 message carrying every imeta tag."""
+        with self.mutex:
+            self._require_ready()
+            self._dm_members(group)
+            paths=payload.get('paths')
+            if not isinstance(paths,list) or not 1 <= len(paths) <= 10 or not all(isinstance(p,str) and os.path.isfile(p) for p in paths):
+                raise EngineError('invalid_upload','Attach the file again',400)
+            caption=payload.get('text') or None
+            if caption is not None: caption=text(caption,'caption',16384)
+            request_id=payload.get('request_id')
+            if not isinstance(request_id,str) or not re.fullmatch('[a-zA-Z0-9_-]{16,128}',request_id):
+                raise EngineError('invalid_request_id','Use a unique 16..128 character client request id',400)
+            digest=hashlib.sha256()
+            for p in paths:
+                with open(p,'rb') as f: digest.update(hashlib.sha256(f.read()).digest())
+            digest.update((caption or '').encode()); digest=digest.hexdigest()
+            with self._db() as db:
+                previous=db.execute('SELECT group_id,body_sha256,state,result_json FROM sends WHERE request_id=?',(request_id,)).fetchone()
+                if previous:
+                    if previous[0]!=group or previous[1]!=digest:
+                        raise EngineError('request_id_conflict','A request id cannot be reused for different message content',409)
+                    if previous[2]=='accepted':
+                        return {**json.loads(previous[3]),'replayed':True}
+                    raise EngineError('send_outcome_unknown','Refresh history before resolving this send; it will not be automatically duplicated',409)
+                db.execute('INSERT INTO sends VALUES (?,?,?,\'pending\',NULL)',(request_id,group,digest))
+            def release(code, message):
+                if code in self.MEDIA_PRE_PUBLISH or (code=='command_failed' and message.startswith('blob store request failed')):
+                    with self._db() as db: db.execute('DELETE FROM sends WHERE request_id=? AND state=\'pending\'',(request_id,))
+                    raise EngineError('media_upload_failed','The attachment could not be uploaded. Try again.',502)
+            result=self._execute({'Media':{'command':{'Upload':{'group':group,'file_paths':paths,'send':True,'message':caption,'media_type':None,'server':None}}}},
+                                 timeout=300,failure=release)
+            sent=result.get('sent') or {}
+            if not sent.get('message_ids'):
+                raise EngineError('send_outcome_unknown','Refresh history before resolving this send; it will not be automatically duplicated',409)
+            receipt={'group_id':group,'message_ids':sent['message_ids'],'published':sent.get('published'),'delivery':'published_not_receipt','request_id':request_id,
+                     'attachments':[{'sha256':a['media']['plaintext_sha256'],'mime':a['media'].get('media_type') or 'application/octet-stream','filename':a['media'].get('file_name') or ''}
+                                    for a in result.get('attachments',[])]}
+            with self._db() as db:
+                db.execute('UPDATE sends SET state=\'accepted\',result_json=? WHERE request_id=?',(json.dumps(receipt),request_id))
+            return receipt
+
+    def media_download(self, group, sha256, output):
+        """Fetch one attachment's ciphertext from Blossom and decrypt it with the group key into `output`."""
+        with self.mutex:
+            self._require_ready()
+            self._dm_members(group)
+            if not isinstance(sha256,str) or not HEX64.fullmatch(sha256):
+                raise EngineError('not_found','No media on that message',404)
+            def missing(code, message):
+                if code=='media_attachment_not_found': raise EngineError('not_found','No media on that message',404)
+                raise EngineError('upstream_unavailable','Could not load that media. Try again.',503)
+            result=self._execute({'Media':{'command':{'Download':{'group':group,'file_hash':sha256,'output':str(output)}}}},timeout=300,failure=missing)
+            return {'size':result.get('size_bytes'),'mime':(result.get('media') or {}).get('media_type')}
 
     def send(self, group, payload):
         with self.mutex:

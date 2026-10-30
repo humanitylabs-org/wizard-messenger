@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.13.0'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.14.0'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -432,7 +432,7 @@
     // Adapter rows only: native history, invite and send handling stay in this engine.
     const nativeRows = [...state.invites, ...state.dms.filter(dm => !isIncoming(dm))].map(dm => {
       const record = readRecord(dm.group_id), last = cacheFor(dm.group_id).messages.at(-1), invite = isIncoming(dm);
-      return {id: 'private:' + dm.group_id, native: true, group_id: dm.group_id, display_name: peerName(dm),
+      return {id: 'private:' + dm.group_id, native: true, invite, group_id: dm.group_id, display_name: peerName(dm),
         identities: [{network: 'private', kind: 'person'}], muted: !!record.muted, low_priority: !!record.low_priority,
         unread: invite || (last?.direction === 'received' && record.seen !== last.message_id) ? 1 : 0,
         last: {text: invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet'),

@@ -1458,6 +1458,10 @@ class UnifiedInbox:
             elif stamp < 1000000000000:
                 stamp *= 1000
             newest = max(newest, int(stamp))
+            if m.get('attachments'):
+                self.store_marmot(m['message_id'], identity, m.get('author', ''), m.get('direction') == 'sent', m.get('text', ''), int(stamp), m['attachments'],
+                                  push_live=live and bool(prior) and int(stamp) >= watermark and m.get('direction') == 'received')
+                continue
             self.store.add_message('messenger:' + m['message_id'], identity, m.get('author', ''), m.get('direction') == 'sent', m.get('text', ''), int(stamp),
                                    push_live=live and bool(prior) and int(stamp) >= watermark and m.get('direction') == 'received')
         if live:
@@ -1682,12 +1686,20 @@ class UnifiedInbox:
         reply_to = self.reply_target(identity, payload.get('reply_to'))
         if identity['network'] not in MATRIX_NETWORKS:
             if upload:
-                fail('media_unsupported', 'Photos, voice notes and files are not available on Messenger yet', 409)
+                if any(u['kind'] == 'voice' for u in (gallery or [upload])):
+                    fail('media_unsupported', 'Voice notes are not available in Wizard chats yet', 409)
+                meta = payload.get('media') if isinstance(payload.get('media'), list) else [payload.get('media')]
+                event, state = self.send_marmot_media(identity, gallery or [upload], body, client_id, meta)
+                for key in (upload_ids or [payload.get('upload_id')]):
+                    self.drop_upload(key)
+                return {'state': state, 'event_id': event, 'message': self.row(event), 'messages': self.album_rows(event)}
             result = self.engine.send(identity['address'], {'text': body, 'request_id': client_id[:64]})
             event = 'messenger:' + result['message_ids'][0]
             self.store.add_message(event, identity, self.owner, True, body, int(time.time() * 1000), client_id=client_id)
             return {'state': 'sent' if result['published'] else 'queued', 'event_id': event, 'message': self.row(event)}
         msgtype, media = 'm.text', None
+        if any(not u.get('mxc') for u in (gallery or ([upload] if upload else []))):
+            fail('upload_expired', 'Attach the file again', 409)
         if upload:
             msgtype, content, media = self.media_content(upload, body, {} if gallery else payload)
         else:
@@ -1720,18 +1732,18 @@ class UnifiedInbox:
                 # Sync may have inserted either event before the send receipts.
                 for key, txn in [(event, client_id)] + ([(caption['event_id'], caption_id)] if caption else []):
                     db.execute('UPDATE message SET client_id=COALESCE(client_id,?) WHERE id=?', (txn, key))
-            self.uploads.pop(payload.get('upload_id'), None)
+            self.drop_upload(payload.get('upload_id'))
             rows = [self.row(event)] + ([self.row(caption['event_id'])] if caption else [])
             return {'state': 'sent', 'event_id': event, 'message': rows[0], 'messages': rows}
         if gallery:
             self.store_gallery(event, identity, self.owner, True, content, int(time.time() * 1000), reply_to=reply_to, client_id=client_id)
             for key in upload_ids:
-                self.uploads.pop(key, None)
+                self.drop_upload(key)
             return {'state': 'sent', 'event_id': event, 'message': self.row(event), 'messages': self.album_rows(event)}
         self.store.add_message(event, identity, self.owner, True, body if upload is None else (body or ''), int(time.time() * 1000),
                                msgtype=msgtype, media=media, reply_to=reply_to, client_id=client_id)
         if upload:
-            self.uploads.pop(payload.get('upload_id'), None)
+            self.drop_upload(payload.get('upload_id'))
         return {'state': 'sent', 'event_id': event, 'message': self.row(event)}
 
     def album_rows(self, message_id):
@@ -1795,9 +1807,15 @@ class UnifiedInbox:
         """Owner upload → Synapse media repo. Returns an opaque, person-bound id."""
         if kind not in ('image', 'voice', 'file'):
             fail('invalid_upload', 'Choose a photo, voice note or file')
-        _, identity = self.channel(person_id)
-        if identity['network'] not in MATRIX_NETWORKS:
+        person, identity = self.channel(person_id)
+        # A merged chat can reply on either side, so keep what each side needs: a Synapse copy for the
+        # bridges, a private local copy for Wizard chats (encrypted and sent to Blossom only at send time).
+        bridged = any(i['network'] in MATRIX_NETWORKS for i in person['identities'])
+        marmot = any(i['network'] == 'messenger' for i in person['identities'])
+        if not bridged and not marmot:
             fail('media_unsupported', 'Photos, voice notes and files are not available on Messenger yet', 409)
+        if kind == 'voice' and not bridged:
+            fail('media_unsupported', 'Voice notes are not available in Wizard chats yet', 409)
         if not 0 < len(data) <= UPLOAD_MAX:
             fail('too_large', 'Files up to 25 MB can be sent', 413)
         mime = sniff(data)
@@ -1812,17 +1830,122 @@ class UnifiedInbox:
                 fail('invalid_upload', 'That file type is not supported here', 415)
             ext = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/mp4': 'm4a'}[mime]
             filename = ('voice-message.' if kind == 'voice' else 'photo.') + ext
-        started = time.time()
-        mxc = self.matrix_upload(data, 'attachment' if kind == 'file' else filename, mime)['content_uri']
-        self.timing('upload', started)
+        mxc = path = None
+        if bridged:
+            started = time.time()
+            mxc = self.matrix_upload(data, 'attachment' if kind == 'file' else filename, mime)['content_uri']
+            self.timing('upload', started)
         upload_id = secrets.token_hex(16)
         now = time.time()
-        self.uploads = {k: v for k, v in self.uploads.items() if v['expires'] > now}
-        self.uploads[upload_id] = {'mxc': mxc, 'mime': mime, 'size': len(data), 'kind': kind, 'filename': filename, 'person_id': person_id, 'expires': now + 3600}
+        self.prune_uploads(now)
+        if marmot:
+            # wnd names the attachment after the file, so the file keeps its display name inside a per-upload folder.
+            folder = self.outbox() / upload_id
+            folder.mkdir(mode=0o700)
+            path = folder / filename
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'wb') as out:
+                out.write(data)
+            path = str(path)
+        self.uploads[upload_id] = {'mxc': mxc, 'path': path, 'mime': mime, 'size': len(data), 'kind': kind, 'filename': filename, 'person_id': person_id, 'expires': now + 3600}
         result = {'upload_id': upload_id, 'mime': mime, 'size': len(data)}
         if kind == 'file':
             result['name'] = filename
         return result
+
+    def outbox(self):
+        folder = self.root / 'marmot-outbox'
+        folder.mkdir(mode=0o700, exist_ok=True)
+        return folder
+
+    def prune_uploads(self, now=None):
+        now = now or time.time()
+        self.uploads = {k: v for k, v in self.uploads.items() if v['expires'] > now}
+        folder = self.root / 'marmot-outbox'
+        if folder.exists():
+            for entry in folder.iterdir():
+                if entry.name not in self.uploads:
+                    shutil.rmtree(entry, ignore_errors=True)
+
+    def drop_upload(self, upload_id):
+        upload = self.uploads.pop(upload_id, None)
+        if upload and upload.get('path'):
+            shutil.rmtree(Path(upload['path']).parent, ignore_errors=True)
+
+    def send_marmot_media(self, identity, uploads, body, client_id, meta):
+        """Wizard-to-Wizard photos and files: one encrypted kind-9 message (MIP-04 imeta per file)."""
+        if any(not u.get('path') for u in uploads):
+            fail('upload_expired', 'Attach the file again', 409)
+        request_id = ('media-' + client_id).ljust(16, '0')[:64]
+        result = self.engine.send_media(identity['address'], {'paths': [u['path'] for u in uploads], 'text': body or None, 'request_id': request_id})
+        mid = result['message_ids'][0]
+        attachments = result.get('attachments') or []
+        items = []
+        for i, u in enumerate(uploads):
+            sent = attachments[i] if i < len(attachments) else {}
+            item = {'sha256': sent.get('sha256'), 'mime': u['mime'], 'filename': u['filename'], 'size': u['size'], 'image': u['kind'] == 'image'}
+            m = meta[i] if i < len(meta) and isinstance(meta[i], dict) else {}
+            for key in ('w', 'h'):
+                if isinstance(m.get(key), int) and 0 < m[key] < 10 ** 8:
+                    item[key] = m[key]
+            items.append(item)
+        stamp = int(time.time() * 1000)
+        self.store_marmot(mid, identity, self.owner, True, body, stamp, items, client_id=client_id)
+        return 'messenger:' + mid, ('sent' if result.get('published') else 'queued')
+
+    def store_marmot(self, mid, identity, sender, outgoing, body, stamp, items, client_id=None, push_live=False):
+        """One row per attachment, the same ids whether the send receipt or the mirror sees it first."""
+        event = 'messenger:' + mid
+        album = 'marmot:' + mid if len(items) > 1 else None
+        with self.store.db() as db:
+            if not db.in_transaction:
+                db.execute('BEGIN')
+            for i, item in enumerate(items):
+                mime = item.get('mime') or 'application/octet-stream'
+                photo = mime in ('image/jpeg', 'image/png', 'image/gif', 'image/webp') and item.get('image', True)
+                media = {'marmot': {'group': identity['address'], 'sha256': item.get('sha256')}, 'mime': mime,
+                         'filename': item.get('filename') or ('photo' if photo else 'file')}
+                for key in ('size', 'w', 'h'):
+                    if item.get(key):
+                        media[key] = item[key]
+                self.store.add_message(event if i == 0 else event + '#photo:%02d' % i, identity, sender, outgoing, body if i == 0 else '', stamp,
+                                       msgtype='m.image' if photo else 'm.file', media=media, client_id=client_id if i == 0 else None,
+                                       album=album, source_event=event if album else None, push_live=push_live and i == 0)
+        return event
+
+    def marmot_media(self, message, media, kind):
+        ref = media['marmot']
+        group, digest = ref.get('group'), ref.get('sha256') or ''
+        if group != message['address'] or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            fail('not_found', 'No media on that message', 404)
+        if kind == 'thumb' and not (media.get('mime') or '').startswith('image/'):
+            fail('not_found', 'No preview for that message', 404)
+        cache = self.root / 'media-cache'
+        cache.mkdir(mode=0o700, exist_ok=True)
+        key = hashlib.sha256(('marmot|%s|%s' % (group, digest)).encode()).hexdigest()
+        path, meta_path = cache / key, cache / (key + '.type')
+        if not path.exists():
+            started = time.time()
+            tmp = cache / (key + '.part-' + secrets.token_hex(4))
+            try:
+                self.engine.media_download(group, digest, str(tmp))
+                with tmp.open('rb') as f:
+                    if hashlib.sha256(f.read()).hexdigest() != digest:
+                        fail('upstream_unavailable', 'Could not load that media. Try again.', 503)
+                    f.seek(0)
+                    sniffed = sniff(f.read(64))
+            except Exception:
+                tmp.unlink(missing_ok=True)
+                raise
+            # Never trust the sender's declared type for inline display: only sniffed bytes decide.
+            meta_path.write_text(sniffed or 'application/octet-stream')
+            os.replace(tmp, path)
+            self.timing('media', started)
+            self.evict(cache)
+        else:
+            os.utime(path)
+        served = meta_path.read_text().strip() if meta_path.exists() else 'application/octet-stream'
+        return Blob(path, served if served in INLINE_MIME else 'application/octet-stream', media.get('filename') or 'media', served in INLINE_MIME)
 
     def matrix_upload(self, data, filename, mime):
         req = Request(self.matrix.rstrip('/') + '/_matrix/media/v3/upload?' + urlencode({'filename': filename}), data=data, method='POST',
@@ -1851,6 +1974,8 @@ class UnifiedInbox:
             if not pick.get('mxc'):
                 fail('not_found', 'No link preview', 404)
             return self.media_blob(pick['mxc'], 'image/jpeg', 'preview', thumb=True)
+        if media and media.get('marmot') and message['network'] == 'messenger':
+            return self.marmot_media(message, media, kind)
         if not media or not media.get('mxc'):
             fail('not_found', 'No media on that message', 404)
         thumb = kind == 'thumb'

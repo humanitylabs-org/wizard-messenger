@@ -723,15 +723,16 @@ class SignalMvpTests(unittest.TestCase):
             self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'expired-12345678'})
         self.assertEqual((err.exception.code, err.exception.status), ('upload_expired', 409))
         marmot = self.inbox.store.identity('messenger', 'abc', 'Marmot')
-        with self.assertRaises(EngineError) as err: self.inbox.upload(marmot['person_id'], 'file', b'x')
+        with self.assertRaises(EngineError) as err: self.inbox.upload(marmot['person_id'], 'voice', b'OggS' + b'\0' * 10)
         self.assertEqual((err.exception.code, err.exception.status), ('media_unsupported', 409))
-        self.assertIn('files', str(err.exception))
+        self.assertIn('Voice notes', str(err.exception))
+        # A bridge-only upload has no local copy for the Wizard engine: attach again instead of sending nothing.
         up = self.file_upload()
         with self.inbox.store.db() as db:
             db.execute("UPDATE identity SET network='messenger' WHERE id=?", (self.a['id'],))
         with self.assertRaises(EngineError) as err:
             self.inbox.send(self.pid, {'upload_id': up['upload_id'], 'client_id': 'network-12345678'})
-        self.assertEqual(err.exception.code, 'media_unsupported')
+        self.assertEqual(err.exception.code, 'upload_expired')
 
     def test_james_uploaded_active_content_is_attachment_only(self):
         import io
