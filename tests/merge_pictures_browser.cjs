@@ -44,6 +44,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
       if (p === 'api/unified/merge-suggestions/dismiss') { posted.push(['dismiss', body.id]); suggestions = []; return ok({dismissed: true}); }
       let m = /^api\/unified\/people\/([^/]+)\/avatar$/.exec(p);
       if (m) { pics.push([decodeURIComponent(m[1]), url.searchParams.get('who')]); return route.fulfill({status: 200, contentType: 'image/png', body: PNG}); }
+      if (/^api\/unified\/media\//.test(p)) return route.fulfill({status: 200, contentType: 'image/png', body: PNG});
       m = /^api\/unified\/people\/([^/]+)\/merge$/.exec(p);
       if (m) { posted.push(['merge', m[1], body.source_id]); people = [{...people[0], identities: [...people[0].identities, ...people[1].identities]}, people[2]]; suggestions = []; return ok({}); }
       m = /^api\/unified\/people\/([^/]+)$/.exec(p);
@@ -51,7 +52,9 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
         const id = decodeURIComponent(m[1]), pr = [...people, ...groups].find(x => x.id === id);
         const msgs = id === 'fam' ? [{id: 'f1', timestamp: now - 9 * min, outgoing: false, original: 'Who cooks?', sender: 'Pedro', msgtype: 'm.text', network: 'whatsapp', reactions: []}]
           : [{id: 'b1', timestamp: now - 40 * min, outgoing: false, original: 'on telegram', sender: 'Bo', msgtype: 'm.text', network: 'telegram', reactions: []},
-             {id: 'b2', timestamp: now - 30 * min, outgoing: false, original: 'see you', sender: 'Bo', msgtype: 'm.text', network: 'whatsapp', reactions: []}];
+             {id: 'b2', timestamp: now - 30 * min, outgoing: false, original: 'see you', sender: 'Bo', msgtype: 'm.text', network: 'whatsapp', reactions: [{key: '👍', count: 2, mine: true}]},
+             {id: 'b3', timestamp: now - 29 * min, outgoing: true, original: 'look https://example.com/a', sender: 'me', msgtype: 'm.text', network: 'whatsapp', reactions: [], reply: {id: 'b2', sender: 'Bo', outgoing: false, text: 'see you', msgtype: 'm.text'},
+              links: [{url: 'https://example.com/a', title: 'Example article', desc: 'A short description of the page', site: 'Example', image: true, w: 1200, h: 630}]}];
         return ok({person: {...pr, faces: id === 'fam' ? {Pedro: 'aaa111'} : {}}, messages: msgs, has_more: false, next_cursor: null, seq: 5, typing: []});
       }
       if (p.endsWith('/read')) return ok({});
@@ -79,6 +82,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.ok(pics.some(x => x[0] === 'ana-w'));
     assert.equal(await page.locator('.u-person', {hasText: 'Bo Chen'}).locator('.u-net').count(), 2, 'merged chat shows both network badges');
     assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-net').count(), 1);
+    assert.equal(await page.locator('.u-chip', {hasText: 'Merged'}).count(), 1, 'Merged filter appears when a chat is merged');
     await shot('inbox');
 
     // First click into the window: a mouse press whose release never arrives must not open the row menu.
@@ -129,6 +133,22 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.match(await pill.textContent(), /Replying on\s*Telegram/);
     await page.getByRole('button', {name: 'Back', exact: true}).click();
 
+    // Link preview card, reply card, reaction pill; header ⋯ offers Mark as unread and Merge with…
+    await page.locator('.u-person', {hasText: 'Bo Chen'}).click();
+    await page.locator('.u-row[data-id=b3] .u-link-card').waitFor();
+    assert.match(await page.locator('.u-row[data-id=b3] .u-link-card').textContent(), /Example article/);
+    await page.waitForFunction(() => document.querySelector('.u-row[data-id=b3] .u-link-img')?.complete);
+    assert.equal(await page.locator('.u-row[data-id=b3] .u-quote').count(), 1);
+    await shot('previews');
+    await page.locator('.u-thread-head .icon-button[aria-label="Chat options"]').click();
+    await page.getByRole('menuitem', {name: 'Merge with…'}).click();
+    await page.locator('.u-pick-row', {hasText: 'Ana Souza'}).first().waitFor();
+    await shot('merge-picker');
+    if (await page.locator('#u-overlay .icon-button[aria-label=Close]').count()) await page.locator('#u-overlay .icon-button[aria-label=Close]').click();
+    await page.locator('.u-thread-head .icon-button[aria-label="Chat options"]').click();
+    await page.getByRole('menuitem', {name: 'Mark as unread'}).waitFor();
+    await page.keyboard.press('Escape'); if (await page.locator('#u-overlay').count()) await page.locator('#u-overlay').click({position: {x: 5, y: 5}});
+    await page.getByRole('button', {name: 'Back', exact: true}).click();
     // Group bubbles carry the sender's picture.
     await page.locator('.u-person', {hasText: 'Family'}).click();
     await page.locator('.u-row[data-id=f1]').waitFor();
@@ -143,6 +163,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.deepEqual(await card.locator('button').evaluateAll(b => b.map(x => x.textContent.trim())), ['Sign in with your browser', 'Sign in with email']);
     await card.getByRole('button', {name: /Sign in with your browser/}).click();
     await page.locator('.c-live-img[src^="data:image"]').waitFor();
+    assert.match(await page.locator('.c-live-hint').textContent(), /use Slack in your browser/);
     assert.equal(await page.locator('.u-sheet', {hasText: /F12|Console|cURL|xoxc/}).count(), 0, 'no developer-tools instructions');
     await page.locator('.c-live-img').click({position: {x: 50, y: 60}});
     await page.locator('.c-live-type').pressSequentially('me@acme.com');

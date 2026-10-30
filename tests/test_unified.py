@@ -83,6 +83,18 @@ class PeopleTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'low_priority': 1})
 
+    def test_link_previews_kept_without_mxc_leaving(self):
+        from unified import link_previews
+        got = link_previews({'com.beeper.linkpreviews': [{'matched_url': 'https://ex.com/a', 'og:title': 'T', 'og:image': 'mxc://s/abc'}, {'matched_url': 'javascript:x', 'og:title': 'bad'}]})
+        self.assertEqual(len(got['links']), 1)
+        self.assertEqual(got['links'][0]['mxc'], 'mxc://s/abc')
+        a = self.store.identity('whatsapp', '!l', 'Lia')
+        self.store.add_message('$l', a, 'x', False, 'see https://ex.com/a', 5, media=got)
+        row = self.store.messages(a['person_id'])[0] if hasattr(self.store, 'messages') else None
+        if row is not None:
+            self.assertNotIn('mxc', json.dumps(row.get('links')))
+            self.assertTrue(row['links'][0]['image'])
+
     def test_mark_unread_makes_newest_incoming_unread(self):
         a = self.store.identity('whatsapp', '!u', 'Uma')
         self.store.add_message('$1', a, 'x', False, 'hi', 10)

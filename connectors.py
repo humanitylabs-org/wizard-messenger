@@ -46,7 +46,7 @@ PROVIDERS = {p.id: p for p in (
     Provider('twitter', 'X', 29327, ('cookies',)),
     Provider('linkedin', 'LinkedIn', 29341, ('cookies',)),
     # Google account pairing (QR was retired by Google): browser sign-in, then tap the matching emoji on the phone.
-    Provider('gmessages', 'Google Messages', 29336, ('google',)),
+    Provider('gmessages', 'Google Messages', 29336, ('qr', 'google')),
     Provider('dots', 'ChatGPT Dots', 29349, ('cookies',)),
     Provider('kakaotalk', 'KakaoTalk', reason='No maintained compatible bridge selected; personal-account bridge support is unverified.'),
 )}
@@ -308,6 +308,35 @@ class Connectors:
                 fail(*job['error'])
             self._jobs.pop(network, None)
             return self.remember(network, job['result'])
+
+    # Browser sign-in (browser_signin.py) needs the bridge's full cookies step (page script, URL pattern),
+    # which never leaves the server: these return (raw, sanitized) and keep the usual pending bookkeeping.
+    def raw_start(self, network, flow):
+        p = self.provider(network)
+        if flow not in p.flows:
+            fail('invalid_flow', 'Unsupported login flow')
+        self.config(network)
+        previous = self.pending.get(network)
+        if previous:
+            try:
+                self.dispatch('POST', [network, 'cancel'], {'login_id': previous[1][0]})
+            except EngineError:
+                pass
+        if self.ensure_owner:
+            self.ensure_owner()
+        raw = self.request(network, '/login/start/' + flow, 'POST', {})
+        with self._lock:
+            return raw, self.remember(network, raw)
+
+    def raw_step(self, network, fields):
+        pending = self.pending.get(network)
+        if not pending or pending[0] < time.monotonic() or pending[1][2] != 'cookies':
+            fail('invalid_step', 'This login has ended; start again', 409)
+        raw = self.request(network, '/login/step/' + '/'.join(pending[1]), 'POST', dict(fields), pending[2])
+        with self._lock:
+            if self.pending.get(network) is not pending:
+                fail('invalid_step', 'This login was cancelled or replaced; start again', 409)
+            return raw, self.remember(network, raw)
 
     def enable(self, network):
         if network == 'telegram' or not self.provider(network).supported:

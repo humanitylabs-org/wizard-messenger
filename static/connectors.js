@@ -145,7 +145,7 @@
       }
     }
     async function start(network, flow) {
-      if (flow === 'browser') return startBrowser(network);
+      if (flow === 'browser' || String(flow).startsWith('browser:')) return startBrowser(network, String(flow).split(':')[1]);
       const mine = generation + 1;
       await cancel(); if (mine !== generation) return;
       root.replaceChildren(heading(network), element('p', 'helper', 'Starting…'));
@@ -351,11 +351,21 @@
     }
     // Beeper-style sign-in: the real site runs in a private window of the Wizard Browser, shown live here.
     // When the page holds the login, Messenger reads it, hands it to the bridge and closes the window.
-    async function startBrowser(network) {
+    // What to do on the page, said up front so nobody waits on a screen that needs one more tap.
+    const BROWSER_HINT = {
+      slack: 'Sign in the way you normally do (Google, email or SSO). If Slack asks to open the Slack app, tap “use Slack in your browser” instead. Messenger connects as soon as your workspace opens.',
+      twitter: 'Sign in to X as usual. Messenger connects when your home timeline opens.',
+      linkedin: 'Sign in to LinkedIn as usual. Messenger connects when your feed opens.',
+      facebook: 'Log in to Facebook as usual. Messenger connects when your news feed or chats open.',
+      dots: 'Log in to ChatGPT as usual. Messenger connects when the chat page opens.',
+      gmessages: 'Pick the Google account that uses Google Messages on your phone. You will then confirm on the phone.',
+    };
+    async function startBrowser(network, flow) {
       const mine = generation + 1;
       await cancel(); if (mine !== generation) return;
       root.replaceChildren(heading(network, 'Sign in to ' + label(network)));
-      root.append(element('p', 'helper', 'Sign in below the way you normally do (Google, email or SSO). When you reach your workspace, Messenger connects it and closes this window. Nothing you type here is saved.'));
+      const hint = element('p', 'c-live-hint', BROWSER_HINT[network] || 'Sign in on the page below. Messenger connects as soon as you are signed in.');
+      root.append(hint, element('p', 'helper c-live-note', 'This is a private window: nothing you type here is saved, and it closes by itself.'));
       const shell = element('div', 'c-live'), img = element('img', 'c-live-img'); img.alt = label(network) + ' sign-in page'; img.draggable = false;
       const wait = element('p', 'c-waiting'); wait.append(element('span', 'spinner'), element('span', '', 'Opening ' + label(network) + '…'));
       shell.append(img); root.append(shell);
@@ -392,7 +402,7 @@
       const width = Math.max(320, Math.min(430, Math.round(shell.clientWidth || 400))), height = Math.max(520, Math.min(860, Math.round(width * 1.7)));
       shell.style.aspectRatio = width + ' / ' + height;
       let started;
-      try { started = await api('/api/unified/connectors/browser/start', 'POST', {network, width, height, mobile: true}); }
+      try { started = await api('/api/unified/connectors/browser/start', 'POST', {network, flow, width, height, mobile: network === 'slack'}); }
       catch (e) { if (mine === generation) failure(e, network, 'browser', mine); return; }
       if (mine !== generation) { api('/api/unified/connectors/browser/' + started.id + '/cancel', 'POST', {}).catch(() => {}); return; }
       browserSession = started.id;
@@ -403,7 +413,12 @@
         catch (e) { if (mine !== generation) return; browserSession = null; failure(e, network, 'browser', mine); return; }
         if (mine !== generation) return;
         if (f.frame) { img.src = 'data:image/jpeg;base64,' + f.frame; seq = f.seq; }
-        if (f.state === 'signing_in') wait.replaceChildren(element('span', '', f.host ? 'Secure page: ' + f.host : ''));
+        if (f.state === 'signing_in') {
+          wait.replaceChildren(element('span', '', f.host ? 'Secure page: ' + f.host : ''));
+          // Slack's "open the app" page: say it again right where the eye is.
+          if (network === 'slack' && /(^|\.)slack\.com$/.test(f.host || '') && f.host !== 'app.slack.com') hint.classList.add('attn');
+        }
+        else if (f.state === 'continue') { browserSession = null; step(network, flow, f.result?.next, mine); return; }
         else if (f.state === 'connecting') wait.replaceChildren(element('span', 'spinner'), element('span', '', 'Signed in. Connecting your workspaces…'));
         else {
           browserSession = null;
@@ -473,7 +488,16 @@
         button(section, 'Set up Telegram', setupTelegram, 'primary wide');
       }
       else if (provider.state === 'unavailable') section.append(element('p', 'helper', 'The private bridge is not responding. Try again in a minute.'));
-      const shown = provider.network === 'slack' && provider.state !== 'unavailable' ? [{id: 'browser', name: 'Sign in with your browser'}, ...flows.filter(f => f.id === 'email')] : flows;
+      // Browser sign-in replaces every copy-from-developer-tools step (Beeper-style).
+      const BROWSER_FLOW = {twitter: 'cookies', linkedin: 'cookies', dots: 'cookies', facebook: 'facebook', gmessages: 'google'};
+      const web = {id: 'browser', name: 'Sign in with your browser'};
+      let shown = flows;
+      if (provider.state === 'unavailable') shown = flows;
+      else if (provider.network === 'slack') shown = [web, ...flows.filter(f => f.id === 'email')];
+      else if (BROWSER_FLOW[provider.network] && flows.some(f => f.id === BROWSER_FLOW[provider.network])) {
+        const bf = BROWSER_FLOW[provider.network];
+        shown = [...flows.filter(f => isQR(f)), {id: 'browser:' + bf, name: provider.network === 'gmessages' ? 'Sign in with Google' : 'Sign in with your browser'}];
+      }
       [...shown].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
         const name = FLOW_LABEL[flow.id] || flow.name;
         button(section, name, async () => start(provider.network, flow.id), i === 0 ? 'primary c-go' : 'c-link').setAttribute('aria-label', name + ' for ' + provider.label);

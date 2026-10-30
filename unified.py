@@ -86,6 +86,25 @@ def name_key(name):
     return ' '.join(re.sub(r'[^\w\s]', ' ', name.casefold()).split())
 
 
+def link_previews(content):
+    """Bridges attach the sender's own link preview (com.beeper.linkpreviews); keep up to two, image as mxc."""
+    out = []
+    for lp in (content.get('com.beeper.linkpreviews') or [])[:2]:
+        if not isinstance(lp, dict):
+            continue
+        url = lp.get('matched_url') or lp.get('og:url') or ''
+        if not isinstance(url, str) or not re.match(r'https?://', url):
+            continue
+        img = lp.get('og:image') or (lp.get('beeper:image:encryption') or {}).get('url')
+        item = {'url': url[:2000], 'title': str(lp.get('og:title') or '')[:300], 'desc': str(lp.get('og:description') or '')[:400],
+                'site': str(lp.get('og:site_name') or '')[:80]}
+        if isinstance(img, str) and MXC.fullmatch(img) and not lp.get('beeper:image:encryption'):
+            item.update(mxc=img, w=lp.get('og:image:width'), h=lp.get('og:image:height'))
+        if item['title'] or item['desc']:
+            out.append(item)
+    return {'links': out} if out else None
+
+
 def picture_tag(mxc):
     return hashlib.sha256(mxc.encode()).hexdigest()[:12] if mxc else None
 
@@ -766,7 +785,10 @@ class PeopleStore:
                 r['sender'] = OWN_SENDER
             r['edited'], r['deleted'] = bool(r.get('edited')), bool(r.get('deleted'))
             media = json.loads(r['media']) if r.get('media') else None
-            if media:
+            if media and media.get('links') and not media.get('mxc'):
+                r['links'] = [{k: v for k, v in l.items() if k in ('url', 'title', 'desc', 'site', 'w', 'h')} | {'image': bool(l.get('mxc'))} for l in media['links']]
+                r['media'] = None
+            elif media:
                 r['media'] = {k: v for k, v in media.items() if k in ('mime', 'size', 'w', 'h', 'duration', 'filename', 'waveform', 'voice')}
                 r['media']['thumb'] = bool(media.get('thumb')) or (media.get('mime', '').startswith('image/'))
             r['reactions'] = list(reacts.get(r['id'], {}).values())
@@ -877,7 +899,7 @@ def message_parts(event):
     if reply_to:
         body = REPLY_FALLBACK.sub('', body, count=1)
     if kind in ('m.text', 'm.notice'):
-        return 'm.text', body, None, reply_to
+        return 'm.text', body, link_previews(content), reply_to
     if kind == 'm.emote':
         return 'm.text', '* ' + body, None, reply_to
     if kind == 'm.location':
@@ -1355,6 +1377,7 @@ class UnifiedInbox:
         person = self.store.person(person_id)
         try:
             person['faces'] = self.store.faces(person_id)
+            person['avatar'] = picture_tag(self.store.picture(person_id))
         except Exception:
             person['faces'] = {}
         if before is None:
@@ -1729,6 +1752,14 @@ class UnifiedInbox:
         """Proxy a message's media from the private homeserver; mxc URIs and tokens never leave the box."""
         message = self.store.message(message_id)
         media = json.loads(message['media']) if message.get('media') else None
+        if media and kind and kind.startswith('link') and media.get('links'):
+            try:
+                pick = media['links'][int(kind[4:] or 0)]
+            except (ValueError, IndexError):
+                fail('not_found', 'No link preview', 404)
+            if not pick.get('mxc'):
+                fail('not_found', 'No link preview', 404)
+            return self.media_blob(pick['mxc'], 'image/jpeg', 'preview', thumb=True)
         if not media or not media.get('mxc'):
             fail('not_found', 'No media on that message', 404)
         thumb = kind == 'thumb'
@@ -1920,7 +1951,7 @@ class UnifiedInbox:
         if suffix == ['directory'] and method == 'GET':
             return {'people': self.store.people('person', chats=False), 'groups': self.store.people('group', chats=False)}
         if len(suffix) == 2 and suffix[0] == 'media' and method == 'GET':
-            return self.media(text(suffix[1], 300), 'thumb' if q('kind') == 'thumb' else 'full')
+            return self.media(text(suffix[1], 300), q('kind') if q('kind') in ('thumb', 'link0', 'link1') else 'full')
         if len(suffix) >= 2 and suffix[0] == 'people':
             person_id = suffix[1]
             if len(suffix) == 2:

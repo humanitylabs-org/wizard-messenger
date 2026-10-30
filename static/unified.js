@@ -77,6 +77,7 @@
     search: ['M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15z', 'M16 16l5 5'],
     settings: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'],
     compose: ['M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z', 'M15 5l4 4'],
+    merge: ['M6 4v5a6 6 0 0 0 6 6h0a6 6 0 0 0 6-6V4', 'M12 15v5'],
     more: ['M12 5.5v.01', 'M12 12v.01', 'M12 18.5v.01'],
     send: ['M4 12 20 4l-4 16-4-6.5L4 12z', 'm12 13.5 8-9.5'],
     down: ['M12 5v14', 'm5 12 7 7 7-7'], up: ['M12 19V5', 'm5 12 7-7 7 7'], plus: ['M12 5v14', 'M5 12h14'],
@@ -193,7 +194,7 @@
     const face = node('span', 'u-av-wrap small'); face.append(withPicture(avatar(name, 'small'), picture));
     if (network) { const b = netBadge(network, 'u-net'); b.setAttribute('aria-hidden', 'true'); face.append(b); }
     who.append(face, text); head.append(who);
-    if (onInfo) head.append(iconButton('more', 'Edit', onInfo));
+    if (onInfo) { const more = iconButton('more', 'Chat options', () => (view.menu || onInfo)(more)); head.append(more); }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   function when(ms) {
@@ -434,7 +435,7 @@
     const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private' && n !== 'messenger').sort((a, b) => netLabel(a).localeCompare(netLabel(b)));
     const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
     const options = [['all', 'All'], ['unread', 'Unread'], ...nets.map(n => ['net:' + n, netLabel(n)]), ['net:private', 'Wizard'],
-      ['direct', 'Direct', 'sub'], ['groups', 'Groups', 'sub'], ...labels.map(l => ['label:' + l, l, 'sub label'])];
+      ['direct', 'Direct', 'sub'], ['groups', 'Groups', 'sub'], ...(all.some(p => networksOf(p).length > 1) ? [['merged', 'Merged', 'sub']] : []), ...labels.map(l => ['label:' + l, l, 'sub label'])];
     if (lowCount || s.low) options.push(['low', 'Low priority', 'sub low']);
     const sig = options.map(o => o.join('=')).join('|');
     let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
@@ -467,6 +468,7 @@
     if (f === 'all') return true;
     if (f === 'unread') return p.unread > 0;
     if (f === 'direct') return listKey(p) === 'people';
+    if (f === 'merged') return networksOf(p).length > 1;
     if (f === 'groups') return listKey(p) === 'groups';
     if (f.startsWith('net:')) return networksOf(p).includes(f.slice(4));
     if (f.startsWith('label:')) return (p.labels || []).includes(f.slice(6));
@@ -654,6 +656,7 @@
     actionMenu(card, p.display_name, [
       muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted)),
       lowAction(isLow(p), () => setLow(p, !isLow(p))),
+      ...(p.native || listKey(p) === 'groups' ? [] : [{label: 'Merge with…', icon: 'merge', run: () => mergePicker(p)}]),
       ...(p.native || !p.last ? [] : [p.unread ? {label: 'Mark as read', icon: 'check', run: () => setUnread(p, false)} : {label: 'Mark as unread', icon: 'unread', run: () => setUnread(p, true)}]),
     ]);
   }
@@ -829,6 +832,14 @@
   }
   function buildThread(id, p) {
     const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null, networksOf(p)[0], pictureURL(p.id, p.avatar));
+    // Header ⋯: the everyday chat actions, same as long-pressing the chat in the list.
+    view.menu = anchor => { const cur = store.threads[id]?.person || p; actionMenu(anchor, cur.display_name, [
+      {label: 'Contact info', icon: 'compose', run: () => editPerson(cur)},
+      {label: 'Mark as unread', icon: 'unread', run: async () => { await setUnread(cur, true); back(); }},
+      {label: 'Merge with…', icon: 'merge', run: () => mergePicker(cur)},
+      muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
+      lowAction(isLow(cur), () => setLow(cur, !isLow(cur))),
+    ], {side: 'right'}); };
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
     const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
@@ -879,7 +890,7 @@
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([group && !m.outgoing ? p.faces?.[nameOf(m.sender)] : 0, m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
+      const sig = JSON.stringify([group && !m.outgoing ? p.faces?.[nameOf(m.sender)] : 0, m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, m.links?.length, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read, faces: p.faces}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -919,6 +930,17 @@
     for (const m of text.matchAll(URL_RE)) { p.append(text.slice(at, m.index)); const a = node('a', '', m[0]); a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer'; p.append(a); at = m.index + m[0].length; }
     p.append(text.slice(at)); return p;
   }
+  // The sender's own link preview (what WhatsApp/Telegram/Signal showed them), as a tidy card.
+  function linkCard(m, l, i) {
+    const a = node('a', 'u-link-card'); a.href = l.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    if (l.image && !m.pending) { const img = document.createElement('img'); img.className = 'u-link-img'; img.alt = ''; img.loading = 'lazy'; img.src = mediaURL(m.id, 'link' + i); img.onerror = () => img.remove(); if (l.w && l.h && l.w / l.h < 1.3) a.classList.add('side'); a.append(img); }
+    const t = node('span', 'u-link-text');
+    let host = ''; try { host = new URL(l.url).hostname.replace(/^www\./, ''); } catch { /* keep blank */ }
+    t.append(node('small', 'u-link-site', l.site || host));
+    if (l.title) t.append(node('strong', 'u-link-title', l.title));
+    if (l.desc) t.append(node('span', 'u-link-desc', l.desc));
+    a.append(t); return a;
+  }
   function bubble(m, pos, ctx) {
     // Direction comes only from message.outgoing: own messages sit right in the accent colour and never carry a name.
     const row = node('div', 'u-row' + (m.outgoing ? ' outgoing' : ' incoming') + ' pos-' + pos + (ctx.group && !m.outgoing ? ' in-group' : '')); row.dataset.id = m.id; row.dataset.direction = m.outgoing ? 'out' : 'in';
@@ -955,6 +977,7 @@
         if (foreignScript(m.original)) b.append(button(translated ? 'Show original' : 'Translate', () => translate(m), 'u-translate link'));
       }
     }
+    if (!m.deleted && m.links?.length) for (const [i, l] of m.links.entries()) b.append(linkCard(m, l, i));
     const meta = node('footer');
     if (ctx.multi) { const via = node('span', 'u-via'); via.append(netBadge(m.network, 'u-via-icon')); via.title = 'via ' + netLabel(m.network); meta.append(via); }
     if (m.edited && !m.deleted) meta.append(node('span', 'u-edited', 'edited'));
@@ -1644,6 +1667,33 @@
     if (!codes.length) requestAnimationFrame(() => addRow().focus());
   }
   // Same person on two networks, offered never applied: Merge joins them into one chat, Not the same hides the pair.
+  // Manual merge: pick anyone from your one-on-one chats; the chosen chat joins this one.
+  async function mergePicker(p) {
+    const sheet = overlay('Merge with…');
+    sheet.append(node('p', 'helper', 'Pick the same person on another network. Their chats join ' + p.display_name + '; you can separate them again from Contact info.'));
+    const search = node('input'); search.type = 'search'; search.placeholder = 'Search people'; search.setAttribute('aria-label', 'Search people'); sheet.append(search);
+    const list = node('div', 'u-pick-list'); sheet.append(list);
+    let people = store.lists.people;
+    if (!people) { try { people = (await call('people')).people || []; } catch (e) { error(e); return; } }
+    const mine = new Set(networksOf(p));
+    const paint = () => {
+      const q = search.value.trim().toLowerCase();
+      const rows = people.filter(x => x.id !== p.id && !String(x.id).startsWith('private:') && (!q || (x.display_name || '').toLowerCase().includes(q)))
+        .sort((a, b) => ((a.display_name || '').toLowerCase() === (p.display_name || '').toLowerCase() ? -1 : 0) - ((b.display_name || '').toLowerCase() === (p.display_name || '').toLowerCase() ? -1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, 60);
+      list.replaceChildren();
+      for (const x of rows) {
+        const row = button('', () => action(async () => {
+          if (!confirm('Merge ' + x.display_name + ' into ' + p.display_name + '?')) return;
+          await call('people/' + encodeURIComponent(p.id) + '/merge', {source_id: x.id});
+          closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; toast('Merged into one chat'); await openPerson(p.id);
+        }), 'u-pick-row');
+        const t = node('span', 'u-pick-text'); t.append(node('strong', '', x.display_name), node('small', '', networksOf(x).map(netLabel).join(', ') + (networksOf(x).some(n => mine.has(n)) ? ' · same network' : '')));
+        row.append(netAvatar(x, 'small'), t); list.append(row);
+      }
+      if (!rows.length) list.append(node('p', 'u-empty', 'No one matches'));
+    };
+    search.oninput = paint; paint(); search.focus();
+  }
   async function mergeSuggestions() {
     const sheet = overlay('Suggested merges');
     sheet.append(node('p', 'helper', 'These look like the same person on different networks. Merging makes one chat; you choose where each reply goes, and you can separate them again from the chat.'));
