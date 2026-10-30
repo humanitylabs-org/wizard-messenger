@@ -1562,10 +1562,10 @@
     };
     view.useNetwork = net => { const i = (p.identities || []).find(x => x.network === net); if (i && i.id !== channel.value) { channel.value = i.id; paintVia(); view.sd?.schedule(); } };
     paintVia();
-    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => bridged(i.network));
+    const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => bridged(i.network)), canAttach = telegramOnly || (p.identities || []).some(i => i.network === 'messenger');
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
     const file = node('input'); file.type = 'file'; file.multiple = true; file.hidden = true; // any file: photos go as photos, the rest as files (James, 26 Oct 2026)
-    const attach = iconButton('plus', 'Attach photos or files', () => file.click(), 'u-attach'); attach.hidden = !telegramOnly;
+    const attach = iconButton('plus', 'Attach photos or files', () => file.click(), 'u-attach'); attach.hidden = !canAttach;
     const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
     const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
     const field = node('div', 'u-field'); field.append(draft);
@@ -1595,10 +1595,10 @@
     // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
     const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
     const addFiles = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB'); continue; } ready.push(PHOTO.test(f.type) ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); if (view.sd) view.sd.uploading = view.sd.attach(ready); } catch (e) { error(e); } };
-    file.onchange = () => { const picked = [...file.files]; file.value = ''; if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats'); addFiles(picked); };
+    file.onchange = () => { const picked = [...file.files]; file.value = ''; if (!canAttach) return toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats'); addFiles(picked); };
     const takeFiles = files => {
       if (!files.length || view.edit) return;
-      if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats');
+      if (!canAttach) return toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats');
       addFiles(files);
     };
     // Paste and drop of files, dictation-safe text paste (Wispr Flow), the drag highlight and Enter / Shift+Enter /
