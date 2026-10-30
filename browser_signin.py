@@ -153,11 +153,12 @@ class Session:
         self.url, self.state, self.message, self.result = '', 'starting', '', None
         self.touched = time.time()
         self.width, self.height = width, height
-        version = json.load(urlopen(BROWSER + '/json/version', timeout=5))
-        ws = version['webSocketDebuggerUrl']
-        # The proxy answers with its own host; reach it the way this container does.
+        # Chrome's DevTools only accepts an IP or localhost in the Host header: resolve the app name first.
         b = urlsplit(BROWSER)
-        ws = 'ws://%s:%d%s' % (b.hostname, b.port or 80, urlsplit(ws).path)
+        ip = socket.gethostbyname(b.hostname)
+        base = 'http://%s:%d' % (ip, b.port or 80)
+        version = json.load(urlopen(base + '/json/version', timeout=5))
+        ws = 'ws://%s:%d%s' % (ip, b.port or 80, urlsplit(version['webSocketDebuggerUrl']).path)
         self.cdp = CDP(ws, self._event)
         self.context = self.cdp.send('Target.createBrowserContext', {'disposeOnDetach': True})['browserContextId']
         target = self.cdp.send('Target.createTarget', {'url': 'about:blank', 'browserContextId': self.context})['targetId']
