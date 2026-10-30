@@ -41,7 +41,9 @@ const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'te
   console.log(JSON.stringify({sessionCalls, sawRetryCard, restartingText: modes.some(m => /restarting/i.test(m.text)), end}));
   assert.ok(sessionCalls >= 4, 'boot retried by itself through three 502s');
   assert.equal(sawRetryCard, false, 'never showed the Try again card during a restart');
-  assert.ok(modes.some(m => /restarting/i.test(m.text)), 'said Messenger is restarting while waiting');
+  // Reads now retry quietly with backoff inside api(), so a short burst of 502s may never need the "restarting" text;
+  // when it does show, it is the Opening card's wording, never the Try again card (asserted above).
+  assert.ok(!modes.some(m => /couldn't|Tap Try again/i.test(m.text)), 'never the Try again wording while waiting');
   assert.doesNotMatch(fs.readFileSync(path.join(root, 'app.js'), 'utf8'), /Open Messenger from Wizard to reconnect/);
   await browser.close();
   console.log('PASS boot_restart_browser');

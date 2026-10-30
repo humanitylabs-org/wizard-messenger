@@ -62,13 +62,23 @@ class BrowserAuth:
                 if issued is None or (isinstance(issued,dict) and issued.get('bootstrap') and not allow_bootstrap):
                     self._save()
                     raise EngineError('invalid_view_ticket','Open Messenger from Wizard again',401)
-            if len(self.sessions)>=256: raise EngineError('session_limit','Please try again shortly',429)
+            # A full table drops its oldest sessions instead of refusing a new one: a refusal here locked the
+            # owner out (every new browser, private window or lost cookie adds one and they live 30 days).
+            while len(self.sessions)>=256:
+                del self.sessions[min(self.sessions,key=lambda k:self.sessions[k]['expires'])]
             token=secrets.token_urlsafe(32)
             session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+SESSION_SECONDS, 'setup_only': ticket is not None,
                      'owner_enrollment': bool(ticket is not None and isinstance(issued, dict) and issued.get('bootstrap'))}
             self.sessions[hashlib.sha256(token.encode()).hexdigest()]=session
             self._save()
             return token,session
+    def renew(self,token):
+        """Slide an in-use session forward, so a Messenger opened at least monthly never signs out."""
+        with self.lock:
+            if not isinstance(token,str) or len(token)>128: return False
+            session=self.sessions.get(hashlib.sha256(token.encode()).hexdigest())
+            if session is None or session['expires']-time.time()>SESSION_SECONDS/2: return False
+            session['expires']=time.time()+SESSION_SECONDS; self._save(); return True
     def lookup(self,token):
         with self.lock:
             self._clean()
@@ -172,12 +182,14 @@ class ViewHandler(Handler):
         origin=self.headers.get('Origin')
         if (required and origin is None) or (origin is not None and not self._origin_allowed(origin)) or self.headers.get('Sec-Fetch-Site')=='cross-site':
             raise EngineError('origin_forbidden','This browser origin is not allowed',403)
-    def _session(self):
+    def _session_token(self):
         try:
             cookies=SimpleCookie(); cookies.load(self.headers.get('Cookie',''))
-            token=cookies['wizard_messenger_session'].value
+            return cookies['wizard_messenger_session'].value
         except (KeyError,ValueError): return None
-        return self.service.auth.lookup(token)
+    def _session(self):
+        token=self._session_token()
+        return None if token is None else self.service.auth.lookup(token)
     def _trusted_owner(self):
         # Verify once per HTTP request, never per TCP connection.
         if not getattr(self, '_trusted_owner_verified', False):
@@ -500,6 +512,9 @@ class ViewHandler(Handler):
                 session=self._session()
                 if session is None:
                     raise EngineError('session_unlock_required', 'Enter your passphrase to open Messenger', 401)
+                token=self._session_token()
+                if token and not self.headers.get('Authorization') and self.service.auth.renew(token):
+                    self.pending_cookie=self._cookie(token)
             else: raise EngineError('not_found','No such view route',404)
             return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
         if path=='/api/resolve-contact' and method=='POST':

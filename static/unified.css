@@ -192,7 +192,7 @@ button { touch-action: manipulation; }
 .u-row.flash .u-message { animation: u-flash 1.2s; }
 @keyframes u-flash { 30% { filter: brightness(1.6); } }
 .u-row.lifted .u-message { filter: brightness(1.25); }
-.u-message { margin-top: 0; max-width: min(80%, 520px); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; animation: u-in .16s var(--ease, ease-out); }
+.u-message { margin-top: 0; max-width: min(80%, 520px); animation: u-in .16s var(--ease, ease-out); }
 @keyframes u-in { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { .u-message, .u-row, .u-skeleton { animation: none; transition: none; } }
 .u-row:not(.outgoing).pos-first .u-message, .u-row:not(.outgoing).pos-mid .u-message { border-bottom-left-radius: 4px; }
@@ -504,9 +504,17 @@ html[data-color-scheme=light] .net-badge:not([data-network=private]) { box-shado
 html[data-color-scheme=light] .u-av-wrap .u-net { box-shadow: 0 0 0 2.5px var(--badge-ring); }
 html[data-color-scheme=light] .c-mark.has-icon { box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
 
-/* Telegram message gestures: the initial hold is message selection, the next is native text. */
-.u-message, .message .bubble { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
-.u-row.u-selecting .u-message, .message.u-selecting .bubble { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }
+/* Message text is selectable with a mouse drag, sent or received (Miguel, 30 Oct 2026). On a touch-only screen the
+   first hold picks messages, so native selection waits for the menu's "Select text" or the next hold in selection. */
+.u-message, .message .bubble { -webkit-user-select: text; user-select: text; -webkit-touch-callout: none; cursor: auto; }
+.u-message .u-text, .message .bubble-text { cursor: text; }
+.u-message footer, .u-message .u-sender, .u-reactions, .u-quote { -webkit-user-select: none; user-select: none; }
+@media (hover: none) and (pointer: coarse) {
+  .u-message, .message .bubble { -webkit-user-select: none; user-select: none; }
+}
+.u-row.u-selecting .u-message, .message.u-selecting .bubble, .u-message.u-textsel, .bubble.u-textsel,
+.u-message.u-textsel .u-text, .bubble.u-textsel .bubble-text { -webkit-touch-callout: default; -webkit-user-select: text; user-select: text; }
+.u-message.u-textsel, .bubble.u-textsel { outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
 /* My QR codes */
 .u-myqr-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
 .u-myqr-chips { padding: 2px 0 8px; }
@@ -728,3 +736,33 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 .u-draft-note button.secondary { padding: 4px 10px; min-height: 0; font-size: 13px; }
 .u-draft-note.conflict { border-style: solid; }
 .u-snippet.draft .u-snippet-who { color: var(--danger, var(--accent)); font-weight: 600; }
+
+/* ---- Phone-width windows (Miguel, 30 Oct 2026): Inbox controls move to the bottom, in thumb reach. ----
+   Sized by Messenger's own window width (a Wizard window or a browser tab), never by device. Desktop is unchanged. */
+.u-head-actions { display: flex; align-items: center; gap: 2px; }
+#messenger { container: messenger / inline-size; }
+@container messenger (max-width: 599px) {
+  #unified-inbox[data-view=list], #unified-inbox[data-view=search] { display: flex; flex-direction: column; }
+  #unified-inbox[data-view=list] > .u-list, #unified-inbox[data-view=search] > .u-list { order: 1; padding-top: 6px; padding-bottom: 88px; }
+  #unified-inbox[data-view=list] > #u-filters { order: 2; padding: 8px 12px 4px; border-top: 1px solid var(--line); }
+  #unified-inbox[data-view=list] > .u-header, #unified-inbox[data-view=search] > .u-header { order: 3; flex: 0 0 auto; height: auto;
+    min-height: 56px; padding: 4px 8px max(4px, env(safe-area-inset-bottom)); }
+  #unified-inbox[data-view=search] > .u-header { border-top: 1px solid var(--line); }
+  #unified-inbox[data-view=list] > .u-header h1 { flex: 1; font-size: 17px; padding-left: 8px; }
+  #unified-inbox[data-view=list] > .u-header .u-head-actions { gap: 6px; }
+  #unified-inbox[data-view=list] > .u-header .icon-button { width: 48px; height: 48px; }
+  #unified-inbox[data-view=list] > .u-fab { bottom: calc(124px + env(safe-area-inset-bottom)); right: 16px; }
+  #unified-inbox > .error { order: 0; }
+  /* Thread: the header stays on top (the composer owns the bottom), but its targets are full size. */
+  .u-thread-head { padding-top: env(safe-area-inset-top); height: auto; min-height: 56px; }
+  .u-thread-head > .icon-button { width: 48px; height: 48px; }
+  .u-composer { padding-left: 8px; padding-right: 8px; }
+  .u-message { max-width: 86%; }
+  .u-toast { bottom: calc(140px + env(safe-area-inset-bottom)); }
+  /* Sheets fill the width and never run under the top of the window. */
+  .u-sheet { max-width: none; max-height: calc(100% - 12px - env(safe-area-inset-top)); }
+}
+/* iOS zooms into any field under 16px when it is focused, and then the page is stuck zoomed (an unusable phone). */
+@media (hover: none) and (pointer: coarse) {
+  input, textarea, select { font-size: 16px; }
+}

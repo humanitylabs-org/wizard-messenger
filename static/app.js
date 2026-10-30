@@ -128,7 +128,10 @@
     if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
     else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
   }
-  let trustedWizard = false; // set by boot from api/view/trusted-owner
+  // Set by boot from api/view/trusted-owner. Remembered on this device so a reload that lands mid-restart (the gateway
+  // answering 502) is still treated as a trusted Wizard: never a passphrase box because one answer was missing.
+  const TRUSTED_KEY = 'messenger-trusted-wizard';
+  let trustedWizard = (() => { try { return localStorage.getItem(TRUSTED_KEY) === '1'; } catch { return false; } })();
   function readRecord(group) {
     if (!state.records.has(group)) {
       let saved = {};
@@ -182,7 +185,22 @@
   class APIError extends Error {
     constructor(code, status, message) { super(message || code); this.code = code; this.status = status; }
   }
-  async function api(path, {method = 'GET', body, signal, session = false} = {}) {
+  // Reads ride out a restarting server or a gateway that refused part of the opening burst (502/503/504, a dropped
+  // connection, an HTML error page): a few quick retries with backoff before anyone sees an error. Writes are never
+  // retried here (sends have their own idempotent retry), and the change feed's long-poll retries by itself.
+  const RETRY_READ_MS = [300, 800, 1600, 3000];
+  const sleepFor = (ms, signal) => new Promise((resolve, reject) => { const t = setTimeout(resolve, ms); signal?.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('Aborted', 'AbortError')); }, {once: true}); });
+  async function api(path, options = {}) {
+    const read = (options.method || 'GET') === 'GET' && !path.startsWith('api/unified/updates');
+    for (let attempt = 0; ; attempt++) {
+      try { return await apiOnce(path, options); }
+      catch (error) {
+        if (!read || attempt >= RETRY_READ_MS.length || error.name === 'AbortError' || !transient(error) || options.signal?.aborted) throw error;
+        await sleepFor(RETRY_READ_MS[attempt] * (0.75 + Math.random() / 2), options.signal);
+      }
+    }
+  }
+  async function apiOnce(path, {method = 'GET', body, signal, session = false} = {}) {
     if (!path.startsWith('api/')) throw new Error('invalid_route');
     const headers = {Accept: 'application/json'};
     if (method !== 'GET') {
@@ -201,6 +219,9 @@
       // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
       if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code) || code.startsWith('passkey_')) throw new APIError(code, 401);
       const unlockRequired = ['session_unlock_required', 'remembered_unlock_unavailable'].includes(code) || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
+      // A trusted Wizard has no Messenger password: any lost or refused session (restart, expiry, evicted, Lock in
+      // another tab) just opens a fresh one from Wizard sign-in, with "Opening" on screen. Never a dead card.
+      if ((unlockRequired || code === 'unauthorized' || code === 'csrf_invalid') && trustedWizard && state.authenticated && path !== 'api/view/session') { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       if (unlockRequired && trustedWizard) { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
@@ -247,16 +268,19 @@
   // On a Wizard that vouches for its owner there is no Messenger password, ever. A "locked" answer only means the
   // server is still opening its vault after a restart: keep showing "Opening" and ask again; the session call
   // unlocks it from the key Wizard holds. Never show a passphrase box here.
+  // It never gives up: after about two minutes Try again shows too, but the view keeps asking by itself (every 15 s)
+  // so a server that comes back later still opens with no tap (Miguel, 30 Oct 2026: "must stay signed in").
   let trustedTries = 0, trustedTimer = null;
   function recoverTrusted() {
-    clearTimeout(trustedTimer);
-    if (trustedTries >= 30) { trustedTries = 0; gate('reconnect'); $('gate-description').textContent = "Messenger couldn't open your messages. Tap Try again."; return; }
-    trustedTries++; gate('opening'); $('gate-description').textContent = 'Opening your messages…';
-    trustedTimer = setTimeout(() => boot(), Math.min(1000 * trustedTries, 4000));
+    clearTimeout(trustedTimer); clearTimeout(bootTimer);
+    trustedTries++;
+    if (trustedTries > 30) { if (state.mode !== 'reconnect') gate('reconnect'); $('gate-description').textContent = "Messenger couldn't open your messages. Tap Try again."; $('reconnect').hidden = false; }
+    else { gate('opening'); $('gate-description').textContent = 'Opening your messages…'; }
+    trustedTimer = setTimeout(() => { if (state.operation?.bootstrap) return; boot(); }, trustedTries > 30 ? 15000 : Math.min(1000 * trustedTries, 4000));
   }
   function gate(mode) {
     if (mode === 'locked' && trustedWizard) return recoverTrusted();
-    if (mode === 'ready') trustedTries = 0;
+    if (mode === 'ready') { trustedTries = 0; bootTries = 0; clearTimeout(trustedTimer); clearTimeout(bootTimer); }
     const changed = state.mode !== mode;
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
     if (['first_open', 'enrollment_ready', 'setup_required', 'locked'].includes(mode)) window.MessengerUnified?.signout();
@@ -584,6 +608,7 @@
     U.actionMenu(node, 'Message', [
       ...(busy ? [] : [{label: 'Reply', icon: 'reply', run: () => startReply(m)}]),
       {label: 'Copy', icon: 'copy', run: () => copy(m.text)},
+      ...(opts.selectText && m.text ? [{label: 'Select text', icon: 'copy', run: opts.selectText}] : []),
       {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection?.forward([m.message_id])},
       ...(outgoing && !busy ? [{label: 'Edit', icon: 'compose', run: () => startEdit(m)}] : []),
       ...(opts.select ? [{label: 'Select', icon: 'check', run: opts.select}] : []),
@@ -1041,14 +1066,19 @@
     if (state.operation?.bootstrap) return;
     if (document.hidden) cancel();
     else if (state.authenticated) run(snapshot);
-    else if (state.mode === 'opening') boot();
+    else if (state.mode === 'opening' || state.mode === 'reconnect') { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); }
   });
   addEventListener('pagehide', cancel);
   function viewport() {
-    const height = window.visualViewport?.height || window.innerHeight;
-    $('messenger').style.setProperty('--view-height', height + 'px');
+    // The keyboard shrinks the visual viewport: Messenger follows it so the composer stays above the keyboard.
+    // iOS also scrolls the page under the keyboard; keep Messenger's box on the visible part. A pinch zoom is not a keyboard.
+    const vv = window.visualViewport, zoomed = vv && vv.scale > 1.01;
+    const height = (!zoomed && vv?.height) || window.innerHeight;
+    $('messenger').style.setProperty('--view-height', Math.round(height) + 'px');
+    const top = !zoomed && vv?.offsetTop > 0 ? Math.round(vv.offsetTop) : 0;
+    $('messenger').style.transform = top ? 'translateY(' + top + 'px)' : '';
   }
-  window.visualViewport?.addEventListener('resize', viewport); addEventListener('resize', viewport); viewport();
+  window.visualViewport?.addEventListener('resize', viewport); window.visualViewport?.addEventListener('scroll', viewport); addEventListener('resize', viewport); viewport();
   // Remove a one-use ticket synchronously, before the first request. It is never
   // persisted, logged or put into a reusable Authorization header.
   let launchTicket = null;
@@ -1076,9 +1106,19 @@
         const ticket = launchTicket; launchTicket = null;
         if (!ticket) {
           try {
-            const response = await fetch('api/view/trusted-owner', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'});
-            trustedWizard = response.ok && (await response.json())?.result?.enabled === true;
-          } catch { trustedWizard = false; }
+            let response;
+            for (let attempt = 0; ; attempt++) {
+              try { response = await fetch('api/view/trusted-owner', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'}); }
+              catch (error) { if (error.name === 'AbortError' || !(error instanceof TypeError) || attempt >= 2) throw error; await sleepFor(400 * (attempt + 1), signal); continue; }
+              if (response.status < 500 || response.status === 501 || attempt >= 2) break;
+              await sleepFor(400 * (attempt + 1), signal);
+            }
+            // A restarting server or a refused burst is no answer: keep what this device knew and retry the boot.
+            if (response.status >= 500 && response.status !== 501) throw new APIError('server_restarting', response.status);
+            let answer = null; try { answer = await response.json(); } catch { throw new APIError('server_restarting', response.status); }
+            trustedWizard = response.ok && answer?.result?.enabled === true;
+            try { if (trustedWizard) localStorage.setItem(TRUSTED_KEY, '1'); else localStorage.removeItem(TRUSTED_KEY); } catch { /* storage blocked */ }
+          } catch (error) { if (error.name === 'AbortError') throw error; if (!transient(error)) trustedWizard = false; else throw error; }
         }
         if ($('remember-wizard-label')) $('remember-wizard-label').hidden = true;
         $('lock').hidden = trustedWizard; renderPasskey();
@@ -1099,9 +1139,14 @@
         if (['session_unlock_required', 'remembered_unlock_unavailable', 'locked', 'vault_locked'].includes(error.code)) { if (trustedWizard) recoverTrusted(); return; }
         // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
         // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
-        if (transient(error) && bootTries < 40) {
-          bootTries++; gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…';
-          clearTimeout(bootTimer); bootTimer = setTimeout(boot, Math.min(1000 * bootTries, 5000)); return;
+        // It keeps trying for as long as the page is open: after ~3 minutes the Try again card shows as well, but the
+        // retries carry on (every 15 s) so the inbox comes back by itself once Messenger answers again. A trusted
+        // Wizard treats any refusal the same way (it can always open a fresh session); only setup is a real stop.
+        if ((transient(error) || (trustedWizard && error.code !== 'setup_link_required')) ) {
+          bootTries++; clearTimeout(bootTimer);
+          if (bootTries <= 40) { gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…'; }
+          else { if (state.mode !== 'reconnect') { cancelView(); gate('reconnect'); } $('gate-description').textContent = "Couldn't reach Messenger yet. Still trying… or tap Try again."; }
+          bootTimer = setTimeout(() => boot(), bootTries <= 40 ? Math.min(1000 * bootTries, 5000) : 15000); return;
         }
         bootTries = 0; disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
@@ -1109,10 +1154,11 @@
   }
   let bootTries = 0, bootTimer = null;
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
-  addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
+  function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.authenticated = false; }
+  addEventListener('online', () => { if (state.mode === 'reconnect' || state.mode === 'opening' || bootTries) { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});
   window.MessengerUnified?.paintSaved();
-  $('reconnect').onclick = () => { trustedTries = 0; boot(true); };
+  $('reconnect').onclick = () => { trustedTries = 0; bootTries = 0; clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(true); };
   refreshPasskey(); refreshPhoneVault();
   boot();
 })();

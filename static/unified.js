@@ -108,10 +108,28 @@
   }
   // Real profile pictures over the initials; a missing or broken picture leaves the initials showing.
   const pictureURL = (pid, tag, who) => tag && pid && !String(pid).startsWith('private:') ? 'api/unified/people/' + encodeURIComponent(pid) + '/avatar?' + new URLSearchParams(who ? {who, v: tag} : {v: tag}) : '';
+  // Pictures load only when their row is near the screen, a few at a time, so opening the Inbox is not a burst of
+  // dozens of requests that a restarting gateway answers with 502s. One failed picture retries once, then initials stay.
+  const AVATAR_PARALLEL = 4, avatarQueue = []; let avatarBusy = 0;
+  function pumpAvatars() {
+    while (avatarBusy < AVATAR_PARALLEL && avatarQueue.length) {
+      const img = avatarQueue.shift(); if (!img.isConnected) continue;
+      avatarBusy++; let settled = false; const done = () => { if (settled) return; settled = true; avatarBusy--; pumpAvatars(); };
+      img.addEventListener('load', done, {once: true}); img.addEventListener('error', done, {once: true}); setTimeout(done, 10000);
+      img.src = img.dataset.src;
+    }
+  }
+  const avatarSeen = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) { avatarSeen.unobserve(e.target); avatarQueue.push(e.target); }
+    pumpAvatars();
+  }, {rootMargin: '300px 0px'}) : null;
   function withPicture(el, url) {
     if (!url) return el;
-    const img = document.createElement('img'); img.className = 'u-av-img'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = url;
-    img.onerror = () => img.remove(); img.onload = () => el.classList.add('has-img'); el.append(img); return el;
+    const img = document.createElement('img'); img.className = 'u-av-img'; img.alt = ''; img.decoding = 'async'; img.dataset.src = url;
+    img.onerror = () => { if (img.dataset.retried) return img.remove(); img.dataset.retried = '1'; setTimeout(() => { if (img.isConnected) { avatarQueue.push(img); pumpAvatars(); } }, 2500 + Math.random() * 2000); };
+    img.onload = () => el.classList.add('has-img'); el.append(img);
+    if (avatarSeen) avatarSeen.observe(img); else { img.loading = 'lazy'; img.src = url; }
+    return el;
   }
   const networksOf = p => [...new Set((p.identities || []).map(i => i.network))];
   const cap = t => t ? t[0].toUpperCase() + t.slice(1) : '';
@@ -173,7 +191,7 @@
     panel.focus(); hold(); return panel;
   }
   function listBase(title) {
-    const root = $('unified-inbox'); root.replaceChildren();
+    const root = $('unified-inbox'); root.replaceChildren(); root.dataset.view = s.search != null ? 'search' : 'list';
     const head = node('header', 'u-header');
     if (s.search != null) {
       const field = node('input', 'u-search'); field.type = 'search'; field.placeholder = 'Search'; field.setAttribute('aria-label', 'Search ' + title.toLowerCase()); field.value = s.search;
@@ -181,12 +199,15 @@
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
-      head.append(node('h1', '', title), iconButton('qr', 'My QR codes', () => myCodes()), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', () => accounts(), 'u-settings-btn'));
+      // On a phone-width window these controls sit at the bottom, in thumb reach (unified.css @container messenger).
+      const actions = node('div', 'u-head-actions');
+      actions.append(iconButton('qr', 'My QR codes', () => myCodes()), iconButton('search', 'Search', () => { s.search = ''; renderList(); }), iconButton('settings', 'Settings', () => accounts(), 'u-settings-btn'));
+      head.append(node('h1', '', title), actions);
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   function threadBase(name, subtitle, onInfo, network, picture = '') {
-    const root = $('unified-inbox'); root.replaceChildren();
+    const root = $('unified-inbox'); root.replaceChildren(); root.dataset.view = 'thread';
     const head = node('header', 'u-header u-thread-head');
     head.append(iconButton('back', 'Back', back));
     const who = button('', onInfo || null, 'u-who'); who.disabled = !onInfo;
@@ -401,7 +422,10 @@
       await loadLists();
       if (s.epoch === epoch && !s.person) drawList();
       persist();
-    } catch (e) { error(e); }
+    } catch (e) {
+      // Never leave skeletons on screen: the list asks again by itself (a restart or a refused burst passes).
+      error(e); if (s.ready) setTimeout(() => { if (s.ready && s.epoch === epoch && !s.person && !store.lists.people) renderList(); }, 2500 + Math.random() * 1500);
+    }
   }
   // A saved list painted first; the server's copy replaces it, then the change feed keeps it current.
   async function freshen(_key, epoch) {
@@ -409,7 +433,7 @@
       await loadLists(true);
       if (s.epoch === epoch && !s.person) drawList();
       persist();
-    } catch (e) { error(e); }
+    } catch (e) { error(e); if (s.ready) setTimeout(() => { if (s.ready && !store.seq) freshen(null, s.epoch); }, 3000 + Math.random() * 1500); }
   }
   // ---------- accounts: always one tap away from the Inbox ----------
   let accountsSeen = null;
@@ -871,7 +895,7 @@
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
     const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
-    scroll.oncontextmenu = e => { if (!view.selection?.active && e.target.closest('.u-message')) e.preventDefault(); };
+    scroll.oncontextmenu = e => { if (!view.selection?.active && e.target.closest('.u-message') && !e.target.closest('.u-textsel')) e.preventDefault(); };
     scroll.onscroll = () => { const near = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80; view.bottom = near; view.pill.hidden = near; if (near) markRead(); if (scroll.scrollTop < 400) older(); };
     const pill = iconButton('down', 'Scroll to newest', () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'}), 'u-down'); pill.hidden = true;
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
@@ -1201,14 +1225,27 @@
     const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
     const holdInteractive = album ? 'a,button:not(.u-media),input,textarea,select,video,audio,.u-reply,.u-wave,.reply-quote' : interactive;
     let timer = null, x0 = 0, y0 = 0, dx = 0, swiping = false, firstHold = false, suppressTap = false, touch = false;
-    // With a mouse there is no long-press, so the menu offers Select to start picking several messages; on a phone
-    // holding a message already does that, so its menu stays as it is (James, 26 Oct 2026).
-    const open = () => menu(touch ? {} : {select: () => { window.getSelection()?.removeAllRanges(); selection()?.begin(id); }});
+    // Text is selectable like any page (Miguel, 30 Oct 2026): a mouse drag highlights part of any bubble, sent or
+    // received, and a plain click never opens a menu (right-click does). A phone's hold still picks messages, so its
+    // menu offers "Select text": that bubble then takes native selection handles, preselected, ready to Copy.
+    const selectText = () => {
+      const text = bubble.querySelector('.u-text,.bubble-text') || bubble;
+      row.classList.add('u-textsel'); bubble.classList.add('u-textsel');
+      requestAnimationFrame(() => { const range = document.createRange(); range.selectNodeContents(text); const sel = window.getSelection(); sel?.removeAllRanges(); sel?.addRange(range); });
+      // Leaves text mode once the selection is gone (tap elsewhere, Copy from the native bar, Back).
+      let seen = false;
+      const watch = () => { const sel = window.getSelection(), inside = sel && !sel.isCollapsed && bubble.contains(sel.anchorNode);
+        if (inside) seen = true; else if (seen || !bubble.isConnected) { row.classList.remove('u-textsel'); bubble.classList.remove('u-textsel'); document.removeEventListener('selectionchange', watch); } };
+      document.addEventListener('selectionchange', watch);
+    };
+    const textMode = () => bubble.classList.contains('u-textsel');
+    const open = () => menu(touch ? {selectText} : {select: () => { window.getSelection()?.removeAllRanges(); selection()?.begin(id); }});
     const cancel = () => { clearTimeout(timer); timer = null; };
-    bubble.addEventListener('selectstart', e => { if (!selection()?.active || firstHold) e.preventDefault(); });
+    // Only a finger's first hold is kept from starting a native selection (it picks messages instead).
+    bubble.addEventListener('selectstart', e => { if (touch && !textMode() && (!selection()?.active || firstHold)) e.preventDefault(); });
     bubble.addEventListener('pointerdown', e => {
-      firstHold = false; suppressTap = false; touch = e.pointerType === 'touch';
-      if (selection()?.active || e.button > 0 || e.target.closest(holdInteractive)) return;
+      firstHold = false; suppressTap = false; touch = e.pointerType === 'touch' || e.pointerType === 'pen';
+      if (textMode() || selection()?.active || e.button > 0 || e.target.closest(holdInteractive)) return;
       cancel(); x0 = e.clientX; y0 = e.clientY; dx = 0; swiping = false;
       if (e.pointerType !== 'touch') return;
       timer = setTimeout(() => {
@@ -1217,7 +1254,7 @@
       }, 450);
     });
     bubble.addEventListener('pointermove', e => {
-      if (selection()?.active || e.target.closest(holdInteractive)) return;
+      if (textMode() || selection()?.active || e.target.closest(holdInteractive)) return;
       const mx = e.clientX - x0, my = e.clientY - y0;
       if (Math.hypot(mx, my) > 8) cancel();
       if (reply && e.pointerType === 'touch' && (swiping || (mx > 12 && Math.abs(my) < 10))) {
@@ -1231,12 +1268,14 @@
     for (const type of ['pointerup','pointercancel','pointerleave']) bubble.addEventListener(type, end);
     bubble.addEventListener('click', e => {
       if (suppressTap) { suppressTap = false; e.preventDefault(); e.stopPropagation(); return; }
-      if (selection()?.active || e.target.closest(interactive)) return;
+      if (selection()?.active || textMode() || e.target.closest(interactive)) return;
+      // Mouse: a click (or the release of a drag that highlighted text) is just a click; menus open on right-click.
+      if (!touch || !window.getSelection()?.isCollapsed) return;
       e.stopPropagation(); open();
     });
     bubble.addEventListener('contextmenu', e => {
       // The first hold selects messages; the next hold is left entirely to native text selection.
-      if (selection()?.active && !firstHold) return;
+      if ((selection()?.active && !firstHold) || textMode()) return;
       if (e.target.closest(holdInteractive)) return;
       e.preventDefault(); cancel();
       if (!selection()?.active) open();
@@ -1265,6 +1304,7 @@
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
+    if (opts.selectText && m.original && !m.deleted) item('Select text', 'copy', opts.selectText);
     if (opts.select && !m.deleted && !m.pending) item('Select', 'check', opts.select);
     item('Delete for me', 'trash', () => del(m, false), 'danger');
     if (m.outgoing && telegram && !m.deleted) item('Delete for everyone', 'trash', () => del(m, true), 'danger');
@@ -1322,8 +1362,18 @@
     return env.result;
   }
   const draftsFor = (rows, id) => rows.filter(d => d.person_id === id && d.state === 'draft').sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  // One drafts request at a time, shared by the Inbox's draft labels and the open chat's composer poll; nothing
+  // polls while Messenger is hidden or not signed in.
+  let draftsReq = null, draftsAt = 0, draftsRows = null;
+  function fetchDrafts(fresh = false) {
+    if (draftsReq) return draftsReq;
+    if (!fresh && draftsRows && performance.now() - draftsAt < 2000) return Promise.resolve(draftsRows);
+    draftsReq = api('api/drafts').then(r => { draftsRows = r.drafts || []; draftsAt = performance.now(); return draftsRows; }).finally(() => { draftsReq = null; });
+    return draftsReq;
+  }
   async function refreshDraftIndex() {
-    let rows; try { rows = (await api('api/drafts')).drafts || []; } catch { return; }
+    if (!s.ready || document.hidden) return;
+    let rows; try { rows = await fetchDrafts(); } catch { return; }
     const next = {}; for (const d of rows) if (d.state === 'draft' && (!next[d.person_id] || (d.updated || 0) > (next[d.person_id].updated || 0))) next[d.person_id] = d;
     const key = JSON.stringify(Object.entries(next).map(([k, d]) => [k, d.revision, d.text, (d.attachments || []).length]));
     if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if (!s.person && s.tab === 'people') drawList(); }
@@ -1372,7 +1422,7 @@
       view.attach = tray.length ? tray : null; ui.grow(); ui.paintBar();
     }
     async function save() {
-      clearTimeout(sd.timer); sd.timer = null;
+      clearTimeout(sd.timer); sd.timer = null; draftsRows = null;
       if (sd.busy) { await sd.busy.catch(() => {}); if (sd.timer) return; }
       if (view.edit || sd.conflict) return;
       const run = (async () => {
@@ -1430,7 +1480,8 @@
     }
     async function check(first) {
       if (!alive()) { clearInterval(sd.poll); return; }
-      let rows; try { rows = (await api('api/drafts')).drafts || []; } catch { return; }
+      if (!first && document.hidden) return;
+      let rows; try { rows = await fetchDrafts(first); } catch { return; }
       if (!alive() || sd.busy || sd.timer || sd.sendPending) return;
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
       const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) s.bindDraft = null;
@@ -1440,7 +1491,7 @@
         else if (first && !sd.row && ui.draft.value.trim()) schedule(); // a draft kept only on this device moves to the server
         return;
       }
-      if (sd.row && latest.id === sd.row.id && latest.revision === sd.row.revision) return;
+      if (sd.row && latest.id === sd.row.id && latest.revision <= sd.row.revision) return; // same, or a read from before our own save
       if (dirty() && !(first && !sd.row && ui.draft.value === latest.text)) { sd.conflict = latest; ui.paintBar(); return; }
       await apply(latest);
     }
@@ -2386,7 +2437,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;

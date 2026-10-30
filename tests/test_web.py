@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from engine import EngineError
@@ -283,6 +284,18 @@ class PersistentBrowserAuth(unittest.TestCase):
             reloaded=BrowserAuth(path); reloaded.verify_password(password)
             self.assertEqual(reloaded.lookup(cookie)['csrf'],session['csrf'])
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
+    def test_full_session_table_drops_the_oldest_instead_of_locking_the_owner_out(self):
+        auth=BrowserAuth(); first,_=auth.create()
+        for _ in range(300): newest,_=auth.create()
+        self.assertEqual(len(auth.sessions),256)
+        self.assertIsNone(auth.lookup(first)); self.assertIsNotNone(auth.lookup(newest))
+    def test_sessions_in_use_slide_forward(self):
+        import web
+        auth=BrowserAuth(); token,session=auth.create()
+        self.assertFalse(auth.renew(token))  # fresh: nothing to do
+        session['expires']=time.time()+3600
+        self.assertTrue(auth.renew(token)); self.assertGreater(auth.lookup(token)['expires'],time.time()+web.SESSION_SECONDS-60)
+        self.assertFalse(auth.renew('unknown'))
     def test_guessing_is_rate_limited(self):
         auth=BrowserAuth(); auth.remember_password('test-fixture-passphrase-123')
         for _ in range(6):

@@ -50,6 +50,10 @@ const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'te
     if (scenario === 'never-recovers') {
       await page.getByText("Messenger couldn't open your messages. Tap Try again.").waitFor({timeout: 120000});
       assert.equal(await page.locator('#reconnect').isVisible(), true);
+      // The card is never a dead end: Messenger keeps asking by itself, so once the server answers again the inbox
+      // returns with no tap (Miguel, 30 Oct 2026).
+      restarted = false;
+      await page.locator('.u-person', {hasText: 'Ana'}).waitFor({timeout: 30000});
     } else {
       await page.waitForFunction(() => true); await page.waitForTimeout(15000); // the locked answers have been served by now
       assert.ok(lockedLeft < 0, scenario + ': every locked answer was consumed (' + lockedLeft + ')');
