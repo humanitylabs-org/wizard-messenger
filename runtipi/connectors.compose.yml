@@ -1,6 +1,6 @@
 services:
   connector-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.14.0}
+    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.15.0}
     pull_policy: never
     user: 0:0
     entrypoint:
