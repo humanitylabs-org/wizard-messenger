@@ -346,10 +346,11 @@
   }
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
-    const counts = {people: nativeUnread, groups: 0};
+    const twins = wizardTwins();
+    const counts = {people: nativeRows.length ? twins.visible.reduce((n, p) => n + (p.muted || p.low_priority || !(p.unread > 0) ? 0 : 1), 0) : nativeUnread, groups: 0};
     // The app badge counts unread chats (the same number as the Unread chip), not messages: one busy group
     // must not push it to 99+. Muted and Low priority chats never count.
-    for (const [id, n] of Object.entries(unreadById)) if (n > 0 && !mutedById[id] && !lowById[id]) counts.people += 1;
+    for (const [id, n] of Object.entries(unreadById)) { const t = twins.twinOf.get(id); if (n > 0 && !mutedById[id] && !lowById[id] && !twins.hideMirror.has(id) && !(t && (t.muted || t.low_priority))) counts.people += 1; }
     paintTabBadges(counts);
     const n = counts.people + counts.groups;
     if (n === badgeShown) return; badgeShown = n;
@@ -555,6 +556,7 @@
     if (f === 'direct') return listKey(p) === 'people';
     if (f === 'merged') return networksOf(p).length > 1;
     if (f === 'groups') return listKey(p) === 'groups';
+    if (f === 'net:private') return networksOf(p).some(n => n === 'private' || n === 'messenger');
     if (f.startsWith('net:')) return networksOf(p).includes(f.slice(4));
     if (f.startsWith('label:')) return (p.labels || []).includes(f.slice(6));
     return true;
@@ -615,7 +617,10 @@
       return;
     }
     const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
-    const everyone = [...(store.lists.people || []), ...(store.lists.groups || []), ...nativeRows]
+    const twins = wizardTwins();
+    const everyone = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
+      .map(p => { const t = twins.twinOf.get(p.id); return t ? {...p, muted: !!(p.muted || t.muted), low_priority: !!(p.low_priority || t.low_priority), twin: t} : p; })
+      .concat(twins.visible)
       .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
     // Low priority (Beeper's name; WhatsApp's Archive): out of the Inbox, chips, unread counts and notifications,
     // and a new message never brings a chat back. They live in one folder reached from the top of the Inbox.
@@ -675,6 +680,24 @@
   }
 
   const isLow = p => !!p.low_priority;
+  // One row per Wizard chat. The native engine row (private:<group>) and the mirrored unified chat (network
+  // 'messenger', address = group) are the same conversation; once the mirror exists only it is listed, because
+  // its thread has attachments and server drafts. The native row's device mute/Low priority still apply to it.
+  // A pending invite keeps the native row (Accept lives there) and hides the mirror until it is accepted.
+  function wizardTwins() {
+    const mirror = new Map();
+    for (const p of [...(store.lists.people || []), ...(store.lists.groups || [])])
+      for (const i of p.identities || []) if (i.network === 'messenger' && i.address && !mirror.has(i.address)) mirror.set(i.address, p);
+    const visible = [], twinOf = new Map(), hideMirror = new Set();
+    for (const n of nativeRows) {
+      const m = mirror.get(n.group_id);
+      if (!m) visible.push(n);
+      else if (n.invite) { visible.push(n); hideMirror.add(m.id); }
+      else twinOf.set(m.id, n);
+    }
+    return {mirror, visible, twinOf, hideMirror};
+  }
+  const mirrorOf = group => group ? wizardTwins().mirror.get(group) : null;
   const LOW_KEY = 'messenger-inbox-low';
   function setLowView(on) { s.low = !!on; try { if (on) sessionStorage.setItem(LOW_KEY, '1'); else sessionStorage.removeItem(LOW_KEY); } catch { /* memory only */ } }
   // Long-press (or right-click) a chat row: Mute / Unmute, Low priority / Inbox. A held press never also opens the chat.
@@ -763,6 +786,7 @@
   }
   // The row leaves the list in place (no extra screen); hold it again in the other folder to move it back.
   async function setLow(p, low) {
+    if (p.twin && !!p.twin.low_priority !== low) { p.twin.setLowPriority(low); p.twin.low_priority = low; }
     if (p.native) { p.setLowPriority(low); p.low_priority = low; syncBadge(); drawList(); toast(low ? 'Moved to Low priority' : 'Moved to Inbox'); return; }
     const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.low_priority = v; p.low_priority = v; drawList(); syncBadge(); };
     flip(low);
@@ -770,6 +794,7 @@
     catch (e) { flip(!low); toast(e.message || 'Could not move this chat', 3000); }
   }
   async function setMuted(p, muted) {
+    if (p.twin && !!p.twin.muted !== muted) { p.twin.setMuted(); p.twin.muted = muted; }
     const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
     flip(muted);
     try { await call('people/' + encodeURIComponent(p.id), {muted}); toast(muted ? 'Muted' : 'Unmuted'); persist(); }
@@ -2434,7 +2459,11 @@
     $('unified-inbox').hidden = true; inChat(true);
   }
   function openNative(group, card) {
-    if (!s.ready || !native) return;
+    if (!s.ready) return;
+    // A Wizard chat that already has its mirrored chat opens there (attachments, drafts); Back returns to the Inbox.
+    const twin = nativeRows.find(n => n.group_id === group), m = twin?.invite ? null : mirrorOf(group);
+    if (m) { if (s.native) returnNative(); return openPerson(m.id, m); }
+    if (!native) return;
     nativeFocus = card; s.nativeGroup = group; showNative(); native.open(group); nativeAgentDrafts(group);
   }
   function returnNative() {

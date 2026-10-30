@@ -44,3 +44,12 @@ the group's `marmot.group.encrypted-media.v2` component, so both members use the
 - The engine mutex is held for the whole upload, up to 300 s for 25 MB, so other engine calls wait meanwhile.
 - The native private thread (`app.js`) still has its own composer without attachments. Media works through the
   unified Inbox thread.
+
+## One Inbox row per Wizard chat
+
+The native engine row (`private:<group>`) and the mirrored unified chat (network `messenger`, identity
+address = group) are the same conversation. Once the mirror exists, the Inbox lists only the mirrored row
+(attachments, server drafts) and opening that group from anywhere (resume, native row hooks) goes to the
+mirrored thread. The native row's per-device mute/Low priority still apply and are kept in step. Unread is
+counted once. A pending invite keeps its native row (Accept lives there) and hides the mirror until accepted.
+Before a mirror exists, the native row behaves as before. Browser guard: `tests/wizard_chat_row_browser.cjs`.
