@@ -83,6 +83,17 @@ class PeopleTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'low_priority': 1})
 
+    def test_mark_unread_makes_newest_incoming_unread(self):
+        a = self.store.identity('whatsapp', '!u', 'Uma')
+        self.store.add_message('$1', a, 'x', False, 'hi', 10)
+        self.store.add_message('$2', a, 'me', True, 'yo', 20)
+        with self.store.db() as db:
+            db.execute('UPDATE identity SET last_read_ts=20 WHERE id=?', (a['id'],))
+        unread = lambda: next(p for p in self.store.people('person') if p['id'] == a['person_id'])['unread']
+        self.assertEqual(unread(), 0)
+        self.store.mark_unread(a['person_id'])
+        self.assertEqual(unread(), 1)
+
     def test_merge_suggestions_cross_network_only_and_dismissable(self):
         a = self.store.identity('whatsapp', '!a', 'Ana Souza')
         b = self.store.identity('instagram', '!b', 'ana souza')

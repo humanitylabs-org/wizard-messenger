@@ -73,7 +73,16 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
     await gear.click();
     await page.locator('.c-card').first().waitFor();
     assert.equal(await page.locator('.u-sheet', {hasText: /of \d+ (accounts )?connected/}).count(), 0, 'no x-of-y score anywhere');
-    assert.match(await page.locator('.u-sheet .u-acct-text').textContent(), /Instagram DMs needs reconnecting/);
+    // No duplicate banner: the account's own row says it needs reconnecting, above the connected list.
+    assert.equal(await page.locator('.u-sheet .u-acct-text').count(), 0);
+    assert.match(await page.locator('.u-sheet .c-card').first().textContent(), /Instagram DMs.*Needs reconnecting/s);
+    assert.ok(await page.locator('.c-group .c-card.c-row').count() >= 1, 'connected accounts are compact rows');
+    const row = page.locator('.c-group .c-card.c-row').first();
+    assert.equal(await row.getByRole('button', {name: /Disconnect/}).isVisible(), false, 'Disconnect hidden until the row is opened');
+    await row.locator('.c-card-top').click();
+    assert.equal(await row.getByRole('button', {name: /Disconnect/}).isVisible(), true);
+    await row.locator('.c-card-top').click();
+    assert.equal(await page.locator('.u-fold summary', {hasText: 'Agent access'}).count(), 1);
     const tiles = await page.locator('.c-add').evaluateAll(els => els.map(e => e.querySelector(':scope > span:last-child').textContent.trim()));
     assert.deepEqual(tiles, ['ChatGPT Dots', 'Facebook Messenger', 'Google Messages', 'LinkedIn', 'X']);
     assert.equal(await page.locator('.c-later summary', {hasText: 'Not available yet'}).count(), 1);
@@ -98,7 +107,7 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
 
     await page.getByRole('button', {name: 'Done'}).click();
     await page.locator('.c-card[data-network=twitter]').waitFor();
-    await page.locator('.u-sheet .u-acct-dot.on[data-network=twitter]').waitFor(); await shot('connected');
+    await page.locator('.c-group .c-card.c-row[data-network=twitter]').waitFor(); await shot('connected');
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(label);
     await ctx.close();

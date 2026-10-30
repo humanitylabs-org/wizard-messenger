@@ -32,7 +32,7 @@ def capability_for(method, path):
     if method == 'POST' and matches(path, WRITES): return 'send'
     return None
 
-WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts agents mcp preview send read typing merge unmerge avatar merge-suggestions dismiss translate react edit delete labels sync view session ticket agent-access'.split())
+WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts agents mcp preview send read unread typing merge unmerge avatar merge-suggestions dismiss translate react edit delete labels sync view session ticket agent-access'.split())
 def route_shape(path):
     return '/' + '/'.join(p if p in WORDS else ':id' for p in path.split('/') if p)
 

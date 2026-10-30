@@ -86,7 +86,7 @@
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
-    lowpri: ['M3 4h18v4H3z', 'M5 8v11h14V8', 'M10 12h4'], inbox: ['M3 13h5l2 3h4l2-3h5', 'M5.5 5h13L21 13v6H3v-6z'],
+    lowpri: ['M3 4h18v4H3z', 'M5 8v11h14V8', 'M10 12h4'], unread: ['M21 12a9 9 0 1 1-6-8.5', 'M19 7a2 2 0 1 0 0-.01'], inbox: ['M3 13h5l2 3h4l2-3h5', 'M5.5 5h13L21 13v6H3v-6z'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -594,7 +594,9 @@
   function holdToMenu(el, open) {
     let timer = null, x0 = 0, y0 = 0;
     const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-    el.addEventListener('pointerdown', e => { if (e.button > 0) return; delete el.dataset.held; x0 = e.clientX; y0 = e.clientY; cancel();
+    // Mouse uses right-click only: a mouse press whose release never arrives (the first click into a Wizard window)
+    // must not count as a long-press.
+    el.addEventListener('pointerdown', e => { if (e.button > 0 || e.pointerType === 'mouse') return; delete el.dataset.held; x0 = e.clientX; y0 = e.clientY; cancel();
       timer = setTimeout(() => { timer = null; el.dataset.held = '1'; navigator.vibrate?.(10); swallowRelease(); open(); }, 450); });
     el.addEventListener('selectstart', e => e.preventDefault());
     el.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 8) cancel(); });
@@ -652,7 +654,15 @@
     actionMenu(card, p.display_name, [
       muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted)),
       lowAction(isLow(p), () => setLow(p, !isLow(p))),
+      ...(p.native || !p.last ? [] : [p.unread ? {label: 'Mark as read', icon: 'check', run: () => setUnread(p, false)} : {label: 'Mark as unread', icon: 'unread', run: () => setUnread(p, true)}]),
     ]);
+  }
+  // Unread again stays on this Messenger only; opening the chat reads it as usual.
+  async function setUnread(p, on) {
+    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.unread = v; p.unread = v; drawList(); syncBadge(); };
+    const before = p.unread; flip(on ? Math.max(1, before || 0) : 0);
+    try { await call('people/' + encodeURIComponent(p.id) + (on ? '/unread' : '/read'), on ? {} : {timestamp: p.last?.timestamp || Date.now()}); }
+    catch (e) { flip(before); error(e); }
   }
   // The row leaves the list in place (no extra screen); hold it again in the other folder to move it back.
   async function setLow(p, low) {
@@ -1664,10 +1674,13 @@
   async function accounts(focus) {
     // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
-    sheet.append(accountsBanner()); refreshAccounts();
-    const mergeRow = button('', () => mergeSuggestions(), 'u-settings-row'); mergeRow.append(node('span', '', 'Suggested merges')); mergeRow.hidden = true; sheet.append(mergeRow);
+    sheet.classList.add('u-settings'); refreshAccounts();
+    // The rest of Settings: one grouped list of quiet rows; long sections fold away until opened.
+    const more = node('div', 'u-settings-group');
+    const mergeRow = button('', () => mergeSuggestions(), 'u-settings-row'); mergeRow.append(node('span', '', 'Suggested merges')); mergeRow.hidden = true; more.append(mergeRow);
     call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; mergeRow.hidden = false; mergeRow.append(node('span', 'u-badge', String(n))); mergeRow.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
-    sheet.append(button('Wizard Messenger · your address', () => { closeOverlay(); showNative(); native?.settings(); }, 'secondary wide'));
+    const addr = button('', () => { closeOverlay(); showNative(); native?.settings(); }, 'u-settings-row'); addr.append(node('span', '', 'Wizard Messenger address'), node('span', 'u-row-caret', '›')); more.append(addr);
+    const fold = (title, fill) => { const d = node('details', 'u-fold'); const sm = node('summary', 'u-settings-row'); sm.append(node('span', '', title), node('span', 'u-row-caret', '›')); d.append(sm); const body = node('div', 'u-fold-body'); d.append(body); let done = false; d.addEventListener('toggle', () => { if (d.open && !done) { done = true; fill(body); } }); more.append(d); return d; };
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
       connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, ...(body === undefined ? {} : {body})}), {
@@ -1677,8 +1690,9 @@
       try {
         await connectorController.show();
         if (focus === 'accounts') { sheet.append(button('More settings', () => accounts(), 'c-link')); return; }
-        sheet.append(node('h3', '', 'Notifications')); notificationSettings(sheet, api);
-        await agentAccess(sheet);
+        sheet.append(node('h3', '', 'More'), more);
+        fold('Notifications', body => notificationSettings(body, api));
+        fold('Agent access', body => agentAccess(body));
         return;
       } catch (e) {
         // Older/dormant installations retain the existing Telegram settings.

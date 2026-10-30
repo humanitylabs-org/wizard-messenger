@@ -453,8 +453,14 @@
       top.append(text); section.append(top);
       const flows = provider.flows || [];
       if (provider.state === 'connected') {
+        // One quiet row: icon, name, account. Tap it to reveal Disconnect.
+        section.classList.add('c-row');
         const who = (provider.logins || []).map(l => l.name).filter(Boolean).join(', ');
-        if (who) section.append(element('p', 'helper', who));
+        if (who) text.querySelector('strong').after(element('small', 'c-who', who));
+        text.querySelector('.c-pill').textContent = '';
+        top.setAttribute('role', 'button'); top.tabIndex = 0; top.setAttribute('aria-expanded', 'false'); top.setAttribute('aria-label', provider.label + ' connected' + (who ? ', ' + who : '') + '. Options');
+        const toggle = () => { const open = section.classList.toggle('open'); top.setAttribute('aria-expanded', String(open)); };
+        top.onclick = toggle; top.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
         button(section, 'Disconnect', async () => {
           if (global.confirm && !global.confirm('Disconnect ' + provider.label + '? Its chats leave this Messenger. Nothing changes on ' + provider.label + ' itself.')) return;
           await request(provider.network, 'disconnect', {}); await show(); options.onChange?.(provider.network);
@@ -470,7 +476,7 @@
       const shown = provider.network === 'slack' && provider.state !== 'unavailable' ? [{id: 'browser', name: 'Sign in with your browser'}, ...flows.filter(f => f.id === 'email')] : flows;
       [...shown].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
         const name = FLOW_LABEL[flow.id] || flow.name;
-        button(section, name, async () => start(provider.network, flow.id), i === 0 ? 'primary wide' : 'c-link').setAttribute('aria-label', name + ' for ' + provider.label);
+        button(section, name, async () => start(provider.network, flow.id), i === 0 ? 'primary c-go' : 'c-link').setAttribute('aria-label', name + ' for ' + provider.label);
       });
       return section;
     }
@@ -487,7 +493,13 @@
       root.replaceChildren();
       if (!connected.length) root.append(element('p', 'c-summary', 'Connect an account to bring its chats into your Inbox'));
       const order = p => p.state === 'connected' ? 2 : p.state === 'not_configured' ? 1 : 0;
-      for (const provider of [...usable].sort((a, b) => order(a) - order(b))) root.append(card(provider));
+      const sorted = [...usable].sort((a, b) => order(a) - order(b));
+      for (const provider of sorted.filter(p => p.state !== 'connected')) root.append(card(provider));
+      // Connected accounts: one grouped list, like a phone's settings.
+      if (connected.length) {
+        root.append(element('h3', 'c-add-title', 'Connected'));
+        const group = element('div', 'c-group'); for (const provider of sorted.filter(p => p.state === 'connected')) group.append(card(provider)); root.append(group);
+      }
       // Every other network sits dormant (no process work) until the owner picks it here.
       const addable = later.filter(p => p.supported && p.state === 'not_configured');
       if (addable.length) {

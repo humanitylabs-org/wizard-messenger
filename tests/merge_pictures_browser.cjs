@@ -55,6 +55,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
         return ok({person: {...pr, faces: id === 'fam' ? {Pedro: 'aaa111'} : {}}, messages: msgs, has_more: false, next_cursor: null, seq: 5, typing: []});
       }
       if (p.endsWith('/read')) return ok({});
+      m = /^api\/unified\/people\/([^/]+)\/unread$/.exec(p);
+      if (m) { posted.push(['unread', decodeURIComponent(m[1])]); return ok({ok: true}); }
       if (p === 'api/unified/connectors') return ok({providers: [{network: 'slack', label: 'Slack', supported: true, state: 'disconnected', flows: [{id: 'email', name: 'Email'}, {id: 'token', name: 'Token'}], logins: []}]});
       if (p === 'api/unified/connectors/browser/start') { posted.push(['start', body.network, body.width > 0]); return ok({id: 'S1', title: 'Slack'}); }
       m = /^api\/unified\/connectors\/browser\/S1\/(frame|input|cancel)$/.exec(p);
@@ -79,6 +81,19 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-net').count(), 1);
     await shot('inbox');
 
+    // First click into the window: a mouse press whose release never arrives must not open the row menu.
+    const fam = page.locator('.u-person', {hasText: 'Family'}); const fb = await fam.boundingBox();
+    await page.mouse.move(fb.x + 60, fb.y + 20); await page.mouse.down(); await page.waitForTimeout(700);
+    assert.equal(await page.locator('.u-menu').count(), 0, 'mouse press is never a long-press');
+    await page.mouse.up(); await page.waitForTimeout(200);
+    if (await page.getByRole('button', {name: 'Back', exact: true}).count()) await page.getByRole('button', {name: 'Back', exact: true}).click();
+    // Mark as unread from the row menu (right-click), then read again.
+    await page.locator('.u-person', {hasText: 'Bo Chen'}).click({button: 'right'});
+    await page.getByRole('menuitem', {name: 'Mark as unread'}).click();
+    assert.ok(posted.some(x => x[0] === 'unread' && x[1] === 'bo'));
+    await page.locator('.u-person', {hasText: 'Bo Chen'}).click({button: 'right'});
+    await page.getByRole('menuitem', {name: 'Mark as read'}).waitFor(); await page.keyboard.press('Escape');
+    if (await page.locator('#u-overlay').count()) await page.locator('#u-overlay').click({position: {x: 5, y: 5}});
     // Suggested merges live in Settings, merge on a tap and leave the list in place.
     await page.locator('.u-settings-btn').click();
     await page.locator('.u-settings-row', {hasText: 'Suggested merges'}).waitFor();

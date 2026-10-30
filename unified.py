@@ -392,6 +392,17 @@ class PeopleStore:
             db.execute('UPDATE identity SET seq=?' + sets + ' WHERE id=?', (self.next_seq(), *fields.values(), identity_id))
         self.changed()
 
+    def mark_unread(self, person_id):
+        """Owner's 'Mark as unread': the newest incoming message counts as unread again (this Messenger only)."""
+        with self.db() as db:
+            row = db.execute('SELECT i.id,m.timestamp FROM message m JOIN identity i ON i.id=m.identity_id '
+                             'WHERE i.person_id=? AND m.outgoing=0 AND m.deleted=0 ORDER BY m.timestamp DESC LIMIT 1', (person_id,)).fetchone()
+            if not row:
+                fail('invalid_input', 'Nothing to mark unread')
+            db.execute('UPDATE identity SET last_read_ts=?,seq=? WHERE id=?', (row[1] - 1, self.next_seq(), row[0]))
+        self.changed()
+        return {'ok': True}
+
     def forget(self, network, address):
         with self.db() as db:
             row = db.execute('SELECT id,person_id FROM identity WHERE network=? AND address=?', (network, address)).fetchone()
@@ -1933,6 +1944,7 @@ class UnifiedInbox:
                 if action == 'preview': return self.preview(person_id, payload)
                 if action == 'send': return self.send(person_id, payload)
                 if action == 'read': return self.read(person_id, payload)
+                if action == 'unread': return self.store.mark_unread(person_id)
                 if action == 'typing': return self.set_typing(person_id, payload)
         if len(suffix) == 3 and suffix[0] == 'messages' and method == 'POST':
             message_id = text(suffix[1], 300)
