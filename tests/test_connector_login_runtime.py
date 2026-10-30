@@ -80,7 +80,11 @@ class LoginRuntimeTests(unittest.TestCase):
             with self.assertRaises(EngineError): self.call('cancel', {'login_id': 'process'})
 
     def test_challenges_redact_executable_payload_and_remain_cancellable(self):
-        for kind in ('cookies', 'client_http', 'webauthn'):
+        # cookies is a supported step (browser / cURL sign-in) but still never exposes scripts or URLs.
+        result = self.controller.remember('line', {**self.step, 'type': 'cookies', 'cookies': {'url': 'https://example.invalid/signin', 'extract_js': 'secret', 'wait_for_url_pattern': 'secret', 'fields': []}})
+        self.assertEqual(result['type'], 'cookies')
+        self.assertNotIn('secret', repr(result))
+        for kind in ('client_http', 'webauthn'):
             with self.subTest(kind=kind):
                 result = self.controller.remember('line', {**self.step, 'type': kind, kind: {'url': 'https://example.invalid/secret', 'extract_js': 'secret'}})
                 self.assertEqual(result['type'], 'challenge')

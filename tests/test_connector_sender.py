@@ -45,7 +45,10 @@ class SenderTests(unittest.TestCase):
         self.assertTrue(self.invoke('/_matrix/provision/v3/login/start/email?user_id=%40owner%3Amessenger.internal', network='slack')['ok'])
         self.assertTrue(self.invoke('/_matrix/client/v3/rooms/%21test%3Amessenger.internal/send/m.room.message/client000', method='PUT')['ok'])
         self.assertEqual(self.invoke('/_matrix/media/v3/upload?filename=photo.png', body=b'test', content_type='image/png')['bytes'], 4)
-        self.assertEqual(len(self.calls), 3)
+        # Browser and cURL sign-ins (Slack token login) submit a cookies step.
+        self.assertTrue(self.invoke('/_matrix/provision/v3/login/step/proc1/fi.mau.slack.login.auth_token/cookies?user_id=%40owner%3Amessenger.internal', network='slack')['ok'])
+        with self.assertRaises(EngineError): self.invoke('/_matrix/provision/v3/login/step/proc1/x/webauthn?user_id=%40owner%3Amessenger.internal', network='slack')
+        self.assertEqual(len(self.calls), 4)
 
     def test_james_any_file_fixed_upload_name_and_strict_mime(self):
         for mime in ('application/pdf', 'application/zip', 'application/octet-stream', 'image/svg+xml'):

@@ -90,7 +90,7 @@ class LocalOwnerSender:
         else:
             route = u.path.removeprefix('/_matrix/provision/v3')
             allowed = method == 'POST' and u.path.startswith('/_matrix/provision/v3/') and (
-                re.fullmatch(r'/login/(?:start/[A-Za-z0-9_.-]+|step/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:user_input|display_and_wait)|cancel/[A-Za-z0-9_.-]+)', route)
+                re.fullmatch(r'/login/(?:start/[A-Za-z0-9_.-]+|step/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:user_input|display_and_wait|cookies)|cancel/[A-Za-z0-9_.-]+)', route)
                 or route == '/logout/all')
             allowed = allowed and set(q) <= {'user_id', 'txn_id'} and q.get('user_id') == ['@owner:messenger.internal']
         if not allowed:
