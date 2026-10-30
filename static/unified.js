@@ -298,9 +298,28 @@
   let csrf = () => '';
   let feedCtl = null;
 
+  // Instagram story replies/reactions arrive as a photo whose caption is Markdown:
+  // "> Replied to @Name's story\n\n[https://instagram.com/stories/…](…)". Read it as words, not markup.
+  const STORY = /^>\s*(Replied|Reacted) to @(.+?)['’]s story\s*(?:\n+\s*\[(https?:\/\/[^\]\s]+)\]\((https?:\/\/[^)\s]+)\))?\s*$/s;
+  const MD_LINK = /\[([^\]\n]{1,300})\]\((https?:\/\/[^)\s]+)\)/g;
+  function storyOf(text, outgoing) {
+    text = text || '';
+    const m = STORY.exec(text.trim());
+    if (m) return {verb: m[1].toLowerCase(), url: m[4] || m[3] || '', label: outgoing ? 'You ' + m[1].toLowerCase() + ' to their story' : m[1] + ' to your story', rest: ''};
+    const only = /^\[(https?:\/\/(?:www\.)?instagram\.com\/stories\/[^\]\s]+)\]\((https?:\/\/[^)\s]+)\)\s*$/.exec(text.trim());
+    if (only) return {verb: 'shared', url: only[2], label: outgoing ? 'You shared a story' : 'Shared a story', rest: ''};
+    return null;
+  }
+  // Plain words for previews: Markdown links show their text (or the site), bare links show the site.
+  const plainText = text => (text || '').replace(MD_LINK, (_, label, url) => /^https?:\/\//.test(label) ? siteOf(url) : label)
+    .replace(/https?:\/\/[^\s)]+/g, url => siteOf(url)).replace(/^>\s?/gm, '').replace(/\s*\n+\s*/g, ' ').trim();
+  function siteOf(url) { try { return new URL(url).hostname.replace(/^www\./, '') + (new URL(url).pathname.length > 1 ? '/…' : ''); } catch { return url; } }
   function snippet(last) {
     if (!last) return '';
     if (last.deleted) return 'This message was deleted';
+    const story = storyOf(last.text, false);
+    if (story) return (story.verb === 'reacted' ? '❤️ ' : story.verb === 'replied' ? '↩︎ ' : '📖 ') + story.label;
+    last = {...last, text: plainText(last.text)};
     const label = last.voice ? '🎤 Voice message' : {'m.image': '📷 Photo', 'm.video': '🎬 Video', 'm.audio': '🎵 Audio', 'm.file': '📎 File', 'm.sticker': 'Sticker', 'm.location': '📍 Location'}[last.msgtype];
     return label ? label + (last.text ? ' · ' + last.text : '') : last.text;
   }
@@ -927,6 +946,12 @@
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
   function richText(cls, text) {
     const p = node('p', cls); let at = 0;
+    // Markdown links from bridges ("[label](url)"): show the label as the link text.
+    if (MD_LINK.test(text)) {
+      MD_LINK.lastIndex = 0;
+      for (const m of text.matchAll(MD_LINK)) { p.append(text.slice(at, m.index)); const a = node('a', '', /^https?:\/\//.test(m[1]) ? siteOf(m[2]) : m[1]); a.href = m[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; p.append(a); at = m.index + m[0].length; }
+      p.append(text.slice(at)); return p;
+    }
     for (const m of text.matchAll(URL_RE)) { p.append(text.slice(at, m.index)); const a = node('a', '', m[0]); a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer'; p.append(a); at = m.index + m[0].length; }
     p.append(text.slice(at)); return p;
   }
@@ -966,7 +991,14 @@
     else if (m.msgtype === 'm.audio') b.append(voice(m));
     else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); if (!m.pending && !m.failed) a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
     else if (m.msgtype === 'm.location') { const geo = /^geo:([-\d.]+),([-\d.]+)/.exec(m.media?.geo || ''); const a = node('a', 'u-file', '📍 ' + (m.original || 'Location')); if (geo) { a.href = 'https://www.openstreetmap.org/?mlat=' + geo[1] + '&mlon=' + geo[2] + '#map=16/' + geo[1] + '/' + geo[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; } b.append(a); }
-    if (!m.deleted && m.original && m.msgtype !== 'm.location') {
+    const story = !m.deleted && storyOf(m.original, m.outgoing);
+    if (story) {
+      const tag = node(story.url ? 'a' : 'p', 'u-story-tag');
+      tag.append(node('span', 'u-story-label', story.label));
+      if (story.url) { tag.href = story.url; tag.target = '_blank'; tag.rel = 'noopener noreferrer'; tag.append(node('span', 'u-story-open', 'Open on Instagram ›')); }
+      b.insertBefore(tag, b.firstChild && b.firstChild.classList?.contains('u-sender') ? b.firstChild.nextSibling : b.firstChild);
+    }
+    if (!story && !m.deleted && m.original && m.msgtype !== 'm.location') {
       if (ctx.auto || m.outgoing) {
         b.append(richText('u-text', m.translated || m.original));
         if (m.translated && m.translated !== m.original) b.append(node('p', 'u-original', m.original));

@@ -15,7 +15,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
   for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
     let people = [
       {id: 'ana-w', display_name: 'Ana Souza', identities: [ident('ana', 'whatsapp')], labels: [], unread: 1, avatar: 'abc123', last: {text: 'Oi!', timestamp: now - 2 * min, outgoing: false}},
-      {id: 'ana-i', display_name: 'Ana Souza', identities: [ident('ana', 'instagram')], labels: [], unread: 0, avatar: null, last: {text: 'nice pic', timestamp: now - 90 * min, outgoing: false}},
+      {id: 'ana-i', display_name: 'Ana Souza', identities: [ident('ana', 'instagram')], labels: [], unread: 0, avatar: null, last: {text: "> Replied to @Owner's story\n\n[https://www.instagram.com/stories/x/1](https://www.instagram.com/stories/x/1?reel_id=1)", msgtype: 'm.image', timestamp: now - 90 * min, outgoing: false}},
       {id: 'bo', display_name: 'Bo Chen', identities: [ident('bo', 'telegram'), ident('bo', 'whatsapp')], labels: [], unread: 0, avatar: 'def456', last: {text: 'see you', timestamp: now - 30 * min, outgoing: false}},
     ];
     const groups = [{id: 'fam', display_name: 'Family', identities: [ident('fam', 'whatsapp', 'group')], labels: [], unread: 0, avatar: null, last: {text: 'Dinner?', timestamp: now - 5 * min, outgoing: false, sender: 'Pedro'}}];
@@ -53,6 +53,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
         const msgs = id === 'fam' ? [{id: 'f1', timestamp: now - 9 * min, outgoing: false, original: 'Who cooks?', sender: 'Pedro', msgtype: 'm.text', network: 'whatsapp', reactions: []}]
           : [{id: 'b1', timestamp: now - 40 * min, outgoing: false, original: 'on telegram', sender: 'Bo', msgtype: 'm.text', network: 'telegram', reactions: []},
              {id: 'b2', timestamp: now - 30 * min, outgoing: false, original: 'see you', sender: 'Bo', msgtype: 'm.text', network: 'whatsapp', reactions: [{key: '👍', count: 2, mine: true}]},
+             {id: 'b4', timestamp: now - 35 * min, outgoing: false, original: "> Reacted to @Owner's story\n\n[https://www.instagram.com/stories/x/1](https://www.instagram.com/stories/x/1?reel_id=1)", sender: 'Bo', msgtype: 'm.image', network: 'whatsapp', reactions: [], media: {mime: 'image/jpeg', w: 720, h: 1280, thumb: true}},
+             {id: 'b5', timestamp: now - 34 * min, outgoing: false, original: '', sender: 'Bo', msgtype: 'm.video', network: 'whatsapp', reactions: [], media: {mime: 'video/mp4', w: 1280, h: 720, duration: 12000, thumb: true}},
              {id: 'b3', timestamp: now - 29 * min, outgoing: true, original: 'look https://example.com/a', sender: 'me', msgtype: 'm.text', network: 'whatsapp', reactions: [], reply: {id: 'b2', sender: 'Bo', outgoing: false, text: 'see you', msgtype: 'm.text'},
               links: [{url: 'https://example.com/a', title: 'Example article', desc: 'A short description of the page', site: 'Example', image: true, w: 1200, h: 630}]}];
         return ok({person: {...pr, faces: id === 'fam' ? {Pedro: 'aaa111'} : {}}, messages: msgs, has_more: false, next_cursor: null, seq: 5, typing: []});
@@ -82,6 +84,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.ok(pics.some(x => x[0] === 'ana-w'));
     assert.equal(await page.locator('.u-person', {hasText: 'Bo Chen'}).locator('.u-net').count(), 2, 'merged chat shows both network badges');
     assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-net').count(), 1);
+    assert.match(await page.locator('.u-person', {hasText: 'Ana Souza'}).nth(1).textContent(), /Replied to your story/);
+    assert.equal(await page.locator('.u-person', {hasText: 'instagram.com'}).count(), 0, 'no raw links in previews');
     assert.equal(await page.locator('.u-chip', {hasText: 'Merged'}).count(), 1, 'Merged filter appears when a chat is merged');
     await shot('inbox');
 
@@ -117,7 +121,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     await pill.waitFor();
     assert.match(await pill.textContent(), /Replying on\s*Telegram/);
     const target = page.locator('.u-row[data-id=b2] .bubble-text, .u-row[data-id=b2] .u-message').first();
-    const tb = await target.boundingBox();
+    await target.scrollIntoViewIfNeeded(); const tb = await target.boundingBox();
     await page.mouse.click(tb.x + 10, tb.y + 8, {button: 'right'});
     const mb = await page.locator('.u-menu').boundingBox(), vh = viewport.height;
     // Right-click menu opens at the pointer (inside the window, even when Messenger is offset on the page).
@@ -139,6 +143,9 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     assert.match(await page.locator('.u-row[data-id=b3] .u-link-card').textContent(), /Example article/);
     await page.waitForFunction(() => document.querySelector('.u-row[data-id=b3] .u-link-img')?.complete);
     assert.equal(await page.locator('.u-row[data-id=b3] .u-quote').count(), 1);
+    assert.match(await page.locator('.u-row[data-id=b4] .u-story-tag').textContent(), /Reacted to your story/);
+    assert.equal(await page.locator('.u-row[data-id=b4]', {hasText: 'instagram.com/stories'}).count(), 0, 'no raw story markup');
+    await page.locator('.u-row[data-id=b5]').scrollIntoViewIfNeeded();
     await shot('previews');
     await page.locator('.u-thread-head .icon-button[aria-label="Chat options"]').click();
     await page.getByRole('menuitem', {name: 'Merge with…'}).click();
