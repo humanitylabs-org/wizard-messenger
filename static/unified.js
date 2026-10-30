@@ -156,10 +156,50 @@
     if (reason && !updateHold) updateHold = {reason, h: window.WizardApp.update.hold(reason)};
   }
   function inChat(on) { if (on) document.documentElement.dataset.inChat = ''; else delete document.documentElement.dataset.inChat; }
+  // Phone-width Inbox inside Wizard: QR, Search and Settings ride the window's own title bar
+  // (WizardApp.titlebar.set), so the Inbox drops its bottom toolbar and the filter chips sit right on the
+  // Wizard dock. Published only on the plain list (no chat, search or sheet open); a host without title-bar
+  // tools (a browser tab, an older Wizard) keeps Messenger's own compact toolbar. Desktop widths are unchanged.
+  const bar = {key: null, gen: 0, ok: false, queued: false};
+  const BAR_TOOLS = [['qr', 'My QR codes', 'QR'], ['search', 'Search', 'Search'], ['settings', 'Settings', 'Settings']];
+  const narrow = () => { const m = $('messenger'); return (m?.clientWidth || innerWidth) < 600; };
+  function onBarTool({id} = {}) {
+    if (!wantBar()) return;
+    if (id === 'qr') myCodes();
+    else if (id === 'search') { s.search = ''; renderList(); }
+    else if (id === 'settings') accounts();
+  }
+  function wantBar() {
+    const inbox = $('unified-inbox');
+    return !!(s.ready && narrow() && inbox && !inbox.hidden && inbox.dataset.view === 'list' && !s.person && s.search == null && !s.overlay && !$('u-overlay') && !('privateView' in document.documentElement.dataset));
+  }
+  function barMode(on) { document.documentElement.toggleAttribute('data-bar-tools', on); }
+  function syncBar() {
+    if (bar.queued) return; bar.queued = true;
+    Promise.resolve().then(() => {
+      bar.queued = false;
+      const tb = window.WizardApp?.titlebar;
+      if (!tb?.set) { barMode(false); return; }
+      const want = wantBar(), warn = !!document.querySelector('.u-settings-btn.warn');
+      // The own toolbar stays hidden under a sheet or menu on the list, so nothing jumps behind it.
+      barMode(bar.ok && narrow());
+      const label = document.querySelector('.u-settings-btn')?.getAttribute('aria-label') || 'Settings';
+      const tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
+      const key = JSON.stringify(tools); if (key === bar.key) return; bar.key = key;
+      const gen = ++bar.gen;
+      let pending; try { pending = Promise.resolve(tb.set(tools, onBarTool)); } catch { pending = Promise.resolve(false); }
+      pending.then(ok => ok === true, () => false).then(ok => {
+        if (gen !== bar.gen) return;
+        if (tools || !ok) bar.ok = ok;
+        if (!ok) bar.key = null; // try again on the next change (a host that connects late)
+        barMode(bar.ok && narrow());
+      });
+    });
+  }
   function closeOverlay() {
     connectorController?.close().catch(() => {}); connectorController = null;
     const answered = s.answer; s.answer = null; answered?.(false);
-    s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold();
+    s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold(); syncBar();
   }
   function back() {
     if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
@@ -451,6 +491,7 @@
     const on = accountsSeen.filter(p => p.state === 'connected'), broken = accountsSeen.filter(p => p.state === 'degraded');
     // The Inbox only carries a small dot on Settings when an account needs reconnecting.
     for (const b of document.querySelectorAll('.u-settings-btn')) { b.classList.toggle('warn', broken.length > 0); b.setAttribute('aria-label', broken.length ? 'Settings, ' + broken.map(p => p.label).join(', ') + ' needs reconnecting' : 'Settings'); }
+    syncBar();
     if (!box) return;
     box.replaceChildren();
     const strip = node('div', 'u-acct-strip');
@@ -2368,6 +2409,11 @@
     if (!s.person && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
   }
   addEventListener('online', wake); addEventListener('focus', wake); addEventListener('pageshow', e => { if (e.persisted) wake(); });
+  // Title-bar tools follow the view and the window width (see syncBar).
+  if (window.MutationObserver) { const inbox = $('unified-inbox'), mo = new MutationObserver(syncBar);
+    if (inbox) mo.observe(inbox, {attributes: true, attributeFilter: ['hidden', 'data-view']});
+    mo.observe(document.documentElement, {attributes: true, attributeFilter: ['data-private-view']});
+    if ($('messenger') && window.ResizeObserver) new ResizeObserver(syncBar).observe($('messenger')); }
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   // After a reload, come back to the same tab and chat (saved on pagehide).

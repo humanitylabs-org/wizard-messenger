@@ -748,10 +748,18 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
   #unified-inbox[data-view=list] > .u-header, #unified-inbox[data-view=search] > .u-header { order: 3; flex: 0 0 auto; height: auto;
     min-height: 56px; padding: 4px 8px max(4px, env(safe-area-inset-bottom)); }
   #unified-inbox[data-view=search] > .u-header { border-top: 1px solid var(--line); }
-  #unified-inbox[data-view=list] > .u-header h1 { flex: 1; font-size: 17px; padding-left: 8px; }
+  /* No "Inbox" word on a phone: just the three controls, at the right in thumb reach. */
+  #unified-inbox[data-view=list] > .u-header h1 { display: none; }
+  #unified-inbox[data-view=list] > .u-header { justify-content: flex-end; }
   #unified-inbox[data-view=list] > .u-header .u-head-actions { gap: 6px; }
   #unified-inbox[data-view=list] > .u-header .icon-button { width: 48px; height: 48px; }
   #unified-inbox[data-view=list] > .u-fab { bottom: calc(124px + env(safe-area-inset-bottom)); right: 16px; }
+  /* Inside Wizard those controls live in the window's title bar (WizardApp.titlebar.set, unified.js syncBar):
+   * the toolbar row goes and the filter chips are the last row, straight on top of the Wizard dock. */
+  html[data-bar-tools] #unified-inbox[data-view=list] > .u-header { display: none; }
+  html[data-bar-tools] #unified-inbox[data-view=list] > #u-filters { padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+  html[data-bar-tools] #unified-inbox[data-view=list] > .u-fab { bottom: calc(68px + env(safe-area-inset-bottom)); }
+  html[data-bar-tools]:not([data-in-chat]) .u-toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
   #unified-inbox > .error { order: 0; }
   /* Thread: the header stays on top (the composer owns the bottom), but its targets are full size. */
   .u-thread-head { padding-top: env(safe-area-inset-top); height: auto; min-height: 56px; }
