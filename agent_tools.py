@@ -42,7 +42,9 @@ TOOLS = [
           {'chat_id': _string('Chat id from messenger_list_chats'), 'text': _string('The draft message'),
            'channel_id': _string('Optional channel id (from the chat\'s channels) when a person has several networks')},
           ['chat_id', 'text']),
-    _tool('messenger_update_draft', 'Change the text (or channel) of a draft this agent created. Needs Draft-only or higher.',
+    _tool('messenger_update_draft', 'Change the text (or channel) of a draft this agent created, or of the owner\'s own '
+          'unsent draft in a chat (to finish or extend it). Keep the owner\'s words unless asked to change them. '
+          'Needs Draft-only or higher.',
           {'draft_id': _string('Draft id'), 'revision': _int('The draft\'s current revision'),
            'text': _string('New draft text'), 'channel_id': _string('Optional new channel id')},
           ['draft_id', 'revision', 'text']),
@@ -118,7 +120,9 @@ def _chat(person):
 
 def _draft(row):
     return {'id': row['id'], 'revision': row['revision'], 'state': row['state'], 'chat_id': row.get('person_id'),
-            'channel_id': row.get('identity_id'), 'text': row.get('text'), 'created_by': (row.get('created_by') or {}).get('name')}
+            'channel_id': row.get('identity_id'), 'text': row.get('text'), 'created_by': (row.get('created_by') or {}).get('name'),
+            'last_edited_by': (row.get('updated_by') or row.get('created_by') or {}).get('name'),
+            'attachments': [{'id': a['id'], 'name': a['name'], 'mime': a['mime'], 'bytes': a['bytes']} for a in row.get('attachments', [])]}
 
 
 def _unified(handler):

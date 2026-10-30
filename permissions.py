@@ -16,14 +16,15 @@ PUBLIC = {('GET', '/healthz'), ('GET', '/api/status'), ('GET', '/api/identity'),
 READS = [r'/api/(?:setup|contacts|invites|dms)', r'/api/dms/[^/]+/messages',
          r'/api/unified/(?:people|groups|directory|updates)',
          r'/api/unified/people/[^/]+', r'/api/unified/people/[^/]+/avatar', r'/api/unified/media/[^/]+',
-         r'/api/drafts(?:/[^/]+)?']
+         r'/api/drafts(?:/[^/]+)?', r'/api/drafts/[^/]+/attachments/[^/]+']
 WRITES = [r'/api/dms/[^/]+/(?:messages|retry)', r'/api/dms/[^/]+/messages/[0-9a-f]{64}/(?:edit|delete|react)',
           r'/api/unified/people/[^/]+/(?:preview|send|read|typing)',
           r'/api/unified/messages/[^/]+/(?:translate|react|edit|delete)',
           r'/api/drafts/[^/]+/(?:preview|send)']
 # Draft routes an agent may use at Draft-only: create, update and discard its OWN draft
 # (ownership is checked in drafts.py). Preview/send stay 'send', never 'draft'.
-DRAFT_WRITES = [(r'POST', r'/api/drafts(?:/[^/]+)?'), (r'DELETE', r'/api/drafts/[^/]+')]
+DRAFT_WRITES = [(r'POST', r'/api/drafts(?:/[^/]+)?'), (r'DELETE', r'/api/drafts/[^/]+'),
+                (r'PUT', r'/api/drafts/[^/]+/attachments'), (r'DELETE', r'/api/drafts/[^/]+/attachments/[^/]+')]
 
 def capability_for(method, path):
     """Route -> 'read' | 'draft' | 'send' | None (None = never for any bearer)."""
@@ -32,7 +33,7 @@ def capability_for(method, path):
     if method == 'POST' and matches(path, WRITES): return 'send'
     return None
 
-WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts agents mcp preview send read unread typing merge unmerge avatar merge-suggestions dismiss translate react edit delete labels sync view session ticket agent-access'.split())
+WORDS = set('api setup contacts invites dms messages retry accept decline unified people groups directory updates media drafts agents mcp preview send read unread typing merge unmerge avatar merge-suggestions dismiss translate react edit delete labels sync view session ticket agent-access attachments'.split())
 def route_shape(path):
     return '/' + '/'.join(p if p in WORDS else ':id' for p in path.split('/') if p)
 

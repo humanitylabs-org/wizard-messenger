@@ -573,7 +573,14 @@
       if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
       const bottom = node('span', 'u-chat-bottom');
       const typing = (store.typing[p.id] || []).length;
+      const dr = s.person !== p.id && !p.native ? (s.draftIndex?.[p.id] || ((s.drafts[p.id] || '').trim() ? {text: s.drafts[p.id]} : null)) : null;
       if (typing) bottom.append(node('span', 'u-snippet typing', 'typing…'));
+      else if (dr) {
+        // A waiting draft (yours or your Wizard's) leads the row, like every messenger shows an unsent reply.
+        const n = (dr.attachments || []).length, line = node('span', 'u-snippet draft');
+        line.append(node('span', 'u-snippet-who', 'Draft: '), (dr.text || '').trim().split('\n')[0] || (n ? n + (n > 1 ? ' attachments' : ' attachment') : ''));
+        bottom.append(line);
+      }
       else if (p.last) {
         // Own last message always reads "You:", never the owner's display name; groups name the other sender.
         const who = p.last.outgoing ? 'You' : groups && p.last.sender ? nameOf(p.last.sender).split(' ')[0] : '';
@@ -869,7 +876,7 @@
     const pill = iconButton('down', 'Scroll to newest', () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'}), 'u-down'); pill.hidden = true;
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
-    root.append(agentDraftStrip(id), composer(id, p));
+    root.append(composer(id, p));
     view.selection = messageSelection(root, () => albumPosts(store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
   }
   // Network-neutral projection: only adjacent parts with the same source and sender join.
@@ -1302,6 +1309,147 @@
   function startReply(m) { view.edit = null; view.reply = m; if (m.network) view.useNetwork?.(m.network); view.paintBar?.(); view.draft?.focus(); }
   function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = m.original; view.grow?.(); view.paintBar?.(); view.draft.focus(); }
 
+  // ---------- server drafts: the composer IS the draft ----------
+  // Whatever is typed or attached in a chat's composer autosaves to one server-side draft, so an agent with
+  // Draft-only access can see it, extend it or attach files, and the owner keeps editing and sends from the same
+  // composer. Agents never send. Edits are fenced by revision: a change made elsewhere is never overwritten silently.
+  const SD_SAVE_MS = 700, SD_POLL_MS = 6000;
+  async function draftRaw(path, method, blob, query) {
+    const response = await fetch(path + '?' + new URLSearchParams(query), {method, credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
+    let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
+    if (!response.ok || !env.ok) { const e = new Error(env.error?.message || 'Could not attach that file'); e.code = env.error?.code; throw e; }
+    return env.result;
+  }
+  const draftsFor = (rows, id) => rows.filter(d => d.person_id === id && d.state === 'draft').sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  async function refreshDraftIndex() {
+    let rows; try { rows = (await api('api/drafts')).drafts || []; } catch { return; }
+    const next = {}; for (const d of rows) if (d.state === 'draft' && (!next[d.person_id] || (d.updated || 0) > (next[d.person_id].updated || 0))) next[d.person_id] = d;
+    const key = JSON.stringify(Object.entries(next).map(([k, d]) => [k, d.revision, d.text, (d.attachments || []).length]));
+    if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if (!s.person && s.tab === 'people') drawList(); }
+  }
+  function serverDraft(id, ui) {
+    const sd = {row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false};
+    const by = row => row?.updated_by || row?.created_by;
+    const byAgent = row => by(row) && by(row).id !== 'owner';
+    const dirty = () => sd.row ? ui.draft.value !== sd.saved || ui.channel.value !== sd.row.identity_id : !!ui.draft.value.trim();
+    const alive = () => sd.alive && ui.form.isConnected && s.person === id;
+    const note = () => {
+      if (sd.conflict) {
+        const box = node('div', 'u-draft-note conflict');
+        box.append(node('span', '', (by(sd.conflict)?.name || 'Someone') + ' changed this draft while you were typing.'),
+          button('Use theirs', () => { const r = sd.conflict; sd.conflict = null; apply(r); }, 'secondary'),
+          button('Keep mine', () => action(async () => { const mine = ui.draft.value, row = sd.conflict; await apply(row); ui.draft.value = mine; s.drafts[id] = mine; saveDrafts(); ui.grow(); ui.paintBar(); await save(); }), 'secondary'));
+        return box;
+      }
+      if (sd.loadError || sd.uploadError) return node('div', 'u-draft-note conflict', 'An attachment could not be saved or opened. Remove it or reload the draft before sending.');
+      if (sd.row && byAgent(sd.row) && !dirty()) {
+        const box = node('div', 'u-draft-note');
+        box.append(node('span', '', 'Drafted by ' + (by(sd.row).name || 'your Wizard') + ' · not sent. Edit it here and send when ready.'),
+          iconButton('close', 'Discard draft', () => action(async () => {
+            if (!await ask({title: 'Discard this draft?', body: 'Nothing is sent.', yes: 'Discard', no: 'Keep'})) return;
+            await clear(); ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; ui.grow(); ui.paintBar();
+          })));
+        return box;
+      }
+      return null;
+    };
+    async function itemFor(a, rid) {
+      const r = await fetch('api/drafts/' + rid + '/attachments/' + a.id, {credentials: 'same-origin', cache: 'no-store'});
+      if (!r.ok) throw new Error('Could not load ' + a.name);
+      const blob = await r.blob(); const f = new File([blob], a.name, {type: a.mime});
+      return /^image\/(jpeg|png|gif|webp)$/.test(a.mime) ? {...await preparePhoto(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id}
+        : {file: true, blob: f, key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id};
+    }
+    async function apply(row) {
+      sd.row = row; sd.saved = row.text; sd.conflict = null; sd.loadError = false;
+      if (!view.edit) { ui.draft.value = row.text; s.drafts[id] = row.text; saveDrafts(); }
+      if (row.identity_id && [...ui.channel.options].some(o => o.value === row.identity_id)) { ui.channel.value = row.identity_id; ui.paintVia(); }
+      const want = row.attachments || [], have = view.attach || [];
+      let tray = have.filter(it => !it.sid || want.some(a => a.id === it.sid));
+      for (const a of want) if (!tray.some(it => it.sid === a.id)) { try { tray.push(await itemFor(a, row.id)); } catch (e) { sd.loadError = true; error(e); } }
+      if (!alive()) return;
+      view.attach = tray.length ? tray : null; ui.grow(); ui.paintBar();
+    }
+    async function save() {
+      clearTimeout(sd.timer); sd.timer = null;
+      if (sd.busy) { await sd.busy.catch(() => {}); if (sd.timer) return; }
+      if (view.edit || sd.conflict) return;
+      const run = (async () => {
+        const text = ui.draft.value, identity_id = ui.channel.value, files = (view.attach || []).some(it => it.sid);
+        if (!identity_id) return;
+        if (!sd.row) {
+          if (!text.trim()) return;
+          const r = await api('api/drafts', {method: 'POST', body: {person_id: id, identity_id, text}});
+          sd.row = r.draft; sd.saved = text;
+        } else if (!text.trim() && !files && !(view.attach || []).length) {
+          await api('api/drafts/' + sd.row.id, {method: 'DELETE', body: {revision: sd.row.revision}}); sd.row = null; sd.saved = null;
+        } else if (text !== sd.row.text || identity_id !== sd.row.identity_id) {
+          const r = await api('api/drafts/' + sd.row.id, {method: 'POST', body: {revision: sd.row.revision, person_id: id, identity_id, text}});
+          sd.row = r.draft; sd.saved = text;
+        }
+      })();
+      sd.busy = run;
+      try { await run; }
+      catch (e) {
+        if (e.code === 'draft_exists') { try { const rows = (await api('api/drafts')).drafts || []; sd.conflict = draftsFor(rows, id)[0] || null; } catch { /* next poll */ } }
+        else if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; } catch { /* next poll */ } }
+        else if (e.code === 'not_found' || e.code === 'draft_closed') { sd.row = null; sd.saved = null; }
+        else if (e.code !== 'server_restarting') error(e);
+      } finally { if (sd.busy === run) sd.busy = null; }
+      if (alive()) { ui.paintBar(); if (!sd.conflict && dirty()) schedule(); } refreshDraftIndex();
+    }
+    const schedule = () => { clearTimeout(sd.timer); sd.timer = setTimeout(save, SD_SAVE_MS); };
+    async function ensure() { if (!sd.row) { if (!ui.draft.value.trim()) { const r = await api('api/drafts', {method: 'POST', body: {person_id: id, identity_id: ui.channel.value, text: ''}}); sd.row = r.draft; sd.saved = ''; } else await save(); } return sd.row; }
+    // A photo or file put in the tray is stored with the draft at once, so it is there on every device and for agents.
+    async function attach(items) {
+      for (const it of items) {
+        try {
+          await sd.busy?.catch(() => {}); const row = await ensure(); if (!row) return;
+          const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
+          sd.row = r.draft; it.sid = r.draft.attachments[r.draft.attachments.length - 1].id;
+        } catch (e) { sd.uploadError = true; if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; ui.paintBar(); } catch { /* next poll */ } } else error(e); ui.paintBar(); }
+      }
+      refreshDraftIndex();
+    }
+    async function detach(it) {
+      // Removing a failed local upload clears the block; any other bad attachment remains visible in the tray.
+      if (!it.sid) { sd.uploadError = false; ui.paintBar(); return; }
+      if (!sd.row) return;
+      try { const r = await api('api/drafts/' + sd.row.id + '/attachments/' + it.sid, {method: 'DELETE', body: {revision: sd.row.revision}}); sd.row = r.draft; }
+      catch (e) { if (e.code !== 'not_found') error(e); }
+      if (!ui.draft.value.trim() && !(view.attach || []).length) save();
+    }
+    // Sent (or emptied): the draft is done. Delete it so it never comes back.
+    async function clear() {
+      clearTimeout(sd.timer); sd.timer = null; await sd.busy?.catch(() => {});
+      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; if (!row) return;
+      try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); }
+      catch (e) { if (e.code !== 'draft_changed' && e.code !== 'not_found') error(e); /* never delete someone else's newer revision */ }
+      refreshDraftIndex();
+    }
+    async function check(first) {
+      if (!alive()) { clearInterval(sd.poll); return; }
+      let rows; try { rows = (await api('api/drafts')).drafts || []; } catch { return; }
+      if (!alive() || sd.busy || sd.timer || sd.sendPending) return;
+      const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
+      const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) s.bindDraft = null;
+      const latest = pick || mine || (!sd.row && draftsFor(rows, id)[0]);
+      if (!latest) {
+        if (sd.row && !dirty()) { sd.row = null; sd.saved = null; ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = (view.attach || []).filter(it => !it.sid); if (!view.attach.length) view.attach = null; ui.grow(); ui.paintBar(); }
+        else if (first && !sd.row && ui.draft.value.trim()) schedule(); // a draft kept only on this device moves to the server
+        return;
+      }
+      if (sd.row && latest.id === sd.row.id && latest.revision === sd.row.revision) return;
+      if (dirty() && !(first && !sd.row && ui.draft.value === latest.text)) { sd.conflict = latest; ui.paintBar(); return; }
+      await apply(latest);
+    }
+    sd.poll = setInterval(() => check(false), SD_POLL_MS);
+    Object.assign(sd, {schedule, save, attach, detach, clear, note, check, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
+    setTimeout(() => check(true), 0);
+    return sd;
+  }
+
   // ---------- composer: text, photo, voice; optimistic and idempotent ----------
   function composer(id, p) {
     const form = node('form', 'u-composer');
@@ -1312,14 +1460,14 @@
     // Merged chats: always say where the reply goes ("Replying on WhatsApp ▾"); tap to pick another network.
     // Replying to a message switches to the network that message came from.
     const via = button('', () => {
-      actionMenu(via, 'Reply on', (p.identities || []).map(i => ({label: netLabel(i.network) + ' · ' + i.label + (i.id === channel.value ? '  ✓' : ''), icon: 'send', run: () => { channel.value = i.id; paintVia(); }})));
+      actionMenu(via, 'Reply on', (p.identities || []).map(i => ({label: netLabel(i.network) + ' · ' + i.label + (i.id === channel.value ? '  ✓' : ''), icon: 'send', run: () => { channel.value = i.id; paintVia(); view.sd?.schedule(); }})));
     }, 'u-via-pick'); via.type = 'button'; via.hidden = (p.identities || []).length < 2;
     const paintVia = () => {
       const i = (p.identities || []).find(x => x.id === channel.value) || p.identities?.[0]; if (!i) return;
       via.replaceChildren(node('span', 'u-via-lead', 'Replying on'), netBadge(i.network, 'u-via-icon'), node('strong', '', netLabel(i.network)), node('span', 'u-via-caret', '▾'));
       via.setAttribute('aria-label', 'Replying on ' + netLabel(i.network) + '. Change');
     };
-    view.useNetwork = net => { const i = (p.identities || []).find(x => x.network === net); if (i && i.id !== channel.value) { channel.value = i.id; paintVia(); } };
+    view.useNetwork = net => { const i = (p.identities || []).find(x => x.network === net); if (i && i.id !== channel.value) { channel.value = i.id; paintVia(); view.sd?.schedule(); } };
     paintVia();
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => bridged(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
@@ -1331,13 +1479,14 @@
     const row = node('div', 'u-compose-row'); row.append(attach, field, send, mic, file);
     const paintBar = () => {
       bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach || [];
-      bar.hidden = !target && !a.length;
+      const note = view.sd?.note?.(); if (note) bar.append(note);
+      bar.hidden = !target && !a.length && !note;
       if (target) {
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
       // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
-      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); }})); bar.append(strip); }
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }})); bar.append(strip); }
     };
     const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
     // The thread rebuilds its composer once the person loads: keep photos/reply already in the tray visible.
@@ -1345,14 +1494,14 @@
     let typingAt = 0, idle = null;
     const typing = on => { if (!telegramOnly) return; call('people/' + id + '/typing', {typing: on}).catch(() => {}); };
     draft.oninput = () => {
-      s.drafts[id] = view.edit ? s.drafts[id] : draft.value; grow(); saveDrafts(); hold();
+      s.drafts[id] = view.edit ? s.drafts[id] : draft.value; grow(); saveDrafts(); hold(); if (!view.edit) view.sd?.schedule(); else paintBar();
       if (draft.value && Date.now() - typingAt > 4000) { typingAt = Date.now(); typing(true); }
       clearTimeout(idle); idle = setTimeout(() => { if (typingAt) { typingAt = 0; typing(false); } }, 5000);
     };
     // Several selected photos are one post and one Telegram media group (up to 10).
     // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
     const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
-    const addFiles = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB'); continue; } ready.push(PHOTO.test(f.type) ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); } catch (e) { error(e); } };
+    const addFiles = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB'); continue; } ready.push(PHOTO.test(f.type) ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); if (view.sd) view.sd.uploading = view.sd.attach(ready); } catch (e) { error(e); } };
     file.onchange = () => { const picked = [...file.files]; file.value = ''; if (!telegramOnly) return toast('Files can be sent in Telegram, WhatsApp and Signal chats'); addFiles(picked); };
     const takeFiles = files => {
       if (!files.length || view.edit) return;
@@ -1364,20 +1513,32 @@
     // implementation, shared by many apps"). Messenger only decides what an attached file becomes.
     window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takeFiles, onSubmit: () => submit(), notice: msg => toast(msg)});
     form.onsubmit = e => { e.preventDefault(); submit(); };
-    function submit() {
+    async function submit() {
+      if (view.sd?.conflict) return toast('Choose which draft to keep first');
+      if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
       const text = draft.value.trim(), a = view.attach || [];
       if (!text && !a.length) return;
       if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }
+      // Do not cross the provider boundary until server-side draft saves/uploads settle. If a concurrent
+      // edit wins, stop here instead of sending an old copy or deleting the other writer's changes.
+      await view.sd?.save();
+      await view.sd?.uploading;
+      if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
+      if (view.sd?.conflict) return toast('This draft changed elsewhere. Choose which version to keep.');
       if (reviewed && !a.length) return reviewSend(id, p, text, channel.value);
       if (typingAt) { typingAt = 0; typing(false); }
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
-      // Photos go first as one post (album) with the text; every other file follows as its own message. With only
-      // files, the text rides with the first one (sent right after it, as bridges show a file's body as its name).
+      // Only clear the saved draft after provider acknowledgement for every post, never on submit.
+      // A failed/ambiguous send retains the draft; the pending bubble handles idempotent retry.
       const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
-      if (!a.length) queueSend(id, {text, photo: null, reply, identity_id: channel.value});
-      else if (photos.length === 1) queueSend(id, {text, photo: photos[0], reply, identity_id: channel.value});
-      else if (photos.length) queueSend(id, {text, photos, reply, identity_id: channel.value});
-      files.forEach((f, i) => queueSend(id, {text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
+      const jobs = [];
+      if (!a.length) jobs.push({text, photo: null, reply, identity_id: channel.value});
+      else if (photos.length === 1) jobs.push({text, photo: photos[0], reply, identity_id: channel.value});
+      else if (photos.length) jobs.push({text, photos, reply, identity_id: channel.value});
+      files.forEach((f, i) => jobs.push({text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
+      let delivered = 0;
+      const sendingDraft = view.sd; if (sendingDraft) sendingDraft.sendPending = true;
+      for (const job of jobs) queueSend(id, {...job, onDelivered: () => { if (++delivered === jobs.length) { sendingDraft?.clear(); if (sendingDraft) sendingDraft.sendPending = false; } }, onFailure: () => { if (sendingDraft) sendingDraft.sendPending = false; }});
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -1411,6 +1572,7 @@
     }
     Object.assign(view, {draft, grow, paintBar});
     form.append(bar, via, channel, row); grow(); paintBar();
+    view.sd?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia});
     return form;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
@@ -1556,6 +1718,7 @@
         if (job.voice) { upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
         const r = await call('people/' + id + '/send', {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
         if (r.message) mergeMessages(id, r.messages || [r.message]);
+        job.onDelivered?.();
         if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
@@ -1570,7 +1733,7 @@
         }
         m.waited = 0;
         m.pending = false; m.failed = offline(e) ? 'Messenger was restarting' : e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
-        store.pending--; hold(); // failed: shown with Retry; no longer blocks updates
+        job.onFailure?.(); store.pending--; hold(); // failed: shown with Retry; no longer blocks updates
       }
       if (s.person === id) paintThread();
     };
@@ -1591,7 +1754,7 @@
       const reply = view.reply;
       const confirmSend = original => action(async () => {
         const r = await call('people/' + id + '/send', {preview_id: preview.id, send_original: original, reply_to: reply?.id || null, client_id: 'w' + uid()});
-        if (s.drafts[id] === preview.original || (s.drafts[id] || '').trim() === preview.original) { s.drafts[id] = ''; saveDrafts(); if (view.draft) { view.draft.value = ''; view.grow(); } }
+        if (s.drafts[id] === preview.original || (s.drafts[id] || '').trim() === preview.original) { s.drafts[id] = ''; saveDrafts(); if (view.draft) { view.draft.value = ''; view.grow(); } view.sd?.clear(); }
         view.reply = null; view.paintBar?.(); closeOverlay();
         if (r.message) { mergeMessages(id, [r.message]); paintThread(true); }
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
@@ -1909,7 +2072,7 @@
       legacy.append(node('p', 'helper', 'The shared key Wizard uses for this app. Prefer giving each agent its own key.'),
         levelPicker(app, st, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
       box.append(legacy);
-      box.append(node('p', 'helper', 'App permissions only: an agent with host-admin access to this server can bypass them. Same-server isolation is supported.'), button('Review agent drafts', agentDrafts, 'secondary wide'));
+      box.append(node('p', 'helper', 'App permissions only: an agent with host-admin access to this server can bypass them. Same-server isolation is supported.'), button('Saved drafts', agentDrafts, 'secondary wide'));
       if (st.log.length) {
         const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
         const list = node('ul', 'u-access-log');
@@ -1968,10 +2131,10 @@
     try {
       const result = await api('api/drafts');
       if (s.overlay !== 'Agent drafts') return;
-      if (!result.drafts.length) sheet.append(node('p', 'helper', 'No agent drafts yet. Nothing has been sent.'));
+      if (!result.drafts.length) sheet.append(node('p', 'helper', 'No saved drafts. Nothing has been sent.'));
       for (const draft of result.drafts) {
         const row = node('div', 'u-account');
-        row.append(node('p', '', draft.text), node('p', 'helper', (draft.created_by?.name ? 'From ' + draft.created_by.name + ' · ' : '') + draft.state + ' · revision ' + draft.revision), button('Review draft', () => reviewAgentDraft(draft), 'secondary'));
+        row.append(node('p', '', draft.text), node('p', 'helper', (draft.created_by?.name ? 'From ' + draft.created_by.name + ' · ' : '') + draft.state + ' · revision ' + draft.revision), draft.state === 'draft' && !draft.export ? button('Open in chat', () => { closeOverlay(); s.bindDraft = draft.id; openPerson(draft.person_id); }, 'secondary') : button('Review draft', () => reviewAgentDraft(draft), 'secondary'));
         sheet.append(row);
       }
     } catch (e) { sheet.append(node('p', 'error', e.message)); }
@@ -2200,7 +2363,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;

@@ -26,6 +26,7 @@ server = ViewServer(('127.0.0.1', port), engine, fx.TOKEN, [origin])
 inbox = UnifiedInbox(tmp, engine); server.unified = inbox
 sent = []
 inbox.mx = Mock(side_effect=lambda *a, **k: (sent.append(a), {'event_id': '$sent%d' % len(sent)})[1])
+inbox.matrix_upload = Mock(return_value={'content_uri': 'mxc://example.test/staged'})  # synthetic media, never a live provider
 now = int(time.time() * 1000)
 alice = inbox.store.identity('telegram', '!alice', 'Alice Example')
 bob = inbox.store.identity('messenger', 'groupbob', 'Bob Wizard')

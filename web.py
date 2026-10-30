@@ -414,13 +414,18 @@ class ViewHandler(Handler):
                 raise EngineError('not_configured', 'Unified inbox is not enabled', 503)
             suffix = path.split('/')[3:]
             caller = self._caller()
-            result = self.service.drafts.dispatch(method, suffix, self._body() if method in ('POST', 'DELETE') else {},
-                self.service.unified, owner=not bool(self.headers.get('Authorization')),
+            raw = self._raw_body() if method == 'PUT' else None
+            body = self._body() if method in ('POST', 'DELETE') else {}
+            result = self.service.drafts.dispatch(method, suffix, body,
+                self.service.unified, owner=not bool(self.headers.get('Authorization')), raw=raw,
+                query=parse_qs(urlsplit(self.path).query),
                 authority=self.service.remote_authority,
                 remote_required=self.service.remote_required or bool(self.service.remote_authority.endpoint),
                 # Each key's OWN level decides; Draft-only never reaches preview/send.
                 can_send=caller is not None and self._caller_mode(caller) == 'draft_and_send',
                 actor=None if caller is None else ({'id': 'agent:' + caller[1]['id'], 'name': caller[1]['name']} if caller[0] == 'agent' else None))
+            if isinstance(result, Blob):
+                self._blob(result); return None, None
             return 200, {'ok': True, 'result': result}
         if path.startswith('/api/unified/'):
             self._authorize()

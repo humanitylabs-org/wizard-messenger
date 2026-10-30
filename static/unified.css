@@ -715,3 +715,10 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 .u-contact-link { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 14px; background: var(--raised); font-size: 14px; color: var(--ink-2); }
 .u-contact-link button { flex: 0 0 auto; min-height: 36px; }
 .u-merge-why { color: var(--link); font-size: 12.5px; font-weight: 600; }
+
+/* Server draft in the composer: who drafted it, and the rare edit conflict. */
+.u-draft-note { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; border: 1px dashed var(--accent); background: var(--accent-soft); font-size: 13px; color: var(--ink-2); }
+.u-draft-note span { flex: 1; min-width: 0; }
+.u-draft-note button.secondary { padding: 4px 10px; min-height: 0; font-size: 13px; }
+.u-draft-note.conflict { border-style: solid; }
+.u-snippet.draft .u-snippet-who { color: var(--danger, var(--accent)); font-weight: 600; }
