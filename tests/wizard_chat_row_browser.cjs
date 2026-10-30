@@ -89,7 +89,12 @@ async function scenario(browser, width, mirrored) {
     assert.equal(requests.filter(([p]) => p.startsWith('api/dms/' + dm.group_id + '/messages')).length >= 0, true);
   } else {
     await page.locator('#messages', {hasText: 'Wizard hello'}).waitFor();
-    await page.locator('#chat-back').click();
+    if (width >= 900) {
+      // Desktop split: the native thread sits beside the list; Back (no header button there) returns to the empty pane.
+      assert.equal(await page.locator('#u-pane-list').isVisible(), true, 'list stays beside the native thread');
+      assert.equal(await page.locator('#chat-back').isVisible(), false, 'no Back button in the split');
+      await page.evaluate(() => window.__back.back()); await page.locator('#u-pane-thread .u-pick').waitFor();
+    } else await page.locator('#chat-back').click();
     await row.waitFor();
   }
   assert.equal(requests.filter(([p, m]) => m === 'POST' && /(send|messages)$/.test(p)).length, 0, 'nothing sent');

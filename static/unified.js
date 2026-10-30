@@ -146,7 +146,10 @@
     const el = node('span', 'net-badge text' + (cls ? ' ' + cls : ''), b.mark); el.style.background = b.color; el.dataset.network = n; el.title = netLabel(n); return el;
   }
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
-  const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
+  // Two panes side by side (desktop split) each carry a notice line: errors go to the sheet if one is open,
+  // else to the pane the owner is working in.
+  const errorBox = () => $('u-overlay')?.querySelector('#u-error') || (split.on ? (s.person ? $('u-pane-thread') : $('u-pane-list'))?.querySelector('#u-error') : null) || $('u-error');
+  const error = e => { const el = errorBox(); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
   // Release a "Saving" hold taken mid-action as soon as the action ends, or it would block Wizard reloads until the next hold() call.
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; hold(); } }
   // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
@@ -209,7 +212,7 @@
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
-    else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); renderList(); }
+    else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); if (split.on && hasListPane()) { emptyPane(); markSelected(); } else renderList(); }
     else if (s.search != null) { s.search = null; s.epoch++; renderList(); }
     else { setLowView(false); s.epoch++; renderList(); }
     return true;
@@ -231,8 +234,63 @@
     const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'alert'); panel.append(notice);
     panel.focus(); hold(); return panel;
   }
+  // ---------- desktop split (Miguel, 31 Oct 2026) ----------
+  // A wide Messenger window (desktop or a wide tablet) shows the chat list and the open chat side by side, like
+  // Chats' session list beside its thread: the list stays put (scroll, filters, search) while chats open on the
+  // right. Sized by Messenger's own window (#messenger), never the device. Narrower windows keep the one-pane
+  // Inbox exactly as before (list or thread), including the phone title-bar tools.
+  const SPLIT_MIN = 900;
+  const split = {on: false, threadGen: 0, listGen: 0};
+  const wideNow = () => { const m = $('messenger'); return !!m && (m.clientWidth || innerWidth) >= SPLIT_MIN; };
+  function panes() {
+    const root = $('unified-inbox');
+    let list = $('u-pane-list'), thread = $('u-pane-thread');
+    if (!list || list.parentNode !== root || !thread || thread.parentNode !== root) {
+      root.replaceChildren();
+      list = node('div', 'u-pane u-pane-list'); list.id = 'u-pane-list'; list.setAttribute('aria-label', 'Chats');
+      thread = node('section', 'u-pane u-pane-thread'); thread.id = 'u-pane-thread'; thread.setAttribute('aria-label', 'Conversation');
+      root.append(list, thread); fillEmpty(thread);
+    }
+    return {root, list, thread};
+  }
+  const hasListPane = () => !!$('u-pane-list')?.querySelector('.u-list');
+  function fillEmpty(thread) {
+    thread.replaceChildren(); thread.dataset.view = 'empty';
+    const box = node('div', 'u-pick'); const mark = node('span', 'u-pick-mark'); mark.append(icon('inbox'));
+    box.append(mark, node('p', '', 'Pick a chat'), node('span', 'helper', 'Choose a conversation on the left to read and reply here.'));
+    thread.append(box);
+  }
+  // The right pane with nothing open. The old composer's pending draft save still runs (see composer()).
+  function emptyPane() { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread); root.dataset.view = s.search != null ? 'search' : 'list'; }
+  // Highlight the open chat's row in place: no list rebuild, so the scroll position stays where it was.
+  function markSelected() {
+    const list = $('u-pane-list'); if (!list) return;
+    for (const el of list.querySelectorAll('.u-person[data-pid]')) {
+      const on = !!(split.on && (el.dataset.nativeGroup ? s.native && s.nativeGroup === el.dataset.nativeGroup : el.dataset.pid === s.person));
+      el.classList.toggle('selected', on); if (on) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
+    }
+  }
+  // Crossing the width line keeps the open chat: wide shows list + chat, narrow shows just that chat.
+  function relayout() {
+    const want = wideNow(); if (want === split.on) return;
+    split.on = want; document.documentElement.toggleAttribute('data-split', want);
+    const root = $('unified-inbox');
+    if (!root || !s.ready || !document.documentElement.dataset.inboxTab || s.tab === 'messenger') { if (root && !want) { delete root.dataset.split; } return; }
+    if (want) root.dataset.split = ''; else delete root.dataset.split;
+    root.replaceChildren();
+    if (s.native) { root.hidden = !want; if (want) { renderList(); } return; }
+    if (want) { renderList(); if (s.person) reopenThread(); }
+    else if (s.person) reopenThread(); else renderList();
+  }
+  // Re-draw the open chat in its new place from memory (no refetch); the draft carries over through the server draft.
+  function reopenThread() {
+    const id = s.person, t = store.threads[id];
+    if (!t) { openPerson(id); return; }
+    els.clear(); buildThread(id, t.person); paintThread(true);
+  }
   function listBase(title) {
-    const root = $('unified-inbox'); root.replaceChildren(); root.dataset.view = s.search != null ? 'search' : 'list';
+    const root = split.on ? panes().list : $('unified-inbox'); root.replaceChildren(); root.dataset.view = s.search != null ? 'search' : 'list';
+    if (split.on) { const r = $('unified-inbox'); r.dataset.split = ''; if (!s.person) r.dataset.view = root.dataset.view; }
     const head = node('header', 'u-header');
     if (s.search != null) {
       const field = node('input', 'u-search'); field.type = 'search'; field.placeholder = 'Search'; field.setAttribute('aria-label', 'Search ' + title.toLowerCase()); field.value = s.search;
@@ -248,9 +306,10 @@
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   function threadBase(name, subtitle, onInfo, network, picture = '') {
-    const root = $('unified-inbox'); root.replaceChildren(); root.dataset.view = 'thread';
+    const root = split.on ? panes().thread : $('unified-inbox'); root.replaceChildren(); root.dataset.view = 'thread';
+    if (split.on) $('unified-inbox').dataset.view = 'thread';
     const head = node('header', 'u-header u-thread-head');
-    head.append(iconButton('back', 'Back', back));
+    head.append(iconButton('back', 'Back', back, 'u-back')); // hidden in the desktop split: the list is right there
     const who = button('', onInfo || null, 'u-who'); who.disabled = !onInfo;
     const text = node('span', 'u-who-text'); text.append(node('strong', '', name)); if (subtitle) text.append(node('span', '', subtitle));
     const face = node('span', 'u-av-wrap small'); face.append(withPicture(avatar(name, 'small'), picture));
@@ -417,7 +476,7 @@
     for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
     if (s.person && store.threads[s.person]) { paintHead(); paintThread(); }
-    else if (!s.person && s.tab !== 'messenger') drawList();
+    if ((!s.person || split.on) && s.tab !== 'messenger') drawList();
     persist();
   }
   async function feed() {
@@ -450,9 +509,12 @@
     // The older of the two cursors, so the change feed cannot skip anything between the two reads.
     if (!store.seq && rows.length) { store.seq = Math.min(...rows.map(r => r.seq || 0)); feed(); }
   }
+  // Whether a list load that started earlier may still paint: in the split the open chat never cancels it.
+  const listLive = (epoch, gen) => split.on ? gen === split.listGen && s.ready : s.epoch === epoch && !s.person;
   async function renderList() {
-    const epoch = ++s.epoch;
+    const epoch = ++s.epoch, gen = ++split.listGen;
     const root = listBase('Inbox');
+    if (split.on && !s.person && !s.native && $('u-pane-thread')?.dataset.view !== 'empty') emptyPane();
     if (s.search == null) root.append(filterChips()); // account status lives in Settings, not on top of the Inbox
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
     if (s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
@@ -462,18 +524,19 @@
     if (!s.ready) return;
     try {
       await loadLists();
-      if (s.epoch === epoch && !s.person) drawList();
+      if (listLive(epoch, gen)) drawList();
       persist();
     } catch (e) {
       // Never leave skeletons on screen: the list asks again by itself (a restart or a refused burst passes).
-      error(e); if (s.ready) setTimeout(() => { if (s.ready && s.epoch === epoch && !s.person && !store.lists.people) renderList(); }, 2500 + Math.random() * 1500);
+      error(e); if (s.ready) setTimeout(() => { if (s.ready && listLive(epoch, gen) && !store.lists.people) renderList(); }, 2500 + Math.random() * 1500);
     }
   }
   // A saved list painted first; the server's copy replaces it, then the change feed keeps it current.
   async function freshen(_key, epoch) {
+    const gen = split.listGen;
     try {
       await loadLists(true);
-      if (s.epoch === epoch && !s.person) drawList();
+      if (listLive(epoch, gen)) drawList();
       persist();
     } catch (e) { error(e); if (s.ready) setTimeout(() => { if (s.ready && !store.seq) freshen(null, s.epoch); }, 3000 + Math.random() * 1500); }
   }
@@ -579,10 +642,10 @@
   }
   async function loadSearch(generation = searchGeneration, cursor = null) {
     const query = s.search, epoch = s.epoch;
-    if (!s.ready || s.person || query == null || !query.trim() || generation !== searchGeneration) return;
+    if (!s.ready || (s.person && !split.on) || query == null || !query.trim() || generation !== searchGeneration) return;
     try {
       const r = await call('search?' + new URLSearchParams({q: query, limit: '50', ...(cursor ? {cursor} : {})}));
-      if (generation !== searchGeneration || epoch !== s.epoch || s.person || query !== s.search || !s.ready) return;
+      if (generation !== searchGeneration || (!split.on && (epoch !== s.epoch || s.person)) || query !== s.search || !s.ready) return;
       searchView.rows.push(...r.messages); searchView.cursor = r.next_cursor; searchView.loading = false; drawSearch();
     } catch (e) {
       if (generation !== searchGeneration || epoch !== s.epoch || query !== s.search) return;
@@ -590,10 +653,11 @@
     }
   }
   function drawSearch() {
-    const list = $('unified-inbox').querySelector('.u-list'); if (!list || s.person || s.search == null) return;
+    const list = (split.on ? $('u-pane-list') : $('unified-inbox'))?.querySelector('.u-list'); if (!list || (s.person && !split.on) || s.search == null) return;
     list.replaceChildren();
     for (const m of searchView.rows) {
       const row = button('', () => action(async () => {
+        if (split.on) { for (const el of list.querySelectorAll('.u-person.selected')) { el.classList.remove('selected'); el.removeAttribute('aria-current'); } row.classList.add('selected'); row.setAttribute('aria-current', 'true'); }
         await openPerson(m.person_id);
         const t = store.threads[m.person_id];
         while (s.person === m.person_id && t && !t.messages.some(x => x.id === m.message_id) && t.has_more && t.next_cursor) await fetchOlder(t, m.person_id, call);
@@ -616,7 +680,7 @@
       if (searchView.query !== s.search) scheduleSearch(); else drawSearch();
       return;
     }
-    const root = $('unified-inbox'), list = root.querySelector('.u-list'); if (!list || s.person) return;
+    const list = (split.on ? $('u-pane-list') : $('unified-inbox'))?.querySelector('.u-list'); if (!list || (s.person && !split.on)) return;
     const twins = wizardTwins();
     const everyone = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
       .map(p => { const t = twins.twinOf.get(p.id); return t ? {...p, muted: !!(p.muted || t.muted), low_priority: !!(p.low_priority || t.low_priority), twin: t} : p; })
@@ -636,6 +700,8 @@
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
       holdToMenu(card, () => chatMenu(p, card));
       if (p.native) card.dataset.nativeGroup = p.group_id;
+      card.dataset.pid = p.native ? 'native:' + p.group_id : p.id;
+      if (split.on && (p.native ? s.native && s.nativeGroup === p.group_id : p.id === s.person)) { card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
       card.append(netAvatar(p)); card.dataset.network = networksOf(p)[0] || '';
       const info = node('span', 'u-person-info');
       const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
@@ -920,7 +986,10 @@
   })();
 
   async function openPerson(id, hint) {
-    view.selection?.clear(); s.person = id; const epoch = ++s.epoch; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
+    view.selection?.clear();
+    if (split.on && s.native) native?.close?.(); // the native Wizard thread on the right gives way
+    s.person = id; const epoch = ++s.epoch, gen = ++split.threadGen; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
+    if (split.on) { if (!hasListPane()) renderList(); markSelected(); }
     const cached = store.threads[id];
     buildThread(id, cached?.person || hint || {display_name: '', identities: []});
     savedOrder = [id, ...savedOrder.filter(x => x !== id)];
@@ -933,7 +1002,7 @@
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
       persist();
-      if (s.epoch !== epoch) return;
+      if (split.on ? gen !== split.threadGen || s.person !== id : s.epoch !== epoch) return;
       if (cached) { paintHead(); paintThread(); } else { buildThread(id, r.person); paintThread(true); }
       markRead();
     } catch (e) { error(e); }
@@ -1040,7 +1109,7 @@
     if (!last || last.timestamp <= (t.person.last_read_ts || 0) || view.reading === last.timestamp) return;
     view.reading = last.timestamp; t.person.last_read_ts = last.timestamp;
     const row = store.lists[listKey(t.person)]?.find(x => x.id === view.id); if (row) row.unread = 0;
-    unreadById[view.id] = 0; syncBadge();
+    unreadById[view.id] = 0; syncBadge(); if (split.on && s.tab !== 'messenger') drawList();
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
   }
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
@@ -1443,10 +1512,10 @@
     let rows; try { rows = await fetchDrafts(); } catch { return; }
     const next = {}; for (const d of rows) if (d.state === 'draft' && (!next[d.person_id] || (d.updated || 0) > (next[d.person_id].updated || 0))) next[d.person_id] = d;
     const key = JSON.stringify(Object.entries(next).map(([k, d]) => [k, d.revision, d.text, (d.attachments || []).length]));
-    if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if (!s.person && s.tab === 'people') drawList(); }
+    if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
   }
-  function serverDraft(id, ui) {
-    const sd = {row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false};
+  function serverDraft(id, ui, after = null) {
+    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false};
     const by = row => row?.updated_by || row?.created_by;
     const byAgent = row => by(row) && by(row).id !== 'owner';
     const dirty = () => sd.row ? ui.draft.value !== sd.saved || ui.channel.value !== sd.row.identity_id : !!ui.draft.value.trim();
@@ -1564,7 +1633,7 @@
     }
     sd.poll = setInterval(() => check(false), SD_POLL_MS);
     Object.assign(sd, {schedule, save, attach, detach, clear, note, check, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
-    setTimeout(() => check(true), 0);
+    setTimeout(() => Promise.resolve(after).catch(() => {}).then(() => check(true)), 0);
     return sd;
   }
 
@@ -1690,7 +1759,9 @@
     }
     Object.assign(view, {draft, grow, paintBar});
     form.append(bar, via, channel, row); grow(); paintBar();
-    view.sd?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia});
+    // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
+    const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.busy;
+    prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia}, prev?.id === id ? flushing : null);
     return form;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
@@ -1893,7 +1964,7 @@
       const r = await fetch(CONTACTS + 'api/contacts', {credentials: 'same-origin'}); if (!r.ok) throw new Error();
       const data = await r.json(); contacts.ok = true; contacts.map = new Map(); contacts.byId = new Map();
       for (const c of data.contacts || []) { contacts.byId.set(c.id, c); for (const a of c.accounts || []) contacts.map.set(accKey(a.network, a.value), c); }
-      applyContacts(); if (!s.person && s.ready) drawList();
+      applyContacts(); if ((!s.person || split.on) && s.ready) drawList();
       if (!sharedMine) call('qr-codes').then(shareToContacts).catch(() => {});
     } catch { contacts.ok = contacts.ok === true; }
   }
@@ -2423,7 +2494,7 @@
     };
   }
   function switchTab(tab) { view.selection?.clear(); if (s.overlay) closeOverlay(); s.tab = tab; s.person = null; view.id = null; s.search = null; s.epoch++; inChat(false); document.documentElement.dataset.inboxTab = tab; $('unified-inbox').hidden = tab === 'messenger'; delete $('unified-inbox').dataset.label; for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.setAttribute('aria-selected', String(el.dataset.tab === tab)); if (tab !== 'messenger') renderList(); }
-  function refresh() { store.lists = {people: null, groups: null}; if (!s.person && s.tab !== 'messenger') renderList(); }
+  function refresh() { store.lists = {people: null, groups: null}; if ((!s.person || split.on) && s.tab !== 'messenger') renderList(); }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { markRead(); wake(); loadContacts(); } });
   // Coming back (phone unlocked, app reopened, network back): drop whatever poll was in flight and catch up now.
   // An open chat re-fetches itself when shown, so it looked instant while the list waited for the feed to catch up
@@ -2432,14 +2503,15 @@
   function wake() {
     if (!s.ready || Date.now() - woke < 2000) return; woke = Date.now();
     if (store.seq) feed();
-    if (!s.person && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
+    if ((!s.person || split.on) && s.tab !== 'messenger') freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch);
   }
   addEventListener('online', wake); addEventListener('focus', wake); addEventListener('pageshow', e => { if (e.persisted) wake(); });
   // Title-bar tools follow the view and the window width (see syncBar).
   if (window.MutationObserver) { const inbox = $('unified-inbox'), mo = new MutationObserver(syncBar);
     if (inbox) mo.observe(inbox, {attributes: true, attributeFilter: ['hidden', 'data-view']});
     mo.observe(document.documentElement, {attributes: true, attributeFilter: ['data-private-view']});
-    if ($('messenger') && window.ResizeObserver) new ResizeObserver(syncBar).observe($('messenger')); }
+    if ($('messenger') && window.ResizeObserver) new ResizeObserver(() => { relayout(); syncBar(); }).observe($('messenger')); }
+  addEventListener('resize', relayout);
   // Keyboard open/close: keep the newest message glued above the composer.
   window.visualViewport?.addEventListener('resize', () => { if (s.person && view.scroll && view.bottom !== false) view.scroll.scrollTop = view.scroll.scrollHeight; });
   // After a reload, come back to the same tab and chat (saved on pagehide).
@@ -2456,6 +2528,8 @@
     if (group) s.nativeGroup = group;
     s.native = true; s.person = null; view.id = null; s.epoch++;
     document.documentElement.dataset.privateView = '';
+    // Desktop split: the native Wizard thread takes the right side and the list stays on the left.
+    if (split.on) { if (!hasListPane()) renderList(); emptyPane(); markSelected(); inChat(true); return; }
     $('unified-inbox').hidden = true; inChat(true);
   }
   function openNative(group, card) {
@@ -2470,7 +2544,8 @@
     if (!s.native) return;
     s.native = false; s.nativeGroup = null; document.getElementById('native-agent-drafts')?.remove();
     delete document.documentElement.dataset.privateView;
-    $('unified-inbox').hidden = false; inChat(false); renderList();
+    $('unified-inbox').hidden = false; inChat(false);
+    if (split.on && hasListPane()) { if (!s.person) emptyPane(); drawList(); } else renderList();
     // List rendering is synchronous when cached; focus the same row after Back.
     const group = nativeFocus?.dataset.nativeGroup;
     if (group) [...document.querySelectorAll('.u-person')].find(el => el.dataset.nativeGroup === group)?.focus();
@@ -2508,7 +2583,7 @@
   }
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative,
-    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if (!s.native && !s.person) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
+    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if ((!s.native && !s.person) || split.on) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
     receiveShare, shareTargetRows,
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
@@ -2530,6 +2605,6 @@
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low), back,
-    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; split.threadGen++; split.listGen++; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

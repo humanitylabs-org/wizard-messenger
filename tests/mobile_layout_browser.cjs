@@ -181,7 +181,7 @@ const box = (loc) => loc.boundingBox();
     await page.evaluate(() => { document.querySelector('.win').style.width = '900px'; });
     await gone('desktop width'); await page.waitForTimeout(300);
     assert.equal(await frame().evaluate(() => document.documentElement.hasAttribute('data-bar-tools')), false, tag + ': desktop width leaves title-bar mode');
-    const dh = await box(app.locator('#unified-inbox > .u-header h1')); assert.ok(dh && dh.y - win.y < 40, tag + ': desktop header on top');
+    const dh = await box(app.locator('#unified-inbox .u-header h1').first()); // one pane, or the list pane of the desktop split assert.ok(dh && dh.y - win.y < 40, tag + ': desktop header on top');
     await page.evaluate(() => { document.querySelector('.win').style.width = '390px'; }); await back3('phone width again');
     assert.deepEqual(errors, [], tag + ': no page errors');
     console.log('ok', tag);

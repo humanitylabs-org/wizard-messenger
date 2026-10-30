@@ -26,6 +26,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     let frames = 0, signin = 'signing_in';
     const finishAfter = () => { signin = 'done'; };
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2});
+    // Desktop split (Messenger 900px and wider): no Back button beside the list; Back (Escape) clears the open chat.
+    const closeChat = async () => (await page.evaluate(() => document.documentElement.hasAttribute('data-split'))) ? page.keyboard.press('Escape') : page.getByRole('button', {name: 'Back', exact: true}).click();
     await ctx.addInitScript(() => { const noop = () => {}; window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}}; });
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
@@ -142,7 +144,7 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     await pill.click();
     await page.getByRole('menuitem', {name: /Telegram/}).click();
     assert.match(await pill.textContent(), /Replying on\s*Telegram/);
-    await page.getByRole('button', {name: 'Back', exact: true}).click();
+    await closeChat();
 
     // Link preview card, reply card, reaction pill; header ⋯ offers Mark as unread and Merge with…
     await page.locator('.u-person', {hasText: 'Bo Chen'}).click();
@@ -162,13 +164,13 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     await page.locator('.u-thread-head .icon-button[aria-label="Chat options"]').click();
     await page.getByRole('menuitem', {name: 'Mark as unread'}).waitFor();
     await page.keyboard.press('Escape'); if (await page.locator('#u-overlay').count()) await page.locator('#u-overlay').click({position: {x: 5, y: 5}});
-    await page.getByRole('button', {name: 'Back', exact: true}).click();
+    await closeChat();
     // Group bubbles carry the sender's picture.
     await page.locator('.u-person', {hasText: 'Family'}).click();
     await page.locator('.u-row[data-id=f1]').waitFor();
     await page.waitForFunction(() => document.querySelector('.u-row[data-id=f1] .u-avatar.has-img'));
     assert.ok(pics.some(x => x[0] === 'fam' && x[1] === 'Pedro'));
-    await page.getByRole('button', {name: 'Back', exact: true}).click();
+    await closeChat();
 
     // Slack: browser sign-in first, email second, no developer-tools steps.
     await page.locator('.u-settings-btn').click();

@@ -52,6 +52,8 @@ const providers = [
   const summary = [];
   for (const scheme of ['dark', 'light']) for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: scheme});
+    // Desktop split (>= 900px): no Back button beside the list; Back (Escape) clears the open chat instead.
+    const closeChat = () => viewport.width >= 900 ? page.keyboard.press('Escape') : page.getByRole('button', {name: 'Back', exact: true}).click();
     await ctx.addInitScript(s => {
       const noop = () => {};
       window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}};
@@ -176,7 +178,7 @@ const providers = [
     assert.equal((await page.locator('.u-row[data-id="j6"] .u-quote strong').textContent()).trim(), 'James Carter', 'reply quote names the other person');
     assert.ok(await page.locator('.u-day').count() >= 2, 'day separators');
     await shot('thread-direct');
-    await page.getByRole('button', {name: 'Back', exact: true}).click();
+    await closeChat();
 
     // Group thread: sender names above incoming runs only; own messages unlabeled.
     await page.locator('.u-person', {hasText: 'Family'}).click();
@@ -186,7 +188,7 @@ const providers = [
     assert.deepEqual(names.filter(n => n[3]).map(n => n[0]), ['f2', 'f3', 'f5'], 'one sender face per incoming run');
     assert.match(await page.locator('.u-who-text span').textContent(), /Group · WhatsApp/);
     await shot('thread-group');
-    await page.getByRole('button', {name: 'Back', exact: true}).click();
+    await closeChat();
 
     // Private (native) thread keeps its engine; same sent/received language and a Private shield in the header.
     await page.locator('.u-person', {hasText: 'Private Alice'}).click();
@@ -199,7 +201,7 @@ const providers = [
     assert.deepEqual(pg.map(x => x[4]), ['pos-first', 'pos-last', 'pos-first', 'pos-last', 'pos-single']);
     assert.equal(await page.locator('#messages', {hasText: OWNER}).count(), 0);
     await shot('thread-private');
-    await page.locator('#chat-back').click();
+    if (viewport.width >= 900) await page.keyboard.press('Escape'); else await page.locator('#chat-back').click();
 
     // Accounts sheet cards use the same glyphs.
     await page.locator('.u-settings-btn').click();
