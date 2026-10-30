@@ -1105,43 +1105,112 @@ class UnifiedInbox:
         return result
 
     # ---------- My QR codes: the owner's own contact links, shown as scannable codes ----------
-    QR_NETWORKS = ('telegram', 'whatsapp', 'signal', 'messenger', 'instagram', 'x', 'line', 'wechat', 'facebook', 'email', 'phone', 'link')
+    # Every connected account becomes a code automatically; the owner only adds extras or hides one.
+    QR_NETWORKS = ('telegram', 'whatsapp', 'signal', 'messenger', 'instagram', 'x', 'linkedin', 'line', 'wechat', 'facebook', 'email', 'phone', 'link')
+
+    @staticmethod
+    def qr_key(code):
+        return '%s:%s' % (code.get('network'), re.sub(r'\s+', '', str(code.get('value') or '')).lower().lstrip('@+'))
+
+    def own_profiles(self):
+        """[(network, login dict)] for the bridges connected here; overridden where bridges exist."""
+        try:
+            return [('telegram', login) for login in self.telegram_status().get('logins') or []]
+        except Exception:  # unreachable: the saved list still shows
+            return []
+
+    def connected_codes(self):
+        """(codes, owner name) derived from connected accounts. Read-only, cached briefly."""
+        cached = getattr(self, '_qr_cache', None)
+        if cached and time.time() - cached[0] < 120:
+            return cached[1], cached[2]
+        codes, names = [], []
+        def add(network, value, source):
+            value = (value or '').strip() if isinstance(value, str) else ''
+            if value and len(value) <= 300:
+                codes.append({'network': network, 'value': value, 'label': '', 'auto': True, 'source': source})
+        phone = lambda v: v if isinstance(v, str) and re.fullmatch(r'\+?\d[\d\s-]{5,20}', v.strip()) else ''
+        user = lambda v, pat=r'[A-Za-z0-9_.]{2,64}': v.strip().lstrip('@') if isinstance(v, str) and re.fullmatch(pat, v.strip().lstrip('@')) else ''
+        for network, login in self.own_profiles():
+            if not isinstance(login, dict):
+                continue
+            state = (login.get('state') or {}).get('state_event', login.get('state_event')) if isinstance(login.get('state'), dict) else login.get('state_event')
+            if state not in (None, 'CONNECTED'):
+                continue
+            prof = login.get('profile') if isinstance(login.get('profile'), dict) else {}
+            if isinstance(prof.get('name'), str) and prof['name'].strip():
+                names.append(prof['name'].strip())
+            login_id = str(login.get('id') or '')
+            if network == 'telegram':
+                add('telegram', user(prof.get('username'), r'[A-Za-z][A-Za-z0-9_]{3,31}') or phone(prof.get('phone')), network)
+            elif network == 'whatsapp':
+                add('whatsapp', phone(prof.get('phone')) or ('+' + login_id if re.fullmatch(r'\d{6,15}', login_id) else ''), network)
+            elif network == 'signal':
+                add('signal', phone(prof.get('phone')), network)
+            elif network == 'instagram':
+                add('instagram', user(prof.get('username')), network)
+            elif network == 'twitter':
+                add('x', user(prof.get('username'), r'[A-Za-z0-9_]{1,15}'), network)
+            elif network == 'facebook':
+                add('facebook', user(prof.get('username')), network)
+            elif network == 'linkedin':
+                add('linkedin', user(prof.get('username'), r'[A-Za-z0-9-]{3,100}'), network)
+            elif network == 'gmessages':
+                add('phone', phone(prof.get('phone')), network)
+        try:
+            ident = (self.engine.identity() or {}).get('identity') or {}
+            add('messenger', ident.get('npub') or '', 'messenger')
+            if ident.get('display_name'):
+                names.insert(0, ident['display_name'])
+        except Exception:
+            pass
+        seen, unique = set(), []
+        for c in codes:
+            if self.qr_key(c) not in seen:
+                seen.add(self.qr_key(c)); unique.append(c)
+        name = names[0] if names else ''
+        self._qr_cache = (time.time(), unique, name)
+        return unique, name
 
     def qr_codes(self):
-        # Saved list once the owner has edited it; until then, what this Messenger already knows (Telegram username).
-        saved = self.store.get('my_qr_codes')
-        suggested = []
+        auto, name = self.connected_codes()
         try:
-            for login in self.telegram_status().get('logins') or []:
-                username = ((login.get('profile') or {}).get('username') or '').strip()
-                if re.fullmatch(r'[A-Za-z0-9_]{4,64}', username):
-                    suggested.append({'network': 'telegram', 'value': username, 'label': ''})
-                    break
-        except Exception:  # Telegram unreachable: the saved list still shows.
-            pass
-        if saved:
-            try:
-                return {'codes': json.loads(saved), 'saved': True, 'suggested': suggested}
-            except ValueError:
-                pass
-        return {'codes': suggested, 'saved': False, 'suggested': suggested}
+            hidden = set(json.loads(self.store.get('my_qr_hidden') or '[]'))
+        except ValueError:
+            hidden = set()
+        try:
+            saved = json.loads(self.store.get('my_qr_codes') or '[]')
+        except ValueError:
+            saved = []
+        keys = {self.qr_key(c) for c in auto}
+        extras = [c for c in saved if isinstance(c, dict) and self.qr_key(c) not in keys]
+        shown = [c for c in auto if self.qr_key(c) not in hidden]
+        return {'codes': shown + extras, 'connected': auto, 'hidden': sorted(hidden & keys), 'extras': extras,
+                'name': name, 'saved': bool(saved)}
 
     def save_qr_codes(self, payload):
         codes = payload.get('codes')
         if not isinstance(codes, list) or len(codes) > 24:
             fail('invalid_codes', 'Invalid QR code list')
-        clean = []
+        clean, connected = [], {self.qr_key(c) for c in self.connected_codes()[0]}
         for item in codes:
             if not isinstance(item, dict) or item.get('network') not in self.QR_NETWORKS:
                 fail('invalid_codes', 'Unknown network')
+            if item.get('auto') or self.qr_key(item) in connected:
+                continue  # connected accounts are never stored; they follow the account
             value, label = item.get('value'), item.get('label') or ''
             if not isinstance(value, str) or not value.strip() or len(value) > 1024:
                 fail('invalid_codes', 'Each code needs a username, number or link')
             if not isinstance(label, str) or len(label) > 80:
                 fail('invalid_codes', 'Labels are up to 80 characters')
             clean.append({'network': item['network'], 'value': value.strip(), 'label': label.strip()})
+        hidden = payload.get('hidden')
+        if hidden is not None:
+            if not isinstance(hidden, list) or len(hidden) > 50 or not all(isinstance(h, str) and len(h) < 400 for h in hidden):
+                fail('invalid_codes', 'Invalid hidden list')
+            self.store.put('my_qr_hidden', json.dumps(sorted(set(hidden))))
         self.store.put('my_qr_codes', json.dumps(clean))
-        return {'codes': clean, 'saved': True}
+        return self.qr_codes()
 
     def telegram_status(self):
         if not self.telegram_configured():

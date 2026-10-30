@@ -1776,6 +1776,7 @@
       const data = await r.json(); contacts.ok = true; contacts.map = new Map(); contacts.byId = new Map();
       for (const c of data.contacts || []) { contacts.byId.set(c.id, c); for (const a of c.accounts || []) contacts.map.set(accKey(a.network, a.value), c); }
       applyContacts(); if (!s.person && s.ready) drawList();
+      if (!sharedMine) call('qr-codes').then(shareToContacts).catch(() => {});
     } catch { contacts.ok = contacts.ok === true; }
   }
   // A chat whose account is saved in Contacts shows the contact's name.
@@ -1799,6 +1800,14 @@
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || 'Contacts could not save this person');
     await loadContacts(true); return data;
+  }
+  // The owner's own codes also fill My card in Contacts, so both apps share the same QR list. Optional: no Contacts app, no-op.
+  let sharedMine = '';
+  async function shareToContacts(data) {
+    const accounts = (data.codes || []).filter(c => c.auto).map(c => ({network: c.network === 'messenger' ? 'wizard' : c.network === 'x' ? 'twitter' : c.network, value: c.value}))
+      .filter(a => a.network !== 'phone');
+    const body = JSON.stringify({name: data.name || '', accounts}); if (body === sharedMine) return; sharedMine = body;
+    try { await fetch(CONTACTS + 'api/me/connected', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body}); } catch { /* Contacts absent */ }
   }
   function openContacts() { if (WizardApp?.nav?.openApp?.('contacts')) return; window.open(CONTACTS, '_blank', 'noopener'); }
   function contactsRow(p) {
@@ -1850,6 +1859,7 @@
     signal: {name: 'Signal', hint: 'Phone, or paste your username link', link: v => 'https://signal.me/#p/+' + v.replace(/\D/g, '')},
     messenger: {name: 'Wizard Messenger', hint: 'npub contact code', link: v => v},
     instagram: {name: 'Instagram', hint: 'Username', link: v => 'https://instagram.com/' + v.replace(/^@/, '')},
+    linkedin: {name: 'LinkedIn', hint: 'Profile name from your link', link: v => 'https://www.linkedin.com/in/' + v.replace(/^@/, '')},
     x: {name: 'X', hint: 'Username', link: v => 'https://x.com/' + v.replace(/^@/, '')},
     line: {name: 'LINE', hint: 'LINE ID', link: v => 'https://line.me/ti/p/~' + v.replace(/^@/, '')},
     wechat: {name: 'WeChat', hint: 'Paste your WeChat QR link', link: v => v},
@@ -1869,11 +1879,11 @@
     const body = node('div', 'u-myqr-body'); body.append(skeleton(1, 'list')); sheet.append(body);
     let data; try { data = await call('qr-codes'); } catch (e) { body.replaceChildren(); return error(e); }
     if (s.overlay !== 'My QR codes') return;
-    const codes = data.codes || []; body.replaceChildren();
-    if (!codes.length) { body.append(node('p', 'helper', 'Add your Telegram, WhatsApp and other contacts once. They show here as codes people can scan.'), button('Add codes', () => editCodes(codes), 'primary wide')); return; }
+    const codes = data.codes || []; body.replaceChildren(); shareToContacts(data);
+    if (!codes.length) { body.append(node('p', 'helper', 'Connect an account in Settings and its code appears here automatically. You can also add others, like an email or a link.'), button('Add a code', () => editCodes(data), 'primary wide')); return; }
     let current = Math.min(pick | 0, codes.length - 1);
     // Edit sits in the sheet header so the code, its link and the actions fit one phone screen.
-    sheet.querySelector('header').insertBefore(iconButton('compose', 'Edit codes', () => editCodes(codes)), sheet.querySelector('header .icon-button'));
+    sheet.querySelector('header').insertBefore(iconButton('compose', 'Edit codes', () => editCodes(data)), sheet.querySelector('header .icon-button'));
     const chips = node('div', 'u-chips u-myqr-chips'), card = node('div', 'u-myqr-card');
     const draw = () => {
       const c = codes[current], link = qrLink(c);
@@ -1890,8 +1900,20 @@
     body.append(...(codes.length > 1 ? [chips] : []), card);
     draw();
   }
-  function editCodes(codes) {
+  function editCodes(data) {
+    const codes = data.extras || [], hidden = new Set(data.hidden || []);
     const sheet = overlay('Edit QR codes'); sheet.classList.add('tall');
+    // Connected accounts make their own codes; here they can only be shown or hidden.
+    const keyOf = c => c.network + ':' + String(c.value).replace(/\s+/g, '').toLowerCase().replace(/^[@+]+/, '');
+    const auto = node('div', 'u-myqr-auto');
+    if ((data.connected || []).length) {
+      auto.append(node('h3', 'u-myqr-sub', 'From your connected accounts'));
+      for (const c of data.connected) {
+        const row = node('label', 'u-myqr-autorow'); const box = node('input'); box.type = 'checkbox'; box.checked = !hidden.has(keyOf(c)); box.dataset.key = keyOf(c);
+        const text = node('span', 'u-myqr-autotext'); text.append(node('b', '', qrTitle(c)), node('small', '', c.value)); row.append(text, box); auto.append(row);
+      }
+      sheet.append(auto, node('h3', 'u-myqr-sub', 'Other codes'));
+    }
     const rows = node('div', 'u-myqr-edit'); sheet.append(rows);
     const addRow = (c = {network: 'whatsapp', value: '', label: ''}) => {
       const row = node('div', 'u-myqr-row');
@@ -1911,9 +1933,10 @@
     for (const c of codes) addRow(c);
     sheet.append(button('Add another', () => addRow().focus(), 'secondary wide'), button('Save', () => action(async () => {
       const list = [...rows.children].map(r => { const [net, value, label] = r.querySelectorAll('select,input'); return {network: net.value, value: value.value.trim(), label: label.value.trim()}; }).filter(c => c.value);
-      await call('qr-codes', {codes: list}); myCodes();
+      const hide = [...auto.querySelectorAll('input[type=checkbox]')].filter(b => !b.checked).map(b => b.dataset.key);
+      await call('qr-codes', {codes: list, hidden: hide}); myCodes();
     }), 'primary wide'));
-    if (!codes.length) requestAnimationFrame(() => addRow().focus());
+    if (!codes.length && !(data.connected || []).length) requestAnimationFrame(() => addRow().focus());
   }
   // Same person on two networks, offered never applied: Merge joins them into one chat, Not the same hides the pair.
   // Manual merge: pick anyone from your one-on-one chats; the chosen chat joins this one.

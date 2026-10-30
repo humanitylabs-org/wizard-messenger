@@ -155,6 +155,18 @@ class ConnectorInbox(UnifiedInbox):
         if event.get('type') in ('m.room.message', 'm.sticker') and not self.is_me(event.get('sender', '')):
             self.store.mark_history_read(identity['id'], stamp)
 
+    def own_profiles(self):
+        """The owner's own login on every connected bridge (provisioning /whoami, read-only)."""
+        out = []
+        for network in sorted(MATRIX_NETWORKS):
+            try:
+                self.connectors.config(network)
+                logins = self.connectors.request(network, '/whoami').get('logins') or []
+            except Exception:
+                continue
+            out += [(network, l) for l in logins if isinstance(l, dict)]
+        return out
+
     def learn_me(self):
         """Own ghosts and names from every connected bridge's provisioning /whoami (read-only).
 

@@ -10,6 +10,9 @@ import threading
 
 class OwnerUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
+    # Opening Messenger fires dozens of parallel requests (lists, avatars, drafts). With the default backlog of 5 a
+    # Unix socket refuses the overflow with EAGAIN instead of queueing it, which the ingress reports as a 502.
+    request_queue_size = 256
     def __init__(self, path, owner):
         # Share the *same* replay cache, sessions, engine, locks and inbox. Never
         # construct a second engine or persistent-state authority.

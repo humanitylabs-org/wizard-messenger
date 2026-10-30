@@ -523,6 +523,12 @@ html[data-color-scheme=light] .c-mark.has-icon { box-shadow: inset 0 0 0 1px rgb
 .u-myqr-sheet > .wide, .u-myqr-body > .wide { margin-top: 8px; }
 .u-myqr-sheet header h2 { flex: 1; }
 .u-myqr-row .icon-button:disabled { opacity: .3; }
+.u-sheet .u-myqr-sub { margin: 10px 0 6px; font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink-2); }
+.u-myqr-auto { display: flex; flex-direction: column; }
+.u-myqr-autorow { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 2px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.u-myqr-autotext { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.u-myqr-autotext small { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-myqr-autorow input { width: 20px; height: 20px; accent-color: var(--accent); }
 
 /* Account linking uses the existing Settings sheet, status rows and buttons. */
 .u-connector-card { padding: 8px 0 16px; border-bottom: 1px solid var(--line); }

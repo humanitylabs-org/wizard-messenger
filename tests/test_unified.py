@@ -219,19 +219,25 @@ class UnifiedTests(unittest.TestCase):
         for ident, value in [('$missing', 'x'), ('$text', 'x'), ('$voice', ''), ('$voice', 'x' * 100001), ('$voice', None)]:
             with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/messages/' + ident + '/transcript', {'text': value})
 
-    def test_my_qr_codes_suggest_telegram_then_persist_owner_list(self):
-        self.inbox.telegram_status = lambda: {'logins': [{'profile': {'username': 'JamesDeFleur'}}]}
+    def test_my_qr_codes_follow_connected_accounts_and_keep_extras(self):
+        self.inbox.own_profiles = lambda: [
+            ('telegram', {'id': '1', 'state': {'state_event': 'CONNECTED'}, 'profile': {'username': 'JamesDeFleur', 'name': 'James'}}),
+            ('whatsapp', {'id': '15550100', 'state': {'state_event': 'CONNECTED'}, 'profile': {}}),
+            ('instagram', {'id': '9', 'state': {'state_event': 'CONNECTED'}, 'profile': {'username': 'james.df'}}),
+            ('line', {'id': 'u1', 'state': {'state_event': 'CONNECTED'}, 'profile': {}}),
+            ('twitter', {'id': '7', 'state': {'state_event': 'BAD_CREDENTIALS'}, 'profile': {'username': 'gone'}})]
         first = self.inbox.dispatch('GET', '/api/unified/qr-codes', {})
-        self.assertEqual(first['codes'], [{'network': 'telegram', 'value': 'JamesDeFleur', 'label': ''}])
-        self.assertFalse(first['saved'])
-        codes = [{'network': 'telegram', 'value': ' JamesDeFleur ', 'label': ''}, {'network': 'whatsapp', 'value': '+1 555 0100', 'label': 'Work'}]
-        self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': codes})
-        again = UnifiedInbox(self.tmp.name, self.engine).dispatch('GET', '/api/unified/qr-codes', {})
-        self.assertTrue(again['saved'])
-        self.assertEqual(again['codes'][0]['value'], 'JamesDeFleur')
-        self.assertEqual(again['codes'][1], {'network': 'whatsapp', 'value': '+1 555 0100', 'label': 'Work'})
-        self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': []})
-        self.assertEqual(self.inbox.dispatch('GET', '/api/unified/qr-codes', {})['codes'], [])
+        self.assertEqual([(c['network'], c['value']) for c in first['codes']], [('telegram', 'JamesDeFleur'), ('whatsapp', '+15550100'), ('instagram', 'james.df')])
+        self.assertTrue(all(c['auto'] for c in first['codes']))
+        self.assertEqual(first['name'], 'James')
+        # Extras persist; a duplicate of a connected account and auto rows are never stored.
+        codes = first['codes'] + [{'network': 'telegram', 'value': ' @JamesDeFleur ', 'label': ''}, {'network': 'email', 'value': 'j@x.io', 'label': 'Work'}]
+        out = self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': codes, 'hidden': ['instagram:james.df']})
+        self.assertEqual([(c['network'], c['value']) for c in out['codes']], [('telegram', 'JamesDeFleur'), ('whatsapp', '+15550100'), ('email', 'j@x.io')])
+        self.assertEqual(out['hidden'], ['instagram:james.df'])
+        again = UnifiedInbox(self.tmp.name, self.engine)
+        again.own_profiles = lambda: []
+        self.assertEqual(again.dispatch('GET', '/api/unified/qr-codes', {})['codes'], [{'network': 'email', 'value': 'j@x.io', 'label': 'Work'}])
         for bad in [None, [{'network': 'myspace', 'value': 'x'}], [{'network': 'x', 'value': ''}], [{'network': 'x', 'value': 'a', 'label': 'l' * 81}], [{'network': 'x', 'value': 'a'}] * 25]:
             with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': bad})
 
