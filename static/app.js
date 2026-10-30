@@ -122,9 +122,10 @@
   let updateHold = null;
   function syncUpdateHold() {
     const setupPending = ['locked', 'setup_required'].includes(state.mode) && ['display-name', 'passphrase', 'confirm-passphrase'].some(id => $(id).value);
-    // Drafts and failed sends are saved on this device and survive a reload, so only work in flight holds an update.
-    const pending = state.operation?.action || [...state.records.values()].some(record => record.attempts.some(a => ['sending', 'checking'].includes(a.state))) ||
-      ['contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
+    // Only a tap still going out holds a Wizard reload. Drafts live on the server, and a send interrupted by a reload
+    // comes back as "checking" and is confirmed by request_id afterwards, so neither a draft, a "checking" bubble nor
+    // a contact address left in the (closed) Add contact sheet may block reloading (Miguel, 30 Oct 2026).
+    const pending = state.operation?.action || [...state.records.values()].some(record => record.attempts.some(a => a.state === 'sending')) || setupPending;
     if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
     else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
   }

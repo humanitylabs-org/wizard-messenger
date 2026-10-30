@@ -147,7 +147,8 @@
   }
   const call = (path, body) => api('api/unified/' + path, body === undefined ? {} : {method: 'POST', body});
   const error = e => { const el = $('u-error'); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
-  async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; } }
+  // Release a "Saving" hold taken mid-action as soon as the action ends, or it would block Wizard reloads until the next hold() call.
+  async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; hold(); } }
   // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
   // Drafts are kept in localStorage and come back after the reload, and an open sheet loses nothing, so neither holds.
   function hold() {
