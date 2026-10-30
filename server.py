@@ -121,7 +121,7 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get('jsonrpc') != '2.0':
             return 400,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32600,'message':'Invalid request'}}
         if method == 'initialize':
-            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.12.0'}}
+            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.13.0'}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
         elif method == 'tools/list': result={'tools':MCP_TOOLS+(agent_tools.TOOLS if (self._caller() or ('',))[0]=='agent' else [])}
@@ -146,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         if method=='GET' and path=='/healthz':
-            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.12.0'}
+            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.13.0'}
         self._authorize()
         engine=self.service.engine
         if path=='/mcp' and method=='POST': return self._mcp(self._body())

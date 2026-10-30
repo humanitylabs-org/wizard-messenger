@@ -2,7 +2,7 @@
 FROM wizard-messenger:0.2.0-unified.11.14
 ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
-      org.opencontainers.image.version="0.2.0-unified.12.0" \
+      org.opencontainers.image.version="0.2.0-unified.13.0" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
 COPY server.py web.py unified.py connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py /app/
 COPY plumbing /app/plumbing
