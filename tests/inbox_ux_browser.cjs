@@ -102,7 +102,7 @@ let providers = [
     assert.ok(box.width >= 220, 'QR is large enough to scan: ' + box.width);
     await page.screenshot({path: path.join(out, `qr-${label}.png`)});
     await page.getByRole('button', {name: 'Cancel', exact: true}).click();
-    await page.locator('.c-card[data-network=slack] .primary').click();
+    await page.locator('.c-card[data-network=slack]').getByRole('button', {name: /Sign in with email/}).click();
     const email = page.locator('.c-form input');
     assert.equal(await email.getAttribute('type'), 'email', 'email stays readable');
     await page.keyboard.press('Escape');

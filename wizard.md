@@ -32,6 +32,7 @@ view:
     dist: static
 health: /healthz
 provides: [messaging]
+uses: [browser]
 needs: []
 ---
 

@@ -83,6 +83,19 @@ class PeopleTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'low_priority': 1})
 
+    def test_merge_suggestions_cross_network_only_and_dismissable(self):
+        a = self.store.identity('whatsapp', '!a', 'Ana Souza')
+        b = self.store.identity('instagram', '!b', 'ana souza')
+        self.store.identity('whatsapp', '!c', 'Ana Souza')  # same network twice: never paired with the first
+        for ident, ts in ((a, 1), (b, 2)):
+            self.store.add_message('$' + ident['address'], ident, 'x', False, 'hi', ts)
+        rows = self.store.merge_suggestions()['suggestions']
+        self.assertEqual(len(rows), 1)
+        nets = [p['networks'] for p in rows[0]['people']]
+        self.assertEqual(sorted(n[0] for n in nets), ['instagram', 'whatsapp'])
+        self.store.dismiss_merge(rows[0]['id'])
+        self.assertEqual(self.store.merge_suggestions()['suggestions'], [])
+
     def test_group_kind_upgrade_and_network_tags_dropped(self):
         a = self.store.identity('whatsapp', '!g', 'Book club (WA)')
         self.assertEqual(a['label'], 'Book club')

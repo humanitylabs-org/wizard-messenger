@@ -63,7 +63,7 @@
   const ABOUT = {
     whatsapp: 'Links like WhatsApp Web. Your phone stays the main device.',
     telegram: 'Links as a new Telegram device.',
-    slack: 'Signs in as you, like the Slack desktop app. Use your browser sign-in (works with Google and SSO), or your email if Slack can send you a code.',
+    slack: 'Signs in as you, like the Slack desktop app. Works with Google and SSO workspaces.',
     line: 'Links as a LINE desktop device. LINE may show a PIN to confirm.',
     instagram: 'Signs in for your Instagram DMs. Instagram may ask you to approve the new login.',
     signal: 'Links as a Signal linked device.',
@@ -84,7 +84,7 @@
     qr: 'Show QR code', phone: 'Use a pairing code instead', email: 'Sign in with email', token: 'Use my browser sign-in',
     'dev.highest.matrix.line.qr_login': 'Show QR code', 'dev.highest.matrix.line.email_login': 'Sign in with email & password',
     android: 'Sign in with username & password', 'instagram-password': 'Try the web sign-in instead',
-    messenger: 'Sign in with your browser', facebook: 'Use facebook.com instead', cookies: 'Sign in with your browser', google: 'Sign in with Google',
+    messenger: 'Sign in with your browser', facebook: 'Use facebook.com instead', cookies: 'Sign in with your browser', google: 'Sign in with Google', browser: 'Sign in with your browser',
   };
   const STATE = {
     connected: ['Connected', 'on'], disconnected: ['Not connected', 'off'], degraded: ['Needs reconnecting', 'warn'],
@@ -128,7 +128,10 @@
     function heading(network, title) {
       const head = element('div', 'c-step-head'); head.append(mark(network, 'big'), element('h3', '', title || 'Connect ' + label(network))); return head;
     }
+    let browserSession = null;
+    function endBrowser() { const id = browserSession; browserSession = null; if (id) api('/api/unified/connectors/browser/' + id + '/cancel', 'POST', {}).catch(() => {}); }
     async function cancel() {
+      endBrowser();
       const old = active; active = null; const mine = ++generation;
       if (old) {
         try { await request(old.network, 'cancel', {login_id: old.login_id}); }
@@ -142,6 +145,7 @@
       }
     }
     async function start(network, flow) {
+      if (flow === 'browser') return startBrowser(network);
       const mine = generation + 1;
       await cancel(); if (mine !== generation) return;
       root.replaceChildren(heading(network), element('p', 'helper', 'Starting…'));
@@ -219,14 +223,6 @@
         button(root, 'Start again', async () => start(network, flow), 'primary wide'); back();
       } else if (result.type === 'user_input') {
         if (result.instructions) root.append(element('p', 'helper', result.instructions));
-        if (network === 'slack' && flow === 'token') {
-          const how = element('ol', 'c-steps');
-          for (const t of ['On a computer, open your workspace at app.slack.com in Chrome and sign in.',
-            'Press F12 (or ⌥⌘I), open Console, type  JSON.parse(localStorage.localConfig_v2).teams  and press Enter. Open your team and copy its "token" (starts with xoxc-).',
-            'Open the Application tab → Cookies → https://app.slack.com and copy the value of the cookie named "d" (starts with xoxd-).',
-            'Paste both below. They stay on your Wizard and are never shown again. Signing out of Slack in that browser ends this login.']) how.append(element('li', '', t));
-          root.append(how);
-        }
         const form = element('form', 'c-form'), inputs = {}; form.autocomplete = 'off';
         for (const field of (result.user_input || {}).fields || []) {
           const wrap = element('label', '', field.name || field.id);
@@ -353,6 +349,64 @@
         finally { for (const k of Object.keys(values)) delete values[k]; }
       };
     }
+    // Beeper-style sign-in: the real site runs in a private window of the Wizard Browser, shown live here.
+    // When the page holds the login, Messenger reads it, hands it to the bridge and closes the window.
+    async function startBrowser(network) {
+      const mine = generation + 1;
+      await cancel(); if (mine !== generation) return;
+      root.replaceChildren(heading(network, 'Sign in to ' + label(network)));
+      root.append(element('p', 'helper', 'Sign in below the way you normally do (Google, email or SSO). When you reach your workspace, Messenger connects it and closes this window. Nothing you type here is saved.'));
+      const shell = element('div', 'c-live'), img = element('img', 'c-live-img'); img.alt = label(network) + ' sign-in page'; img.draggable = false;
+      const wait = element('p', 'c-waiting'); wait.append(element('span', 'spinner'), element('span', '', 'Opening ' + label(network) + '…'));
+      shell.append(img); root.append(shell);
+      const keys = element('div', 'c-live-keys'), typer = element('textarea', 'c-live-type'); typer.rows = 1; typer.placeholder = 'Type here to fill the page'; typer.autocapitalize = 'none'; typer.spellcheck = false; typer.setAttribute('aria-label', 'Type into the page');
+      keys.append(typer); root.append(keys, wait);
+      const send = body => browserSession && api('/api/unified/connectors/browser/' + browserSession + '/input', 'POST', body).catch(() => {});
+      for (const [text, key] of [['⌫', 'Backspace'], ['Tab', 'Tab'], ['Enter ⏎', 'Enter']]) { const k = element('button', 'secondary c-live-key', text); k.type = 'button'; k.onclick = () => send({type: 'key', key}); keys.append(k); }
+      const back = element('button', 'secondary c-live-key', '‹ Page back'); back.type = 'button'; back.onclick = () => send({type: 'back'}); keys.append(back);
+      typer.addEventListener('beforeinput', e => {
+        if (e.inputType === 'insertText' || e.inputType === 'insertReplacementText' || e.inputType === 'insertFromPaste') { const t = e.data ?? e.dataTransfer?.getData('text') ?? ''; if (t) send({type: 'text', text: t}); }
+        else if (e.inputType === 'deleteContentBackward') send({type: 'key', key: 'Backspace'});
+        else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') send({type: 'key', key: 'Enter'});
+        e.preventDefault();
+      });
+      typer.addEventListener('paste', e => { const t = e.clipboardData?.getData('text'); if (t) send({type: 'text', text: t}); e.preventDefault(); });
+      const point = e => { const r = img.getBoundingClientRect(); return {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height}; };
+      let down = null;
+      img.addEventListener('pointerdown', e => { down = {x: e.clientX, y: e.clientY, at: point(e)}; img.setPointerCapture?.(e.pointerId); });
+      img.addEventListener('pointerup', e => {
+        if (!down) return; const dy = down.y - e.clientY, dx = down.x - e.clientX, at = down.at; down = null;
+        if (Math.hypot(dx, dy) < 10) { send({type: 'tap', ...at}); typer.focus({preventScroll: true}); }
+        else send({type: 'scroll', ...at, dy: dy * 2});
+      });
+      img.addEventListener('wheel', e => { e.preventDefault(); send({type: 'scroll', ...point(e), dy: e.deltaY}); }, {passive: false});
+      button(root, 'Cancel', async () => { const next = generation + 1; await cancel(); if (next === generation) await show(); });
+      const width = Math.max(320, Math.min(430, Math.round(shell.clientWidth || 400))), height = Math.max(520, Math.min(860, Math.round(width * 1.7)));
+      shell.style.aspectRatio = width + ' / ' + height;
+      let started;
+      try { started = await api('/api/unified/connectors/browser/start', 'POST', {network, width, height, mobile: true}); }
+      catch (e) { if (mine === generation) failure(e, network, 'browser', mine); return; }
+      if (mine !== generation) { api('/api/unified/connectors/browser/' + started.id + '/cancel', 'POST', {}).catch(() => {}); return; }
+      browserSession = started.id;
+      let seq = 0;
+      while (mine === generation && browserSession === started.id) {
+        let f;
+        try { f = await api('/api/unified/connectors/browser/' + started.id + '/frame?after=' + seq, 'GET'); }
+        catch (e) { if (mine !== generation) return; browserSession = null; failure(e, network, 'browser', mine); return; }
+        if (mine !== generation) return;
+        if (f.frame) { img.src = 'data:image/jpeg;base64,' + f.frame; seq = f.seq; }
+        if (f.state === 'signing_in') wait.replaceChildren(element('span', '', f.host ? 'Secure page: ' + f.host : ''));
+        else if (f.state === 'connecting') wait.replaceChildren(element('span', 'spinner'), element('span', '', 'Signed in. Connecting your workspaces…'));
+        else {
+          browserSession = null;
+          if (f.state === 'done') {
+            root.replaceChildren(heading(network, label(network) + ' connected'), element('p', 'helper', (f.message || '') + '. Your chats appear in the Inbox over the next few minutes.' + (f.result?.failed?.length ? ' Not connected: ' + f.result.failed.join(', ') + '.' : '')));
+            button(root, 'Done', async () => show(), 'primary wide'); options.onChange?.(network);
+          } else failure(new Error(f.message || 'The sign-in window closed. Start again.'), network, 'browser', mine);
+          return;
+        }
+      }
+    }
     async function setupTelegram() {
       const mine = generation + 1;
       await cancel(); if (mine !== generation) return;
@@ -405,7 +459,8 @@
         button(section, 'Set up Telegram', setupTelegram, 'primary wide');
       }
       else if (provider.state === 'unavailable') section.append(element('p', 'helper', 'The private bridge is not responding. Try again in a minute.'));
-      [...flows].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
+      const shown = provider.network === 'slack' && provider.state !== 'unavailable' ? [{id: 'browser', name: 'Sign in with your browser'}, ...flows.filter(f => f.id === 'email')] : flows;
+      [...shown].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
         const name = FLOW_LABEL[flow.id] || flow.name;
         button(section, name, async () => start(provider.network, flow.id), i === 0 ? 'primary wide' : 'c-link').setAttribute('aria-label', name + ' for ' + provider.label);
       });

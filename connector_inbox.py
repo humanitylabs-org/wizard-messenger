@@ -6,11 +6,11 @@ own-name learning and silent first-discovery history import.
 """
 from unified import *
 from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
-from unified import weak_label
+from unified import weak_label, MXC
 
 # Cached room_meta written before this version may have dropped a bridged room
 # (protocol.id aliases): re-read room state once for those.
-META_VERSION = 2
+META_VERSION = 3  # 3: member and room pictures
 # Bridged history (bridgev2 backfill on stock Synapse) arrives through /sync with
 # its original timestamps; only recent lines may notify.
 LIVE_WINDOW_MS = 15 * 60 * 1000
@@ -19,6 +19,7 @@ HISTORY_PAGES, HISTORY_PAGE = 5, 100
 
 class ConnectorInbox(UnifiedInbox):
     def __init__(self, data, engine, sender=None):
+        self._picture_skip = set()
         super().__init__(data, engine)
         self.importing = set()
         self.import_slots = threading.Semaphore(2)
@@ -63,6 +64,12 @@ class ConnectorInbox(UnifiedInbox):
 
     def dispatch(self, method, path, payload, query=None, raw=None):
         parts = [unquote(p) for p in path.split('?')[0].strip('/').split('/')]
+        if parts[:4] == ['api', 'unified', 'connectors', 'browser']:
+            # Owner-only live sign-in in the Wizard Browser (no agent capability maps here).
+            if getattr(self, 'browser_signin', None) is None:
+                from browser_signin import BrowserSignIn
+                self.browser_signin = BrowserSignIn(self.connectors)
+            return self.browser_signin.dispatch(method, parts[4:], payload, query or {})
         if parts[:3] == ['api', 'unified', 'connectors']:
             return self.connectors.dispatch(method, parts[3:], payload)
         if parts[:3] == ['api', 'unified', 'telegram']:
@@ -97,7 +104,7 @@ class ConnectorInbox(UnifiedInbox):
                 row = db.execute('SELECT json FROM room_meta WHERE room=?', (room,)).fetchone()
             meta = json.loads(row[0]) if row else None
         events = (data.get('state', {}).get('events') or []) + [e for e in data.get('timeline', {}).get('events', []) if 'state_key' in e]
-        fresh = meta is not None and 'network' in meta and (meta['network'] or meta.get('v', 0) >= META_VERSION)
+        fresh = meta is not None and 'network' in meta and (meta['network'] or meta.get('v', 0) >= META_VERSION) and (not meta['network'] or meta.get('v', 0) >= META_VERSION)
         if fresh and not any(e.get('type') in self.META_TYPES for e in events):
             self.rooms[room] = meta
             return meta
@@ -116,6 +123,14 @@ class ConnectorInbox(UnifiedInbox):
             meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state) or room_type in ('space', 'personal_filtering_space')
             meta['kind'] = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
             meta['names'] = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member' and (e.get('content') or {}).get('displayname')}
+            # Profile pictures the bridges already copy in (mxc URIs stay on the box; the view gets them through a proxy).
+            meta['avatars'] = {e.get('state_key'): (e.get('content') or {}).get('avatar_url') for e in joined if MXC.fullmatch((e.get('content') or {}).get('avatar_url') or '')}
+            room_pic = next(((e.get('content') or {}).get('url') for e in state if e['type'] == 'm.room.avatar'), None)
+            if not (isinstance(room_pic, str) and MXC.fullmatch(room_pic)):
+                room_pic = None
+            if meta['kind'] == 'person' and not room_pic and len(members) == 1:
+                room_pic = meta['avatars'].get(members[0].get('state_key'))
+            meta['avatar'] = room_pic
             label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
             own = self.store.own_names()
             if meta['kind'] == 'person' and weak_label(label, own):
@@ -183,6 +198,33 @@ class ConnectorInbox(UnifiedInbox):
                            path='/_matrix/media/v3/upload?' + urlencode({'filename': filename}),
                            method='POST', body=data, token=self.matrix_token(),
                            content_type=mime, timeout=60)
+
+    def refresh_pictures(self, batch=25):
+        """Re-read older rooms' state a few at a time on each sync pass, so every chat gets its picture."""
+        marker = 'meta_pictures_v%d' % META_VERSION
+        if self.store.get(marker):
+            return
+        try:
+            with self.store.db() as db:
+                rooms = [r[0] for r in db.execute(
+                    "SELECT i.address FROM identity i LEFT JOIN room_meta m ON m.room=i.address "
+                    "WHERE i.network NOT IN ('messenger','private') AND (m.json IS NULL OR m.json NOT LIKE '%\"avatars\"%') "
+                    "AND i.address NOT IN (SELECT value FROM json_each(?)) LIMIT ?", (json.dumps(sorted(self._picture_skip)), batch))]
+        except Exception:
+            return
+        if not rooms:
+            self.store.put(marker, '1')
+            return
+        for room in rooms:
+            self.rooms.pop(room, None)
+            try:
+                self.room_meta(room, {})  # META_VERSION bump makes it re-read state; the old row stays if that fails
+            except Exception:
+                pass
+            with self.store.db() as db:
+                if not db.execute("SELECT 1 FROM room_meta WHERE room=? AND json LIKE '%\"avatars\"%'", (room,)).fetchone():
+                    self._picture_skip.add(room)
+        self.store.changed()
 
     def rescan_dropped(self):
         """Once per META_VERSION: rooms an older release cached as non-bridged (LINE,
@@ -279,6 +321,7 @@ class ConnectorInbox(UnifiedInbox):
             self.store.put('sync_token', result['next_batch'])
             self.store.put('sync_error', '')
             self.rescan_dropped()
+            self.refresh_pictures()
             return {'state': 'ready'}
         except EngineError as error:
             self.store.put('sync_error', error.message)

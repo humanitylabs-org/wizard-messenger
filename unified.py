@@ -73,8 +73,21 @@ class Blob:
 # Served inline only for these; everything else (SVG, HTML, PDF...) is an attachment download.
 INLINE_MIME = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
                'audio/webm', 'audio/aac', 'audio/x-m4a', 'video/mp4', 'video/webm', 'video/quicktime'}
+MXC = re.compile(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)')
+
 # Bridges tag ghost names with their network ("Ana (WA)"); the Inbox already shows the network's icon.
 NAME_SUFFIX = {'whatsapp': ' (WA)', 'twitter': ' (Twitter)', 'linkedin': ' (LinkedIn)'}
+
+
+def name_key(name):
+    """Comparable form of a person's name: accents, case, punctuation and emoji dropped."""
+    name = unicodedata.normalize('NFKD', name or '')
+    name = ''.join(c for c in name if not unicodedata.combining(c))
+    return ' '.join(re.sub(r'[^\w\s]', ' ', name.casefold()).split())
+
+
+def picture_tag(mxc):
+    return hashlib.sha256(mxc.encode()).hexdigest()[:12] if mxc else None
 
 
 def plain_name(network, label):
@@ -420,6 +433,7 @@ class PeopleStore:
             unread = dict(db.execute(
                 'SELECT i.person_id,COUNT(*) FROM message m JOIN identity i ON i.id=m.identity_id '
                 'WHERE i.kind=? AND m.outgoing=0 AND m.deleted=0 AND m.timestamp>i.last_read_ts GROUP BY i.person_id', (kind,)).fetchall())
+            pictures = self.room_pictures(db)
         result = []
         for pid, ident in idents.items():
             if pid not in persons or (ids is not None and pid not in ids):
@@ -427,6 +441,8 @@ class PeopleStore:
             if chats and pid not in last:
                 continue
             p = dict(persons[pid], identities=ident, labels=labels.get(pid, []))
+            pic = next((pictures[i['address']] for i in ident if pictures.get(i['address'])), None)
+            p['avatar'] = picture_tag(pic)
             if pid in last:
                 r = last[pid]
                 media = json.loads(r['media']) if r['media'] else {}
@@ -442,6 +458,51 @@ class PeopleStore:
         else:
             result.sort(key=lambda p: p['display_name'].casefold())
         return result
+
+    @staticmethod
+    def room_pictures(db):
+        out = {}
+        for room, raw in db.execute("SELECT room,json FROM room_meta WHERE json LIKE '%\"avatar\": \"mxc%'"):
+            try:
+                pic = json.loads(raw).get('avatar')
+            except ValueError:
+                continue
+            if isinstance(pic, str) and MXC.fullmatch(pic):
+                out[room] = pic
+        return out
+
+    def picture(self, person_id, who=None):
+        """mxc of a chat's picture, or of one group member (by the display name the view shows)."""
+        person = self.person(person_id)
+        with self.db() as db:
+            for ident in person['identities']:
+                row = db.execute('SELECT json FROM room_meta WHERE room=?', (ident['address'],)).fetchone()
+                if not row:
+                    continue
+                meta = json.loads(row[0])
+                if who is None:
+                    pic = meta.get('avatar')
+                else:
+                    ids = [k for k, v in (meta.get('names') or {}).items() if v == who or plain_name(ident['network'], v) == who]
+                    pic = next(((meta.get('avatars') or {}).get(k) for k in ids if (meta.get('avatars') or {}).get(k)), None)
+                if isinstance(pic, str) and MXC.fullmatch(pic):
+                    return pic
+        return None
+
+    def faces(self, person_id):
+        """Display name -> picture tag for a chat's members (group bubbles show the sender's face)."""
+        out = {}
+        with self.db() as db:
+            for ident in self.person(person_id)['identities']:
+                row = db.execute('SELECT json FROM room_meta WHERE room=?', (ident['address'],)).fetchone()
+                if not row:
+                    continue
+                meta = json.loads(row[0])
+                for mxid, pic in (meta.get('avatars') or {}).items():
+                    name = (meta.get('names') or {}).get(mxid)
+                    if name and isinstance(pic, str) and MXC.fullmatch(pic):
+                        out[plain_name(ident['network'], name)] = picture_tag(pic)
+        return out
 
     def update(self, person_id, payload):
         self.person(person_id)
@@ -469,6 +530,52 @@ class PeopleStore:
             db.execute('UPDATE identity SET seq=? WHERE person_id=?', (self.next_seq(), person_id))
         self.changed()
         return self.person(person_id)
+
+    def merge_suggestions(self):
+        """Pairs of one-on-one chats on different networks that look like the same person. Never applied
+        automatically: the owner merges or dismisses each one."""
+        try:
+            dismissed = set(json.loads(self.get('merge_dismissed') or '[]'))
+        except ValueError:
+            dismissed = set()
+        own = {name_key(n) for n in self.own_names()}
+        people = [p for p in self.people('person', chats=False) if p['identities']]
+        by_key = {}
+        for p in people:
+            key = name_key(p['display_name'])
+            if len(key) < 3 or key in own or weak_label(p['display_name'], self.own_names()):
+                continue
+            by_key.setdefault(key, []).append(p)
+        out = []
+        for key, group in by_key.items():
+            if len(group) < 2:
+                continue
+            nets = [set(i['network'] for i in p['identities']) for p in group]
+            # Same network twice is usually two different people with one name: only suggest across networks.
+            pick, seen = [], set()
+            for p, n in sorted(zip(group, nets), key=lambda x: -len(x[1])):
+                if not (n & seen):
+                    pick.append(p); seen |= n
+            ids = sorted(p['id'] for p in pick)
+            if len(pick) < 2 or '|'.join(ids) in dismissed:
+                continue
+            out.append({'id': '|'.join(ids), 'name': pick[0]['display_name'],
+                        'people': [{'id': p['id'], 'display_name': p['display_name'], 'avatar': p.get('avatar'),
+                                    'networks': sorted(set(i['network'] for i in p['identities'])),
+                                    'last': p.get('last')} for p in pick]})
+        return {'suggestions': sorted(out, key=lambda s: s['name'].casefold())}
+
+    def dismiss_merge(self, suggestion_id):
+        ids = sorted(text(x, 24) for x in str(suggestion_id or '').split('|') if x)
+        if len(ids) < 2:
+            fail('invalid_input', 'Choose a suggestion')
+        try:
+            dismissed = json.loads(self.get('merge_dismissed') or '[]')
+        except ValueError:
+            dismissed = []
+        dismissed = (dismissed + ['|'.join(ids)])[-2000:]
+        self.put('merge_dismissed', json.dumps(dismissed))
+        return {'dismissed': True}
 
     def merge(self, target, source):
         if target == source:
@@ -991,7 +1098,7 @@ class UnifiedInbox:
             return {'state': 'unavailable', 'message': error.message, 'logins': [], 'flows': []}
 
     # ---------- Matrix ingest ----------
-    META_TYPES = ('m.room.member', 'm.room.name', 'm.bridge', 'uk.half-shot.bridge', 'm.room.create')
+    META_TYPES = ('m.room.member', 'm.room.name', 'm.room.avatar', 'm.bridge', 'uk.half-shot.bridge', 'm.room.create')
 
     def room_meta(self, room, data):
         """Room kind/label/member names, cached; full state is fetched only for new rooms or state changes."""
@@ -1235,6 +1342,10 @@ class UnifiedInbox:
     # ---------- reading ----------
     def timeline(self, person_id, before=None, limit=2000):
         person = self.store.person(person_id)
+        try:
+            person['faces'] = self.store.faces(person_id)
+        except Exception:
+            person['faces'] = {}
         if before is None:
             for identity in person['identities']:
                 if identity['network'] == 'messenger':
@@ -1597,6 +1708,12 @@ class UnifiedInbox:
         except (HTTPError, URLError, OSError, ValueError, KeyError):
             fail('upstream_unavailable', 'Upload failed. Please try again.', 503)
 
+    def picture_blob(self, person_id, who=None):
+        mxc = self.store.picture(person_id, who)
+        if not mxc:
+            fail('not_found', 'No picture', 404)
+        return self.media_blob(mxc, 'image/jpeg', 'avatar', size=160)
+
     def media(self, message_id, kind):
         """Proxy a message's media from the private homeserver; mxc URIs and tokens never leave the box."""
         message = self.store.message(message_id)
@@ -1608,18 +1725,24 @@ class UnifiedInbox:
         if thumb and not (media.get('thumb') or mime.startswith('image/')):
             fail('not_found', 'No preview for that message', 404)
         mxc = (media.get('thumb') if thumb and media.get('thumb') else media['mxc'])
+        if not re.fullmatch(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)', mxc or ''):
+            fail('not_found', 'No media on that message', 404)
+        return self.media_blob(mxc, mime, media.get('filename') or 'media', thumb=thumb and not media.get('thumb'), raw_thumb=thumb)
+
+    def media_blob(self, mxc, mime, name, *, thumb=False, raw_thumb=False, size=800):
         match = re.fullmatch(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)', mxc or '')
         if not match:
-            fail('not_found', 'No media on that message', 404)
+            fail('not_found', 'No media', 404)
+        thumb = thumb or size != 800
         cache = self.root / 'media-cache'
         cache.mkdir(mode=0o700, exist_ok=True)
-        key = hashlib.sha256((mxc + '|' + ('thumb' if thumb else 'full')).encode()).hexdigest()
+        key = hashlib.sha256((mxc + '|' + (('thumb%d' % size if size != 800 else 'thumb') if (thumb or raw_thumb) else 'full')).encode()).hexdigest()
         path = cache / key
         meta_path = cache / (key + '.type')
         if not path.exists():
             server, media_id = match.groups()
-            if thumb and not media.get('thumb'):
-                url = '/_matrix/client/v1/media/thumbnail/%s/%s?%s' % (server, media_id, urlencode({'width': 800, 'height': 800, 'method': 'scale', 'animated': 'true'}))
+            if thumb:
+                url = '/_matrix/client/v1/media/thumbnail/%s/%s?%s' % (server, media_id, urlencode({'width': size, 'height': size, 'method': 'scale' if size == 800 else 'crop', 'animated': 'true'}))
             else:
                 url = '/_matrix/client/v1/media/download/%s/%s' % (server, media_id)
             started = time.time()
@@ -1656,7 +1779,6 @@ class UnifiedInbox:
             served = 'video/webm'
         if served == 'audio/mp4' and mime.startswith('video/'):
             served = 'video/mp4'
-        name = media.get('filename') or ('media')
         return Blob(path, served if served in INLINE_MIME else 'application/octet-stream', name, served in INLINE_MIME)
 
     def evict(self, cache):
@@ -1780,6 +1902,10 @@ class UnifiedInbox:
                                          limit=int(q('limit', '50')), cursor=q('cursor'))
             except ValueError:
                 fail('invalid_search', 'Invalid search query or cursor')
+        if suffix == ['merge-suggestions'] and method == 'GET':
+            return self.store.merge_suggestions()
+        if suffix == ['merge-suggestions', 'dismiss'] and method == 'POST':
+            return self.store.dismiss_merge(payload.get('id'))
         if suffix == ['directory'] and method == 'GET':
             return {'people': self.store.people('person', chats=False), 'groups': self.store.people('group', chats=False)}
         if len(suffix) == 2 and suffix[0] == 'media' and method == 'GET':
@@ -1796,6 +1922,8 @@ class UnifiedInbox:
                     return self.timeline(person_id, before, limit)
                 if method == 'POST':
                     return self.store.update(person_id, payload)
+            if len(suffix) == 3 and method == 'GET' and suffix[2] == 'avatar':
+                return self.picture_blob(person_id, q('who') or None)
             if len(suffix) == 3 and method == 'PUT' and suffix[2] == 'upload':
                 return self.upload(person_id, q('kind', 'image'), raw or b'', q('name', ''))
             if len(suffix) == 3 and method == 'POST':

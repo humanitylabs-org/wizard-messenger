@@ -105,6 +105,13 @@
     const initials = text.split(/\s+/).filter(Boolean).slice(0, 2).map(w => [...w][0]).join('').toUpperCase() || '?';
     const el = node('span', 'u-avatar tone-' + (h % TONES) + (cls ? ' ' + cls : ''), initials); el.setAttribute('aria-hidden', 'true'); return el;
   }
+  // Real profile pictures over the initials; a missing or broken picture leaves the initials showing.
+  const pictureURL = (pid, tag, who) => tag && pid && !String(pid).startsWith('private:') ? 'api/unified/people/' + encodeURIComponent(pid) + '/avatar?' + new URLSearchParams(who ? {who, v: tag} : {v: tag}) : '';
+  function withPicture(el, url) {
+    if (!url) return el;
+    const img = document.createElement('img'); img.className = 'u-av-img'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = url;
+    img.onerror = () => img.remove(); img.onload = () => el.classList.add('has-img'); el.append(img); return el;
+  }
   const networksOf = p => [...new Set((p.identities || []).map(i => i.network))];
   const cap = t => t ? t[0].toUpperCase() + t.slice(1) : '';
   // Brand-correct network names (WhatsApp, LINE, Instagram…) from connectors.js, falling back to Capitalised.
@@ -137,7 +144,8 @@
   }
   function back() {
     if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
-    if (s.overlay === 'Edit QR codes') { myCodes(); return true; } // nested: Back returns to the codes, not the list
+    if (s.overlay === 'Edit QR codes') { myCodes(); return true; }
+    if (s.overlay === 'Suggested merges') { accounts(); return true; } // nested: Back returns to the codes, not the list
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
@@ -176,13 +184,13 @@
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
-  function threadBase(name, subtitle, onInfo, network) {
+  function threadBase(name, subtitle, onInfo, network, picture = '') {
     const root = $('unified-inbox'); root.replaceChildren();
     const head = node('header', 'u-header u-thread-head');
     head.append(iconButton('back', 'Back', back));
     const who = button('', onInfo || null, 'u-who'); who.disabled = !onInfo;
     const text = node('span', 'u-who-text'); text.append(node('strong', '', name)); if (subtitle) text.append(node('span', '', subtitle));
-    const face = node('span', 'u-av-wrap small'); face.append(avatar(name, 'small'));
+    const face = node('span', 'u-av-wrap small'); face.append(withPicture(avatar(name, 'small'), picture));
     if (network) { const b = netBadge(network, 'u-net'); b.setAttribute('aria-hidden', 'true'); face.append(b); }
     who.append(face, text); head.append(who);
     if (onInfo) head.append(iconButton('more', 'Edit', onInfo));
@@ -465,7 +473,7 @@
     return true;
   }
   function netAvatar(p, size = '') {
-    const wrap = node('span', 'u-av-wrap' + (size ? ' ' + size : '')); wrap.append(avatar(p.display_name, size));
+    const wrap = node('span', 'u-av-wrap' + (size ? ' ' + size : '')); wrap.append(withPicture(avatar(p.display_name, size), pictureURL(p.id, p.avatar)));
     const net = networksOf(p)[0];
     if (net) wrap.append(netBadge(net, 'u-net'));
     return wrap;
@@ -795,7 +803,7 @@
     view.sub.textContent = subtitle(t.person); view.sub.classList.toggle('typing', (store.typing[s.person] || []).length > 0);
   }
   function buildThread(id, p) {
-    const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null, networksOf(p)[0]);
+    const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null, networksOf(p)[0], pictureURL(p.id, p.avatar));
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
     const scroll = node('div', 'u-timeline'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
@@ -846,9 +854,9 @@
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
+      const sig = JSON.stringify([group && !m.outgoing ? p.faces?.[nameOf(m.sender)] : 0, m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
       let el = els.get(key);
-      if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read}); el.dataset.sig = sig; els.set(key, el); }
+      if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read, faces: p.faces}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
     });
     if (!t.messages.length) kids.push(node('p', 'u-empty', 'No messages yet. Say hi 👋'));
@@ -889,7 +897,7 @@
   function bubble(m, pos, ctx) {
     // Direction comes only from message.outgoing: own messages sit right in the accent colour and never carry a name.
     const row = node('div', 'u-row' + (m.outgoing ? ' outgoing' : ' incoming') + ' pos-' + pos + (ctx.group && !m.outgoing ? ' in-group' : '')); row.dataset.id = m.id; row.dataset.direction = m.outgoing ? 'out' : 'in';
-    if (ctx.group && !m.outgoing && (pos === 'last' || pos === 'single')) { const face = avatar(nameOf(m.sender) || '?', 'tiny u-row-av'); face.title = nameOf(m.sender); row.append(face); }
+    if (ctx.group && !m.outgoing && (pos === 'last' || pos === 'single')) { const who = nameOf(m.sender), tag = ctx.faces?.[who]; const face = withPicture(avatar(who || '?', 'tiny u-row-av'), pictureURL(view.id, tag, who)); face.title = who; row.append(face); }
     const b = node('article', 'u-message' + (m.outgoing ? ' outgoing' : '') + (m.deleted ? ' deleted' : '') + (m.pending ? ' pending' : '') + (m.failed ? ' failed' : ''));
     const visual = !m.deleted && ['m.image', 'm.sticker', 'm.video'].includes(m.msgtype);
     if (visual && !m.original) b.classList.add('bare');
@@ -1211,7 +1219,7 @@
     if (everyone && !confirm('Delete this message for everyone?')) return;
     try { const r = await call('messages/' + encodeURIComponent(m.id) + '/delete', {everyone}); mergeMessages(view.id, r.messages || [r.message]); paintThread(); } catch (e) { error(e); }
   }
-  function startReply(m) { view.edit = null; view.reply = m; view.paintBar?.(); view.draft?.focus(); }
+  function startReply(m) { view.edit = null; view.reply = m; if (m.network) view.useNetwork?.(m.network); view.paintBar?.(); view.draft?.focus(); }
   function startEdit(m) { view.reply = null; view.edit = m; view.draft.value = m.original; view.grow?.(); view.paintBar?.(); view.draft.focus(); }
 
   // ---------- composer: text, photo, voice; optimistic and idempotent ----------
@@ -1220,7 +1228,19 @@
     const bar = node('div', 'u-bar'); bar.hidden = true;
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
     for (const i of p.identities || []) { const opt = node('option', '', 'via ' + netLabel(i.network) + ' · ' + i.label); opt.value = i.id; channel.append(opt); }
-    channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = (p.identities || []).length < 2;
+    channel.value = p.preferred_identity || p.identities?.[0]?.id || ''; channel.hidden = true;
+    // Merged chats: always say where the reply goes ("Replying on WhatsApp ▾"); tap to pick another network.
+    // Replying to a message switches to the network that message came from.
+    const via = button('', () => {
+      actionMenu(via, 'Reply on', (p.identities || []).map(i => ({label: netLabel(i.network) + ' · ' + i.label + (i.id === channel.value ? '  ✓' : ''), icon: 'send', run: () => { channel.value = i.id; paintVia(); }})));
+    }, 'u-via-pick'); via.type = 'button'; via.hidden = (p.identities || []).length < 2;
+    const paintVia = () => {
+      const i = (p.identities || []).find(x => x.id === channel.value) || p.identities?.[0]; if (!i) return;
+      via.replaceChildren(node('span', 'u-via-lead', 'Replying on'), netBadge(i.network, 'u-via-icon'), node('strong', '', netLabel(i.network)), node('span', 'u-via-caret', '▾'));
+      via.setAttribute('aria-label', 'Replying on ' + netLabel(i.network) + '. Change');
+    };
+    view.useNetwork = net => { const i = (p.identities || []).find(x => x.network === net); if (i && i.id !== channel.value) { channel.value = i.id; paintVia(); } };
+    paintVia();
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => bridged(i.network));
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
     const file = node('input'); file.type = 'file'; file.multiple = true; file.hidden = true; // any file: photos go as photos, the rest as files (James, 26 Oct 2026)
@@ -1310,7 +1330,7 @@
       row.hidden = true; form.append(panel); view.recording = {stop: finish, cancel}; hold();
     }
     Object.assign(view, {draft, grow, paintBar});
-    form.append(bar, channel, row); grow(); paintBar();
+    form.append(bar, via, channel, row); grow(); paintBar();
     return form;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
@@ -1600,10 +1620,40 @@
     }), 'primary wide'));
     if (!codes.length) requestAnimationFrame(() => addRow().focus());
   }
+  // Same person on two networks, offered never applied: Merge joins them into one chat, Not the same hides the pair.
+  async function mergeSuggestions() {
+    const sheet = overlay('Suggested merges');
+    sheet.append(node('p', 'helper', 'These look like the same person on different networks. Merging makes one chat; you choose where each reply goes, and you can separate them again from the chat.'));
+    const list = node('div', 'u-merge-list'); sheet.append(list);
+    let rows = [];
+    try { rows = (await call('merge-suggestions')).suggestions || []; } catch (e) { error(e); return; }
+    if (s.overlay !== 'Suggested merges') return;
+    const empty = () => { if (!list.children.length) list.append(node('p', 'u-empty', 'No suggestions right now.')); };
+    for (const sg of rows) {
+      const card = node('section', 'u-merge-card'), pair = node('div', 'u-merge-pair');
+      sg.people.forEach((x, i) => {
+        if (i) pair.append(node('span', 'u-merge-plus', '+'));
+        const who = node('div', 'u-merge-who'), txt = node('span');
+        txt.append(node('strong', '', x.display_name), node('small', '', x.networks.map(netLabel).join(', ') + (x.last ? ' · ' + when(x.last.timestamp) : '')));
+        who.append(netAvatar({id: x.id, display_name: x.display_name, avatar: x.avatar, identities: x.networks.map(n => ({network: n}))}, 'small'), txt);
+        pair.append(who);
+      });
+      const acts = node('div', 'u-merge-actions');
+      acts.append(button('Not the same', () => action(async () => { await call('merge-suggestions/dismiss', {id: sg.id}); card.remove(); empty(); toast('Hidden'); }), 'secondary'),
+        button('Merge', () => action(async () => {
+          const [target, ...rest] = sg.people; for (const x of rest) await call('people/' + encodeURIComponent(target.id) + '/merge', {source_id: x.id});
+          card.remove(); empty(); toast('Merged into one chat'); store.lists = {people: null, groups: null}; refresh();
+        }), 'primary'));
+      card.append(pair, acts); list.append(card);
+    }
+    empty();
+  }
   async function accounts(focus) {
     // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
     sheet.append(accountsBanner()); refreshAccounts();
+    const mergeRow = button('', () => mergeSuggestions(), 'u-settings-row'); mergeRow.append(node('span', '', 'Suggested merges')); mergeRow.hidden = true; sheet.append(mergeRow);
+    call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; mergeRow.hidden = false; mergeRow.append(node('span', 'u-badge', String(n))); mergeRow.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
     sheet.append(button('Wizard Messenger · your address', () => { closeOverlay(); showNative(); native?.settings(); }, 'secondary wide'));
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);

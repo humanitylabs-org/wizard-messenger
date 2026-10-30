@@ -1,0 +1,136 @@
+// Pictures, suggested merges, "Replying on" and Slack browser sign-in (Miguel, 30 Oct 2026).
+// node tests/merge_pictures_browser.cjs [outdir]   (needs playwright via PLAYWRIGHT_MODULE). Synthetic APIs only.
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+const L = require('../static/app.js');
+const root = path.resolve(__dirname, '../static'), out = path.resolve(process.argv[2] || 'merge-shots');
+fs.mkdirSync(out, {recursive: true});
+const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'};
+// 1x1 PNGs: a red face and a blue frame
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+const now = Date.now(), min = 60e3;
+const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, kind, label: id});
+(async () => {
+  const browser = await chromium.launch(), summary = [];
+  for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
+    let people = [
+      {id: 'ana-w', display_name: 'Ana Souza', identities: [ident('ana', 'whatsapp')], labels: [], unread: 1, avatar: 'abc123', last: {text: 'Oi!', timestamp: now - 2 * min, outgoing: false}},
+      {id: 'ana-i', display_name: 'Ana Souza', identities: [ident('ana', 'instagram')], labels: [], unread: 0, avatar: null, last: {text: 'nice pic', timestamp: now - 90 * min, outgoing: false}},
+      {id: 'bo', display_name: 'Bo Chen', identities: [ident('bo', 'telegram'), ident('bo', 'whatsapp')], labels: [], unread: 0, avatar: 'def456', last: {text: 'see you', timestamp: now - 30 * min, outgoing: false}},
+    ];
+    const groups = [{id: 'fam', display_name: 'Family', identities: [ident('fam', 'whatsapp', 'group')], labels: [], unread: 0, avatar: null, last: {text: 'Dinner?', timestamp: now - 5 * min, outgoing: false, sender: 'Pedro'}}];
+    let suggestions = [{id: 'ana-i|ana-w', name: 'Ana Souza', people: [
+      {id: 'ana-w', display_name: 'Ana Souza', avatar: 'abc123', networks: ['whatsapp'], last: people[0].last},
+      {id: 'ana-i', display_name: 'Ana Souza', avatar: null, networks: ['instagram'], last: people[1].last}]}];
+    const posted = [], pics = [], inputs = [];
+    let frames = 0, signin = 'signing_in';
+    const finishAfter = () => { signin = 'done'; };
+    const ctx = await browser.newContext({viewport, deviceScaleFactor: 2});
+    await ctx.addInitScript(() => { const noop = () => {}; window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}}; });
+    const page = await ctx.newPage(), errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    const ownKey = '11'.repeat(32);
+    await page.route('https://messenger.test/**', async route => {
+      const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
+      const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
+      const body = req.postData() ? JSON.parse(req.postData()) : {};
+      if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
+      if (p === 'api/status') return ok({state: 'ready', account_configured: true});
+      if (p === 'api/identity') return ok({identity: {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'}});
+      if (['api/contacts', 'api/invites', 'api/dms'].includes(p)) return ok({contacts: [], invites: [], dms: []});
+      if (p === 'api/unified/people') return ok({people, seq: 5});
+      if (p === 'api/unified/groups') return ok({groups, seq: 5});
+      if (p === 'api/unified/merge-suggestions') return ok({suggestions});
+      if (p === 'api/unified/merge-suggestions/dismiss') { posted.push(['dismiss', body.id]); suggestions = []; return ok({dismissed: true}); }
+      let m = /^api\/unified\/people\/([^/]+)\/avatar$/.exec(p);
+      if (m) { pics.push([decodeURIComponent(m[1]), url.searchParams.get('who')]); return route.fulfill({status: 200, contentType: 'image/png', body: PNG}); }
+      m = /^api\/unified\/people\/([^/]+)\/merge$/.exec(p);
+      if (m) { posted.push(['merge', m[1], body.source_id]); people = [{...people[0], identities: [...people[0].identities, ...people[1].identities]}, people[2]]; suggestions = []; return ok({}); }
+      m = /^api\/unified\/people\/([^/]+)$/.exec(p);
+      if (m) {
+        const id = decodeURIComponent(m[1]), pr = [...people, ...groups].find(x => x.id === id);
+        const msgs = id === 'fam' ? [{id: 'f1', timestamp: now - 9 * min, outgoing: false, original: 'Who cooks?', sender: 'Pedro', msgtype: 'm.text', network: 'whatsapp', reactions: []}]
+          : [{id: 'b1', timestamp: now - 40 * min, outgoing: false, original: 'on telegram', sender: 'Bo', msgtype: 'm.text', network: 'telegram', reactions: []},
+             {id: 'b2', timestamp: now - 30 * min, outgoing: false, original: 'see you', sender: 'Bo', msgtype: 'm.text', network: 'whatsapp', reactions: []}];
+        return ok({person: {...pr, faces: id === 'fam' ? {Pedro: 'aaa111'} : {}}, messages: msgs, has_more: false, next_cursor: null, seq: 5, typing: []});
+      }
+      if (p.endsWith('/read')) return ok({});
+      if (p === 'api/unified/connectors') return ok({providers: [{network: 'slack', label: 'Slack', supported: true, state: 'disconnected', flows: [{id: 'email', name: 'Email'}, {id: 'token', name: 'Token'}], logins: []}]});
+      if (p === 'api/unified/connectors/browser/start') { posted.push(['start', body.network, body.width > 0]); return ok({id: 'S1', title: 'Slack'}); }
+      m = /^api\/unified\/connectors\/browser\/S1\/(frame|input|cancel)$/.exec(p);
+      if (m && m[1] === 'frame') { await new Promise(r => setTimeout(r, 150)); frames++; return ok({seq: frames, frame: PNG.toString('base64'), state: signin, host: 'app.slack.com', message: 'Connected Acme', result: {connected: ['Acme'], failed: []}}); }
+      if (m && m[1] === 'input') { inputs.push(body); return ok({ok: true}); }
+      if (m && m[1] === 'cancel') { posted.push(['cancel']); return ok({}); }
+      if (p.startsWith('api/unified/updates')) { await new Promise(r => setTimeout(r, 20000)); return ok({seq: 5}); }
+      if (p.startsWith('api/')) return ok({});
+      const file = path.join(root, p || 'index.html');
+      if (!file.startsWith(root) || !fs.existsSync(file)) return route.fulfill({status: 404, body: ''});
+      return route.fulfill({status: 200, contentType: TYPES[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file)});
+    });
+    const shot = name => page.screenshot({path: path.join(out, `${name}-${label}.png`)});
+    await page.goto('https://messenger.test/');
+    await page.locator('.u-person', {hasText: 'Bo Chen'}).waitFor({timeout: 15000});
+    // Pictures: rows with a picture load it; rows without keep initials.
+    await page.waitForFunction(() => document.querySelectorAll('.u-person .u-avatar.has-img').length >= 2);
+    assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('img.u-av-img').count(), 0);
+    assert.ok(pics.some(x => x[0] === 'ana-w'));
+    await shot('inbox');
+
+    // Suggested merges live in Settings, merge on a tap and leave the list in place.
+    await page.locator('.u-settings-btn').click();
+    await page.locator('.u-settings-row', {hasText: 'Suggested merges'}).waitFor();
+    await page.locator('.u-settings-row', {hasText: 'Suggested merges'}).click();
+    await page.locator('.u-merge-card').waitFor();
+    assert.match(await page.locator('.u-merge-card').textContent(), /WhatsApp.*Instagram|Instagram.*WhatsApp/s);
+    await shot('merges');
+    await page.locator('.u-merge-card').getByRole('button', {name: 'Merge'}).click();
+    await page.locator('.u-merge-card').waitFor({state: 'detached'});
+    assert.deepEqual(posted.find(x => x[0] === 'merge'), ['merge', 'ana-w', 'ana-i']);
+    await page.getByText('No suggestions right now.').waitFor();
+    await page.keyboard.press('Escape'); if (await page.locator('#u-overlay').count()) await page.locator('#u-overlay .icon-button[aria-label=Close]').click();
+
+    // Merged chat: the composer says where the reply goes; replying to a message switches to its network.
+    await page.locator('.u-person', {hasText: 'Bo Chen'}).click();
+    const pill = page.locator('.u-via-pick');
+    await pill.waitFor();
+    assert.match(await pill.textContent(), /Replying on\s*Telegram/);
+    await page.locator('.u-row[data-id=b2] .bubble-text, .u-row[data-id=b2] .u-message').first().click({button: 'right'});
+    await page.getByRole('menuitem', {name: /Reply/}).click();
+    assert.match(await pill.textContent(), /Replying on\s*WhatsApp/);
+    await shot('reply-on');
+    await pill.click();
+    await page.getByRole('menuitem', {name: /Telegram/}).click();
+    assert.match(await pill.textContent(), /Replying on\s*Telegram/);
+    await page.getByRole('button', {name: 'Back', exact: true}).click();
+
+    // Group bubbles carry the sender's picture.
+    await page.locator('.u-person', {hasText: 'Family'}).click();
+    await page.locator('.u-row[data-id=f1]').waitFor();
+    await page.waitForFunction(() => document.querySelector('.u-row[data-id=f1] .u-avatar.has-img'));
+    assert.ok(pics.some(x => x[0] === 'fam' && x[1] === 'Pedro'));
+    await page.getByRole('button', {name: 'Back', exact: true}).click();
+
+    // Slack: browser sign-in first, email second, no developer-tools steps.
+    await page.locator('.u-settings-btn').click();
+    const card = page.locator('.c-card[data-network=slack]');
+    await card.waitFor();
+    assert.deepEqual(await card.locator('button').evaluateAll(b => b.map(x => x.textContent.trim())), ['Sign in with your browser', 'Sign in with email']);
+    await card.getByRole('button', {name: /Sign in with your browser/}).click();
+    await page.locator('.c-live-img[src^="data:image"]').waitFor();
+    assert.equal(await page.locator('.u-sheet', {hasText: /F12|Console|cURL|xoxc/}).count(), 0, 'no developer-tools instructions');
+    await page.locator('.c-live-img').click({position: {x: 50, y: 60}});
+    await page.locator('.c-live-type').pressSequentially('me@acme.com');
+    await page.getByRole('button', {name: 'Enter ⏎'}).click();
+    await shot('slack-live'); finishAfter();
+    await page.getByText('Slack connected').waitFor({timeout: 15000});
+    assert.ok(inputs.some(i => i.type === 'tap' && i.x > 0 && i.x < 1), 'tap mapped to page coordinates');
+    assert.equal(inputs.filter(i => i.type === 'text').map(i => i.text).join(''), 'me@acme.com');
+    assert.ok(inputs.some(i => i.type === 'key' && i.key === 'Enter'));
+    await shot('slack-done');
+    assert.deepEqual(errors, [], 'no page errors');
+    summary.push(label);
+    await ctx.close();
+  }
+  await browser.close();
+  console.log('PASS merge_pictures_browser: ' + summary.join(', ') + ' · pictures, suggested merges, Replying on, group faces, Slack browser sign-in');
+})().catch(e => { console.error('FAIL', e); process.exit(1); });
