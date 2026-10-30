@@ -2,7 +2,7 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.2.0-unified.12.0
+version: 0.2.0-unified.13.0
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
@@ -32,6 +32,7 @@ view:
     dist: static
 health: /healthz
 provides: [messaging]
+uses: [browser]
 needs: []
 ---
 
@@ -39,6 +40,6 @@ Messenger runs entirely in its own isolated container. Its web view uses only it
 
 This candidate implements text DMs with dedicated messaging identities, invitations, local encrypted history and explicit passphrase unlock after restart. The protected root Wizard ID is never imported. Public contact codes are shareable; secret keys are not exposed.
 
-The API requires a generated capability for trusted integrations; browser access uses a scoped HttpOnly session, exact-origin checks and CSRF. Initial owner setup uses a single-use install capability. The MCP exposes public identity/status only; agent message access, groups, attachments and phone push are later work.
+The API requires a generated capability for trusted integrations; browser access uses a scoped HttpOnly session, exact-origin checks and CSRF. Initial owner setup uses a single-use install capability. Without a key the MCP exposes public identity/status only. Each agent can get its own Messenger key with an owner-chosen level (Draft-only recommended) that adds chat listing, thread reading and draft tools; only the owner sends.
 
 Private beta installation and versioned image-download instructions are in PRIVATE-BETA.md. Public indexing and recipient contact are not included.

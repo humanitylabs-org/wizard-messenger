@@ -43,10 +43,10 @@ class BoundaryTests(unittest.TestCase):
     def test_unknown_mcp_tool_cannot_send(self):
         _,data=self.call('/mcp',{'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'messages_send'}})
         self.assertEqual(data['error']['code'],-32601)
-    def test_internal_error_cannot_echo_setup_secret(self):
+    def test_denied_bearer_setup_cannot_echo_secret(self):
         secret='this-must-not-appear-in-the-response'
         status,data=self.call('/api/setup',{'vault_password':secret})
-        self.assertEqual(status,500); self.assertNotIn(secret,json.dumps(data))
+        self.assertEqual(status,403); self.assertNotIn(secret,json.dumps(data))
     def test_empty_token_is_rejected(self):
         with self.assertRaises(ValueError): MessengerServer(('127.0.0.1',0),FakeEngine(),'',['https://view.invalid'])
     def test_empty_origin_list_means_same_host_only(self):

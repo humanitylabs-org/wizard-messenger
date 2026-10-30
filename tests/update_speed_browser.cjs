@@ -62,7 +62,7 @@ const assert = require('node:assert/strict');
   // (2) A draft left in a chat no longer holds a Wizard update; reloading comes back on the same chat with the draft.
   await page.locator('.u-composer textarea').fill('half a thought');
   await page.waitForTimeout(500);
-  const open = await page.evaluate(() => (window.__holds || []).filter(h => !h.released).map(h => h.reason)); 
+  const open = await page.evaluate(() => (window.__holds || []).filter(h => !h.released).map(h => h.reason));
   assert.ok(!open.some(r => /unified|sending|saving|recording/i.test(r)), 'a chat draft holds no update: ' + open); // (a half-typed account setup on the locked Messenger tab still may)
   await page.evaluate(() => { window.__before = 1; }); await page.reload();
   await page.waitForFunction(() => !window.__before, null, {timeout: 15000});

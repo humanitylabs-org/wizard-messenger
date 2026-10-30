@@ -1,0 +1,21 @@
+{
+  "successful": true,
+  "tests_run": 3,
+  "passed": 3,
+  "known_failures": 0,
+  "skipped": 0,
+  "outcomes": [
+    {
+      "test": "readiness.tests.test_transport.TransportTests.test_composite_history_cursor_preserves_ties",
+      "outcome": "passed"
+    },
+    {
+      "test": "readiness.tests.test_transport.TransportTests.test_failed_sync_preserves_cursor_restart_replay_is_deduplicated",
+      "outcome": "passed"
+    },
+    {
+      "test": "readiness.tests.test_transport.TransportTests.test_limited_sync_warns_history_incomplete",
+      "outcome": "passed"
+    }
+  ]
+}

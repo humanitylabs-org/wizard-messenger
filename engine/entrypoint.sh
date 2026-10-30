@@ -13,4 +13,7 @@ fi
 # No host bus/keychain socket is used. Unlock is an authenticated API action.
 mkdir -p "${XDG_RUNTIME_DIR:-/run/messenger}"
 chmod 700 "${XDG_RUNTIME_DIR:-/run/messenger}"
+# App-manager restarts and backups can widen app-data modes; private files must stay owner-only
+# (the trusted-owner envelope refuses to open otherwise). Every Messenger container runs as this uid.
+find /data -xdev \( -type d -perm /077 -exec chmod 700 {} + \) -o \( -type f -perm /077 -exec chmod 600 {} + \) 2>/dev/null || true
 exec dbus-run-session -- python3 /app/web.py

@@ -36,16 +36,19 @@ class SenderTests(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         self.base = 'http://127.0.0.1:' + str(self.server.server_port)
-        self.sender = LocalOwnerSender(self.base, bases={'signal': self.base})
+        self.sender = LocalOwnerSender(self.base, bases={'slack': self.base, 'signal': self.base})
 
     def invoke(self, path, network='matrix', method='POST', **kw):
         return self.sender(network=network, base=self.base, path=path, method=method, body=kw.pop('body', {}), **kw)
 
     def test_real_loopback_fixed_routes_json_and_binary(self):
-        self.assertTrue(self.invoke('/_matrix/provision/v3/login/start/email?user_id=%40owner%3Amessenger.internal', network='signal')['ok'])
+        self.assertTrue(self.invoke('/_matrix/provision/v3/login/start/email?user_id=%40owner%3Amessenger.internal', network='slack')['ok'])
         self.assertTrue(self.invoke('/_matrix/client/v3/rooms/%21test%3Amessenger.internal/send/m.room.message/client000', method='PUT')['ok'])
         self.assertEqual(self.invoke('/_matrix/media/v3/upload?filename=photo.png', body=b'test', content_type='image/png')['bytes'], 4)
-        self.assertEqual(len(self.calls), 3)
+        # Browser and cURL sign-ins (Slack token login) submit a cookies step.
+        self.assertTrue(self.invoke('/_matrix/provision/v3/login/step/proc1/fi.mau.slack.login.auth_token/cookies?user_id=%40owner%3Amessenger.internal', network='slack')['ok'])
+        with self.assertRaises(EngineError): self.invoke('/_matrix/provision/v3/login/step/proc1/x/webauthn?user_id=%40owner%3Amessenger.internal', network='slack')
+        self.assertEqual(len(self.calls), 4)
 
     def test_james_any_file_fixed_upload_name_and_strict_mime(self):
         for mime in ('application/pdf', 'application/zip', 'application/octet-stream', 'image/svg+xml'):
@@ -88,11 +91,11 @@ class SenderTests(unittest.TestCase):
             with self.assertRaises(EngineError): self.invoke(path)
         with self.assertRaises(EngineError): self.invoke('/_synapse/admin/v1/register', body={'username': 'another', 'admin': True})
         with self.assertRaises(EngineError): self.sender(network='matrix', base='http://example.com', path='/_matrix/client/v3/login', method='POST', body={})
-        with self.assertRaises(EngineError): self.invoke('/_matrix/provision/v3/logout/all?user_id=%40other%3Amessenger.internal', network='signal')
+        with self.assertRaises(EngineError): self.invoke('/_matrix/provision/v3/logout/all?user_id=%40other%3Amessenger.internal', network='slack')
         self.assertFalse(self.calls)
 
     def test_redirect_never_forwards_credentials(self):
-        with self.assertRaises(EngineError): self.invoke('/_matrix/provision/v3/login/cancel/redirect?user_id=%40owner%3Amessenger.internal', network='signal', token='synthetic-private-token')
+        with self.assertRaises(EngineError): self.invoke('/_matrix/provision/v3/login/cancel/redirect?user_id=%40owner%3Amessenger.internal', network='slack', token='synthetic-private-token')
         self.assertEqual(len(self.calls), 1)
         self.assertNotIn('/unapproved-secret-target', self.calls[0][0])
 

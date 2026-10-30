@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#121214">
   <meta name="referrer" content="no-referrer">
+  <meta name="messenger-enrollment" content="manual">
   <title>Messenger</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -20,7 +21,7 @@
 </head>
 <body>
   <main id="messenger" aria-label="Messenger">
-    <nav id="inbox-tabs" aria-label="Inbox sections" hidden><button data-tab="people" aria-label="Chats"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 11.5a8.4 8.4 0 0 1-12.2 7.5L3 21l2-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg><span>Chats</span></button><button data-tab="groups" aria-label="Groups"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg><span>Groups</span></button><button data-tab="messenger" aria-label="Messenger"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Messenger</span></button></nav>
+    <nav id="inbox-tabs" aria-label="Inbox sections" hidden><button data-tab="people" aria-label="Inbox"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 11.5a8.4 8.4 0 0 1-12.2 7.5L3 21l2-5.4A8.4 8.4 0 1 1 21 11.5z"/></svg><span>Inbox</span></button></nav>
     <section id="unified-inbox" hidden></section>
     <section id="gate" class="gate" aria-labelledby="gate-title">
       <div class="setup-card">
@@ -30,8 +31,9 @@
         <div id="gate-progress" class="loading-line" aria-hidden="true"><span class="spinner"></span></div>
         <form id="setup-form" hidden autocomplete="off">
           <label id="name-label">Your name<input id="display-name" placeholder="Optional" maxlength="160" autocomplete="nickname"></label>
-          <label>Passphrase<span class="password-field"><input id="passphrase" type="password" autocomplete="off" required><button id="show-password" type="button" aria-label="Show passphrase" aria-pressed="false">Show</button></span></label>
+          <label id="passphrase-label">Passphrase<span class="password-field"><input id="passphrase" type="password" autocomplete="off" required><button id="show-password" type="button" aria-label="Show passphrase" aria-pressed="false">Show</button></span></label>
           <p id="passphrase-help" class="helper">At least 16 characters. You'll type it again after Wizard restarts.</p>
+          <label id="remember-wizard-label" hidden><input id="remember-wizard" type="checkbox"> Remember this Wizard (opens after Wizard sign-in, including restarts). Lock forgets this choice.</label>
           <label id="confirm-label">Confirm passphrase<input id="confirm-passphrase" type="password" autocomplete="off" required></label>
           <p id="setup-error" class="error" role="alert"></p>
           <button id="setup-submit" class="primary wide" type="submit">Create address</button>
@@ -51,12 +53,12 @@
       <section id="detail" class="detail-pane" aria-label="Conversation">
         <div id="no-selection" class="empty-state"><p>Choose a conversation</p></div>
         <div id="chat" class="chat" hidden>
-          <header class="pane-header chat-header"><button id="chat-back" class="icon-button" aria-label="Back to messages"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 12H5M11 5l-7 7 7 7"/></svg></button><div class="chat-heading"><h2 id="chat-name"></h2><p id="chat-subline" class="subline"></p></div><button id="copy-peer" class="icon-button copy-peer" aria-label="Copy address" title="Copy address"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></header>
+          <header class="pane-header chat-header"><button id="chat-back" class="icon-button" aria-label="Back to messages"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 12H5M11 5l-7 7 7 7"/></svg></button><span id="chat-avatar" class="chat-avatar u-av-wrap small" aria-hidden="true"></span><div class="chat-heading"><h2 id="chat-name"></h2><p id="chat-subline" class="subline"></p></div><button id="copy-peer" class="icon-button copy-peer" aria-label="Copy address" title="Copy address"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></header>
           <div id="invite-actions" class="invite-actions" hidden><p>This person wants to chat.</p><button id="accept-invite" class="primary">Accept</button><button id="decline-invite" class="secondary">Ignore</button></div>
           <p id="chat-error" class="error pane-error" role="status"></p>
           <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="Messages"><button id="load-older" class="secondary older" hidden>Earlier messages</button><p id="history-loading" class="loading-line history-loading" aria-hidden="true" hidden><span class="spinner"></span><span id="history-loading-text">Loading messages…</span></p><div id="messages" class="messages" role="log" aria-live="off"></div><p id="history-empty" class="helper history-empty" hidden>No messages yet.</p></div>
           <button id="new-messages" class="new-messages" hidden>New messages</button>
-          <form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12 20 4l-4 16-4-6.5L4 12z"/><path d="m12 13.5 8-9.5"/></svg></button></form>
+          <div id="compose-bar" class="u-bar compose-bar" hidden></div><form id="composer" class="composer"><label class="sr-only" for="draft">Message</label><textarea id="draft" rows="1" placeholder="Message" maxlength="16384"></textarea><button id="send" class="send-button" aria-label="Send message" title="Send message" type="submit" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12 20 4l-4 16-4-6.5L4 12z"/><path d="m12 13.5 8-9.5"/></svg></button></form>
           <p id="composer-error" class="error composer-error" role="alert"></p>
         </div>
       </section>

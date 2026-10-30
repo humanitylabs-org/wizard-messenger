@@ -36,6 +36,21 @@ def public_key(value):
         raise EngineError('invalid_public_key', 'Use a lowercase npub or 64-character hex public key', 400)
     return value
 
+def timeline_row(m, me):
+    """One materialized Marmot message as the view's row: text, edits, delete tombstone, reactions, reply quote."""
+    by=(m.get('reactions') or {}).get('by_emoji') or {}
+    reactions=[{'key':k,'count':len(v) if isinstance(v,list) else int(v or 0),'mine':isinstance(v,list) and me in v} for k,v in by.items()]
+    reactions=[r for r in reactions if r['count']>0]
+    preview=m.get('reply_preview') or None
+    reply=None
+    if m.get('reply_to_message_id'):
+        reply={'message_id':m['reply_to_message_id'],'text':(preview or {}).get('plaintext') or '','deleted':bool((preview or {}).get('deleted')),
+               'outgoing':bool(preview) and preview.get('sender')==me,'missing':preview is None}
+    return {'message_id':m['message_id'],'group_id':m['group_id'],'author':m['from'],'author_name':m.get('from_display_name',''),
+            'text':'' if m.get('deleted') else m.get('plaintext',''),'direction':m['direction'],'created_at':m.get('timeline_at') or m.get('received_at'),
+            'edited':bool(m.get('edit')),'deleted':bool(m.get('deleted')),'reactions':reactions,'reply':reply}
+
+
 def group_id(value):
     if not isinstance(value, str) or not GROUP.fullmatch(value):
         raise EngineError('invalid_group_id', 'Invalid group identifier', 400)
@@ -392,11 +407,51 @@ class MarmotEngine:
             if (before is None) != (before_message_id is None): raise EngineError('invalid_cursor','Supply both before and before_message_id',400)
             if before is not None and (not isinstance(before,int) or before < 0 or not re.fullmatch('[0-9a-f]{64}', before_message_id)):
                 raise EngineError('invalid_cursor','Invalid message cursor',400)
-            command={'List':{'group_id':group,'group':None,'kinds':[9],'before':before,'before_message_id':before_message_id,'after':None,'after_message_id':None,'limit':limit}}
+            # The materialized timeline folds edits, delete tombstones, reactions and replies into each message.
+            command={'Timeline':{'command':{'List':{'group_id':group,'group':None,'before':before,'before_message_id':before_message_id,'after':None,'after_message_id':None,'limit':limit}}}}
             result=self._execute({'Messages':{'command':command}})
-            rows=[{'message_id':m['message_id'],'group_id':m['group_id'],'author':m['from'],'author_name':m.get('from_display_name',''),'text':m['plaintext'],'direction':m['direction'],'created_at':m['received_at']} for m in result['messages']]
-            cursor={'before':rows[0]['created_at'],'before_message_id':rows[0]['message_id']} if len(rows)==limit else None
+            me=result.get('account_id') or ''
+            rows=[timeline_row(m,me) for m in result['messages'] if m.get('kind',9)==9 and not m.get('group_system')]
+            raw=result['messages']
+            cursor={'before':raw[0]['timeline_at'],'before_message_id':raw[0]['message_id']} if raw and (len(raw)==limit or result.get('has_more_before')) else None
             return {'messages':rows,'next_cursor':cursor}
+
+    def _message_target(self, group, payload):
+        message_id=payload.get('message_id')
+        if not isinstance(message_id,str) or not re.fullmatch('[0-9a-f]{64}',message_id):
+            raise EngineError('invalid_message_id','Invalid message identifier',400)
+        return message_id
+
+    def edit(self, group, payload):
+        with self.mutex:
+            self._require_ready()
+            self._dm_members(group)
+            message_id=self._message_target(group,payload)
+            body=text(payload.get('text'),'TEXT message',16384)
+            result=self._execute({'Messages':{'command':{'Edit':{'group_id':group,'message_id':message_id,'text':[body]}}}})
+            return {'group_id':group,'message_id':message_id,'message_ids':result.get('message_ids',[]),'published':result.get('published')}
+
+    def delete(self, group, payload):
+        with self.mutex:
+            self._require_ready()
+            self._dm_members(group)
+            message_id=self._message_target(group,payload)
+            result=self._execute({'Messages':{'command':{'Delete':{'group_id':group,'message_id':message_id}}}})
+            return {'group_id':group,'message_id':message_id,'message_ids':result.get('message_ids',[]),'published':result.get('published')}
+
+    def react(self, group, payload):
+        with self.mutex:
+            self._require_ready()
+            self._dm_members(group)
+            message_id=self._message_target(group,payload)
+            if payload.get('remove') is True:
+                result=self._execute({'Messages':{'command':{'Unreact':{'group_id':group,'message_id':message_id}}}})
+            else:
+                emoji=payload.get('emoji')
+                if not isinstance(emoji,str) or not emoji.strip() or len(emoji)>32 or any(c in emoji for c in '\r\n\t'):
+                    raise EngineError('invalid_input','Choose a reaction',400)
+                result=self._execute({'Messages':{'command':{'React':{'group_id':group,'message_id':message_id,'emoji':emoji}}}})
+            return {'group_id':group,'message_id':message_id,'message_ids':result.get('message_ids',[]),'published':result.get('published')}
 
     def retry(self, group, payload):
         with self.mutex:
@@ -413,6 +468,9 @@ class MarmotEngine:
             self._require_ready()
             self._dm_members(group)
             body=text(payload.get('text'),'TEXT message',16384)
+            reply_to=payload.get('reply_to')
+            if reply_to is not None and (not isinstance(reply_to,str) or not re.fullmatch('[0-9a-f]{64}',reply_to)):
+                raise EngineError('invalid_message_id','Invalid reply target',400)
             request_id=payload.get('request_id')
             if request_id is not None:
                 if not isinstance(request_id,str) or not re.fullmatch('[a-zA-Z0-9_-]{16,128}',request_id):
@@ -429,7 +487,7 @@ class MarmotEngine:
                         # crash/timeout. Never fresh-encrypt/send the body again.
                         raise EngineError('send_outcome_unknown','Refresh history before resolving this send; it will not be automatically duplicated',409)
                     db.execute('INSERT INTO sends VALUES (?,?,?,\'pending\',NULL)',(request_id,group,digest))
-            result=self._execute({'Messages':{'command':{'Send':{'group_flag':group,'reply_to':None,'args':[body]}}}})
+            result=self._execute({'Messages':{'command':{'Send':{'group_flag':group,'reply_to':reply_to,'args':[body]}}}})
             receipt={'group_id':group,'message_ids':result['message_ids'],'published':result['published'],'delivery':'published_not_receipt'}
             if request_id is not None:
                 receipt['request_id']=request_id

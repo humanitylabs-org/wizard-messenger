@@ -26,7 +26,8 @@ class PeopleTests(unittest.TestCase):
         self.store.add_message('$2', new, 'me', True, 'fresh', 200)
         chats = self.store.people()
         self.assertEqual([p['display_name'] for p in chats], ['Amy', 'Zed'])
-        self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'me', 'timestamp': 200})
+        # Outgoing lines never expose the owner's stored name/ghost as the sender.
+        self.assertEqual(chats[0]['last'], {'text': 'fresh', 'outgoing': True, 'sender': 'You', 'timestamp': 200})
         self.assertEqual([p['display_name'] for p in self.store.people(chats=False)], ['Amy', 'Bob', 'Zed'])
 
     def test_all_deleted_chats_disappear_and_new_messages_restore_them(self):
@@ -57,6 +58,80 @@ class PeopleTests(unittest.TestCase):
         self.assertEqual(self.store.people()[0]['muted'], 0)
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'muted': 'yes'})
+
+    def test_low_priority_persists_keeps_unread_and_never_notifies(self):
+        a = self.store.identity('telegram', '!deals', 'Deals', 'group')
+        b = self.store.identity('telegram', '!amy', 'Amy')
+        self.store.push_enabled = True
+        self.store.add_message('$d1', a, 'shop', False, 'sale', int(time.time() * 1000), push_live=True)
+        before = self.store.seq
+        self.store.update(a['person_id'], {'low_priority': True})
+        self.assertGreater(self.store.seq, before)  # the change feed carries it to every open view
+        p = self.store.people('group')[0]
+        self.assertEqual((p['low_priority'], p['unread']), (1, 1))
+        # A new message keeps it in Low priority (no un-archiving) and queues no notification.
+        self.store.add_message('$d2', a, 'shop', False, 'another sale', int(time.time() * 1000), push_live=True)
+        self.store.add_message('$b1', b, 'amy', False, 'hi', int(time.time() * 1000), push_live=True)
+        self.store.update(b['person_id'], {'muted': True})
+        self.store.add_message('$b2', b, 'amy', False, 'muted too', int(time.time() * 1000), push_live=True)
+        self.assertEqual(self.store.people('group')[0]['low_priority'], 1)
+        with self.store.db() as db:
+            queued = sorted(r[0] for r in db.execute('SELECT message FROM push_intent'))
+        self.assertEqual(queued, ['matrix:$b1', 'matrix:$d1'])
+        self.store.update(a['person_id'], {'low_priority': False})
+        self.assertEqual(self.store.people('group')[0]['low_priority'], 0)
+        with self.assertRaises(Exception):
+            self.store.update(a['person_id'], {'low_priority': 1})
+
+    def test_link_previews_kept_without_mxc_leaving(self):
+        from unified import link_previews
+        got = link_previews({'com.beeper.linkpreviews': [{'matched_url': 'https://ex.com/a', 'og:title': 'T', 'og:image': 'mxc://s/abc'}, {'matched_url': 'javascript:x', 'og:title': 'bad'}]})
+        self.assertEqual(len(got['links']), 1)
+        self.assertEqual(got['links'][0]['mxc'], 'mxc://s/abc')
+        a = self.store.identity('whatsapp', '!l', 'Lia')
+        self.store.add_message('$l', a, 'x', False, 'see https://ex.com/a', 5, media=got)
+        row = self.store.messages(a['person_id'])[0] if hasattr(self.store, 'messages') else None
+        if row is not None:
+            self.assertNotIn('mxc', json.dumps(row.get('links')))
+            self.assertTrue(row['links'][0]['image'])
+
+    def test_mark_unread_makes_newest_incoming_unread(self):
+        a = self.store.identity('whatsapp', '!u', 'Uma')
+        self.store.add_message('$1', a, 'x', False, 'hi', 10)
+        self.store.add_message('$2', a, 'me', True, 'yo', 20)
+        with self.store.db() as db:
+            db.execute('UPDATE identity SET last_read_ts=20 WHERE id=?', (a['id'],))
+        unread = lambda: next(p for p in self.store.people('person') if p['id'] == a['person_id'])['unread']
+        self.assertEqual(unread(), 0)
+        self.store.mark_unread(a['person_id'])
+        self.assertEqual(unread(), 1)
+
+    def test_merge_suggestions_cross_network_only_and_dismissable(self):
+        a = self.store.identity('whatsapp', '!a', 'Ana Souza')
+        b = self.store.identity('instagram', '!b', 'ana souza')
+        self.store.identity('whatsapp', '!c', 'Ana Souza')  # same network twice: never paired with the first
+        for ident, ts in ((a, 1), (b, 2)):
+            self.store.add_message('$' + ident['address'], ident, 'x', False, 'hi', ts)
+        rows = self.store.merge_suggestions()['suggestions']
+        self.assertEqual(len(rows), 1)
+        nets = [p['networks'] for p in rows[0]['people']]
+        self.assertEqual(sorted(n[0] for n in nets), ['instagram', 'whatsapp'])
+        self.store.dismiss_merge(rows[0]['id'])
+        self.assertEqual(self.store.merge_suggestions()['suggestions'], [])
+
+    def test_group_kind_upgrade_and_network_tags_dropped(self):
+        a = self.store.identity('whatsapp', '!g', 'Book club (WA)')
+        self.assertEqual(a['label'], 'Book club')
+        self.assertEqual(self.store.identity('whatsapp', '!g', 'Book club', 'group')['kind'], 'group')
+        b = self.store.identity('whatsapp', '!p', 'Ana')
+        self.store.refresh_label(b, 'Ana Souza (WA)')
+        self.assertEqual(self.store.person(b['person_id'])['display_name'], 'Ana Souza')
+        with self.store.db() as db:
+            db.execute("UPDATE person SET display_name='Kim (WA)' WHERE id=?", (b['person_id'],))
+            db.execute("INSERT OR REPLACE INTO room_meta(room,json) VALUES('!p', ?)", (json.dumps({'kind': 'group'}),))
+        self.store.migrate()
+        self.assertEqual(self.store.person(b['person_id'])['display_name'], 'Kim')
+        self.assertEqual(self.store.person(b['person_id'])['identities'][0]['kind'], 'group')
 
     def test_auto_create_deduplicates_and_preserves_rename(self):
         a = self.store.identity('telegram', '!one', 'Alice')
@@ -144,19 +219,25 @@ class UnifiedTests(unittest.TestCase):
         for ident, value in [('$missing', 'x'), ('$text', 'x'), ('$voice', ''), ('$voice', 'x' * 100001), ('$voice', None)]:
             with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/messages/' + ident + '/transcript', {'text': value})
 
-    def test_my_qr_codes_suggest_telegram_then_persist_owner_list(self):
-        self.inbox.telegram_status = lambda: {'logins': [{'profile': {'username': 'JamesDeFleur'}}]}
+    def test_my_qr_codes_follow_connected_accounts_and_keep_extras(self):
+        self.inbox.own_profiles = lambda: [
+            ('telegram', {'id': '1', 'state': {'state_event': 'CONNECTED'}, 'profile': {'username': 'JamesDeFleur', 'name': 'James'}}),
+            ('whatsapp', {'id': '15550100', 'state': {'state_event': 'CONNECTED'}, 'profile': {}}),
+            ('instagram', {'id': '9', 'state': {'state_event': 'CONNECTED'}, 'profile': {'username': 'james.df'}}),
+            ('line', {'id': 'u1', 'state': {'state_event': 'CONNECTED'}, 'profile': {}}),
+            ('twitter', {'id': '7', 'state': {'state_event': 'BAD_CREDENTIALS'}, 'profile': {'username': 'gone'}})]
         first = self.inbox.dispatch('GET', '/api/unified/qr-codes', {})
-        self.assertEqual(first['codes'], [{'network': 'telegram', 'value': 'JamesDeFleur', 'label': ''}])
-        self.assertFalse(first['saved'])
-        codes = [{'network': 'telegram', 'value': ' JamesDeFleur ', 'label': ''}, {'network': 'whatsapp', 'value': '+1 555 0100', 'label': 'Work'}]
-        self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': codes})
-        again = UnifiedInbox(self.tmp.name, self.engine).dispatch('GET', '/api/unified/qr-codes', {})
-        self.assertTrue(again['saved'])
-        self.assertEqual(again['codes'][0]['value'], 'JamesDeFleur')
-        self.assertEqual(again['codes'][1], {'network': 'whatsapp', 'value': '+1 555 0100', 'label': 'Work'})
-        self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': []})
-        self.assertEqual(self.inbox.dispatch('GET', '/api/unified/qr-codes', {})['codes'], [])
+        self.assertEqual([(c['network'], c['value']) for c in first['codes']], [('telegram', 'JamesDeFleur'), ('whatsapp', '+15550100'), ('instagram', 'james.df')])
+        self.assertTrue(all(c['auto'] for c in first['codes']))
+        self.assertEqual(first['name'], 'James')
+        # Extras persist; a duplicate of a connected account and auto rows are never stored.
+        codes = first['codes'] + [{'network': 'telegram', 'value': ' @JamesDeFleur ', 'label': ''}, {'network': 'email', 'value': 'j@x.io', 'label': 'Work'}]
+        out = self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': codes, 'hidden': ['instagram:james.df']})
+        self.assertEqual([(c['network'], c['value']) for c in out['codes']], [('telegram', 'JamesDeFleur'), ('whatsapp', '+15550100'), ('email', 'j@x.io')])
+        self.assertEqual(out['hidden'], ['instagram:james.df'])
+        again = UnifiedInbox(self.tmp.name, self.engine)
+        again.own_profiles = lambda: []
+        self.assertEqual(again.dispatch('GET', '/api/unified/qr-codes', {})['codes'], [{'network': 'email', 'value': 'j@x.io', 'label': 'Work'}])
         for bad in [None, [{'network': 'myspace', 'value': 'x'}], [{'network': 'x', 'value': ''}], [{'network': 'x', 'value': 'a', 'label': 'l' * 81}], [{'network': 'x', 'value': 'a'}] * 25]:
             with self.assertRaises(EngineError): self.inbox.dispatch('POST', '/api/unified/qr-codes', {'codes': bad})
 
@@ -298,7 +379,8 @@ class UnifiedTests(unittest.TestCase):
         with patch.dict('os.environ', {'TELEGRAM_API_ID': '12345', 'TELEGRAM_API_HASH': 'a' * 32}):
             unified_setup.setup(self.tmp.name)
         config = yaml.safe_load((Path(self.tmp.name) / 'telegram' / 'config.yaml').read_text())
-        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 50))
+        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 200))
+        self.assertFalse(config['backfill']['queue']['enabled'])
         self.assertEqual(config['network']['sync']['login_sync_limit'], 50)
         self.assertFalse(config['backfill']['queue']['enabled'])
         self.assertTrue(config['double_puppet']['secrets']['messenger.internal'].startswith('as_token:'))

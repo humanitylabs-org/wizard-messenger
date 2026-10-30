@@ -11,8 +11,8 @@ class ConnectorHistory(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.inbox = ConnectorInbox(self.tmp.name, Mock())
         self.store = self.inbox.store
-        self.a = self.store.identity('signal', '!signal:messenger.internal', 'Signal fixture')
-        self.b = self.store.identity('whatsapp', '!wa:messenger.internal', 'WhatsApp fixture')
+        self.a = self.store.identity('line', '!line:messenger.internal', 'LINE fixture')
+        self.b = self.store.identity('instagram', '!ig:messenger.internal', 'Instagram fixture')
 
     def tearDown(self):
         self.inbox.close()
@@ -23,7 +23,7 @@ class ConnectorHistory(unittest.TestCase):
         return {'type':'m.room.message','event_id':mid,'sender':'@peer:messenger.internal',
                 'origin_server_ts':int(time.time()*1000),'content':{'msgtype':'m.text','body':body}}
 
-    def test_connector_mutations_cannot_cross_thread(self):
+    def test_connector_mutations_cannot_cross_thread_and_fts_tracks_redaction(self):
         self.inbox.ingest(self.a, {}, self.event('$one'))
         edit = self.event('$edit')
         edit['content'] = {'m.relates_to':{'rel_type':'m.replace','event_id':'$one'},
@@ -31,14 +31,14 @@ class ConnectorHistory(unittest.TestCase):
         self.inbox.ingest(self.b, {}, edit)
         self.assertEqual(self.store.messages(self.a['person_id'])[0]['original'],'needle')
         self.inbox.ingest(self.b, {}, {'type':'m.room.redaction','redacts':'$one'})
-        self.assertEqual(self.store.messages(self.a['person_id'])[0]['original'], 'needle')
+        self.assertEqual(len(self.store.search('needle')['messages']),1)
         self.inbox.ingest(self.a, {}, edit)
-        self.assertFalse(any(m['original'] == 'needle' and not m['deleted'] for m in self.store.messages(self.a['person_id'])))
-        self.assertEqual(self.store.messages(self.a['person_id'])[0]['original'], 'replacement')
+        self.assertEqual(self.store.search('needle')['messages'],[])
+        self.assertEqual(len(self.store.search('replacement')['messages']),1)
         self.inbox.ingest(self.a, {}, {'type':'m.room.redaction','redacts':'$one'})
-        self.assertTrue(self.store.messages(self.a['person_id'])[0]['deleted'])
+        self.assertEqual(self.store.search('replacement')['messages'],[])
         self.inbox.ingest(self.a, {}, self.event('$one'))
-        self.assertFalse(any(m['original'] == 'needle' and not m['deleted'] for m in self.store.messages(self.a['person_id'])))
+        self.assertEqual(self.store.search('needle')['messages'],[])
 
     def test_connector_reactions_cannot_cross_thread(self):
         self.inbox.ingest(self.a, {}, self.event('$one'))
@@ -50,7 +50,7 @@ class ConnectorHistory(unittest.TestCase):
         self.assertEqual(len(self.store.messages(self.a['person_id'])[0]['reactions']),1)
 
     def test_owner_ghost_recovery_uses_shared_history_for_both_networks(self):
-        for identity, ghost in ((self.a, '@signal_abc:messenger.internal'), (self.b, '@whatsapp_15550000000:messenger.internal')):
+        for identity, ghost in ((self.a, '@line_abc:messenger.internal'), (self.b, '@instagram_15550000000:messenger.internal')):
             event = self.event('$own-' + identity['id'])
             event['sender'] = ghost
             self.inbox.ingest(identity, {}, event)

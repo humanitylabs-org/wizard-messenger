@@ -1,0 +1,11 @@
+{
+  "origin": "https://owner-sender.CHANGE-TO-INDEPENDENT-DOMAIN.example",
+  "rp_id": "owner-sender.CHANGE-TO-INDEPENDENT-DOMAIN.example",
+  "database": "/var/lib/isolated-sender/authority.sqlite3",
+  "agent_key_sha256": "OWNER-MUST-SET-SHA256-OF-RANDOM-DRAFT-ONLY-KEY",
+  "accounts": ["test-owner"],
+  "backend": "test-ledger",
+  "allow_full_access": false,
+  "independently_administered": false,
+  "challenge_seconds": 120
+}

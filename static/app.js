@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.12.0'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.13.0'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -122,17 +122,22 @@
   let updateHold = null;
   function syncUpdateHold() {
     const setupPending = ['locked', 'setup_required'].includes(state.mode) && ['display-name', 'passphrase', 'confirm-passphrase'].some(id => $(id).value);
-    // Drafts and failed sends are saved on this device and survive a reload, so only work in flight holds an update.
-    const pending = state.operation?.action || [...state.records.values()].some(record => record.attempts.some(a => ['sending', 'checking'].includes(a.state))) ||
-      ['contact-address', 'contact-name'].some(id => $(id).value) || setupPending;
+    // Only a tap still going out holds a Wizard reload. Drafts live on the server, and a send interrupted by a reload
+    // comes back as "checking" and is confirmed by request_id afterwards, so neither a draft, a "checking" bubble nor
+    // a contact address left in the (closed) Add contact sheet may block reloading (Miguel, 30 Oct 2026).
+    const pending = state.operation?.action || [...state.records.values()].some(record => record.attempts.some(a => a.state === 'sending')) || setupPending;
     if (pending && !updateHold) updateHold = window.WizardApp.update.hold('Messenger unsent work');
     else if (!pending && updateHold) { updateHold.release(); updateHold = null; }
   }
+  // Set by boot from api/view/trusted-owner. Remembered on this device so a reload that lands mid-restart (the gateway
+  // answering 502) is still treated as a trusted Wizard: never a passphrase box because one answer was missing.
+  const TRUSTED_KEY = 'messenger-trusted-wizard';
+  let trustedWizard = (() => { try { return localStorage.getItem(TRUSTED_KEY) === '1'; } catch { return false; } })();
   function readRecord(group) {
     if (!state.records.has(group)) {
       let saved = {};
       try { saved = JSON.parse(localStorage.getItem(storagePrefix() + group) || '{}'); } catch { /* A draft failure never permits an untracked send. */ }
-      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null, muted: saved?.muted === true};
+      const record = {draft: typeof saved?.draft === 'string' ? saved.draft : '', attempts: Array.isArray(saved?.attempts) ? saved.attempts.filter(a => a && (typeof a.text === 'string' || a.message_ids?.length) && /^[a-zA-Z0-9_-]{16,128}$/.test(a.request_id)) : [], invite_sent: saved?.invite_sent === true, seen: saved?.seen || null, muted: saved?.muted === true, low_priority: saved?.low_priority === true};
       for (const attempt of record.attempts) if (attempt.state === 'sending') attempt.state = 'checking';
       state.records.set(group, record);
       syncUpdateHold();
@@ -155,8 +160,8 @@
   }
   function schedule() {
     clearTimeout(state.timer);
-    // The Marmot engine serialises every RPC; poll it fast only while its own tab is in front.
-    if (!document.hidden && !state.operation && state.authenticated) state.timer = setTimeout(() => run(snapshot), window.MessengerUnified?.active() ? 60000 : 3000);
+    // The Marmot engine serialises every RPC; keep unified previews current without a tight background loop.
+    if (!document.hidden && !state.operation && state.authenticated) state.timer = setTimeout(() => run(snapshot), window.MessengerUnified?.active() ? 10000 : 3000);
   }
   const isBusy = () => state.operation?.action === true;
   const act = work => run(work, true);
@@ -181,7 +186,22 @@
   class APIError extends Error {
     constructor(code, status, message) { super(message || code); this.code = code; this.status = status; }
   }
-  async function api(path, {method = 'GET', body, signal, session = false} = {}) {
+  // Reads ride out a restarting server or a gateway that refused part of the opening burst (502/503/504, a dropped
+  // connection, an HTML error page): a few quick retries with backoff before anyone sees an error. Writes are never
+  // retried here (sends have their own idempotent retry), and the change feed's long-poll retries by itself.
+  const RETRY_READ_MS = [300, 800, 1600, 3000];
+  const sleepFor = (ms, signal) => new Promise((resolve, reject) => { const t = setTimeout(resolve, ms); signal?.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('Aborted', 'AbortError')); }, {once: true}); });
+  async function api(path, options = {}) {
+    const read = (options.method || 'GET') === 'GET' && !path.startsWith('api/unified/updates');
+    for (let attempt = 0; ; attempt++) {
+      try { return await apiOnce(path, options); }
+      catch (error) {
+        if (!read || attempt >= RETRY_READ_MS.length || error.name === 'AbortError' || !transient(error) || options.signal?.aborted) throw error;
+        await sleepFor(RETRY_READ_MS[attempt] * (0.75 + Math.random() / 2), options.signal);
+      }
+    }
+  }
+  async function apiOnce(path, {method = 'GET', body, signal, session = false} = {}) {
     if (!path.startsWith('api/')) throw new Error('invalid_route');
     const headers = {Accept: 'application/json'};
     if (method !== 'GET') {
@@ -199,7 +219,11 @@
       signal?.throwIfAborted();
       // A wrong passphrase is a form error: keep the unlock card, never drop to reconnect.
       if (['vault_unlock_failed', 'invalid_vault_password', 'invalid_view_ticket'].includes(code) || code.startsWith('passkey_')) throw new APIError(code, 401);
-      const unlockRequired = code === 'session_unlock_required' || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
+      const unlockRequired = ['session_unlock_required', 'remembered_unlock_unavailable'].includes(code) || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
+      // A trusted Wizard has no Messenger password: any lost or refused session (restart, expiry, evicted, Lock in
+      // another tab) just opens a fresh one from Wizard sign-in, with "Opening" on screen. Never a dead card.
+      if ((unlockRequired || code === 'unauthorized' || code === 'csrf_invalid') && trustedWizard && state.authenticated && path !== 'api/view/session') { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
+      if (unlockRequired && trustedWizard) { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
     // A restarting release answers through the gateway with an empty or HTML body: say so, never surface a parser error.
@@ -212,6 +236,7 @@
   function friendly(error) {
     const messages = {
       unauthorized: "You were signed out of Messenger. Tap Try again.",
+      owner_unlock_required: 'Use your independently issued owner enrollment link, or unlock with your existing passphrase.',
       vault_unlock_failed: "That passphrase isn't right.", invalid_public_key: "That address doesn't look right.",
       login_rate_limited: 'Too many tries. Wait a minute and try again.',
       invalid_vault_password: state.mode === 'locked' ? "That passphrase isn't right." : 'Needs at least 16 characters.',
@@ -241,15 +266,36 @@
     cancel(); eraseView(); state.csrf = null; state.authenticated = false;
     state.sessionLocked = unlockRequired; gate(unlockRequired ? 'locked' : 'reconnect');
   }
+  // On a Wizard that vouches for its owner there is no Messenger password, ever. A "locked" answer only means the
+  // server is still opening its vault after a restart: keep showing "Opening" and ask again; the session call
+  // unlocks it from the key Wizard holds. Never show a passphrase box here.
+  // It never gives up: after about two minutes Try again shows too, but the view keeps asking by itself (every 15 s)
+  // so a server that comes back later still opens with no tap (Miguel, 30 Oct 2026: "must stay signed in").
+  let trustedTries = 0, trustedTimer = null;
+  function recoverTrusted() {
+    clearTimeout(trustedTimer); clearTimeout(bootTimer);
+    trustedTries++;
+    if (trustedTries > 30) { if (state.mode !== 'reconnect') gate('reconnect'); $('gate-description').textContent = "Messenger couldn't open your messages. Tap Try again."; $('reconnect').hidden = false; }
+    else { gate('opening'); $('gate-description').textContent = 'Opening your messages…'; }
+    trustedTimer = setTimeout(() => { if (state.operation?.bootstrap) return; boot(); }, trustedTries > 30 ? 15000 : Math.min(1000 * trustedTries, 4000));
+  }
   function gate(mode) {
+    if (mode === 'locked' && trustedWizard) return recoverTrusted();
+    if (mode === 'ready') { trustedTries = 0; bootTries = 0; clearTimeout(trustedTimer); clearTimeout(bootTimer); }
     const changed = state.mode !== mode;
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
-    const create = mode === 'setup_required', locked = mode === 'locked';
+    if (['first_open', 'enrollment_ready', 'setup_required', 'locked'].includes(mode)) window.MessengerUnified?.signout();
+    const create = mode === 'setup_required', locked = mode === 'locked', enrollment = mode === 'enrollment_ready';
     $('gate-title').textContent = locked ? 'Unlock Messenger' : 'Messenger';
-    $('gate-description').textContent = locked ? 'Enter your passphrase to open your messages.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Ask your Wizard for your Messenger setup link. It opens here once so you can create your address.' : 'Opening your messages…';
-    $('setup-form').hidden = !(create || locked); $('reconnect').hidden = mode !== 'reconnect' && mode !== 'first_open';
-    $('name-label').hidden = !create; $('confirm-label').hidden = !create; $('confirm-passphrase').required = create;
-    $('passphrase-help').hidden = !create; $('passphrase').minLength = locked ? 1 : 16;
+    // On a Wizard that vouches for its owner there is no Messenger password: Wizard sign-in is the lock.
+    const keyless = trustedWizard && create;
+    $('gate-description').textContent = locked ? (trustedWizard ? 'Enter your old Messenger passphrase one last time. Wizard remembers it, so you will not be asked again.' : 'Enter your passphrase to open your messages.') : keyless ? 'Create your Wizard Messenger address. Chats are end-to-end encrypted and go straight to the other person\'s Wizard.' : create ? 'Create a messaging address for this Wizard. It is separate from your Wizard ID and is used only for chats.' : enrollment ? 'Your private setup link is ready. Continue here to create your Messenger address.' : mode === 'reconnect' ? "Couldn't reach Messenger. Tap Try again." : mode === 'first_open' ? 'Finish setup using the private Messenger setup link in your Wizard chat.' : 'Opening your messages…';
+    $('setup-form').hidden = !(create || locked); $('reconnect').hidden = !enrollment && mode !== 'reconnect' && mode !== 'first_open';
+    $('reconnect').textContent = enrollment ? 'Continue setup' : 'Try again';
+    $('name-label').hidden = !create; $('confirm-label').hidden = !create || keyless; $('confirm-passphrase').required = create && !keyless;
+    $('passphrase-label').hidden = keyless; $('passphrase').required = !keyless;
+    $('passphrase-help').hidden = !create || keyless; $('passphrase').minLength = locked ? 1 : keyless ? 0 : 16;
+    if ($('remember-wizard-label')) $('remember-wizard-label').hidden = true;
     if (changed) {
       $('passphrase').value = ''; $('confirm-passphrase').value = ''; $('setup-error').textContent = '';
       $('passphrase').type = 'password'; $('show-password').textContent = 'Show';
@@ -278,7 +324,7 @@
     $('setup-submit').classList.toggle('pending', pending);
     if (pending) { $('setup-submit').disabled = true; $('setup-submit').textContent = create ? 'Creating address…' : 'Unlocking…'; return; }
     $('setup-submit').textContent = create ? (state.setupFailed ? 'Try again' : 'Create address') : 'Unlock';
-    $('setup-submit').disabled = create ? passphraseLength(password) < 16 || password !== $('confirm-passphrase').value : !password.length;
+    $('setup-submit').disabled = create ? !trustedWizard && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value) : !password.length;
   }
   function ready(identity) {
     state.identity = identity; state.mode = 'ready'; $('gate').hidden = true; $('workspace').hidden = false;
@@ -308,6 +354,8 @@
     const {identity} = await api('api/identity', {signal});
     if (!identity) { if (state.mode === 'ready') eraseView(); gate('setup_required'); return; }
     ready(identity);
+    // A setup-only browser session is not a configured messaging account.
+    window.MessengerUnified?.authenticated();
     state.contacts = (await api('api/contacts', {signal})).contacts || [];
     state.invites = (await api('api/invites', {signal})).invites || [];
     state.dms = (await api('api/dms', {signal})).dms || [];
@@ -361,7 +409,7 @@
   function button(text, className, action) {
     const el = element('button', className, text); el.type = 'button'; el.addEventListener('click', action); return el;
   }
-  function timeLabel(value) { const ms = stamp(value); return ms ? new Date(ms).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : ''; }
+  function timeLabel(value) { const ms = stamp(value); return ms ? new Date(ms).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : ''; }
   function row(dm, invite = false) {
     const name = peerName(dm), messages = cacheFor(dm.group_id).messages, last = messages.at(-1), record = readRecord(dm.group_id);
     const unread = !invite && last?.direction === 'received' && record.seen !== last.message_id;
@@ -379,9 +427,20 @@
   }
   function renderList() {
     if (state.mode !== 'ready') return;
-    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted])]);
+    const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted,r.low_priority])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
-    window.MessengerUnified?.setNativeUnread?.(state.invites.length + state.dms.filter(dm => { if (isIncoming(dm)) return false; if (readRecord(dm.group_id).muted) return false; const last = cacheFor(dm.group_id).messages.at(-1); return last?.direction === 'received' && readRecord(dm.group_id).seen !== last.message_id; }).length);
+    // Adapter rows only: native history, invite and send handling stay in this engine.
+    const nativeRows = [...state.invites, ...state.dms.filter(dm => !isIncoming(dm))].map(dm => {
+      const record = readRecord(dm.group_id), last = cacheFor(dm.group_id).messages.at(-1), invite = isIncoming(dm);
+      return {id: 'private:' + dm.group_id, native: true, group_id: dm.group_id, display_name: peerName(dm),
+        identities: [{network: 'private', kind: 'person'}], muted: !!record.muted, low_priority: !!record.low_priority,
+        unread: invite || (last?.direction === 'received' && record.seen !== last.message_id) ? 1 : 0,
+        last: {text: invite ? 'wants to chat' : last?.text || (record.invite_sent ? 'Invite sent' : 'No messages yet'),
+          timestamp: stamp(last?.created_at), outgoing: last?.direction === 'sent'},
+        setMuted: () => { record.muted = !record.muted; persist(dm.group_id); state.listSignature = ''; renderList(); },
+        setLowPriority: v => { record.low_priority = !!v; persist(dm.group_id); state.listSignature = ''; renderList(); }};
+    });
+    window.MessengerUnified?.setNativeRows?.(nativeRows);
     const list = $('conversation-list'), top = list.scrollTop, fragment = document.createDocumentFragment();
     if (state.invites.length) {
       fragment.append(element('h2', 'section-label', 'Invites'));
@@ -407,6 +466,7 @@
     if (!state.group || state.mode !== 'ready') return;
     const dm = dmById(state.group); if (!dm) return;
     $('chat-name').textContent = peerName(dm);
+    paintChatFace(peerName(dm));
     const pending = isIncoming(dm), sent = readRecord(state.group).invite_sent;
     $('chat-subline').textContent = state.reconnecting ? 'Reconnecting…' : pending ? 'Invite pending' : sent ? 'Invite sent' : '';
     $('chat-subline').classList.toggle('reconnecting', state.reconnecting);
@@ -418,6 +478,13 @@
     $('accept-invite').classList.toggle('pending', operation?.action === 'accept'); $('decline-invite').classList.toggle('pending', operation?.action === 'decline');
     $('copy-peer').disabled = !publicAddress(peerOf(dm, state.identity));
     $('load-older').hidden = pending || !cacheFor(state.group).cursor;
+  }
+  // Header face for a private chat: the person's initial with the Private (shield) badge, like bridged threads.
+  function paintChatFace(name) {
+    const face = $('chat-avatar'), initial = (name || '?').trim().slice(0, 1).toUpperCase() || '?';
+    if (face.dataset.name === name) return; face.dataset.name = name; face.replaceChildren();
+    face.append(element('span', 'avatar small', initial));
+    const badge = window.MessengerConnectors?.badge?.('private', 'u-net'); if (badge) face.append(badge);
   }
   function updateComposer() {
     const dm = dmById(state.group), disabled = state.mode !== 'ready' || !dm || isIncoming(dm);
@@ -448,6 +515,10 @@
     items.sort((a,b) => stamp(a.message.created_at) - stamp(b.message.created_at) || a.key.localeCompare(b.key));
     const lastOutgoing = items.findLast(x => x.message.direction === 'sent');
     const live = new Set(); let lastDay = '';
+    // Consecutive messages from the same side within five minutes form one run (like the bridged thread view).
+    const dayOf = item => { const ms = stamp(item?.message.created_at); return ms ? new Date(ms).toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'}) : ''; };
+    const joins = (a, b) => !!a && !!b && a.message.direction === b.message.direction && dayOf(a) === dayOf(b) && Math.abs(stamp(b.message.created_at) - stamp(a.message.created_at)) < 3e5;
+    items.forEach((item, i) => { const jp = joins(items[i - 1], item), jn = joins(item, items[i + 1]); item.pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single'; });
     for (const item of items) {
       const ms = stamp(item.message.created_at), day = ms ? new Date(ms).toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'}) : '';
       if (day && day !== lastDay) {
@@ -457,21 +528,19 @@
       let node = state.nodes.get(item.key);
       if (!node) { node = element('article', 'message'); node.append(element('div', 'bubble'), element('time', 'message-time'), element('div', 'message-status')); state.nodes.set(item.key, node); }
       live.add(item.key); const outgoing = item.message.direction === 'sent', delivery = item.attempt?.state;
-      node.className = 'message' + (outgoing ? ' sent' : '') + (delivery === 'failed' ? ' not-sent' : '');
-      if (!node.dataset.selectionBound && item.message.message_id) {
-        node.dataset.selectionBound = '1'; const messageId = item.message.message_id;
-        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => state.selection, id: messageId, menu: (opts = {}) => {
-          if (state.selection?.active) return;
-          window.MessengerUnified.actionMenu(node, 'Message', [
-            {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection.forward([messageId])},
-            {label: 'Copy', icon: 'copy', run: () => navigator.clipboard?.writeText(cacheFor(state.group).messages.find(m => m.message_id === messageId)?.text || '').catch(() => {})},
-            ...(opts.select ? [{label: 'Select', icon: 'check', run: opts.select}] : [])
-          ]);
-        }});
+      node.className = 'message' + (outgoing ? ' sent' : ' received') + ' pos-' + item.pos + (delivery === 'failed' ? ' not-sent' : '');
+      node.dataset.direction = outgoing ? 'out' : 'in';
+      node.item = item;
+      if (!node.dataset.selectionBound) {
+        node.dataset.selectionBound = '1'; const messageId = item.message.message_id || null;
+        window.MessengerUnified?.messageGestures?.(node, node.children[0], {selection: () => messageId ? state.selection : null, id: messageId,
+          reply: messageId ? () => { const m = node.item?.message; if (m && !m.deleted) startReply(m); } : null,
+          menu: (opts = {}) => { if (!state.selection?.active) messageMenu(group, node, opts); }});
       }
       node.dataset.messageId = item.message.message_id || ''; node.dataset.requestId = item.attempt?.request_id || '';
-      const bubble = node.children[0]; if (bubble.textContent !== item.message.text) bubble.textContent = item.message.text;
+      paintBubble(node.children[0], item.message, outgoing);
       node.children[1].textContent = timeLabel(item.message.created_at); if (ms) node.children[1].dateTime = new Date(ms).toISOString();
+      paintReactions(node, group, item.message);
       const status = node.children[2]; status.replaceChildren(); status.className = 'message-status';
       if (outgoing && delivery && (item === lastOutgoing || ['checking', 'failed', 'queued', 'sending'].includes(delivery))) {
         if (delivery === 'checking') status.append(element('span', 'spinner'), element('span', '', 'Checking delivery'));
@@ -497,15 +566,114 @@
     state.selection?.paint();
     markSeen();
   }
+  // One message bubble: optional reply quote, then the text (or the delete tombstone). Text stays data, never markup.
+  function paintBubble(bubble, m, outgoing) {
+    const quote = m.reply && !m.deleted ? (m.reply.deleted ? 'Deleted message' : m.reply.text || (m.reply.missing ? 'Earlier message' : '')) : null;
+    const text = m.deleted ? (outgoing ? 'You deleted this message' : 'This message was deleted') : m.text;
+    const edited = !!m.edited && !m.deleted;
+    const sig = JSON.stringify([quote, m.reply?.outgoing, text, !!m.deleted, edited]);
+    if (bubble.dataset.sig === sig) return; bubble.dataset.sig = sig; bubble.replaceChildren();
+    bubble.classList.toggle('deleted', !!m.deleted);
+    if (quote !== null) {
+      const q = element('div', 'u-quote reply-quote'); q.append(element('strong', '', m.reply.outgoing ? 'You' : peerName(dmById(state.group)) || 'Them'), element('span', '', quote));
+      q.onclick = () => { const target = [...state.nodes.values()].find(n => n.dataset.messageId === m.reply.message_id); if (target) { target.scrollIntoView({block: 'center', behavior: 'smooth'}); target.classList.add('flash'); setTimeout(() => target.classList.remove('flash'), 1200); } };
+      bubble.append(q);
+    }
+    bubble.append(element('span', 'bubble-text', text || ''));
+    if (edited) bubble.append(element('span', 'bubble-edited', 'edited'));
+  }
+  function paintReactions(node, group, m) {
+    let strip = node.reactionStrip;
+    const list = m.deleted ? [] : m.reactions || [];
+    if (!list.length) { if (strip) { strip.remove(); node.reactionStrip = null; } return; }
+    if (!strip) { strip = node.reactionStrip = element('div', 'u-reactions'); node.children[0].after(strip); }
+    strip.replaceChildren(...list.map(r => { const b = button(r.key + (r.count > 1 ? ' ' + r.count : ''), 'u-react' + (r.mine ? ' mine' : ''), () => reactTo(group, m, r.key)); b.setAttribute('aria-label', (r.mine ? 'Remove your ' : 'React ') + r.key); return b; }));
+  }
+  // Long-press, right-click or tap a bubble: every action this chat supports, in one menu.
+  function messageMenu(group, node, opts = {}) {
+    const U = window.MessengerUnified, item = node.item; if (!U?.actionMenu || !item) return;
+    const m = item.message, outgoing = m.direction === 'sent', copy = text => navigator.clipboard?.writeText(text || '').then(() => U.toast?.('Copied')).catch(() => U.toast?.('Copy is not available here'));
+    if (!m.message_id) {
+      // A local bubble the server never confirmed (Not sent / Checking delivery). It lives only in this browser.
+      const attempt = item.attempt; if (!attempt) return;
+      U.actionMenu(node, 'Message', [
+        {label: 'Copy', icon: 'copy', run: () => copy(attempt.text)},
+        ...(attempt.state === 'failed' ? [{label: 'Try again', icon: 'send', run: () => submitAttempt(group, attempt)}] : []),
+        {label: 'Edit and resend', icon: 'compose', run: () => { discardAttempt(group, attempt); $('draft').value = attempt.text || ''; readRecord(group).draft = $('draft').value; persist(group); resizeDraft(); updateComposer(); $('draft').focus(); }},
+        {label: 'Discard', icon: 'trash', danger: true, run: () => discardAttempt(group, attempt)}
+      ], {side: 'right'});
+      return;
+    }
+    if (m.deleted) return;
+    const busy = isIncoming(dmById(group));
+    U.actionMenu(node, 'Message', [
+      ...(busy ? [] : [{label: 'Reply', icon: 'reply', run: () => startReply(m)}]),
+      {label: 'Copy', icon: 'copy', run: () => copy(m.text)},
+      ...(opts.selectText && m.text ? [{label: 'Select text', icon: 'copy', run: opts.selectText}] : []),
+      {label: 'Forward to Wizard', icon: 'reply', run: () => state.selection?.forward([m.message_id])},
+      ...(outgoing && !busy ? [{label: 'Edit', icon: 'compose', run: () => startEdit(m)}] : []),
+      ...(opts.select ? [{label: 'Select', icon: 'check', run: opts.select}] : []),
+      ...(outgoing && !busy ? [{label: 'Delete for everyone', icon: 'trash', danger: true, run: () => deleteForEveryone(group, m)}] : [])
+    ], {side: outgoing ? 'right' : 'left', quick: busy ? null : {mine: (m.reactions || []).find(r => r.mine)?.key, pick: key => reactTo(group, m, key)}});
+  }
+  function discardAttempt(group, attempt) {
+    const record = readRecord(group); record.attempts = record.attempts.filter(a => a !== attempt);
+    persist(group); if (group === state.group) { renderMessages(); renderList(); }
+  }
+  function startReply(m) { state.compose = {group: state.group, mode: 'reply', message: m}; paintComposeBar(); $('draft').focus(); }
+  function startEdit(m) {
+    state.compose = {group: state.group, mode: 'edit', message: m, saved: $('draft').value};
+    $('draft').value = m.text || ''; resizeDraft(); updateComposer(); paintComposeBar(); $('draft').focus();
+  }
+  function endCompose() {
+    const c = state.compose; state.compose = null;
+    if (c?.mode === 'edit') { readRecord(c.group).draft = c.saved || ''; persist(c.group); if (c.group === state.group) { $('draft').value = c.saved || ''; resizeDraft(); updateComposer(); } }
+    paintComposeBar();
+  }
+  function paintComposeBar() {
+    const bar = $('compose-bar');
+    const c = state.compose && state.compose.group === state.group ? state.compose : null;
+    bar.hidden = !c; bar.replaceChildren(); if (!c) return;
+    const q = element('div', 'u-quote in-bar'); q.append(element('strong', '', c.mode === 'edit' ? 'Edit message' : c.message.direction === 'sent' ? 'Reply to yourself' : 'Reply to ' + (peerName(dmById(state.group)) || 'them')), element('span', '', c.message.text || ''));
+    const close = button('', 'icon-button compose-cancel', () => endCompose()); close.setAttribute('aria-label', 'Cancel'); close.title = 'Cancel';
+    const glyph = window.MessengerUnified?.icon?.('close'); if (glyph) close.append(glyph); else close.textContent = '×';
+    bar.append(q, close);
+  }
+  // Edit, delete and react publish a new encrypted event; refresh history to show what the relay accepted.
+  function messageAction(group, m, action, body, done) {
+    if (isBusy()) return;
+    act(async signal => {
+      try {
+        await api('api/dms/' + encodeURIComponent(group) + '/messages/' + encodeURIComponent(m.message_id) + '/' + action, {method: 'POST', body, signal});
+        done?.(); await refreshMessages(group, signal);
+      } catch (error) {
+        if (error.name !== 'AbortError') { $('composer-error').textContent = friendly(error); window.MessengerUnified?.toast?.(friendly(error), 3000); }
+      }
+      if (state.group === group) renderMessages();
+    });
+  }
+  function reactTo(group, m, key) {
+    const mine = (m.reactions || []).find(r => r.mine)?.key;
+    // One reaction per person: picking your current one again removes it, a new one replaces it.
+    if (mine === key) messageAction(group, m, 'react', {remove: true});
+    else messageAction(group, m, 'react', {emoji: key});
+  }
+  async function deleteForEveryone(group, m) {
+    const U = window.MessengerUnified;
+    const yes = U?.ask ? await U.ask({title: 'Delete for everyone?', body: 'You and ' + (peerName(dmById(group)) || 'they') + ' will see "This message was deleted" instead. It is hidden, not securely erased.', yes: 'Delete', no: 'Cancel'}) : true;
+    if (yes) messageAction(group, m, 'delete', {});
+  }
   function resizeDraft() {
     const draft = $('draft'), top = $('message-scroll').scrollTop;
     draft.style.height = '44px'; draft.style.height = Math.min(112, Math.max(44, draft.scrollHeight)) + 'px';
     $('message-scroll').scrollTop = top;
   }
   function openChat(group) {
+    window.MessengerUnified?.showNative?.(group);
     if (state.group === group) { closeSheet(); return; }
     state.selection?.clear();
     cancel(); if (state.group) state.scroll.set(state.group, $('message-scroll').scrollTop);
+    state.compose = null; paintComposeBar();
     state.group = group; state.chatOpening = group; state.initialChat = true; state.nodes.clear(); $('messages').replaceChildren();
     $('chat-error').textContent = ''; $('composer-error').textContent = ''; $('new-messages').hidden = true;
     $('draft').value = readRecord(group).draft; $('no-selection').hidden = true; $('chat').hidden = false;
@@ -519,8 +687,10 @@
     state.group = null; state.chatOpening = null; $('chat').hidden = true; $('no-selection').hidden = false;
     $('workspace').classList.remove('has-chat'); $('draft').value = ''; state.nodes.clear(); $('messages').replaceChildren();
     renderList(); updateComposer();
+    window.MessengerUnified?.returnNative?.();
   }
   function openSheet(kind) {
+    window.MessengerUnified?.showNative?.();
     cancel(); state.focusBefore = document.activeElement; state.sheet = kind;
     $('sheet-title').textContent = kind === 'contact' ? 'Add contact' : 'My address';
     $('contact-form').hidden = kind !== 'contact'; $('address-panel').hidden = kind !== 'address';
@@ -535,6 +705,7 @@
     cancel(); state.sheet = null; $('sheet-layer').hidden = true;
     $('workspace').inert = false;
     state.focusBefore?.focus?.(); state.focusBefore = null; schedule();
+    if (!state.group) window.MessengerUnified?.returnNative?.();
   }
   function renderContacts() {
     const target = $('saved-contacts'); target.replaceChildren();
@@ -573,7 +744,7 @@
       updateComposer(); renderMessages();
       let accepted = false;
       try {
-        const receipt = await api('api/dms/' + encodeURIComponent(group) + '/messages', {method: 'POST', body: {text: attempt.text, request_id: attempt.request_id}, signal});
+        const receipt = await api('api/dms/' + encodeURIComponent(group) + '/messages', {method: 'POST', body: {text: attempt.text, request_id: attempt.request_id, ...(attempt.reply_to ? {reply_to: attempt.reply_to} : {})}, signal});
         if (receipt.request_id !== attempt.request_id) throw new APIError('send_outcome_unknown', 409);
         attempt.message_ids = receipt.message_ids; attempt.published = receipt.published; attempt.state = receiptState(receipt);
         accepted = true;
@@ -655,13 +826,21 @@
     resizeDraft(); updateComposer();
   };
   $('draft').onkeydown = event => {
+    if (event.key === 'Escape' && state.compose) { event.preventDefault(); event.stopPropagation(); endCompose(); return; }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && matchMedia('(pointer: fine)').matches) { event.preventDefault(); if (!$('send').disabled) $('composer').requestSubmit(); }
   };
   $('composer').onsubmit = event => {
     event.preventDefault(); const group = state.group, text = $('draft').value;
     if (!group || isBusy() || !text.trim() || isIncoming(dmById(group))) return;
     if (new TextEncoder().encode(text).length > 16384 || text.includes('\0')) { $('composer-error').textContent = 'This message is too long. Shorten it and try again.'; return; }
-    const record = readRecord(group), attempt = {request_id: crypto.randomUUID(), text, created_at: Date.now(), state: 'failed'};
+    const compose = state.compose?.group === group ? state.compose : null;
+    if (compose?.mode === 'edit') {
+      if (text === compose.message.text) { endCompose(); return; }
+      messageAction(group, compose.message, 'edit', {text}, () => endCompose());
+      return;
+    }
+    const record = readRecord(group), attempt = {request_id: crypto.randomUUID(), text, created_at: Date.now(), state: 'failed', ...(compose?.mode === 'reply' ? {reply_to: compose.message.message_id} : {})};
+    if (compose) { state.compose = null; paintComposeBar(); }
     const previousDraft = record.draft; record.attempts.push(attempt); record.draft = '';
     if (!persist(group)) { record.attempts.pop(); record.draft = previousDraft; $('composer-error').textContent = 'Draft storage is unavailable. Keep this window open and try again.'; return; }
     $('draft').value = ''; $('composer-error').textContent = ''; resizeDraft(); submitAttempt(group, attempt);
@@ -676,8 +855,10 @@
   };
   $('setup-form').onsubmit = event => {
     event.preventDefault(); if ($('setup-submit').disabled || isBusy()) return;
-    const creating = state.mode === 'setup_required', password = $('passphrase').value, name = $('display-name').value;
-    if (creating && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value)) return;
+    const creating = state.mode === 'setup_required', name = $('display-name').value;
+    // Keyless setup: the vault still gets a strong random key, which only Wizard keeps (never shown, never typed).
+    const password = creating && trustedWizard ? b64u(crypto.getRandomValues(new Uint8Array(32))) : $('passphrase').value;
+    if (creating && !trustedWizard && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value)) return;
     if (new TextEncoder().encode(password).length > 1024 || password.includes('\0')) { $('setup-error').textContent = 'Choose a shorter passphrase.'; return; }
     if (new TextEncoder().encode(name).length > 160) { $('setup-error').textContent = 'Choose a shorter name.'; return; }
     $('setup-submit').disabled = true;
@@ -686,7 +867,7 @@
         if (!(await unlockWith(password, signal, creating, name))) return;
         phone.typed = password;
         $('passphrase').value = ''; $('confirm-passphrase').value = ''; state.setupFailed = false;
-        window.MessengerUnified?.authenticated(); await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
+        await snapshot(signal); if (creating && state.mode === 'ready') openSheet('address');
         if (!creating) offerPhoneFingerprint(password);
         if (!phone.available && !creating && state.passkey && !state.passkeyWrapped) rememberOnFingerprint(password).catch(e => console.warn('fingerprint seal', e?.name, e?.message));
       } catch (error) {
@@ -696,12 +877,18 @@
     });
   };
   async function unlockWith(password, signal, creating = false, name = '') {
+    const rememberWizard = trustedWizard; // Wizard sign-in is the lock: always remember on a trusted Wizard.
     if (state.sessionLocked) {
-      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password}, signal, session: true});
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
-      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated();
+      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
     } else {
       await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
+      // Launcher tickets are setup-only; passphrase proof opens the owner view,
+      // including when a phone-vault or PRF unlock calls this shared helper.
+      const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
+      if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
+      state.csrf = session.csrf_token; state.authenticated = true;
     }
     return true;
   }
@@ -728,7 +915,7 @@
   // First time only: ask, never spring the fingerprint prompt on someone. "Not now" is remembered on this phone.
   async function offerPhoneFingerprint(password) {
     if (!phone.available || phone.saved || localStorage.getItem('messenger.fingerprint.declined')) return;
-    const U = window.MessengerUnified, later = 'Not now. You can turn it on anytime from the Messenger tab.';
+    const U = window.MessengerUnified, later = 'Not now. You can turn it on anytime from Settings.';
     const yes = await U?.ask?.({title: 'Unlock with your fingerprint?', body: 'Next time Messenger asks for your password, a fingerprint touch opens it instead. Your password stays on this phone.', yes: 'Use fingerprint', no: 'Not now'});
     if (!yes) { localStorage.setItem('messenger.fingerprint.declined', '1'); U?.toast?.(later, 4000); return; }
     if (await savePhoneFingerprint(password)) U?.toast?.('Fingerprint unlock is on', 2500);
@@ -737,7 +924,7 @@
   function renderPasskey() {
     const usePhone = phone.available;
     $('fingerprint-unlock').hidden = !(state.mode === 'locked' && (usePhone ? phone.saved : passkeySupported && state.passkey));
-    $('fingerprint-toggle').hidden = !(usePhone || passkeySupported);
+    $('fingerprint-toggle').hidden = trustedWizard || !(usePhone || passkeySupported);
     $('fingerprint-toggle').textContent = (usePhone ? phone.saved : state.passkey) ? 'Turn off fingerprint unlock' : usePhone ? 'Unlock with fingerprint' : 'Unlock with fingerprint next time';
   }
   async function refreshPasskey() {
@@ -778,7 +965,7 @@
       if (phone.available && phone.saved) {
         try {
           const password = await vault().open('Unlock Messenger');
-          if (await unlockWith(password, signal)) { phone.typed = password; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+          if (await unlockWith(password, signal)) { phone.typed = password; await snapshot(signal); }
         } catch (error) {
           if (error.name === 'AbortError') return;
           if (error.code === 'vault_unlock_failed' || error.code === 'invalidated' || error.code === 'not_saved') { await vault().forget(); phone.saved = false; renderPasskey(); }
@@ -795,7 +982,7 @@
           let password = null; try { password = await openSealed(prf, wrap); } catch { /* resealed on next passphrase */ }
           if (password) {
             try {
-              if (await unlockWith(password, signal)) { state.passkeyWrapped = true; window.MessengerUnified?.authenticated(); await snapshot(signal); }
+              if (await unlockWith(password, signal)) { state.passkeyWrapped = true; await snapshot(signal); }
               return;
             } catch (error) {
               if (error.code === 'vault_unlock_failed') { api('api/view/passkey/wrap', {method: 'POST', body: {id: credential.id, wrap: null}}).catch(() => {}); }
@@ -807,7 +994,7 @@
         const session = await api('api/view/passkey/unlock', {method: 'POST', session: true, signal, body: {id: credential.id, clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature)}});
         if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
-        window.MessengerUnified?.authenticated(); await snapshot(signal);
+        await snapshot(signal);
       } catch (error) {
         if (error.name === 'AbortError') return;
         $('setup-error').textContent = error.name === 'NotAllowedError' ? 'Fingerprint cancelled. Use your passphrase.' : error.code === 'passkey_vault_locked' ? 'Type your passphrase once: Messenger restarted or was locked.' : error.code?.startsWith('passkey_') ? "Fingerprint unlock didn't work. Use your passphrase." : friendly(error);
@@ -880,14 +1067,19 @@
     if (state.operation?.bootstrap) return;
     if (document.hidden) cancel();
     else if (state.authenticated) run(snapshot);
-    else if (state.mode === 'opening') boot();
+    else if (state.mode === 'opening' || state.mode === 'reconnect') { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); }
   });
   addEventListener('pagehide', cancel);
   function viewport() {
-    const height = window.visualViewport?.height || window.innerHeight;
-    $('messenger').style.setProperty('--view-height', height + 'px');
+    // The keyboard shrinks the visual viewport: Messenger follows it so the composer stays above the keyboard.
+    // iOS also scrolls the page under the keyboard; keep Messenger's box on the visible part. A pinch zoom is not a keyboard.
+    const vv = window.visualViewport, zoomed = vv && vv.scale > 1.01;
+    const height = (!zoomed && vv?.height) || window.innerHeight;
+    $('messenger').style.setProperty('--view-height', Math.round(height) + 'px');
+    const top = !zoomed && vv?.offsetTop > 0 ? Math.round(vv.offsetTop) : 0;
+    $('messenger').style.transform = top ? 'translateY(' + top + 'px)' : '';
   }
-  window.visualViewport?.addEventListener('resize', viewport); addEventListener('resize', viewport); viewport();
+  window.visualViewport?.addEventListener('resize', viewport); window.visualViewport?.addEventListener('scroll', viewport); addEventListener('resize', viewport); viewport();
   // Remove a one-use ticket synchronously, before the first request. It is never
   // persisted, logged or put into a reusable Authorization header.
   let launchTicket = null;
@@ -903,11 +1095,34 @@
     if (state.authenticated) { launchTicket = null; run(snapshot); }
     else boot();
   });
-  async function boot() {
+  async function boot(redeemTicket = false) {
+    // Bound views may preload in a different browser context. A preview must not
+    // consume the owner's one-use enrollment before they act in this window.
+    if (launchTicket && redeemTicket !== true && document.querySelector?.('meta[name="messenger-enrollment"]')?.content === 'manual') {
+      gate('enrollment_ready'); return;
+    }
     gate('opening');
     await run(async signal => {
       try {
         const ticket = launchTicket; launchTicket = null;
+        if (!ticket) {
+          try {
+            let response;
+            for (let attempt = 0; ; attempt++) {
+              try { response = await fetch('api/view/trusted-owner', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'}); }
+              catch (error) { if (error.name === 'AbortError' || !(error instanceof TypeError) || attempt >= 2) throw error; await sleepFor(400 * (attempt + 1), signal); continue; }
+              if (response.status < 500 || response.status === 501 || attempt >= 2) break;
+              await sleepFor(400 * (attempt + 1), signal);
+            }
+            // A restarting server or a refused burst is no answer: keep what this device knew and retry the boot.
+            if (response.status >= 500 && response.status !== 501) throw new APIError('server_restarting', response.status);
+            let answer = null; try { answer = await response.json(); } catch { throw new APIError('server_restarting', response.status); }
+            trustedWizard = response.ok && answer?.result?.enabled === true;
+            try { if (trustedWizard) localStorage.setItem(TRUSTED_KEY, '1'); else localStorage.removeItem(TRUSTED_KEY); } catch { /* storage blocked */ }
+          } catch (error) { if (error.name === 'AbortError') throw error; if (!transient(error)) trustedWizard = false; else throw error; }
+        }
+        if ($('remember-wizard-label')) $('remember-wizard-label').hidden = true;
+        $('lock').hidden = trustedWizard; renderPasskey();
         let session;
         try {
           session = await api('api/view/session', ticket ? {method: 'POST', body: {ticket}, signal, session: true} : {signal, session: true});
@@ -918,15 +1133,21 @@
           session = await api('api/view/session', {session: true});
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; window.MessengerUnified?.authenticated(); await snapshot(signal);
-        bootTries = 0;
+        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
+        bootTries = 0; if (state.mode === 'ready') trustedTries = 0;
       } catch (error) {
-        if (error.name === 'AbortError' || error.code === 'session_unlock_required') return;
+        if (error.name === 'AbortError') return;
+        if (['session_unlock_required', 'remembered_unlock_unavailable', 'locked', 'vault_locked'].includes(error.code)) { if (trustedWizard) recoverTrusted(); return; }
         // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
         // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
-        if (transient(error) && bootTries < 40) {
-          bootTries++; gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…';
-          clearTimeout(bootTimer); bootTimer = setTimeout(boot, Math.min(1000 * bootTries, 5000)); return;
+        // It keeps trying for as long as the page is open: after ~3 minutes the Try again card shows as well, but the
+        // retries carry on (every 15 s) so the inbox comes back by itself once Messenger answers again. A trusted
+        // Wizard treats any refusal the same way (it can always open a fresh session); only setup is a real stop.
+        if ((transient(error) || (trustedWizard && error.code !== 'setup_link_required')) ) {
+          bootTries++; clearTimeout(bootTimer);
+          if (bootTries <= 40) { gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…'; }
+          else { if (state.mode !== 'reconnect') { cancelView(); gate('reconnect'); } $('gate-description').textContent = "Couldn't reach Messenger yet. Still trying… or tap Try again."; }
+          bootTimer = setTimeout(() => boot(), bootTries <= 40 ? Math.min(1000 * bootTries, 5000) : 15000); return;
         }
         bootTries = 0; disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
@@ -934,10 +1155,11 @@
   }
   let bootTries = 0, bootTimer = null;
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
-  addEventListener('online', () => { if (state.mode === 'reconnect' || bootTries) { clearTimeout(bootTimer); boot(); } });
-  window.MessengerUnified?.mount({api, csrf: () => state.csrf});
+  function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.authenticated = false; }
+  addEventListener('online', () => { if (state.mode === 'reconnect' || state.mode === 'opening' || bootTries) { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); } });
+  window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});
   window.MessengerUnified?.paintSaved();
-  $('reconnect').onclick = boot;
+  $('reconnect').onclick = () => { trustedTries = 0; bootTries = 0; clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(true); };
   refreshPasskey(); refreshPhoneVault();
   boot();
 })();

@@ -316,7 +316,8 @@ test('DOM fixture: setup match/minimum, CSRF body-only secret and first address 
   let created=false;
   const f=await fixture({respond:(url,opts,base)=>{
     if(url==='api/status') return {state:created?'ready':'setup_required'};
-    if(url==='api/setup'){created=true;return {state:'ready',identity:own};}return base(url,opts);
+    if(url==='api/setup'){created=true;return {state:'ready',identity:own};}
+    if(url==='api/view/unlock')return {authenticated:true,csrf_token:'fixture-csrf',status:{state:'ready'}};return base(url,opts);
   }});
   assert.equal(f.e('setup-submit').disabled,true);
   f.e('display-name').value='Fixture owner';f.e('display-name').fire('input');assert.equal(f.context.sharedHolds.size,1);
@@ -364,7 +365,8 @@ test('shared domain Back is honest and holds drafts beyond nested close',async()
   assert.equal(f.context.sharedBack.back(),true);assert.equal(f.context.sharedBack.canGoBack(),false);assert.equal(f.context.sharedHolds.size,0);
   f.e('conversation-list').children[0].fire('click');await f.flush();f.e('draft').value='';f.e('draft').fire('input');assert.equal(f.context.sharedHolds.size,0);
   f.e('add-contact').fire('click');f.e('contact-address').value=peer.npub;f.e('contact-address').fire('input');
-  f.context.sharedBack.back();assert.equal(f.context.sharedHolds.size,1,'closing a contact sheet is not discarding its draft');
+  assert.equal(f.context.sharedHolds.size,0,'a typed contact address never blocks a Wizard reload');
+  f.context.sharedBack.back();assert.equal(f.context.sharedHolds.size,0,'a closed contact sheet never blocks a Wizard reload');
 });
 test('DOM fixture: outgoing invite stays Invite sent despite relay-published text',async()=>{
   let messages=[];
@@ -391,6 +393,8 @@ test('DOM fixture: request/draft persisted BEFORE send; checking outcome has no 
   assert.match(f.e('messages').textContent,/Checking delivery/);assert.doesNotMatch(f.e('messages').textContent,/Retry|Sent ✓/);
   await f.poll();assert.equal(f.calls.filter(c=>c.url.includes('/messages')&&c.opts.method==='POST').length,1);
   const record=JSON.parse(saved.get('wizard-messenger:v1:'+ownHex+':'+group));assert.equal(record.attempts[0].state,'checking');assert.equal(record.attempts[0].request_id,durableRequest);
+  // A "checking" bubble survives a reload and is confirmed by request_id afterwards, so it never blocks Wizard reloads.
+  assert.equal(f.context.sharedHolds.size,0,'a Checking delivery bubble never blocks a Wizard reload');
 });
 test('DOM fixture: definite rejection Retry preserves exact request and message text',async()=>{
   let attempts=0;

@@ -22,6 +22,7 @@ const tick = () => new Promise(r => setTimeout(r, 0));
     calls.push({path,method,body});
     if (method === 'GET') return {providers: [
       {network:'whatsapp',label:'WhatsApp',supported:true,state:'disconnected',flows:[{id:'phone',name:'Pairing code'},{id:'qr',name:'QR'}],logins:[]},
+      {network:'kakaotalk',label:'KakaoTalk',supported:false,state:'unsupported',message:'No compatible maintained bridge selected',flows:[],logins:[]}
     ]};
     if (path.endsWith('/start')) return {login_id:'synthetic',step_id:'fi.mau.whatsapp.login.qr',type:'display_and_wait',display_and_wait:{type:'qr',data:'synthetic-only'}};
     if (path.endsWith('/step')) return new Promise(r => { release = () => r({type:'complete'}); });
@@ -30,7 +31,8 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   const ui = window.MessengerConnectors(root,api); await ui.show();
   const buttons = nodes(root).filter(x => x.tag === 'button');
   assert.equal(buttons[0].textContent, 'Show QR code', 'QR is the primary action, ahead of pairing code');
-  assert.equal(buttons.length, 2, 'one button per advertised WhatsApp flow');
+  assert.equal(buttons.length, 2, 'no fake button for an unsupported network');
+  assert.ok(texts(root).some(t => /KakaoTalk/.test(t)), 'unsupported networks fold into More networks');
   const started = buttons[0].onclick(); await tick(); await tick(); await tick();
   assert.ok(nodes(root).some(x => x.tag === 'canvas'), 'QR rendered');
   assert.ok(texts(root).some(t => /Linked devices/.test(t)), 'phone scan steps shown');
@@ -44,7 +46,7 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   // Credential flow: secrets masked, addresses readable, values cleared after submit, select preserved.
   const privateRoot = new Element('main'), submitted = [];
   const privateApi = async (path, method, body) => {
-    if (method === 'GET') return {providers:[{network:'telegram',label:'Telegram',supported:true,state:'disconnected',flows:[{id:'phone',name:'Login'}],logins:[]}]};
+    if (method === 'GET') return {providers:[{network:'line',label:'LINE',supported:true,state:'disconnected',flows:[{id:'dev.highest.matrix.line.email_login',name:'Login'}],logins:[]}]};
     if (path.endsWith('/start')) return {login_id:'local',step_id:'credentials',type:'user_input',user_input:{fields:[{id:'email',type:'email'},{id:'password',type:'password'},{id:'code',type:'2fa_code'},{id:'workspace',type:'select',options:['Workspace A','Workspace B']}]}};
     if (path.endsWith('/step')) { submitted.push(body); return new Promise(() => {}); }
     return {};

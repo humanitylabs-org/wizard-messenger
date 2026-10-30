@@ -23,7 +23,7 @@ class ConnectorBoundary(unittest.TestCase):
         self.server.shutdown(); self.server.server_close(); self.thread.join()
     def test_machine_key_cannot_link_even_with_message_grant(self):
         for granted in (False, True):
-            if granted: self.server.agent_access.grant(60)
+            if granted: self.server.agent_access.configure({'mode': 'draft_and_send', 'minutes': 60})
             for network in ('telegram', 'whatsapp', 'signal'):
                 paths = ['/api/unified/connectors/' + network, '/api/unified/telegram'] if network == 'telegram' else ['/api/unified/connectors/' + network]
                 for prefix in paths:
@@ -46,7 +46,7 @@ class ConnectorBoundary(unittest.TestCase):
         self.inbox.dispatch.assert_called_once_with('POST',path,{'flow':'qr'},{},None)
     def test_machine_header_cannot_bypass_csrf_using_a_cookie(self):
         cookie, _ = self.session()
-        self.server.agent_access.grant(60)
+        self.server.agent_access.configure({'mode': 'draft_and_send', 'minutes': 60})
         for method in ('GET', 'POST'):
             path = '/api/unified/connectors/signal/' + ('status' if method == 'GET' else 'start')
             status, _, body = self.request(method, path, None if method == 'GET' else {}, {'Cookie':cookie,'Authorization':'Bearer ' + TOKEN})

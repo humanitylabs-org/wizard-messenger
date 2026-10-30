@@ -1,0 +1,37 @@
+{
+  "whatsapp": {
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "release": "v0.2610.0",
+    "source_commit": "1067291a89f4949887b328104005abe4f7163ddf",
+    "account_authentication_attempted": false
+  },
+  "signal": {
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "release": "v0.2610.0",
+    "source_commit": "d129f0ecc6bd29cfb5e54b18e025bd0c8a20a4bf",
+    "account_authentication_attempted": false
+  },
+  "slack": {
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "release": "v0.2610.0",
+    "source_commit": "78742470614d455d4fb9081962e757f6afd6f3ea",
+    "account_authentication_attempted": false
+  },
+  "instagram": {
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "release": "v0.2610.0",
+    "source_commit": "3c16226686c71af64df294df0803791685064e0b",
+    "account_authentication_attempted": false
+  },
+  "line": {
+    "binary_hash_verified": true,
+    "config_parse_and_registration_exit": 0,
+    "release": "",
+    "source_commit": "72c7a51a44f344966b916bd2f42a734381061186",
+    "account_authentication_attempted": false
+  }
+}

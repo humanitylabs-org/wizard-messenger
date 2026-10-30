@@ -1,0 +1,433 @@
+{
+  "schema_version": 1,
+  "baseline": "490abc8",
+  "status_vocabulary": [
+    "proven",
+    "implemented-unverified",
+    "unsupported",
+    "owner-login-required"
+  ],
+  "status_semantics": {
+    "proven": "Only named scope exercised with linked executable evidence; never implies provider parity.",
+    "implemented-unverified": "Source exists, stated end-to-end scope not verified.",
+    "unsupported": "Not implemented or not wired in the inspected baseline.",
+    "owner-login-required": "Provider test requires voluntary owner account setup; not a passed test."
+  },
+  "migration_ready": false,
+  "keep_beeper": true,
+  "networks": {
+    "whatsapp": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "telegram": {
+      "status": "owner-login-required",
+      "source": "unified.py:UnifiedInbox",
+      "features": {
+        "text": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "photos": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "voice_notes": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "replies": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "reactions": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "history": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        },
+        "search": {
+          "status": "implemented-unverified",
+          "scope": "Stored-history FTS wired to authenticated owner API and UI; local SQLite/HTTP/JS tests only, no Telegram account or phone proof."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "implemented-unverified",
+          "scope": "Telegram transport implementation exists; provider/phone behavior not verified."
+        }
+      }
+    },
+    "signal": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "line": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "kakao": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    },
+    "slack": {
+      "status": "unsupported",
+      "source": null,
+      "features": {
+        "text": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "photos": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "voice_notes": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "replies": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reactions": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "history": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "search": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "notifications": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        },
+        "reconnect": {
+          "status": "unsupported",
+          "scope": "No integrated implementation in baseline."
+        }
+      }
+    }
+  },
+  "components": {
+    "search_module": {
+      "status": "proven",
+      "scope": "FTS5 mirror transactionally integrated with unified SQLite store and authenticated owner API/UI; local tests, not provider proof",
+      "source": "readiness/search.py",
+      "evidence": "search_module.log"
+    },
+    "history_search_integration": {
+      "status": "proven",
+      "scope": "Local production SQLite/loopback HTTP and synthetic DOM/API JS contracts only; no real account or rendered browser verification",
+      "source": "tests/test_history_search.py",
+      "evidence": "history_search_integration.log"
+    },
+    "sync_cursor_recovery": {
+      "status": "proven",
+      "scope": "Production UnifiedInbox.sync via disposable loopback fixture; retry and restart, not provider reconnect",
+      "source": "readiness/tests/test_transport.py",
+      "evidence": "sync_recovery_and_history_limit.log"
+    },
+    "history_pagination": {
+      "status": "proven",
+      "scope": "Timestamp+id scoped cursors preserve equal-millisecond rows; regression required to pass normally. Local tests only, not full bridge backfill.",
+      "source": "readiness/tests/test_transport.py",
+      "evidence": "sync_recovery_and_history_limit.log"
+    }
+  },
+  "owner_gates": [
+    "Set up owner Messenger identity and unlock privately.",
+    "Configure and connect each supported network only with owner approval.",
+    "Verify inbound/outbound text and real photo/voice playback, replies and reactions on each account.",
+    "Verify full required history, message search, reconnect after restart/outage, and alerts with browser closed/phone locked.",
+    "Exercise daily use alongside Beeper before retirement; local fixture success is insufficient."
+  ],
+  "known_gaps": [
+    "Only Telegram is bridged in baseline; Signal MVP means Signal-style UI, not Signal network.",
+    "Message search covers stored original/translated text only; remote unimported history is not searchable.",
+    "No background phone push/OS notifications found.",
+    "Initial Telegram import is 50 chats \u00d7 50 messages; backward bridge backfill disabled; media revisit at most three pages of 100.",
+    "Legacy before=timestamp remains an explicit cutoff; clients must page using next_cursor to preserve timestamp ties.",
+    "History is plaintext on disk; new search index also plaintext.",
+    "Provider reconnect/login expiry and phone codec behavior not exercised by local fixtures."
+  ],
+  "generated_at": "2026-10-24T05:12:56.259045+00:00",
+  "checks": [
+    {
+      "id": "acceptance_probe_safety",
+      "command": [
+        "/home/oscar/.hermes/installs/92fb099a4c936984/environments/a5ce98798878478c90c3d65cfe732cc9/venv/bin/python",
+        "-m",
+        "readiness.runner",
+        "--result",
+        "/home/oscar/.hermes/cache/scratch/messenger-readiness/readiness/evidence/history-search/acceptance_probe_safety.json",
+        "readiness.tests.test_checker",
+        "readiness.tests.test_runner"
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 0.769,
+      "evidence": "acceptance_probe_safety.log",
+      "evidence_sha256": "c235d3d3a66c9e6f27c12187deee498a324be5d46ccaa30bca590ecb610aa0a4",
+      "test_results": "acceptance_probe_safety.json"
+    },
+    {
+      "id": "search_module",
+      "command": [
+        "/home/oscar/.hermes/installs/92fb099a4c936984/environments/a5ce98798878478c90c3d65cfe732cc9/venv/bin/python",
+        "-m",
+        "readiness.runner",
+        "--result",
+        "/home/oscar/.hermes/cache/scratch/messenger-readiness/readiness/evidence/history-search/search_module.json",
+        "readiness.tests.test_search"
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 0.393,
+      "evidence": "search_module.log",
+      "evidence_sha256": "e403c54ec4f8ca853e4ae4ab44a27f6657681184252bc8b7920109501bce0c9b",
+      "test_results": "search_module.json"
+    },
+    {
+      "id": "history_search_integration",
+      "command": [
+        "/home/oscar/.hermes/installs/92fb099a4c936984/environments/a5ce98798878478c90c3d65cfe732cc9/venv/bin/python",
+        "-m",
+        "readiness.runner",
+        "--result",
+        "/home/oscar/.hermes/cache/scratch/messenger-readiness/readiness/evidence/history-search/history_search_integration.json",
+        "test_history_search"
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 0.821,
+      "evidence": "history_search_integration.log",
+      "evidence_sha256": "fd77b62b419b3665873c0fa01526b42880cfdbf0c74ea49aa30c7d8a0a28e201",
+      "test_results": "history_search_integration.json"
+    },
+    {
+      "id": "sync_recovery_and_history_limit",
+      "command": [
+        "/home/oscar/.hermes/installs/92fb099a4c936984/environments/a5ce98798878478c90c3d65cfe732cc9/venv/bin/python",
+        "-m",
+        "readiness.runner",
+        "--result",
+        "/home/oscar/.hermes/cache/scratch/messenger-readiness/readiness/evidence/history-search/sync_recovery_and_history_limit.json",
+        "readiness.tests.test_transport"
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 1.612,
+      "evidence": "sync_recovery_and_history_limit.log",
+      "evidence_sha256": "34bc02275c30fd5a15b69899e103f83e10af3d71c129c7879e3e18d5f073df1d",
+      "test_results": "sync_recovery_and_history_limit.json"
+    },
+    {
+      "id": "existing_media_relations_changefeed",
+      "command": [
+        "/home/oscar/.hermes/installs/92fb099a4c936984/environments/a5ce98798878478c90c3d65cfe732cc9/venv/bin/python",
+        "-m",
+        "readiness.runner",
+        "--result",
+        "/home/oscar/.hermes/cache/scratch/messenger-readiness/readiness/evidence/history-search/existing_media_relations_changefeed.json",
+        "test_unified.SignalMvpTests.test_reply_reaction_edit_redaction_ingest",
+        "test_unified.SignalMvpTests.test_media_rows_hide_mxc_and_upgrade_label_rows",
+        "test_unified.SignalMvpTests.test_voice_note_ingest",
+        "test_unified.SignalMvpTests.test_media_proxy_caches_and_serves_safe_types_only",
+        "test_unified.SignalMvpTests.test_updates_feed_returns_new_rows_and_wakes_waiters"
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 0.353,
+      "evidence": "existing_media_relations_changefeed.log",
+      "evidence_sha256": "dad763aa0d0b66b1834cc1217b1e007274cfb5d18c221886e4d7c6d43bdd33a7",
+      "test_results": "existing_media_relations_changefeed.json"
+    }
+  ],
+  "probes": [],
+  "source": "993a1a5450703625fca441f66f224ee3e43353d1",
+  "source_dirty": true,
+  "source_files": {
+    "unified.py": "c30e846eda45f5752144c3b8f22b7014e556688fef60ae93197ada425304f315",
+    "history_cursor.py": "c07ec99d97f1348c59ae019757004c21d41f2f4b3d64bbd16d45cfb4d41373d4",
+    "web.py": "d7a68a201bf9211f5927cf35fe8dfae07a2a951463989a48fc455fe26668d69b",
+    "static/unified.js": "fdcf4299ee3f10fc2b7834729c175b9839e7d6e4843a3291bdbc0ffa705af538",
+    "tests/test_history_search.py": "6f8b3ba3fe350a3cd24474e66eea3a8834ea26a0f92c60c854f8b62b51fe5729",
+    "tests/test_history_search_view.cjs": "18cc1eb38abc9b6ae3593913b4e4c584aedd31d3d859f44c6ce3b31fc6868fd1",
+    "engine.py": "434195dcf96fb6460c949e6b62044083db2a11b7f4985e00b74b126009e40e15",
+    "unified_setup.py": "03822ddd451ba90940ced55cdaf2958ab62cdf0979b11661c75a9bbd1505b51a",
+    "translation.py": "5a59cee0305aef9114ae4635cdca47b39bcab9c65e555b230bc39e866fd5a300",
+    "tests/test_unified.py": "cc1a7890e1a918e937d9235ab90f0db8779a5be3e3b5ff87bbdd57b197ed5558",
+    "readiness/manifest.json": "6fbe974972b89eaddb42135ad4a83e730151072241bbd5ef252bded2faa51378",
+    "readiness/__init__.py": "b1b29825195395ffe37891a9848aaa503f3672f687a38e00be31c7fb7cacc8a3",
+    "readiness/check.py": "8fa96dc9f0a21586831c1ec8b602cceed062f62b6cee88c916885f0c78b3e04f",
+    "readiness/runner.py": "42573fc1261add49101ea0b3930dd7d9698f6b8f628c73e1a20a413335447478",
+    "readiness/search.py": "da7c1d25b354601c68bd734adbf21729d574a2d4d73ab6eee170b7ac6a99a217",
+    "readiness/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "readiness/tests/test_checker.py": "0417a94c30111eb3b2f2aa860a54c1c337f44182f09d51024fb950eb02cb0532",
+    "readiness/tests/test_runner.py": "57f7837a4709b559771c606e56ba153adc002b4b1bfd578bd41cdb5bdbb77e93",
+    "readiness/tests/test_search.py": "177241af7de6de201879e61e8eb1c393b6756acf37b5ecb2b128f8ec1a881045",
+    "readiness/tests/test_transport.py": "1cceb6029eb7276019351630096cdeba3705682b40d14df82f8b2febaf894858"
+  },
+  "local_checks_passed": true
+}

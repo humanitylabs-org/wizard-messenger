@@ -17,7 +17,21 @@ LOGIN_ERRORS = {
     'FI.MAU.BRIDGE.LOGIN_TIMED_OUT': ('login_expired', 'Login timed out. Start a new login.', 409),
     'M_NOT_FOUND': ('login_expired', 'This login is no longer available. Start a new login.', 409),
     'M_BAD_STATE': ('invalid_step', 'Login step changed. Start a new login.', 409),
+    'FI.MAU.SLACK.RATE_LIMITED': ('login_rate_limited', 'Slack is rate limiting sign-in. Wait a few minutes before starting again.', 429),
+    'FI.MAU.SLACK.BROWSER_REQUIRED': ('login_challenge_required', 'Slack requires browser verification which this view cannot safely complete. Finish verification in Slack, then start again.', 409),
+    'FI.MAU.META_RATE_LIMITED': ('login_rate_limited', 'Instagram is limiting sign-in attempts. Wait a few minutes before starting again.', 429),
+    'FI.MAU.META_ACCOUNT_SUSPENDED': ('login_account_restricted', 'Instagram reports an account suspension. Review it in Instagram before retrying.', 409),
+    'FI.MAU.META_ACCOUNT_PENDING_DELETION': ('login_account_restricted', 'Instagram reports this account is scheduled for deletion. Review it in Instagram before retrying.', 409),
+    'FI.MAU.META_INBOX_LOAD_FAILED': ('login_inbox_failed', 'Instagram could not load the inbox after login. Check the official app and try again later.', 502),
+    'FI.MAU.META_WEB_CHECKPOINT_FAILED': ('login_verification_failed', 'Instagram verification did not complete. Start again when your connection is stable.', 502),
+    'FI.MAU.SLACK.CAPTCHA_REJECTED': ('login_challenge_required', 'Slack requires a new interactive CAPTCHA. This view cannot safely complete it.', 409),
+    'DEV.HIGHEST.LINE.TOO_MANY_ATTEMPTS': ('login_rate_limited', 'LINE is limiting sign-in attempts. Wait before starting again.', 429),
+    'DEV.HIGHEST.LINE.LOGIN_REJECTED': ('login_rejected', 'LINE rejected this login. Review the request in LINE before starting again.', 409),
+    'DEV.HIGHEST.LINE.VERIFICATION_FAILED': ('login_verification_failed', 'LINE verification did not complete. Start a new login and approve it on your phone.', 409),
+    'DEV.HIGHEST.LINE.NO_KEYCHAIN': ('login_keys_unavailable', 'LINE did not provide the encryption keys required by this bridge. Review linked devices in LINE before trying again.', 409),
 }
+for _code in ('FI.MAU.META_CHALLENGE_ERROR', 'FI.MAU.META_CHECKPOINT_ERROR', 'FI.MAU.META_CONSENT_ERROR', 'FI.MAU.META_ACCOUNT_RECOVERY_REQUIRED', 'FI.MAU.META_NO_SUPPORTED_MFA', 'FI.MAU.META_GOOGLE_RECAPTCHA', 'FI.MAU.META_PASSKEY_MANDATORY', 'FI.MAU.META_OAUTH_MANDATORY', 'FI.MAU.META_UNSUPPORTED_CAA_STEP', 'FI.MAU.META_UNSUPPORTED_WEB_CHECKPOINT', 'FI.MAU.META_WEB_CHECKPOINT_CAPTCHA', 'FI.MAU.IG_CAA_FALLBACK_DISABLED'):
+    LOGIN_ERRORS[_code] = ('login_challenge_required', 'Instagram requires verification this view cannot safely complete. Finish verification in Instagram, then start a new login.', 409)
 from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -76,7 +90,7 @@ class LocalOwnerSender:
         else:
             route = u.path.removeprefix('/_matrix/provision/v3')
             allowed = method == 'POST' and u.path.startswith('/_matrix/provision/v3/') and (
-                re.fullmatch(r'/login/(?:start/[A-Za-z0-9_.-]+|step/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:user_input|display_and_wait)|cancel/[A-Za-z0-9_.-]+)', route)
+                re.fullmatch(r'/login/(?:start/[A-Za-z0-9_.-]+|step/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:user_input|display_and_wait|cookies)|cancel/[A-Za-z0-9_.-]+)', route)
                 or route == '/logout/all')
             allowed = allowed and set(q) <= {'user_id', 'txn_id'} and q.get('user_id') == ['@owner:messenger.internal']
         if not allowed:

@@ -1,4 +1,4 @@
-"""Offsignal regression fixtures; no provider accounts or credentials used."""
+"""Offline regression fixtures; no provider accounts or credentials used."""
 import io
 import json
 import os
@@ -20,15 +20,15 @@ class LoginRuntimeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR'))
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        (self.root / 'connectors.json').write_text(json.dumps({'signal': {'enabled': True, 'url': 'http://signal:29322'}}))
-        (self.root / 'connector-secrets.json').write_text(json.dumps({'signal': {'provisioning': 'synthetic-test-only'}}))
+        (self.root / 'connectors.json').write_text(json.dumps({'line': {'enabled': True, 'url': 'http://line:29322'}}))
+        (self.root / 'connector-secrets.json').write_text(json.dumps({'line': {'provisioning': 'synthetic-test-only'}}))
         self.writer = Mock()
         self.controller = Connectors(self.root, writer=self.writer)
         self.step = {'login_id': 'process', 'step_id': 'qr', 'type': 'display_and_wait', 'txn_id': 'bls_first'}
-        self.controller.remember('signal', self.step)
+        self.controller.remember('line', self.step)
 
     def call(self, action, payload):
-        return self.controller.dispatch('POST', ['signal', action], payload)
+        return self.controller.dispatch('POST', ['line', action], payload)
 
     def test_short_polls_submit_once_and_wait_past_old_transport_limit(self):
         entered, release = threading.Event(), threading.Event()
@@ -50,7 +50,7 @@ class LoginRuntimeTests(unittest.TestCase):
             self.assertEqual(self.writer.call_args.kwargs['timeout'], 620)
             self.assertEqual(captured, [{'password': 'synthetic-secret'}])
             self.assertNotIn('synthetic-secret', repr(self.controller.pending))
-            job = self.controller._jobs['signal']
+            job = self.controller._jobs['line']
             release.set(); self.assertTrue(job['done'].wait(2))
             pin = self.call('step', self.step)
             self.assertEqual(pin['step_id'], 'pin')
@@ -65,24 +65,28 @@ class LoginRuntimeTests(unittest.TestCase):
             if '/login/step/' in kw['path']:
                 release.wait(5)
                 return {**self.step, 'step_id': 'late'}
-            self.assertNotIn('signal', self.controller.pending)
+            self.assertNotIn('line', self.controller.pending)
             return {}
         self.writer.side_effect = writer
         with patch('connectors.STEP_RESPONSE_WAIT', 0):
             self.call('step', self.step)
-            job = self.controller._jobs['signal']
+            job = self.controller._jobs['line']
             self.call('cancel', {'login_id': 'process'})
             replacement = {**self.step, 'login_id': 'new-process'}
-            self.controller.remember('signal', replacement)
+            self.controller.remember('line', replacement)
             release.set(); self.assertTrue(job['done'].wait(2))
-            self.assertEqual(self.controller.pending['signal'][1][0], 'new-process')
+            self.assertEqual(self.controller.pending['line'][1][0], 'new-process')
             self.assertFalse(self.controller._jobs)
             with self.assertRaises(EngineError): self.call('cancel', {'login_id': 'process'})
 
     def test_challenges_redact_executable_payload_and_remain_cancellable(self):
-        for kind in ('cookies', 'client_http', 'webauthn'):
+        # cookies is a supported step (browser / cURL sign-in) but still never exposes scripts or URLs.
+        result = self.controller.remember('line', {**self.step, 'type': 'cookies', 'cookies': {'url': 'https://example.invalid/signin', 'extract_js': 'secret', 'wait_for_url_pattern': 'secret', 'fields': []}})
+        self.assertEqual(result['type'], 'cookies')
+        self.assertNotIn('secret', repr(result))
+        for kind in ('client_http', 'webauthn'):
             with self.subTest(kind=kind):
-                result = self.controller.remember('signal', {**self.step, 'type': kind, kind: {'url': 'https://example.invalid/secret', 'extract_js': 'secret'}})
+                result = self.controller.remember('line', {**self.step, 'type': kind, kind: {'url': 'https://example.invalid/secret', 'extract_js': 'secret'}})
                 self.assertEqual(result['type'], 'challenge')
                 self.assertNotIn('secret', repr(result))
                 with self.assertRaises(EngineError) as exc: self.call('step', {**self.step, 'type': kind})
@@ -91,7 +95,7 @@ class LoginRuntimeTests(unittest.TestCase):
                 self.call('cancel', {'login_id': 'process'})
 
     def test_expiry_is_explicit_and_no_upstream_submission(self):
-        self.controller.pending['signal'] = (0, ('process', 'qr', 'display_and_wait'), 'bls_first')
+        self.controller.pending['line'] = (0, ('process', 'qr', 'display_and_wait'), 'bls_first')
         with self.assertRaises(EngineError) as exc: self.call('step', self.step)
         self.assertEqual(exc.exception.code, 'login_expired')
         self.writer.assert_not_called()
@@ -102,11 +106,11 @@ class LoginRuntimeTests(unittest.TestCase):
             with self.assertRaises(EngineError) as exc: self.call('step', self.step)
             self.assertEqual(exc.exception.code, 'login_cancelled')
         self.assertEqual(self.writer.call_count, 1)
-        self.assertIsInstance(self.controller._jobs['signal']['error'], tuple)
+        self.assertIsInstance(self.controller._jobs['line']['error'], tuple)
 
     def test_refresh_start_cleans_previous_process_before_replacing(self):
         self.writer.side_effect = [{}, {**self.step, 'login_id': 'replacement'}]
-        result = self.call('start', {'flow': 'qr'})
+        result = self.call('start', {'flow': 'dev.highest.matrix.line.qr_login'})
         self.assertEqual(result['login_id'], 'replacement')
         self.assertIn('/login/cancel/process?', self.writer.call_args_list[0].kwargs['path'])
         self.assertEqual(self.writer.call_count, 2)
@@ -118,10 +122,10 @@ class LoginTransportTests(unittest.TestCase):
         self.path = '/_matrix/provision/v3/login/step/process/credentials/user_input?user_id=%40owner%3Amessenger.internal'
 
     def invoke(self):
-        return self.sender(network='signal', base='http://signal:29328', path=self.path, method='POST', body={}, timeout=620)
+        return self.sender(network='slack', base='http://slack:29335', path=self.path, method='POST', body={}, timeout=620)
 
     def test_safe_error_codes_not_raw_provider_text(self):
-        for code, expected in [('FI.MAU.BRIDGE.LOGIN_CANCELLED', 'login_cancelled'), ('FI.MAU.BRIDGE.LOGIN_TIMED_OUT', 'login_expired'), ('unknown', 'login_failed')]:
+        for code, expected in [('FI.MAU.BRIDGE.LOGIN_CANCELLED', 'login_cancelled'), ('FI.MAU.BRIDGE.LOGIN_TIMED_OUT', 'login_expired'), ('FI.MAU.SLACK.RATE_LIMITED', 'login_rate_limited'), ('FI.MAU.SLACK.BROWSER_REQUIRED', 'login_challenge_required'), ('FI.MAU.META_UNSUPPORTED_WEB_CHECKPOINT', 'login_challenge_required'), ('DEV.HIGHEST.LINE.NO_KEYCHAIN', 'login_keys_unavailable'), ('unknown', 'login_failed')]:
             with self.subTest(code=code):
                 error = HTTPError('http://private.invalid', 400, 'private', {}, io.BytesIO(json.dumps({'errcode': code, 'error': 'secret-provider-url-and-password'}).encode()))
                 with patch.object(self.sender.opener, 'open', side_effect=error):

@@ -1,0 +1,2 @@
+# Keep the executable proof logs despite the repository-wide *.log rule.
+!evidence/local/*.log

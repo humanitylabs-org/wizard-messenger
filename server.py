@@ -3,12 +3,16 @@ from __future__ import annotations
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 import os
 import signal
 import threading
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 from engine import EngineError, MarmotEngine
+from permissions import AgentAccess, PUBLIC, route_shape
+from agent_keys import AgentKeys, LABELS as LEVEL_LABELS
+import agent_tools
 
 MAX_BODY=65536
 MCP_TOOLS=[
@@ -19,9 +23,16 @@ MCP_TOOLS=[
 class MessengerServer(ThreadingHTTPServer):
     daemon_threads=True
     def __init__(self, address, engine, token, origins):
+        self.remote_required = os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1'
+        if self.remote_required:
+            from remote_authority import OfflineEngine
+            engine = OfflineEngine(getattr(engine, 'data', None))
         if not isinstance(token,str) or len(token)<32:
             raise ValueError('MESSENGER_API_TOKEN must contain at least 32 characters')
         self.engine, self.token, self.origins=engine, token, frozenset(origins)
+        self.agent_access = AgentAccess(getattr(engine, 'data', None))
+        # Per-agent keys, each with its own owner-chosen level (agent_keys.py).
+        self.agent_keys = AgentKeys(getattr(engine, 'data', None))
         super().__init__(address,Handler)
 
 class Handler(BaseHTTPRequestHandler):
@@ -51,15 +62,45 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Security-Policy',"default-src 'none'; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(body)
-    def _authorize(self):
-        authorization=self.headers.get('Authorization','')
-        if not hmac.compare_digest(authorization.encode(),('Bearer '+self.service.token).encode()):
+    def _caller(self):
+        """None without a bearer; ('machine', None) for the app's machine key (global level);
+        ('agent', row) for a per-agent key (its own level). Unknown bearers are refused."""
+        authorization = self.headers.get('Authorization')
+        if not authorization:
+            return None
+        if hmac.compare_digest(authorization.encode(), ('Bearer ' + self.service.token).encode()):
+            return ('machine', None)
+        agent = self.service.agent_keys.lookup(authorization)
+        if agent is not None:
+            return ('agent', agent)
+        raise EngineError('unauthorized', 'A Messenger API capability is required', 401)
+    def _caller_mode(self, caller):
+        return caller[1]['level'] if caller and caller[0] == 'agent' else self.service.agent_access.effective_mode()
+    def _authorize(self, machine_only=False):
+        caller = self._caller()
+        if caller is None or (machine_only and caller[0] != 'machine'):
             raise EngineError('unauthorized','A Messenger API capability is required',401)
         origin=self.headers.get('Origin')
         if origin is not None and not self._origin_allowed(origin):
             raise EngineError('origin_forbidden','This browser origin is not allowed',403)
         if self.headers.get('Sec-Fetch-Site') == 'cross-site':
             raise EngineError('origin_forbidden','Cross-site requests are not permitted',403)
+        self._agent_gate(self.command, urlsplit(self.path).path)
+    def _agent_gate(self, method, path):
+        caller = self._caller()
+        if caller is None: return
+        if (method, path) in PUBLIC:
+            # Launcher tickets are for the trusted machine caller only, never an agent key.
+            if caller[0] == 'agent' and path == '/api/view/ticket':
+                raise EngineError('agent_permission_denied', 'This action is not allowed for agent keys.', 403)
+            return
+        mode = caller[1]['level'] if caller[0] == 'agent' else None
+        allowed = self.service.agent_access.permits(method, path, mode)
+        self.service.agent_access.record(method, route_shape(path), 'allowed' if allowed else 'blocked',
+                                         caller[1]['name'] if caller[0] == 'agent' else None)
+        if not allowed:
+            code = 'agent_access_off' if self._caller_mode(caller) == 'no_access' else 'agent_permission_denied'
+            raise EngineError(code, 'This action is not allowed by the owner’s Messenger agent policy.', 403)
     def _body(self):
         if self.headers.get('Transfer-Encoding'):
             raise EngineError('invalid_request','Chunked bodies are not supported',400)
@@ -80,12 +121,14 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get('jsonrpc') != '2.0':
             return 400,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32600,'message':'Invalid request'}}
         if method == 'initialize':
-            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.12.0'}}
+            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.13.0'}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
-        elif method == 'tools/list': result={'tools':MCP_TOOLS}
+        elif method == 'tools/list': result={'tools':MCP_TOOLS+(agent_tools.TOOLS if (self._caller() or ('',))[0]=='agent' else [])}
         elif method == 'tools/call':
             params=payload.get('params') or {}
+            if params.get('name') in agent_tools.NAMES:
+                return 200,{'jsonrpc':'2.0','id':request_id,'result':agent_tools.call(self, params.get('name'), params.get('arguments'))}
             if params.get('arguments') not in [None,{}]:
                 return 200,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32602,'message':'No arguments are accepted'}}
             if params.get('name') == 'messenger_status': data=self.service.engine.status()
@@ -99,8 +142,11 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self,method):
         parsed=urlsplit(self.path)
         path=parsed.path
+        if self.service.remote_required:
+            from remote_authority import remote_required_gate
+            remote_required_gate(method, path)
         if method=='GET' and path=='/healthz':
-            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.12.0'}
+            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.13.0'}
         self._authorize()
         engine=self.service.engine
         if path=='/mcp' and method=='POST': return self._mcp(self._body())
@@ -131,6 +177,10 @@ class Handler(BaseHTTPRequestHandler):
                 parts=path.split('/')
                 if len(parts)!=5: raise EngineError('not_found','No such API route',404)
                 result=engine.send(parts[3],payload)
+            elif path.startswith('/api/dms/') and re.fullmatch(r'/api/dms/[^/]+/messages/[0-9a-f]{64}/(?:edit|delete|react)',path):
+                parts=path.split('/')
+                payload={**payload,'message_id':parts[5]}
+                result={'edit':engine.edit,'delete':engine.delete,'react':engine.react}[parts[6]](parts[3],payload)
             elif path.startswith('/api/dms/') and path.endswith('/retry'):
                 parts=path.split('/')
                 if len(parts)!=5: raise EngineError('not_found','No such API route',404)
@@ -160,7 +210,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     os.umask(0o077)
-    engine=MarmotEngine(os.environ.get('MESSENGER_DATA','/data'))
+    from remote_authority import OfflineEngine
+    engine=(OfflineEngine if os.environ.get('MESSENGER_REMOTE_REQUIRED') == '1' else MarmotEngine)(os.environ.get('MESSENGER_DATA','/data'))
     server=MessengerServer(('0.0.0.0',int(os.environ.get('MESSENGER_PORT','8765'))),engine,os.environ.get('MESSENGER_API_TOKEN',''),[x for x in os.environ.get('MESSENGER_ALLOWED_ORIGINS','').split(',') if x])
     def stop(*_): threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM,stop)

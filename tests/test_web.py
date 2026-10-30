@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from engine import EngineError
@@ -43,9 +44,8 @@ class ViewBoundary(unittest.TestCase):
         self.server.shutdown(); self.server.server_close(); self.thread.join(); self.temp.cleanup()
     def request(self,method,path,body=None,headers=None):
         conn=http.client.HTTPConnection('127.0.0.1',self.server.server_port,timeout=3)
-        h=dict(headers or {})
+        h={'Connection':'close', **(headers or {})}
         if body is not None and not isinstance(body,bytes): h['Content-Type']='application/json'; body=json.dumps(body)
-        if isinstance(body,bytes): h.setdefault('Connection','close')
         conn.request(method,path,body,headers=h); response=conn.getresponse()
         result=response.read(); status=response.status; result_headers=dict(response.getheaders()); conn.close()
         return status,result_headers,json.loads(result) if result_headers.get('Content-Type','').startswith('application/json') else result
@@ -53,10 +53,12 @@ class ViewBoundary(unittest.TestCase):
         s,_,d=self.request('POST','/api/view/ticket',{}, {'Authorization':'Bearer '+TOKEN})
         self.assertEqual(s,200); return d['result']['ticket']
     def session(self):
-        s,h,d=self.request('POST','/api/view/session',{'ticket':self.ticket()},{'Origin':ORIGIN})
-        self.assertEqual(s,200)
-        self.assertIn('HttpOnly',h['Set-Cookie']); self.assertIn('SameSite=Strict',h['Set-Cookie']); self.assertIn('Secure',h['Set-Cookie'])
-        return h['Set-Cookie'].split(';')[0],d['result']['csrf_token']
+        # A fixture owner session, NOT a machine-issued launcher ticket.
+        token, session = self.server.auth.create()
+        return 'wizard_messenger_session=' + token, session['csrf']
+    def owner_headers(self):
+        cookie, csrf = self.session()
+        return {'Cookie': cookie, 'Origin': ORIGIN, 'X-Messenger-CSRF': csrf}
     def test_unified_routes_keep_owner_cookie_csrf_and_origin_boundary(self):
         from unittest.mock import Mock
         unified = Mock()
@@ -131,11 +133,11 @@ class ViewBoundary(unittest.TestCase):
         self.assertNotIn('abc',json.dumps(log))
     def test_only_owner_session_can_grant_and_grant_expires_to_off(self):
         bearer={'Authorization':'Bearer '+TOKEN}
-        self.assertEqual(self.request('POST','/api/view/agent-access',{'minutes':60},bearer)[0],403)
+        self.assertEqual(self.request('POST','/api/view/agent-access',{'mode':'read_only','minutes':60},bearer)[0],403)
         cookie,csrf=self.session()
-        self.assertEqual(self.request('POST','/api/view/agent-access',{'minutes':60},{'Cookie':cookie,'Origin':ORIGIN})[0],403)
+        self.assertEqual(self.request('POST','/api/view/agent-access',{'mode':'read_only','minutes':60},{'Cookie':cookie,'Origin':ORIGIN})[0],403)
         self.assertEqual(self.request('POST','/api/view/agent-access',{'minutes':99999},{'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})[0],400)
-        s,_,d=self.request('POST','/api/view/agent-access',{'minutes':60},{'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})
+        s,_,d=self.request('POST','/api/view/agent-access',{'mode':'read_only','minutes':60},{'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})
         self.assertEqual(s,200); self.assertTrue(d['result']['enabled'])
         self.assertNotEqual(self.request('GET','/api/dms',headers=bearer)[0],403)
         self.assertEqual(self.server.agent_access.recent()[0]['outcome'],'allowed')
@@ -186,9 +188,9 @@ class ViewBoundary(unittest.TestCase):
         self.assertEqual(self.request('GET','/api/status',headers={'Cookie':cookie,'Sec-Fetch-Site':'cross-site'})[0],403)
         for path in ['/../engine.py','/%2e%2e/engine.py','/engine.py']:
             self.assertNotEqual(self.request('GET',path)[0],200)
-    def test_gateway_html_bootstraps_cookie_without_exposing_token(self):
+    def test_gateway_html_never_mints_owner_cookie_or_exposes_token(self):
         s,h,b=self.request('GET','/',headers={'Authorization':'Bearer '+TOKEN})
-        self.assertEqual(s,200); self.assertIn('Set-Cookie',h); self.assertNotIn(TOKEN.encode(),b)
+        self.assertEqual(s,200); self.assertNotIn('Set-Cookie',h); self.assertNotIn(TOKEN.encode(),b)
     def test_resolve_contact_uses_same_boundary(self):
         cookie,csrf=self.session()
         s,_,d=self.request('POST','/api/resolve-contact',{'address':addresses.npub_encode(KEY)},{'Cookie':cookie,'Origin':ORIGIN,'X-Messenger-CSRF':csrf})
@@ -206,7 +208,7 @@ class ViewBoundary(unittest.TestCase):
         self.assertEqual(self.request('GET','/api/identity')[0],401)
     def test_existing_account_can_sign_in_without_install_ticket(self):
         password='test-fixture-passphrase-123'
-        self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':password},{'Authorization':'Bearer '+TOKEN})[0],200)
+        self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':password},self.owner_headers())[0],200)
         s,_,d=self.request('GET','/api/view/session')
         self.assertEqual(s,401); self.assertEqual(d['error']['code'],'session_unlock_required')
         self.assertEqual(self.request('POST','/api/view/unlock',{'vault_password':'wrong-fixture-passphrase'},{'Origin':ORIGIN})[0],401)
@@ -215,18 +217,18 @@ class ViewBoundary(unittest.TestCase):
     def test_signup_and_import_do_not_have_anonymous_bypasses(self):
         self.assertEqual(self.request('POST','/api/view/unlock',{'vault_password':'some-test-fixture-passphrase'},{'Origin':ORIGIN})[0],401)
         self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':'some-test-fixture-passphrase'},{'Origin':ORIGIN})[0],401)
-        self.assertEqual(self.request('POST','/api/setup',{'action':'import'},{'Authorization':'Bearer '+TOKEN})[0],400)
+        self.assertEqual(self.request('POST','/api/setup',{'action':'import'},self.owner_headers())[0],400)
     def test_owner_verifier_does_not_change_when_provider_is_unlocked(self):
         password='test-fixture-passphrase-123'
         self.server.auth.remember_password(password)
-        self.assertEqual(self.request('POST','/api/setup',{'action':'unlock','vault_password':'a-different-test-passphrase'},{'Authorization':'Bearer '+TOKEN})[0],401)
+        self.assertEqual(self.request('POST','/api/setup',{'action':'unlock','vault_password':'a-different-test-passphrase'},self.owner_headers())[0],401)
         self.server.auth.verify_password(password)
     def test_lock_with_password_never_records_a_verifier(self):
-        s,_,_=self.request('POST','/api/setup',{'action':'lock','vault_password':'chosen-but-never-provider-proved'},{'Authorization':'Bearer '+TOKEN})
+        s,_,_=self.request('POST','/api/setup',{'action':'lock','vault_password':'chosen-but-never-provider-proved'},self.owner_headers())
         self.assertEqual(s,200); self.assertIsNone(self.server.auth.credential)
         self.assertEqual(self.request('POST','/api/view/unlock',{'vault_password':'chosen-but-never-provider-proved'},{'Origin':ORIGIN})[0],401)
     def test_invalid_password_is_rejected_before_any_engine_side_effect(self):
-        s,_,d=self.request('POST','/api/setup',{'action':'create','vault_password':'line-one-passphrase\nline-two'},{'Authorization':'Bearer '+TOKEN})
+        s,_,d=self.request('POST','/api/setup',{'action':'create','vault_password':'line-one-passphrase\nline-two'},self.owner_headers())
         self.assertEqual(s,400); self.assertEqual(d['error']['code'],'invalid_vault_password')
         self.assertEqual(self.server.engine.calls,0); self.assertIsNone(self.server.auth.credential)
     def test_concurrent_initial_setup_records_only_the_proved_password(self):
@@ -235,7 +237,7 @@ class ViewBoundary(unittest.TestCase):
         self.server.engine.delay=delay
         results={}
         def setup(name,password):
-            results[name]=self.request('POST','/api/setup',{'action':'create','vault_password':password},{'Authorization':'Bearer '+TOKEN})[0]
+            results[name]=self.request('POST','/api/setup',{'action':'create','vault_password':password},self.owner_headers())[0]
         a=threading.Thread(target=setup,args=('a','proved-first-passphrase-123')); a.start(); started.wait(3)
         b=threading.Thread(target=setup,args=('b','unproved-second-passphrase')); b.start()
         gate.set(); a.join(5); b.join(5)
@@ -282,6 +284,18 @@ class PersistentBrowserAuth(unittest.TestCase):
             reloaded=BrowserAuth(path); reloaded.verify_password(password)
             self.assertEqual(reloaded.lookup(cookie)['csrf'],session['csrf'])
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
+    def test_full_session_table_drops_the_oldest_instead_of_locking_the_owner_out(self):
+        auth=BrowserAuth(); first,_=auth.create()
+        for _ in range(300): newest,_=auth.create()
+        self.assertEqual(len(auth.sessions),256)
+        self.assertIsNone(auth.lookup(first)); self.assertIsNotNone(auth.lookup(newest))
+    def test_sessions_in_use_slide_forward(self):
+        import web
+        auth=BrowserAuth(); token,session=auth.create()
+        self.assertFalse(auth.renew(token))  # fresh: nothing to do
+        session['expires']=time.time()+3600
+        self.assertTrue(auth.renew(token)); self.assertGreater(auth.lookup(token)['expires'],time.time()+web.SESSION_SECONDS-60)
+        self.assertFalse(auth.renew('unknown'))
     def test_guessing_is_rate_limited(self):
         auth=BrowserAuth(); auth.remember_password('test-fixture-passphrase-123')
         for _ in range(6):

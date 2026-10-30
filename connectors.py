@@ -36,6 +36,19 @@ PROVIDERS = {p.id: p for p in (
     Provider('telegram', 'Telegram', 29317, ('qr', 'phone')),
     Provider('whatsapp', 'WhatsApp', 29318, ('qr', 'phone')),
     Provider('signal', 'Signal', 29328, ('qr',)),
+    # Personal email/code flow, plus the browser token & cookie login (what Beeper uses; works with
+    # Google/SSO workspaces where the emailed code never comes). 'app' is bot-only and stays off.
+    Provider('slack', 'Slack', 29335, ('token', 'email')),
+    Provider('line', 'LINE', 29322, ('dev.highest.matrix.line.qr_login', 'dev.highest.matrix.line.email_login')),
+    Provider('instagram', 'Instagram DMs', 29330, ('android', 'instagram-password')),
+    # Browser sign-in networks (bridgev2 'cookies' step): the owner pastes his signed-in browser request.
+    Provider('facebook', 'Facebook Messenger', 29319, ('messenger', 'facebook')),
+    Provider('twitter', 'X', 29327, ('cookies',)),
+    Provider('linkedin', 'LinkedIn', 29341, ('cookies',)),
+    # Google account pairing (QR was retired by Google): browser sign-in, then tap the matching emoji on the phone.
+    Provider('gmessages', 'Google Messages', 29336, ('qr', 'google')),
+    Provider('dots', 'ChatGPT Dots', 29349, ('cookies',)),
+    Provider('kakaotalk', 'KakaoTalk', reason='No maintained compatible bridge selected; personal-account bridge support is unverified.'),
 )}
 MATRIX_NETWORKS = frozenset(k for k, p in PROVIDERS.items() if p.supported)
 TOKEN = re.compile(r'[A-Za-z0-9_.-]{1,160}\Z')
@@ -49,7 +62,12 @@ PROTOCOL_IDS = {
     'telegram': 'telegram',
     'whatsapp': 'whatsapp',
     'signal': 'signal',
-
+    'slack': 'slack', 'slackgo': 'slack',
+    'instagram': 'instagram', 'instagramgo': 'instagram',
+    'line': 'line', 'github.com/highesttt/matrix-line-messenger': 'line',
+    'facebook': 'facebook', 'facebookgo': 'facebook',
+    'twitter': 'twitter', 'linkedin': 'linkedin', 'gmessages': 'gmessages',
+    'chatgpt-dots': 'dots', 'dots': 'dots',
 }
 SERVER = 'messenger.internal'
 
@@ -112,6 +130,25 @@ def ghost_network(user):
     """Network of a bridged ghost MXID, or None (bots and foreign servers excluded)."""
     match = re.fullmatch(r'@([a-z]+)_.+:' + re.escape(SERVER), user or '')
     return match.group(1) if match and match.group(1) in MATRIX_NETWORKS else None
+
+
+SOURCE_TYPES = ('cookie', 'local_storage', 'request_header', 'request_body', 'special')
+
+
+def cookie_step(params):
+    """Sanitized bridgev2 LoginCookiesParams for the owner's paste form."""
+    params = params if isinstance(params, dict) else {}
+    url = params.get('url') if isinstance(params.get('url'), str) else ''
+    out = {'url': url if re.fullmatch(r'https://[A-Za-z0-9.-]+(/[^\s"<>]*)?', url or '') else '', 'fields': []}
+    for f in (params.get('fields') or [])[:16]:
+        if not isinstance(f, dict) or not isinstance(f.get('id'), str) or not TOKEN.fullmatch(f['id']):
+            continue
+        sources = []
+        for src in (f.get('sources') or [])[:8]:
+            if isinstance(src, dict) and src.get('type') in SOURCE_TYPES and isinstance(src.get('name'), str) and len(src['name']) <= 120:
+                sources.append({'type': src['type'], 'name': src['name']})
+        out['fields'].append({'id': f['id'], 'required': f.get('required') is not False, 'sources': sources})
+    return out
 
 
 class Connectors:
@@ -217,7 +254,12 @@ class Connectors:
             self.telegram_resume = None if result['type'] == 'complete' else (time.monotonic() + 900, dict(result))
         # Only the owner's authenticated, no-store view receives this short-lived data.
         allowed = ('login_id', 'step_id', 'txn_id', 'type', 'instructions', 'user_input', 'display_and_wait')
-        if result['type'] in ('cookies', 'webauthn', 'client_http'):
+        if result['type'] == 'cookies':
+            # The owner signs in on the real site in his own browser and pastes the named values here.
+            # Only the sign-in page and the value names leave the bridge; never its scripts or URL patterns.
+            return {**{k: result[k] for k in ('login_id', 'step_id', 'txn_id', 'type', 'instructions') if k in result},
+                    'cookies': cookie_step(result.get('cookies'))}
+        if result['type'] in ('webauthn', 'client_http'):
             # Do not expose challenge URLs, cookies, scripts or arbitrary HTTP requests.
             return {**{k: result[k] for k in ('login_id', 'step_id', 'txn_id') if k in result},
                     'type': 'challenge', 'challenge': result['type']}
@@ -267,8 +309,37 @@ class Connectors:
             self._jobs.pop(network, None)
             return self.remember(network, job['result'])
 
+    # Browser sign-in (browser_signin.py) needs the bridge's full cookies step (page script, URL pattern),
+    # which never leaves the server: these return (raw, sanitized) and keep the usual pending bookkeeping.
+    def raw_start(self, network, flow):
+        p = self.provider(network)
+        if flow not in p.flows:
+            fail('invalid_flow', 'Unsupported login flow')
+        self.config(network)
+        previous = self.pending.get(network)
+        if previous:
+            try:
+                self.dispatch('POST', [network, 'cancel'], {'login_id': previous[1][0]})
+            except EngineError:
+                pass
+        if self.ensure_owner:
+            self.ensure_owner()
+        raw = self.request(network, '/login/start/' + flow, 'POST', {})
+        with self._lock:
+            return raw, self.remember(network, raw)
+
+    def raw_step(self, network, fields):
+        pending = self.pending.get(network)
+        if not pending or pending[0] < time.monotonic() or pending[1][2] != 'cookies':
+            fail('invalid_step', 'This login has ended; start again', 409)
+        raw = self.request(network, '/login/step/' + '/'.join(pending[1]), 'POST', dict(fields), pending[2])
+        with self._lock:
+            if self.pending.get(network) is not pending:
+                fail('invalid_step', 'This login was cancelled or replaced; start again', 409)
+            return raw, self.remember(network, raw)
+
     def enable(self, network):
-        if network not in ('whatsapp', 'signal'):
+        if network == 'telegram' or not self.provider(network).supported:
             fail('invalid_network', 'This network uses installation settings', 409)
         from unified_setup import write
         with self._lock:
@@ -347,10 +418,10 @@ class Connectors:
                 fail('login_expired', 'This login has expired. Start a new login.', 409)
             if not pending or pending[1] != values:
                 fail('invalid_step', 'Start or resume the current owner login first', 409)
-            if values[2] not in ('user_input', 'display_and_wait'):
+            if values[2] not in ('user_input', 'display_and_wait', 'cookies'):
                 fail('unsupported_login_challenge', 'This verification requires a secure browser integration not available here. Finish verification in the provider app, then start again.', 409)
             fields = payload.get('fields', {})
-            if not isinstance(fields, dict) or len(fields) > 16 or not all(isinstance(k, str) and TOKEN.fullmatch(k) and isinstance(v, str) and len(v) <= 4096 for k, v in fields.items()):
+            if not isinstance(fields, dict) or len(fields) > 16 or not all(isinstance(k, str) and TOKEN.fullmatch(k) and isinstance(v, str) and len(v) <= 16384 for k, v in fields.items()):
                 fail('invalid_step', 'Invalid login input')
             txn_id = pending[2]
             if txn_id and payload.get('txn_id') != txn_id:
