@@ -72,8 +72,9 @@ class Handler(BaseHTTPRequestHandler):
         ('agent', row) for a per-agent key (its own level). Unknown bearers are refused."""
         authorization = self.headers.get('Authorization')
         if not authorization:
-            # web.py marks a bare /mcp call on the app port as the Wizard gateway (the Wizard app key).
-            return ('machine', None) if getattr(self, 'gateway_mcp', False) else None
+            # A bare call names nobody: the app port is also reachable on the tailnet (Serve), so the Wizard gateway
+            # proves itself with its per-app key instead (wizard_agents.py).
+            return None
         if hmac.compare_digest(authorization.encode(), ('Bearer ' + self.service.token).encode()):
             return ('machine', None)
         if self.service.gateway_key.matches(authorization):
