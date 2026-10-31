@@ -403,7 +403,7 @@
   const fmtDur = ms => { const t = Math.max(0, Math.round((ms || 0) / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
   const fmtSize = b => !b ? '' : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
   const QUICK = ['❤️', '👍', '👎', '😂', '😮', '😢'];
-  const MORE = ['🙏', '🔥', '🎉', '👏', '😍', '🤔', '😅', '🙌', '💯', '😎', '🥲', '😡', '🤯', '🤝', '👀', '✅', '😘', '🥰', '😆', '😬', '🤣', '😭', '🤗', '😴', '💪', '👌', '🙃', '😇', '🤩', '😱', '💔', '⭐', '🌹', '☕', '🍻', '🎂', '🚀', '💡', '📌', '❓', '❗', '👋'];
+  const MORE = ['😁', '😀', '😃', '😄', '😊', '🙂', '😉', '🥹', '😋', '😜', '🤪', '🤭', '🫡', '🤷', '🤦', '😔', '😞', '😤', '😩', '😳', '🤨', '😐', '😑', '🤢', '🙏', '🔥', '🎉', '👏', '😍', '🤔', '😅', '🙌', '💯', '😎', '🥲', '😡', '🤯', '🤝', '👀', '✅', '😘', '🥰', '😆', '😬', '🤣', '😭', '🤗', '😴', '💪', '👌', '🙃', '😇', '🤩', '😱', '💔', '⭐', '🌹', '☕', '🍻', '🎂', '🚀', '💡', '📌', '❓', '❗', '👋'];
   // Saved copy on this device: the list and recent threads paint before the session handshake; Lock erases it.
   const CACHE_KEY = 'messenger-unified-cache-v2', THREADS_KEPT = 40, MESSAGES_KEPT = 80;
   let saveTimer = null, savedOrder = [];
@@ -490,7 +490,8 @@
   function mergeMessages(pid, rows) {
     const t = store.threads[pid]; if (!t) return;
     const oldest = t.messages.find(m => !m.pending)?.timestamp ?? 0;
-    for (const m of rows) {
+    for (const incoming of rows) {
+      const m = pendingReactions(pid, incoming);
       const i = t.messages.findIndex(x => x.id === m.id || (m.client_id && x.client_id === m.client_id));
       if (i >= 0) { const local = t.messages[i].local; t.messages[i] = m; if (local) m.local = local; }
       else if (!t.has_more || m.timestamp >= oldest) t.messages.push(m);
@@ -1052,7 +1053,7 @@
     if (!s.ready) return;
     try {
       const r = await call('people/' + id + '?limit=60');
-      store.threads[id] = {person: r.person, messages: r.messages, has_more: r.has_more, next_cursor: r.next_cursor, warning: r.history_warning};
+      store.threads[id] = {person: r.person, messages: r.messages.map(m => pendingReactions(id, m)), has_more: r.has_more, next_cursor: r.next_cursor, warning: r.history_warning};
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
       persist();
@@ -1484,7 +1485,8 @@
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
       for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn' + (mine === k ? ' mine' : '')));
-      strip.append(button('＋', () => { panel.replaceChildren(grid(m)); }, 'u-qr-btn more'));
+      const more = button('＋', () => { panel.replaceChildren(grid(m)); panel.querySelector('button')?.focus(); }, 'u-qr-btn more');
+      more.setAttribute('aria-label', 'More reactions'); strip.append(more);
       panel.append(strip);
     }
     const list = node('div', 'u-actions');
@@ -1520,17 +1522,60 @@
       panel.append(node('p', 'helper', body), pair); pair.lastChild.focus();
     });
   }
+  const reactionEdits = new Map();
+  const reactionSlot = (pid, id) => JSON.stringify([pid, id]);
+  function toggledReactions(reactions, key) {
+    const had = reactions.some(r => r.mine && r.key === key);
+    // Copy every entry: increasing an existing count must not mutate the rollback snapshot.
+    const next = reactions.map(r => ({...r, count: r.count - (r.mine ? 1 : 0), mine: false})).filter(r => r.count > 0);
+    if (!had) { const r = next.find(r => r.key === key); if (r) { r.count++; r.mine = true; } else next.push({key, count: 1, mine: true}); }
+    return next;
+  }
+  function pendingReactions(pid, message) {
+    const edit = reactionEdits.get(reactionSlot(pid, message.id));
+    if (!edit || edit.threads !== store.threads) return message;
+    return {...message, reactions: edit.queue.reduce((rs, op) => toggledReactions(rs, op.key), edit.confirmed)};
+  }
   async function react(m, key) {
+    const pid = view.id, t = store.threads[pid]; if (!t) return;
     recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
-    const t = store.threads[view.id]; const before = m.reactions;
-    const target = m.photos?.find(p => p.reactions?.some(r => r.mine && r.key === key)) || m;
-    // Optimistic: one reaction per person, tapping your own again removes it.
-    const others = (m.reactions || []).map(r => r.mine ? {...r, count: r.count - 1, mine: false} : r).filter(r => r.count > 0);
-    const had = (m.reactions || []).some(r => r.mine && r.key === key);
-    if (!had) { const e = others.find(r => r.key === key); if (e) { e.count++; e.mine = true; } else others.push({key, count: 1, mine: true}); }
-    m.reactions = others; paintThread();
-    try { const r = await call('messages/' + encodeURIComponent(target.id) + '/react', {key}); mergeMessages(view.id, [r.message]); paintThread(); }
-    catch (e) { m.reactions = before; paintThread(); error(e); }
+    // Album posts are projections, not store rows. Change the canonical part, including
+    // an own reaction on a later photo, so paintThread's next projection sees it now.
+    const parts = (m.photos || [m]).map(p => t.messages.find(row => row.id === p.id)).filter(Boolean);
+    const target = parts.find(p => reactionEdits.has(reactionSlot(pid, p.id))) || parts.find(p => p.reactions?.some(r => r.mine && r.key === key)) || parts.find(p => p.reactions?.some(r => r.mine)) || parts[0];
+    if (!target) return;
+    const slot = reactionSlot(pid, target.id);
+    let edit = reactionEdits.get(slot);
+    if (!edit || edit.threads !== store.threads) {
+      edit = {threads: store.threads, confirmed: target.reactions || [], queue: []}; reactionEdits.set(slot, edit);
+    }
+    const done = new Promise(resolve => edit.queue.push({key, resolve}));
+    target.reactions = pendingReactions(pid, target).reactions;
+    paintThread(); // Before the first await or HTTP call, even on a slow bridge.
+    if (edit.queue.length > 1) return done;
+    while (edit.queue.length) {
+      const op = edit.queue[0]; let failure;
+      try {
+        const r = await call('messages/' + encodeURIComponent(target.id) + '/react', {key: op.key});
+        edit.confirmed = r.message.reactions || [];
+        if (edit.threads === store.threads) mergeMessages(pid, [r.message]);
+      } catch (e) { failure = e; }
+      if (edit.threads !== store.threads) {
+        if (reactionEdits.get(slot) === edit) reactionEdits.delete(slot);
+        for (const queued of edit.queue) queued.resolve();
+        return done; // Sign-out/reset must not send queued reactions into a new session.
+      }
+      edit.queue.shift();
+      if (reactionEdits.get(slot) === edit && !edit.queue.length) reactionEdits.delete(slot);
+      if (edit.threads === store.threads) {
+        const row = store.threads[pid]?.messages.find(row => row.id === target.id);
+        if (row) row.reactions = edit.queue.reduce((rs, next) => toggledReactions(rs, next.key), edit.confirmed);
+        // A late completion belongs to its original thread, never the thread now open.
+        if (view.id === pid && s.person === pid) { paintThread(); if (failure) error(failure); }
+      }
+      op.resolve();
+    }
+    return done;
   }
   async function del(m, everyone) {
     if (everyone && !confirm('Delete this message for everyone?')) return;
@@ -1784,38 +1829,96 @@
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
     // elsewhere it is the shared browser recorder with the same external-mic guard. Messenger never opens the mic itself.
-    async function record() {
-      if (!window.WizardApp?.capture) return error(new Error('Voice notes need Wizard. Open Messenger from Wizard and try again.'));
-      let session;
-      try { session = await WizardApp.capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576}); }
-      catch (e) { return error(new Error(e?.code === 'busy' ? 'The microphone is busy with another Wizard recording.' : e?.message || 'Could not start recording.')); }
-      const levels = [], started = Date.now(); let done = false;
-      const panel = node('div', 'u-recording'); const clock = node('span', 'u-rec-time', '0:00'); const live = node('div', 'u-wave live');
-      const close = () => { done = true; clearInterval(tick); offLevel?.(); panel.remove(); row.hidden = false; view.recording = null; hold(); };
-      let last = 0; const offLevel = session.onLevel?.(v => { last = v; });
-      const tick = setInterval(() => {
-        const level = Math.round(Math.min(1, last * 1.6) * 1024); levels.push(level); clock.textContent = fmtDur(Date.now() - started);
-        const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); while (live.children.length > 40) live.firstChild.remove();
-      }, 100);
-      const cancel = async () => { if (done) return; close(); try { await session.cancel(); } catch (e) { error(new Error('Could not discard the recording: ' + (e.message || e))); } };
-      const finish = async () => {
-        if (done) return; close();
-        let take; try { take = await session.stop(); } catch (e) { return error(new Error('Recording kept on this device; try again. ' + (e.message || ''))); }
-        const duration = take.durationMs || Date.now() - started;
-        if (duration < 600 || !take.blob?.size) { toast('Hold on a little longer to record'); WizardApp.capture.ack(take.id).catch(() => {}); return; }
-        const step = Math.max(1, levels.length / 64); const waveform = Array.from({length: Math.min(64, levels.length)}, (_, i) => levels[Math.floor(i * step)]);
-        const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
-        const reply = view.reply; view.reply = null; paintBar();
-        queueSend(id, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply, identity_id: channel.value});
+    // The recorder is state, not a promise's old DOM closure: openPerson builds this form twice.
+    const notice = node('p', 'u-voice-notice'); notice.setAttribute('role', 'alert');
+    let panel;
+    const paintRecording = () => {
+      panel?.remove(); panel = null;
+      notice.textContent = view.voiceNotice || ''; notice.hidden = !notice.textContent;
+      const r = view.recording; row.hidden = !!r; mic.disabled = !!r;
+      if (!r) return;
+      panel = node('div', 'u-recording'); panel.setAttribute('role', 'status');
+      const clock = node('span', 'u-rec-time', r.phase === 'starting' ? 'Starting…' : r.phase === 'stopping' ? 'Stopping…' : fmtDur(Date.now() - r.started));
+      const live = node('div', 'u-wave live');
+      for (const level of r.levels.slice(-40)) { const i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; live.append(i); }
+      const cancel = iconButton('trash', 'Discard recording', () => r.cancel(), 'u-rec-cancel'); cancel.title = 'Cancel recording'; cancel.disabled = r.phase === 'stopping';
+      panel.append(cancel, node('span', 'u-rec-dot'), clock, live);
+      if (r.phase === 'recording') panel.append(iconButton('send', 'Send voice message', () => r.stop(), 'u-send'));
+      form.append(panel);
+    };
+    const voiceNotice = message => { view.voiceNotice = message; view.paintRecording?.(); };
+    async function record(recoverOnly = false) {
+      if (view.recording) return;
+      const capture = window.WizardApp?.capture;
+      if (!capture) { if (!recoverOnly) voiceNotice('Voice recording is unavailable. Reload Messenger and try again.'); return; }
+      let own;
+      try { own = capture.current?.(); } catch (e) { if (!recoverOnly) voiceNotice(e.message); return; }
+      if (recoverOnly && !own && !capture.attach) return;
+      const r = {phase: 'starting', levels: [], started: Date.now(), cancelled: false};
+      view.recording = r; view.voiceNotice = ''; hold();
+      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
+      const failed = e => { voiceNotice(e?.message || 'Could not start recording. Try again.'); };
+      const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
+      r.cancel = async () => {
+        if (r.phase === 'stopping') return;
+        r.cancelled = true; r.phase = 'stopping'; view.paintRecording?.();
+        if (!r.session) return; // the pending start cancels its late result before clearing the hold
+        try { await r.session.cancel(); close(); }
+        catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error(discardFailure(e))); }
       };
-      panel.append(iconButton('trash', 'Cancel recording', cancel, 'u-rec-cancel'), node('span', 'u-rec-dot'), clock, live, iconButton('send', 'Send voice message', finish, 'u-send'));
-      row.hidden = true; form.append(panel); view.recording = {stop: finish, cancel}; hold();
+      r.stop = async () => {
+        if (r.phase !== 'recording') return;
+        r.phase = 'stopping'; view.paintRecording?.();
+        let take;
+        try { take = await r.session.stop(); }
+        catch (e) { r.phase = 'recording'; failed(new Error('Recording kept on this device. Try Send or Discard again. ' + e.message)); return; }
+        close();
+        const duration = take.durationMs || Date.now() - r.started;
+        if (duration < 600 || !take.blob?.size) { voiceNotice('Hold on a little longer to record'); capture.ack(take.id).catch(() => {}); return; }
+        const step = Math.max(1, r.levels.length / 64), waveform = Array.from({length: Math.min(64, r.levels.length)}, (_, i) => r.levels[Math.floor(i * step)]);
+        const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
+        queueSend(r.person, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply: r.reply, identity_id: r.identity});
+      };
+      view.paintRecording?.();
+      r.deadline = setTimeout(() => { voiceNotice('The microphone took too long to start. Cancelling the recording…'); r.cancel(); }, 8000);
+      try {
+        const attached = capture.attach ? await capture.attach() : null;
+        own = capture.current?.() || own;
+        if (!attached && recoverOnly && !own) { close(); return; }
+        if (r.cancelled && !attached) { close(); return; }
+        r.person = own?.meta?.person || id; r.identity = own?.meta?.identity || channel.value; r.reply = view.reply;
+        r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
+        if (!r.session) throw new Error('That recording has already stopped. Tap the microphone to start again.');
+        clearTimeout(r.deadline);
+        if (r.cancelled) { await r.session.cancel(); close(); return; }
+        r.phase = 'recording';
+        const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
+        let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
+        r.tick = setInterval(() => {
+          if (r.phase !== 'recording') return;
+          const level = Math.round(Math.min(1, last * 1.6) * 1024); r.levels.push(level);
+          if (r.levels.length > 9600) r.levels.splice(0, 3200);
+          view.paintRecordingTick?.(r, level);
+        }, 100);
+        view.paintRecording?.();
+      } catch (e) {
+        // Listener/bridge setup can throw after start succeeded: keep custody but stop the physical mic.
+        if (r.session) { try { await r.session.stop(); } catch (_) { r.phase = 'recording'; failed(e); return; } }
+        close(); failed(e);
+      }
     }
-    Object.assign(view, {draft, grow, paintBar});
-    form.append(bar, via, channel, row); grow(); paintBar();
+    const paintRecordingTick = (r, level) => {
+      if (!panel?.isConnected) return;
+      panel.querySelector('.u-rec-time').textContent = fmtDur(Date.now() - r.started);
+      const wave = panel.querySelector('.u-wave'), i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; wave.append(i);
+      while (wave.children.length > 40) wave.firstChild.remove();
+    };
+    Object.assign(view, {draft, grow, paintBar, paintRecording, paintRecordingTick});
+    form.append(bar, via, channel, row, notice); grow(); paintBar(); paintRecording();
     // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
     const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.busy;
     prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia}, prev?.id === id ? flushing : null);
+    queueMicrotask(() => { if (form.isConnected && !view.recording) record(true); });
     return form;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.
@@ -2265,7 +2368,11 @@
     sheet.classList.add('u-settings'); refreshAccounts();
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
+      let whatsappNumber = '';
+      call('qr-codes').then(r => { const w = (r.codes || []).find(c => c.network === 'whatsapp'); if (w && /^\+?[\d\s().-]{6,}$/.test(w.value)) whatsappNumber = w.value.replace(/[^\d+]/g, ''); }).catch(() => {});
       connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, ...(body === undefined ? {} : {body})}), {
+        // Country picker + national number on every network's phone step; the WhatsApp number saved on My QR codes fills it (12.11).
+        phoneField, phoneFor: network => network === 'whatsapp' ? whatsappNumber : '',
         onChange: () => { refresh(); refreshAccounts(); },
         onPending: (network, pending) => { if (network === 'telegram') { if (pending) localStorage.setItem(LOGIN_FLAG, '1'); else localStorage.removeItem(LOGIN_FLAG); } },
       });
@@ -2551,7 +2658,7 @@
   // Region code, dialling code, name. Built from libphonenumber + ISO 3166 names.
   const COUNTRIES = 'AF93,Afghanistan|AL355,Albania|DZ213,Algeria|AD376,Andorra|AO244,Angola|AI1,Anguilla|AG1,Antigua & Barbuda|AR54,Argentina|AM374,Armenia|AW297,Aruba|AU61,Australia|AT43,Austria|AZ994,Azerbaijan|BS1,Bahamas|BH973,Bahrain|BD880,Bangladesh|BB1,Barbados|BY375,Belarus|BE32,Belgium|BZ501,Belize|BJ229,Benin|BM1,Bermuda|BT975,Bhutan|BO591,Bolivia|BA387,Bosnia & Herzegovina|BW267,Botswana|BR55,Brazil|GB44,Britain (UK)|IO246,British Indian Ocean Territory|BN673,Brunei|BG359,Bulgaria|BF226,Burkina Faso|BI257,Burundi|KH855,Cambodia|CM237,Cameroon|CA1,Canada|CV238,Cape Verde|BQ599,Caribbean NL|KY1,Cayman Islands|CF236,Central African Rep.|TD235,Chad|CL56,Chile|CN86,China|CX61,Christmas Island|CC61,Cocos (Keeling) Islands|CO57,Colombia|KM269,Comoros|CD243,Congo (Dem. Rep.)|CG242,Congo (Rep.)|CK682,Cook Islands|CR506,Costa Rica|HR385,Croatia|CU53,Cuba|CW599,Curaçao|CY357,Cyprus|CZ420,Czech Republic|CI225,Côte d’Ivoire|DK45,Denmark|DJ253,Djibouti|DM1,Dominica|DO1,Dominican Republic|TL670,East Timor|EC593,Ecuador|EG20,Egypt|SV503,El Salvador|GQ240,Equatorial Guinea|ER291,Eritrea|EE372,Estonia|SZ268,Eswatini (Swaziland)|ET251,Ethiopia|FK500,Falkland Islands|FO298,Faroe Islands|FJ679,Fiji|FI358,Finland|FR33,France|GF594,French Guiana|PF689,French Polynesia|GA241,Gabon|GM220,Gambia|GE995,Georgia|DE49,Germany|GH233,Ghana|GI350,Gibraltar|GR30,Greece|GL299,Greenland|GD1,Grenada|GP590,Guadeloupe|GU1,Guam|GT502,Guatemala|GG44,Guernsey|GN224,Guinea|GW245,Guinea-Bissau|GY592,Guyana|HT509,Haiti|HN504,Honduras|HK852,Hong Kong|HU36,Hungary|IS354,Iceland|IN91,India|ID62,Indonesia|IR98,Iran|IQ964,Iraq|IE353,Ireland|IM44,Isle of Man|IL972,Israel|IT39,Italy|JM1,Jamaica|JP81,Japan|JE44,Jersey|JO962,Jordan|KZ7,Kazakhstan|KE254,Kenya|KI686,Kiribati|KP850,Korea (North)|KR82,Korea (South)|KW965,Kuwait|KG996,Kyrgyzstan|LA856,Laos|LV371,Latvia|LB961,Lebanon|LS266,Lesotho|LR231,Liberia|LY218,Libya|LI423,Liechtenstein|LT370,Lithuania|LU352,Luxembourg|MO853,Macau|MG261,Madagascar|MW265,Malawi|MY60,Malaysia|MV960,Maldives|ML223,Mali|MT356,Malta|MH692,Marshall Islands|MQ596,Martinique|MR222,Mauritania|MU230,Mauritius|YT262,Mayotte|MX52,Mexico|FM691,Micronesia|MD373,Moldova|MC377,Monaco|MN976,Mongolia|ME382,Montenegro|MS1,Montserrat|MA212,Morocco|MZ258,Mozambique|MM95,Myanmar (Burma)|NA264,Namibia|NR674,Nauru|NP977,Nepal|NL31,Netherlands|NC687,New Caledonia|NZ64,New Zealand|NI505,Nicaragua|NE227,Niger|NG234,Nigeria|NU683,Niue|NF672,Norfolk Island|MK389,North Macedonia|MP1,Northern Mariana Islands|NO47,Norway|OM968,Oman|PK92,Pakistan|PW680,Palau|PS970,Palestine|PA507,Panama|PG675,Papua New Guinea|PY595,Paraguay|PE51,Peru|PH63,Philippines|PL48,Poland|PT351,Portugal|PR1,Puerto Rico|QA974,Qatar|RO40,Romania|RU7,Russia|RW250,Rwanda|RE262,Réunion|AS1,Samoa (American)|WS685,Samoa (western)|SM378,San Marino|ST239,Sao Tome & Principe|SA966,Saudi Arabia|SN221,Senegal|RS381,Serbia|SC248,Seychelles|SL232,Sierra Leone|SG65,Singapore|SK421,Slovakia|SI386,Slovenia|SB677,Solomon Islands|SO252,Somalia|ZA27,South Africa|SS211,South Sudan|ES34,Spain|LK94,Sri Lanka|BL590,St Barthelemy|SH290,St Helena|KN1,St Kitts & Nevis|LC1,St Lucia|SX1,St Maarten (Dutch)|MF590,St Martin (French)|PM508,St Pierre & Miquelon|VC1,St Vincent|SD249,Sudan|SR597,Suriname|SJ47,Svalbard & Jan Mayen|SE46,Sweden|CH41,Switzerland|SY963,Syria|TW886,Taiwan|TJ992,Tajikistan|TZ255,Tanzania|TH66,Thailand|TG228,Togo|TK690,Tokelau|TO676,Tonga|TT1,Trinidad & Tobago|TN216,Tunisia|TR90,Turkey|TM993,Turkmenistan|TC1,Turks & Caicos Is|TV688,Tuvalu|UG256,Uganda|UA380,Ukraine|AE971,United Arab Emirates|US1,United States|UY598,Uruguay|UZ998,Uzbekistan|VU678,Vanuatu|VA39,Vatican City|VE58,Venezuela|VN84,Vietnam|VG1,Virgin Islands (UK)|VI1,Virgin Islands (US)|WF681,Wallis & Futuna|EH212,Western Sahara|YE967,Yemen|ZM260,Zambia|ZW263,Zimbabwe|AX358,Åland Islands'.split('|').map(x => { const [, r, c, n] = x.match(/^([A-Z]{2})(\d+),(.*)$/); return {r, c, n}; });
   const flag = r => String.fromCodePoint(...[...r].map(ch => 0x1f1e6 + ch.charCodeAt(0) - 65));
-  function phoneField(form) {
+  function phoneField(form, preset = '') {
     // Country picker + national number, like Telegram's own login; the bridge still receives one +E.164 value.
     const pick = node('select', 'u-country'); pick.setAttribute('aria-label', 'Country');
     for (const k of COUNTRIES) { const o = node('option', '', flag(k.r) + '  ' + k.n + '  +' + k.c); o.value = k.r; pick.append(o); }
@@ -2572,6 +2679,8 @@
       if (match && code() !== match.c) { pick.value = match.r; paint(); }
     };
     paint();
+    // A saved full number (+66…) picks its country and fills the rest.
+    if (/^\+\d{6,}$/.test(preset)) { number.value = preset; number.oninput(); number.value = preset.slice(1 + code().length); }
     const countryLabel = node('label', '', 'Country'); countryLabel.append(pick);
     const numberLabel = node('label', '', 'Phone number'); const row = node('div', 'u-phone'); row.append(prefix, number); numberLabel.append(row);
     form.append(countryLabel, numberLabel);

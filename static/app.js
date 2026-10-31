@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.15.6'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.15.8'});
 
   const $ = id => document.getElementById(id);
   const state = {
@@ -905,7 +905,36 @@
   async function refreshPhoneVault() {
     try { Object.assign(phone, await vault()?.has() || {}); } catch { phone.available = false; }
     renderPasskey();
-    if (phone.saved && state.mode === 'locked' && !phone.tried) { if (isBusy()) setTimeout(refreshPhoneVault, 400); else { phone.tried = true; $('fingerprint-unlock').click(); } }
+    if (phone.saved && state.mode === 'locked' && !phone.tried) whenOnScreen(() => {
+      if (phone.tried || state.mode !== 'locked') return;
+      if (isBusy()) setTimeout(refreshPhoneVault, 400); else { phone.tried = true; $('fingerprint-unlock').click(); }
+    });
+  }
+  // The fingerprint prompt waits until you can actually see Messenger. Wizard loads apps in the background
+  // after a reload; a prompt for an app you never opened is noise (James, 27 Oct 2026). On screen means the tab
+  // is visible and at least half the unlock card is in the real viewport (IntersectionObserver sees through the shell's frame).
+  let onScreenWait = null;
+  function whenOnScreen(fn) {
+    onScreenWait = fn;
+    if (whenOnScreen.io) return;
+    const gateEl = $('gate'); let seen = false;
+    // Also ask Wizard (it knows which window is in front, which an overlay or a restoring reload hides from the
+    // observer), and require it to hold for a moment.
+    const front = () => seen && document.visibilityState === 'visible' && window.WizardApp?.view?.isVisible?.() !== false;
+    let steady = null;
+    const fire = () => {
+      if (!onScreenWait) return;
+      if (!front()) { clearTimeout(steady); steady = null; return; }
+      if (steady) return;
+      steady = setTimeout(() => { steady = null; if (!onScreenWait || !front()) return; const f = onScreenWait; onScreenWait = null; stop(); f(); }, 600);
+    };
+    const poll = setInterval(() => { if (!whenOnScreen.io) clearInterval(poll); else fire(); }, 300);
+    const stop = () => { whenOnScreen.io?.disconnect(); whenOnScreen.io = null; document.removeEventListener('visibilitychange', fire); };
+    if (!window.IntersectionObserver) { seen = true; document.addEventListener('visibilitychange', fire); whenOnScreen.io = {disconnect() {}}; return fire(); }
+    // Half the unlock card in view: a desk parked just past the edge still counts as "intersecting" with zero area.
+    whenOnScreen.io = new IntersectionObserver(entries => { seen = entries.some(e => e.isIntersecting && e.intersectionRatio >= 0.5); fire(); }, {threshold: [0, 0.5, 1]});
+    whenOnScreen.io.observe(gateEl);
+    document.addEventListener('visibilitychange', fire);
   }
   async function savePhoneFingerprint(password) {
     try { await vault().seal(password, 'Unlock Messenger with your fingerprint'); phone.saved = true; localStorage.removeItem('messenger.fingerprint.declined'); return true; }
@@ -968,6 +997,8 @@
           if (await unlockWith(password, signal)) { phone.typed = password; await snapshot(signal); }
         } catch (error) {
           if (error.name === 'AbortError') return;
+          // Wizard holds the prompt until Messenger is in front; if you never opened it, ask again when you do.
+          if (error.code === 'not_in_front') { phone.tried = false; refreshPhoneVault(); return; }
           if (error.code === 'vault_unlock_failed' || error.code === 'invalidated' || error.code === 'not_saved') { await vault().forget(); phone.saved = false; renderPasskey(); }
           $('setup-error').textContent = error.code === 'cancelled' ? '' : error.code === 'vault_unlock_failed' ? 'Your password changed. Type it once and your fingerprint takes over again.'
             : error.code === 'invalidated' ? 'Your phone\'s fingerprints changed. Type your password once to turn fingerprint back on.' : error.code ? "Fingerprint didn't work. Type your password." : friendly(error);
