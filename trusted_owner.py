@@ -123,8 +123,13 @@ class TrustedOwner:
         try:
             fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
             with os.fdopen(fd, 'rb') as stream:
-                if os.fstat(stream.fileno()).st_mode & 0o077:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
                     raise ValueError()
+                if info.st_mode & 0o077:
+                    # App Manager backups widen app-data to 0777 while Messenger keeps running. Our own file
+                    # (same uid, regular, not a symlink): tighten it back instead of locking the owner out.
+                    os.fchmod(stream.fileno(), 0o600)
                 value = json.loads(stream.read(8193))
             if value['version'] != 1:
                 raise ValueError()
