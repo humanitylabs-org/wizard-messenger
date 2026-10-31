@@ -2280,8 +2280,8 @@
   }
   // Agents: what each of the Wizard's agents may do in Messenger. Draft-only is the recommended level:
   // the agent reads and writes drafts, and only this signed-in screen can send them.
-  const LEVEL_TEXT = {no_access: 'Can\'t read your chats.', read_only: 'Reads chats. Can\'t draft or change anything.',
-    draft_only: 'Reads chats and writes drafts. Only you send them.', draft_and_send: 'Reads and sends messages without your review.'};
+  const LEVEL_TEXT = {no_access: 'Can\'t read your chats.', read_only: 'Reads chats. Can\'t draft.',
+    draft_only: 'Reads and drafts. Only you send.', draft_and_send: 'Reads and sends without your review.'};
   // One agent row: name and what it may do on the left, a plain level picker on the right. A change saves at once.
   function levelRow(agent, name, levels, save) {
     const row = node('div', 'u-more-row u-more-agent');

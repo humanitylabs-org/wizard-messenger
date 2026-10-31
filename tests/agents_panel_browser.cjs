@@ -99,8 +99,9 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     assert.equal(await page.locator('.u-overlay .u-sheet[aria-label="Settings"]').count(), 1, 'no confirm sheet');
     assert.deepEqual(posted.at(-1), ['POST', 'api/view/agents/wizard/hermes', {level: 'draft_only'}]);
     assert.equal(await more.getByLabel('What Oscar may do').inputValue(), 'draft_only', 'repainted with the saved level');
-    assert.ok(await more.getByText('Only you send them').count(), 'the level explains itself');
+    assert.ok(await more.getByText('Only you send.').count(), 'the level explains itself');
     assert.match(await more.locator('.u-more-what').first().textContent(), /^Recommended\. /, 'Draft-only is marked recommended');
+    assert.ok(await more.locator('.u-more-what').first().evaluate(e => e.getBoundingClientRect().height < 24), 'the description is one line');
     const ink = await more.locator('.u-agent-name').first().evaluate(e => getComputedStyle(e).color);
     assert.ok(!/rgba?\(0, 0, 0, 0\)/.test(ink), 'agent name is not transparent: ' + ink);
     // Advanced: the address, older keys (folded away from the main view) and the request log.
