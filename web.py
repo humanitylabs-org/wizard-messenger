@@ -369,10 +369,15 @@ class ViewHandler(Handler):
                 raise EngineError('not_configured','Unified inbox is not enabled',503)
             import inbox_feed
             if path=='/api/inbox' and method=='GET':
-                return 200,inbox_feed.items(unified.store)
+                return 200,inbox_feed.feed(unified)
+            if path=='/api/inbox/wait' and method=='GET':
+                # Long poll (the shell's change signal): the socket must outlive the hold.
+                self.connection.settimeout(60)
+                q=parse_qs(urlsplit(self.path).query)
+                return 200,inbox_feed.wait(unified,(q.get('v') or [''])[0],(q.get('hold') or [inbox_feed.HOLD_MAX])[0])
             if path=='/api/inbox/act' and method=='POST':
                 return 200,inbox_feed.act(unified,self._body())
-            raise EngineError('method_not_allowed','Use GET /api/inbox or POST /api/inbox/act',405)
+            raise EngineError('method_not_allowed','Use GET /api/inbox, GET /api/inbox/wait or POST /api/inbox/act',405)
         except EngineError as e:
             self.close_connection=True
             return e.status,{'ok':False,'error':e.message,'code':e.code}
@@ -384,7 +389,7 @@ class ViewHandler(Handler):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         self._agent_gate(method,path)
-        if path in ('/api/inbox','/api/inbox/act'):
+        if path in ('/api/inbox','/api/inbox/wait','/api/inbox/act'):
             return self._inbox(method,path)
         if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
             raise EngineError('owner_only','Owner browser access is required',403)
