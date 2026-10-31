@@ -8,14 +8,15 @@ const fs = require('node:fs'), path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.join(__dirname, '..', 'static');
 const evidence = process.env.EVIDENCE_DIR || path.join(__dirname, '..', 'evidence', 'one-phone-linking'); fs.mkdirSync(evidence, {recursive: true});
+// 15.8: providers carry main's `supported` flag; tiles and brand icons also carry data-network, so cards are targeted.
 const SIGNAL = 'sgnl://linkdevice?uuid=AbCdEf123_-x&pub_key=BQ%2Babc%2Fdef%3D';
 const stub = `
   window.WizardApp = {update: {hold: () => ({release() {}})}, back: {register() {}}, share: {text: async () => 'shared'}};
   window.calls = []; let polls = 0;
   const providers = () => [
-    {network: 'telegram', label: 'Telegram', state: 'connected', flows: [{id: 'qr'}, {id: 'phone'}], logins: [{name: 'James'}]},
-    {network: 'whatsapp', label: 'WhatsApp', state: 'disconnected', flows: [{id: 'qr', name: 'QR'}, {id: 'phone', name: 'Phone'}], logins: []},
-    {network: 'signal', label: 'Signal', state: 'disconnected', flows: [{id: 'qr', name: 'QR'}], logins: []}];
+    {network: 'telegram', label: 'Telegram', supported: true, state: 'connected', flows: [{id: 'qr'}, {id: 'phone'}], logins: [{name: 'James'}]},
+    {network: 'whatsapp', label: 'WhatsApp', supported: true, state: 'disconnected', flows: [{id: 'qr', name: 'QR'}, {id: 'phone', name: 'Phone'}], logins: []},
+    {network: 'signal', label: 'Signal', supported: true, state: 'disconnected', flows: [{id: 'qr', name: 'QR'}], logins: []}];
   async function api(p, opts = {}) {
     window.calls.push([p, opts.method || 'GET', opts.body]);
     if (p === 'api/unified/people') return {people: [], seq: 1};
@@ -48,18 +49,18 @@ async function open(browser, ctx) {
   await page.goto('https://msg.test/messenger/');
   await page.getByRole('button', {name: 'Settings'}).first().waitFor({state: 'visible'});
   await page.getByRole('button', {name: 'Settings'}).first().click();
-  await page.locator('[data-network="signal"]').waitFor({state: 'visible'});
+  await page.locator('.c-card[data-network="signal"]').waitFor({state: 'visible'});
   return page;
 }
 (async () => {
   const browser = await chromium.launch({headless: true});
   // ---- Phone ----
   const page = await open(browser, {viewport: {width: 360, height: 640}, deviceScaleFactor: 2, colorScheme: 'dark', hasTouch: true, isMobile: true});
-  assert.equal(await page.locator('.u-connectors-title').textContent(), 'Connect your chats');
-  const wa = page.locator('[data-network="whatsapp"] button');
+  assert.ok(await page.locator('.u-connected-networks').isVisible(), 'accounts lead Settings');
+  const wa = page.locator('.c-card[data-network="whatsapp"] button');
   assert.deepEqual(await wa.allTextContents(), ['Link on this phone', 'Show QR code for another device'], 'phone route first on a phone');
   assert.match(await wa.first().getAttribute('class'), /primary/);
-  assert.deepEqual(await page.locator('[data-network="signal"] button').allTextContents(), ['Link on this phone']);
+  assert.deepEqual(await page.locator('.c-card[data-network="signal"] button').allTextContents(), ['Link on this phone']);
   await page.screenshot({path: evidence + '/1-phone-connect-your-chats.png'});
   // Signal: one tap into Signal's own "Link this device?" screen.
   await page.getByRole('button', {name: 'Link on this phone for Signal'}).click();
@@ -73,11 +74,11 @@ async function open(browser, ctx) {
   await page.locator('.u-connector-other summary').click();
   await page.locator('.u-connector-other canvas').waitFor({state: 'visible'});
   assert.match(await page.locator('.u-connector-other canvas').getAttribute('aria-label'), /Scan it/);
-  await page.getByRole('button', {name: 'Cancel'}).click(); // closes Settings and cancels the Signal login
+  await page.getByRole('button', {name: 'Cancel'}).click(); // cancels the Signal login (15.8: back to the accounts list)
   await page.waitForFunction(() => window.calls.some(c => c[0] === 'api/unified/connectors/signal/cancel'));
-  await page.getByRole('button', {name: 'Settings'}).first().click();
+  if (!await page.locator('#u-overlay .u-connected-networks').isVisible()) await page.getByRole('button', {name: 'Settings'}).first().click();
   // WhatsApp: no + sign; the My QR codes number is already there.
-  await page.locator('[data-network="whatsapp"]').waitFor({state: 'visible'});
+  await page.locator('.c-card[data-network="whatsapp"]').waitFor({state: 'visible'});
   await page.getByRole('button', {name: 'Link on this phone for WhatsApp'}).click();
   const number = page.getByRole('textbox', {name: 'Phone number'}); await number.waitFor({state: 'visible'});
   assert.equal(await number.inputValue(), '812345678'); assert.match(await page.locator('.u-prefix').textContent(), /^\+66$/);
@@ -93,7 +94,7 @@ async function open(browser, ctx) {
   await page.evaluate(() => navigator.clipboard.writeText(''));
   await page.getByRole('button', {name: 'Copy code'}).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'ABCD-EFGH');
-  const steps = await page.locator('.u-connectors ol li').allTextContents();
+  const steps = await page.locator('.u-connected-networks ol li').allTextContents();
   assert.match(steps.join(' '), /Enter code to link new device/); assert.match(steps.join(' '), /Link with phone number instead/);
   assert.equal(await page.getByRole('button', {name: 'Get a new code'}).count(), 1);
   assert.equal(await page.getByRole('button', {name: 'I scanned it'}).count(), 0, 'no manual confirm: it settles on its own');
@@ -101,10 +102,10 @@ async function open(browser, ctx) {
   assert.deepEqual(page.errors, []);
   // ---- Computer: QR codes lead ----
   const desk = await open(browser, {viewport: {width: 1280, height: 860}, colorScheme: 'light'});
-  assert.deepEqual(await desk.locator('[data-network="whatsapp"] button').allTextContents(), ['Show QR code', 'Connect with phone']);
-  assert.deepEqual(await desk.locator('[data-network="signal"] button').allTextContents(), ['Show QR code']);
+  assert.deepEqual(await desk.locator('.c-card[data-network="whatsapp"] button').allTextContents(), ['Show QR code', 'Use a pairing code instead']);
+  assert.deepEqual(await desk.locator('.c-card[data-network="signal"] button').allTextContents(), ['Show QR code']);
   await desk.getByRole('button', {name: 'Show QR code for Signal'}).click();
-  await desk.locator('.u-connector-qr canvas').waitFor({state: 'visible'});
+  await desk.locator('.c-qr-frame canvas').waitFor({state: 'visible'});
   assert.equal(await desk.locator('a.u-connector-open').count(), 0);
   await desk.screenshot({path: evidence + '/5-computer-signal-qr.png'});
   assert.deepEqual(desk.errors, []);
