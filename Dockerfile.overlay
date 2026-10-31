@@ -1,11 +1,11 @@
-# Python/static/template-only packaging over the 15.12 binary carrier. No owner data.
-# Carrier source: eefe38a. All /app/*.py hashes match the accepted live image.
-# No binaries or dependencies are rebuilt; existing optional-runtime limitations remain.
-ARG BASE=wizard-messenger:0.2.0-unified.15.12
+# Python/static-only overlay on the verified 15.13 live carrier (dee754aa). No owner data.
+# Only server version literals and Send to recency change; pinned view bytes stay unchanged.
+# No binaries/dependencies rebuilt; inherited optional-runtime limitations remain.
+ARG BASE=wizard-messenger@sha256:64c41e37f4846d2b125ae00958c726d6e6c73ad493f45ec0e742b0b6d5abd424
 FROM ${BASE}
 ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
-      org.opencontainers.image.version="0.2.0-unified.15.13" \
+      org.opencontainers.image.version="0.2.0-unified.15.14" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
 COPY --chmod=0644 engine.py server.py web.py trusted_owner.py unified.py unified_setup.py telegram_application.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py inbox_feed.py remote_authority.py owner_unix.py API-contract.json /app/
 COPY --chmod=0644 connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py browser_signin.py /app/
