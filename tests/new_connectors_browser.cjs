@@ -82,7 +82,9 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
     await row.locator('.c-card-top').click();
     assert.equal(await row.getByRole('button', {name: /Disconnect/}).isVisible(), true);
     await row.locator('.c-card-top').click();
-    assert.equal(await page.locator('.u-fold summary', {hasText: 'Agent access'}).count(), 1);
+    await page.locator('.u-more .u-more-advanced').waitFor();
+    assert.equal(await page.locator('.u-more .u-more-link', {hasText: 'Saved drafts'}).count(), 1, 'More is one plain list');
+    assert.equal(await page.locator('.u-sheet details.u-fold').count(), 0, 'no folds under More');
     const tiles = await page.locator('.c-add').evaluateAll(els => els.map(e => e.querySelector(':scope > span:last-child').textContent.trim()));
     assert.deepEqual(tiles, ['ChatGPT Dots', 'Facebook Messenger', 'Google Messages', 'LinkedIn', 'X']);
     assert.equal(await page.locator('.c-later summary', {hasText: 'Not available yet'}).count(), 1);

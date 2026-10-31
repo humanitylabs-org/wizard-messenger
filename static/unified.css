@@ -118,19 +118,10 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-status.on::before { background: var(--ok); } .u-status.warn::before { background: var(--warn); }
 .u-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .u-pair button { min-height: 48px; padding: 0 8px; }
-.u-log { margin-top: 14px; font-size: 13px; color: var(--ink-2); }
-.u-log summary { cursor: pointer; padding: 8px 0; }
 .u-access-log { list-style: none; padding: 0; margin: 4px 0 0; font-size: 12px; color: var(--ink-3); max-height: 180px; overflow: auto; }
 .u-access-log li { padding: 3px 0; } .u-access-log li.blocked { color: var(--err); }
 /* Agents (Settings) and agent drafts waiting in a chat */
-.u-agent { padding: 10px 0; border-top: 1px solid var(--line); }
 .u-agent-name { font-weight: 600; margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.u-agent-head { display: flex; align-items: center; gap: 10px; }
-.u-agent-head .u-agent-level { flex: none; width: auto; max-width: 60%; }
-.u-agent .helper { margin: 4px 0 0; }
-.u-agent-access .helper.warn { color: var(--danger, currentColor); }
-.u-agent-key { margin-top: 10px; display: grid; gap: 8px; }
-.u-agent-key .u-key { font-family: ui-monospace, monospace; font-size: 12px; width: 100%; }
 .u-agent-drafts { padding: 8px 12px 0; display: grid; gap: 8px; }
 .u-agent-drafts[hidden] { display: none; }
 .u-agent-draft { border: 1px dashed var(--accent); background: var(--accent-soft); border-radius: 14px; padding: 10px 12px; }
@@ -663,11 +654,32 @@ html[data-color-scheme=light] { --sheet-solid: #f6f6f8; }
 .u-settings-group { border-radius: 14px; background: var(--raised); overflow: hidden; }
 .u-settings-group > * + * { border-top: 1px solid var(--line); }
 .u-settings-group .u-settings-row { margin: 0; border-radius: 0; background: none; min-height: 48px; cursor: pointer; list-style: none; }
-.u-settings-group .u-settings-row::-webkit-details-marker { display: none; }
 .u-row-caret { margin-left: auto; color: var(--ink-3); font-size: 18px; transition: transform 120ms; }
-.u-fold[open] > summary .u-row-caret { transform: rotate(90deg); }
-.u-fold-body { padding: 4px 14px 14px; }
-.u-fold-body > h3:first-child { margin-top: 6px; }
+/* More (Miguel, 31 Oct): one plain list under the accounts; Advanced holds the rarely used rest. No boxes inside boxes. */
+.u-more > * { border-top: 0; }
+.u-sheet > h3.u-more-head { margin: 18px 0 8px; } /* same rhythm as Connected / Add an account above */
+.u-more > :not([hidden]) ~ :not([hidden]), .u-more-agents > * + * { border-top: 1px solid var(--line); }
+.u-more [hidden] { display: none !important; }
+.u-more-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 14px; margin: 0; border-radius: 0; background: none; color: var(--ink); text-align: left; font: inherit; }
+.u-more-link { cursor: pointer; }
+.u-more-link .u-more-label { flex: 1; min-width: 0; }
+.u-more-value { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.u-more .u-row-caret { margin-left: 0; }
+.u-more-agent { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 0; padding: 4px 14px 10px; }
+.u-more-agent .u-agent-name { flex: none; overflow-wrap: anywhere; }
+.u-more-what { grid-column: 1 / -1; margin-top: -6px; color: var(--ink-3); font-size: 0.8125rem; line-height: 1.35; }
+.u-sheet select.u-more-level { width: auto; max-width: 100%; min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--ink-2); font-size: 1rem; text-align: right; cursor: pointer; }
+.u-more-note { margin: 0; padding: 10px 14px; color: var(--ink-2); font-size: 0.8125rem; }
+.u-more-note.warn { color: var(--warn); }
+.u-more-notify { display: grid; gap: 2px; padding: 0; }
+.u-more-notify button { width: 100%; min-height: 52px; padding: 0 14px; border-radius: 0; background: none; color: var(--ink); text-align: left; font: inherit; }
+.u-more-notify p:empty { display: none; }
+.u-more-notify p { margin: -6px 14px 10px; color: var(--ink-3); font-size: 0.8125rem; }
+.u-more-title { margin: 22px 0 6px; font-weight: 600; color: var(--ink); }
+.u-advanced .u-more-title + .helper { margin: 0 0 8px; font-size: 0.8125rem; }
+.u-sheet .u-more-remove { grid-column: 1 / -1; justify-self: start; margin-top: 4px; min-height: 32px; padding: 0; background: none; color: var(--err); font-size: 0.8125rem; }
+.u-advanced .u-access-log { max-height: none; margin: 0; }
+.u-more-foot { margin-top: 18px; font-size: 0.8125rem; color: var(--ink-3); }
 
 /* ---- Visual refresh (30 Oct): softer depth, cleaner previews. Colours come only from skin tokens. ---- */
 .u-message { box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.06); padding: 7px 12px 5px; }

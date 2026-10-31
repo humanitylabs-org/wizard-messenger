@@ -209,6 +209,7 @@
     if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
     if (s.overlay === 'Edit QR codes') { myCodes(); return true; }
     if (s.overlay === 'Suggested merges') { accounts(); return true; } // nested: Back returns to the codes, not the list
+    if (s.overlay === 'Advanced' || s.overlay === 'Agent drafts') { accounts(); return true; } // pages opened from Settings return to it
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
@@ -2244,15 +2245,9 @@
     empty();
   }
   async function accounts(focus) {
-    // Accounts first: linking is the main job of this sheet. Notifications and agent access follow.
+    // Accounts first: linking is the main job of this sheet. Everything else sits in one short "More" list below.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
     sheet.classList.add('u-settings'); refreshAccounts();
-    // The rest of Settings: one grouped list of quiet rows; long sections fold away until opened.
-    const more = node('div', 'u-settings-group');
-    const mergeRow = button('', () => mergeSuggestions(), 'u-settings-row'); mergeRow.append(node('span', '', 'Suggested merges')); mergeRow.hidden = true; more.append(mergeRow);
-    call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; mergeRow.hidden = false; mergeRow.append(node('span', 'u-badge', String(n))); mergeRow.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
-    const addr = button('', () => { closeOverlay(); showNative(); native?.settings(); }, 'u-settings-row'); addr.append(node('span', '', 'Wizard Messenger address'), node('span', 'u-row-caret', '›')); more.append(addr);
-    const fold = (title, fill) => { const d = node('details', 'u-fold'); const sm = node('summary', 'u-settings-row'); sm.append(node('span', '', title), node('span', 'u-row-caret', '›')); d.append(sm); const body = node('div', 'u-fold-body'); d.append(body); let done = false; d.addEventListener('toggle', () => { if (d.open && !done) { done = true; fill(body); } }); more.append(d); return d; };
     if (window.MessengerConnectors) {
       const networks = node('section', 'u-connected-networks'); sheet.append(networks);
       connectorController = window.MessengerConnectors(networks, (path, method, body) => api(path.replace(/^\//, ''), {method, ...(body === undefined ? {} : {body})}), {
@@ -2262,19 +2257,16 @@
       try {
         await connectorController.show();
         if (focus === 'accounts') { sheet.append(button('More settings', () => accounts(), 'c-link')); return; }
-        sheet.append(node('h3', '', 'More'), more);
-        fold('Notifications', body => notificationSettings(body, api));
-        fold('Agent access', body => agentAccess(body));
+        moreSettings(sheet);
         return;
       } catch (e) {
         // Older/dormant installations retain the existing Telegram settings.
         networks.remove(); connectorController = null;
         if (!['not_found', 'unified_not_found'].includes(e.code)) {
-          error(e); await agentAccess(sheet); return;
+          error(e); moreSettings(sheet); return;
         }
       }
     }
-    notificationSettings(sheet, api);
     sheet.append(node('h3', '', 'Telegram'));
     try {
       const status = await call('telegram/status'); if (!['Settings', 'Accounts'].includes(s.overlay)) return;
@@ -2284,69 +2276,91 @@
       if (!status.logins?.length) for (const [flow, label] of [['qr','Connect with QR'],['phone','Connect with phone']]) { const b = button(label, () => action(async () => loginStep(await call('telegram/start', {flow}))), flow === 'qr' ? 'primary wide' : 'secondary wide'); b.disabled = status.state === 'not_configured' || status.state === 'unavailable'; sheet.append(b); }
       if (status.logins?.length) sheet.append(button('Disconnect Telegram', () => action(async () => { await call('telegram/disconnect', {}); await accounts(); }), 'secondary wide danger'));
     } catch (e) { error(e); }
-    agentAccess(sheet);
+    moreSettings(sheet);
   }
-  // Agents: each agent has its own Messenger key and its own level. Draft-only is the recommended level:
+  // Agents: what each of the Wizard's agents may do in Messenger. Draft-only is the recommended level:
   // the agent reads and writes drafts, and only this signed-in screen can send them.
-  const LEVEL_TEXT = {no_access: 'Status only. Cannot read your chats.', read_only: 'Reads chats. Cannot draft or change anything.',
-    draft_only: 'Reads chats and writes drafts, with photos and files. Only you send them.', draft_and_send: 'Reads and sends, reacts, edits and deletes messages without your review.'};
-  async function agentAccess(sheet) {
-    // Miguel: the agents this Wizard already has, each with one level. Picking a level is the whole setup:
-    // the Wizard gateway carries each agent's identity, so there is no key to create or copy. Nothing here sends.
-    const box = node('section', 'u-agent-access'); sheet.append(box);
-    const when = t => new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
-    const levelPicker = (agent, name, levels, save) => {
-      const wrap = node('div', 'u-agent');
-      const head = node('div', 'u-agent-head');
-      head.append(node('p', 'u-agent-name', name));
-      const choice = node('select', 'u-channel u-agent-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
-      const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
-      for (const l of shown) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
-      choice.value = agent.level;
-      head.append(choice);
-      const what = node('p', 'helper', LEVEL_TEXT[agent.level] || '');
-      choice.onchange = () => action(async () => {
-        const level = choice.value;
-        await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
-      });
-      wrap.append(head, what);
-      return wrap;
-    };
-    const paint = st => {
-      box.replaceChildren(node('h3', '', 'Agents'), node('p', 'helper', 'Your Wizard\'s agents. Pick what each one may do in Messenger. Only you send messages.'));
-      const reload = async () => paint(await api('api/view/agents'));
-      if (st.gateway_connected === false) box.append(node('p', 'helper warn', 'Your agents can\'t reach Messenger on this Wizard yet. Ask your Wizard to finish connecting it.'));
+  const LEVEL_TEXT = {no_access: 'Can\'t read your chats.', read_only: 'Reads chats. Can\'t draft or change anything.',
+    draft_only: 'Reads chats and writes drafts. Only you send them.', draft_and_send: 'Reads and sends messages without your review.'};
+  // One agent row: name and what it may do on the left, a plain level picker on the right. A change saves at once.
+  function levelRow(agent, name, levels, save) {
+    const row = node('div', 'u-more-row u-more-agent');
+    const choice = node('select', 'u-more-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
+    const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
+    for (const l of shown) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
+    choice.value = agent.level;
+    choice.onchange = () => action(async () => {
+      const level = choice.value;
+      await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
+    });
+    row.append(node('strong', 'u-agent-name', name), choice, node('small', 'u-more-what', LEVEL_TEXT[agent.level] || ''));
+    return row;
+  }
+  // A quiet list row that opens another page.
+  function moreLink(label, fn, cls = '') {
+    const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
+    row.append(node('span', 'u-more-label', label), node('span', 'u-more-value'), node('span', 'u-row-caret', '›'));
+    return row;
+  }
+  // Miguel: everything under the accounts is one short list. Agents (one picker each), drafts, merges,
+  // notifications, then a single Advanced row for addresses, older keys and the request log.
+  function moreSettings(sheet) {
+    const group = node('div', 'u-settings-group u-more');
+    sheet.append(node('h3', 'u-more-head', 'More'), group);
+    const agents = node('div', 'u-more-agents'); agents.hidden = true; group.append(agents);
+    const paintAgents = st => {
+      agents.replaceChildren();
+      if (st.gateway_connected === false) agents.append(node('p', 'u-more-note warn', 'Your agents can\'t reach Messenger yet. Ask your Wizard to finish connecting it.'));
       for (const agent of st.wizard_agents || []) {
-        const name = agent.label || 'Your Wizard agent';
-        const row = levelPicker(agent, name, st.wizard_levels || [], async level => { await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}}); await reload(); });
-        if (agent.last_used) row.append(node('p', 'helper', 'Last asked ' + when(agent.last_used)));
-        box.append(row);
+        agents.append(levelRow(agent, agent.label || 'Your Wizard agent', st.wizard_levels || [], async level => {
+          await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}});
+          const next = await api('api/view/agents'); if (agents.isConnected) paintAgents(next);
+        }));
       }
-      box.append(button('Saved drafts', agentDrafts, 'secondary wide'));
-      // Keys made before this (and the shared app key) keep working; they only show while one exists.
-      const app = st.app_key;
-      if ((st.agents || []).length || (app && app.level !== 'no_access')) {
-        const older = node('details', 'u-log'); older.append(node('summary', '', 'Older agent keys'));
-        older.append(node('p', 'helper', 'Keys for agents outside this Wizard. You don\'t need them for your Wizard\'s agents.'));
-        for (const agent of st.agents || []) {
-          const row = levelPicker(agent, agent.name, st.levels, async level => { await api('api/view/agents/' + agent.id, {method: 'POST', body: {level}}); await reload(); });
-          row.append(button('Remove ' + agent.name, () => action(async () => {
-            await api('api/view/agents/' + agent.id, {method: 'DELETE', body: {}}); await reload(); toast(agent.name + ' removed');
-          }), 'c-link danger'));
-          older.append(row);
-        }
-        if (app && app.level !== 'no_access') older.append(levelPicker(app, 'Wizard app key', st.levels, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
-        box.append(older);
-      }
-      if (st.log.length) {
-        const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
-        const list = node('ul', 'u-access-log');
-        for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', when(e.t) + ' · ' + (e.agent ? e.agent + ' · ' : '') + e.outcome + ' · ' + e.method + ' ' + e.route));
-        details.append(list); box.append(details);
-      }
-      box.append(node('p', 'helper', 'App permissions only: an agent with admin access to this server can bypass them.'));
+      agents.hidden = !agents.children.length;
     };
-    try { const st = await api('api/view/agents'); if (box.isConnected) paint(st); } catch (e) { error(e); }
+    api('api/view/agents').then(st => { if (agents.isConnected) paintAgents(st); }).catch(e => error(e));
+    const drafts = moreLink('Saved drafts', agentDrafts, 'u-more-drafts'); group.append(drafts);
+    api('api/drafts').then(r => { const n = (r.drafts || []).filter(d => d.state === 'draft').length; if (n && drafts.isConnected) drafts.querySelector('.u-more-value').textContent = String(n); }).catch(() => {});
+    const merges = moreLink('Suggested merges', () => mergeSuggestions(), 'u-settings-row'); merges.hidden = true; group.append(merges);
+    call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; merges.hidden = false; merges.querySelector('.u-more-value').textContent = String(n); merges.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
+    // Notifications show only where this Wizard offers them: one row that turns them on or off.
+    const notify = node('div', 'u-more-row u-more-notify'); notify.hidden = true; group.append(notify);
+    notificationSettings(notify, api).then(() => { if (notify.querySelector('button')) notify.hidden = false; });
+    group.append(moreLink('Advanced', advancedSettings, 'u-more-advanced'));
+  }
+  // Rarely needed: the Wizard-to-Wizard address, keys made for agents outside this Wizard, and what agents asked for.
+  async function advancedSettings() {
+    const sheet = overlay('Advanced'); sheet.classList.add('u-settings', 'u-advanced');
+    const group = node('div', 'u-settings-group u-more'); sheet.append(group);
+    group.append(moreLink('Wizard Messenger address', () => { closeOverlay(); showNative(); native?.settings(); }, 'u-more-address'));
+    let st;
+    try { st = await api('api/view/agents'); } catch (e) { error(e); return; }
+    if (s.overlay !== 'Advanced') return;
+    const reload = () => advancedSettings();
+    // Keys made before Wizard agents (and the shared app key) keep working; they only show while one exists.
+    const app = st.app_key;
+    if ((st.agents || []).length || (app && app.level !== 'no_access')) {
+      sheet.append(node('p', 'u-more-title', 'Older agent keys'), node('p', 'helper', 'For agents outside this Wizard. Your Wizard\'s agents don\'t need them.'));
+      const keys = node('div', 'u-settings-group u-more u-older-keys'); sheet.append(keys);
+      for (const agent of st.agents || []) {
+        const row = levelRow(agent, agent.name, st.levels, async level => { await api('api/view/agents/' + agent.id, {method: 'POST', body: {level}}); await reload(); });
+        row.append(button('Remove', () => action(async () => {
+          await api('api/view/agents/' + agent.id, {method: 'DELETE', body: {}}); await reload(); toast(agent.name + ' removed');
+        }), 'u-more-remove'));
+        keys.append(row);
+      }
+      if (app && app.level !== 'no_access') keys.append(levelRow(app, 'Wizard app key', st.levels, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
+    }
+    const at = t => new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+    sheet.append(node('p', 'u-more-title', 'Recent agent requests'));
+    if (!(st.log || []).length) sheet.append(node('p', 'helper', 'None yet.'));
+    else {
+      const list = node('ul', 'u-access-log');
+      for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', at(e.t) + ' · ' + (e.agent ? e.agent + ' · ' : '') + e.outcome + ' · ' + e.method + ' ' + e.route));
+      sheet.append(list);
+    }
+    sheet.append(node('p', 'helper u-more-foot', 'These are app permissions. An agent with admin access to this server can bypass them.'));
   }
   // Drafts an agent saved for this chat appear above the composer. The owner edits, sends or discards them; agents never send.
   function agentDraftStrip(id, active = () => s.person === id) {
@@ -2400,7 +2414,7 @@
       if (!result.drafts.length) sheet.append(node('p', 'helper', 'No saved drafts. Nothing has been sent.'));
       for (const draft of result.drafts) {
         const row = node('div', 'u-account');
-        row.append(node('p', '', draft.text), node('p', 'helper', (draft.created_by?.name ? 'From ' + draft.created_by.name + ' · ' : '') + draft.state + ' · revision ' + draft.revision), draft.state === 'draft' && !draft.export ? button('Open in chat', () => { closeOverlay(); s.bindDraft = draft.id; openPerson(draft.person_id); }, 'secondary') : button('Review draft', () => reviewAgentDraft(draft), 'secondary'));
+        row.append(node('p', '', draft.text), node('p', 'helper', (draft.created_by?.name ? 'From ' + draft.created_by.name + ' · ' : '') + (draft.state === 'draft' ? 'Not sent' : draft.state)), draft.state === 'draft' && !draft.export ? button('Open in chat', () => { closeOverlay(); s.bindDraft = draft.id; openPerson(draft.person_id); }, 'secondary') : button('Review draft', () => reviewAgentDraft(draft), 'secondary'));
         sheet.append(row);
       }
     } catch (e) { sheet.append(node('p', 'error', e.message)); }
