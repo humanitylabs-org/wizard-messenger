@@ -404,8 +404,14 @@
     if (now - d < 6 * 864e5) return d.toLocaleDateString([], {weekday: 'long'});
     return d.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? {year: 'numeric'} : {})});
   }
+  function recentSharePeople(rows) {
+    // Directory entries may omit activity; the already-loaded chat lists know the latest timestamp.
+    const activity = new Map([...(store.lists.people || []), ...(store.lists.groups || [])].map(p => [p.id, p.last?.timestamp || 0]));
+    const stamp = p => Math.max(p.last?.timestamp || 0, activity.get(p.id) || 0);
+    return [...rows].sort((a, b) => stamp(b) - stamp(a) || a.display_name.localeCompare(b.display_name));
+  }
   async function newChat(shareText) {
-    // The full A-Z contact list lives only here. From Wizard's share sheet it picks who gets the shared text.
+    // New chat keeps its A-Z directory; Send to… offers recent chats first.
     const title = shareText ? 'Send to…' : 'New chat';
     const sheet = overlay(title); sheet.classList.add('tall');
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
@@ -415,12 +421,13 @@
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
       const d = await call('directory'); if (s.overlay !== title) return settled;
-      const all = [...d.people, ...d.groups.map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
+      const directory = [...d.people, ...d.groups.map(g => ({...g, group: true}))];
+      const all = shareText ? recentSharePeople(directory) : directory.sort((a, b) => a.display_name.localeCompare(b.display_name));
       const draw = () => {
         const q = search.value.trim().toLowerCase(); list.replaceChildren(); let letter = '';
         for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 200)) {
           const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
-          if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
+          if (!shareText && !q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
           const row = button('', () => { if (shareText) placeShared(p.id, shareText); closeOverlay(); openPerson(p.id); }, 'u-directory-row');
           const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
           row.append(netAvatar(p, 'small'), text); list.append(row);
@@ -2802,9 +2809,9 @@
   const SHARE_TARGETS = 12;
   let sharedTargetsKey = '';
   function shareTargetRows() {
-    return [...(store.lists.people || []), ...(store.lists.groups || []).map(g => ({...g, group: true}))]
-      .filter(p => p.id && p.display_name).sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, SHARE_TARGETS)
-      .map(p => ({id: p.id, name: p.display_name, detail: p.group || listKey(p) === 'groups' ? 'Group' : networksOf(p).map(cap).join(' · ')}));
+    return recentSharePeople([...(store.lists.people || []), ...(store.lists.groups || []).map(g => ({...g, group: true}))])
+      .filter(p => p.id && p.display_name).slice(0, SHARE_TARGETS)
+      .map(p => ({id: p.id, name: p.display_name, lastActivity: p.last?.timestamp || 0, detail: p.group || listKey(p) === 'groups' ? 'Group' : networksOf(p).map(cap).join(' · ')}));
   }
   function shareTargets() {
     const share = window.WizardApp?.share; if (!share?.targets) return;
