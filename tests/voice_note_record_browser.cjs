@@ -22,7 +22,7 @@ async function setup(mode='pending'){
  await p.setContent('<div id="root"></div><p id="hidden-error" hidden></p>');
  await p.evaluate(mode=>{window.calls={start:0,cancel:0,stop:0,attach:0,ack:0,cancelled:[]};window.active=null;window.sent=null;window.starts=[];
  const make=id=>({id,onLevel:()=>()=>{},getInfo:()=>({startedAt:Date.now()-1500}),cancel:async()=>{calls.cancel++;calls.cancelled.push(id);if(active===id)active=null;},stop:async()=>{calls.stop++;if(active===id)active=null;return{id,durationMs:1500,blob:new Blob(['synthetic-audio'],{type:'audio/ogg'})};}});
- window.session=make('take-fixture');
+ window.session=make('take-fixture'); window.warnListeners=[]; session.onWarn=fn=>{warnListeners.push(fn);return()=>warnListeners.splice(warnListeners.indexOf(fn),1);};
  window.resolveStart=(i=0)=>starts[i].resolve();
  window.WizardApp={update:{hold:()=>({release(){}})},capture:{current:()=>active?{id:active,meta:{person:'synthetic'}}:null,attach:async()=>{if(!active)return null;calls.attach++;return session;},ack:async()=>{calls.ack++;},start:()=>{calls.start++;if(mode==='fail')return Promise.reject(new Error('Microphone held by Recorder'));
    const n=starts.length,sess=n?make('take-'+n):session;return new Promise(resolve=>{starts.push({session:sess,resolve:()=>{active=sess.id;resolve(sess);}});});}}};
@@ -37,6 +37,17 @@ async function composerBack(label){
  assert.doesNotMatch(await p.locator('#root').innerText(),/Stopping/,label+': no Stopping…');
 }
 if(process.env.PROVE_OLD_REBUILD){await setup();await p.getByRole('button',{name:'Record voice message'}).click();await p.evaluate(()=>{rebuild();resolveStart();});await p.waitForFunction(()=>active);await p.waitForTimeout(100);assert.equal(await p.locator('.u-recording').count(),0);assert.ok(await p.evaluate(()=>active));console.log('CONFIRMED old composer rebuild: physical take active, recording panel detached and invisible');return;}
+// The physical-recorder acknowledgement paints the timer immediately; a storage warning never hides it.
+await setup();await p.getByRole('button',{name:'Record voice message'}).click();
+const ackAt=Date.now();await p.evaluate(()=>resolveStart());await p.getByRole('button',{name:'Send voice message'}).waitFor();
+assert.ok(Date.now()-ackAt<300,'timer/Send within 300ms of actual recorder acknowledgement');
+assert.doesNotMatch(await p.locator('.u-recording').innerText(),/Starting/);
+await p.evaluate(()=>warnListeners.forEach(fn=>fn('Recording is kept in memory. Keep Wizard open.')));
+assert.match(await p.locator('.u-voice-notice').innerText(),/kept in memory/);
+assert.equal(await p.getByRole('button',{name:'Send voice message'}).isVisible(),true);
+await p.getByRole('button',{name:'Discard recording'}).click();await p.waitForFunction(()=>!active);
+assert.equal(await p.evaluate(()=>warnListeners.length),0,'warning observer released with the take');
+console.log('PASS recorder acknowledgement paints timer immediately; storage warning preserves Send/Discard');
 // Hung start first: these are the cases that fail before the 15.8 fix.
 await setup();await p.getByRole('button',{name:'Record voice message'}).click();
 assert.match(await p.locator('.u-recording').innerText(),/Starting/);

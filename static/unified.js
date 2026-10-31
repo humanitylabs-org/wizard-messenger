@@ -1900,7 +1900,7 @@
       if (recoverOnly && !own && !capture.attach) return;
       const r = {phase: 'starting', levels: [], started: Date.now(), cancelled: false};
       view.recording = r; view.voiceNotice = ''; hold();
-      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
+      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); r.offWarn?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
       // An abandoned start may settle long after a newer recording began: it never paints a notice again.
       const failed = e => { if (!r.abandoned) voiceNotice(e?.message || 'Could not start recording. Try again.'); };
       const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
@@ -1950,6 +1950,8 @@
           r.phase = 'recording';
           const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
           let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
+          r.offWarn = r.session.onWarn?.(message => { if (!r.abandoned) voiceNotice(message); });
+          if (info?.warning) voiceNotice(info.warning);
           r.tick = setInterval(() => {
             if (r.phase !== 'recording') return;
             const level = Math.round(Math.min(1, last * 1.6) * 1024); r.levels.push(level);
