@@ -2,7 +2,7 @@
 html[data-inbox-tab] #messenger { display: flex; flex-direction: column; }
 html[data-inbox-tab=people] #gate, html[data-inbox-tab=groups] #gate, html[data-inbox-tab=people] #workspace, html[data-inbox-tab=groups] #workspace { display: none !important; }
 /* Unsent voice uses the normal composer lane, never a live-recording panel. */
-.u-unsent-voice { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+.u-unsent-voice { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.75rem; color:var(--muted); }
 .u-unsent-voice button { color:var(--accent); background:transparent; border:0; padding:6px; cursor:pointer; }
 /* A native private thread is a detail route, never a second inbox/tab. */
 html[data-private-view] #workspace { display: flex !important; flex: 1; min-height: 0; }
@@ -285,7 +285,7 @@ button { touch-action: manipulation; }
 .u-attach[hidden], .u-mic[hidden], .u-send[hidden] { display: none; }
 .u-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .u-bar[hidden] { display: none; }
-.u-unsent-voice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+.u-unsent-voice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.75rem; color: var(--ink-2); }
 .u-unsent-voice button { color: var(--accent); background: transparent; border: 0; padding: 6px; cursor: pointer; }
 .u-bar .u-quote { flex: 1; min-width: 0; margin: 0; background: var(--surface); }
 .u-attach-strip { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
@@ -302,14 +302,14 @@ button { touch-action: manipulation; }
 .u-qr-btn { width: 44px; height: 44px; min-height: 0; min-width: 0; padding: 0; border-radius: 50%; font-size: 24px; background: none; }
 .u-qr-btn.mine { background: var(--accent-soft); }
 .u-qr-btn.more { font-size: 20px; color: var(--ink-2); background: var(--raised-2); }
-.u-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 44px)); gap: 2px; padding: 8px; border-radius: 20px; background: linear-gradient(var(--wz-panel, var(--panel-tint)), var(--wz-panel, var(--panel-tint))) var(--panel-solid); box-shadow: 0 8px 24px rgba(0,0,0,.5); box-sizing: border-box; width: min(382px, calc(100vw - 24px)); max-height: min(50vh, 360px); overflow-y: auto; overflow-x: hidden; }
+.u-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 44px)); gap: 2px; padding: 8px; border-radius: 20px; background: linear-gradient(var(--wz-panel, var(--panel-tint)), var(--wz-panel, var(--panel-tint))) var(--panel-solid); box-shadow: 0 8px 24px color-mix(in srgb, var(--wz-base, var(--bg)) 50%, transparent); box-sizing: border-box; width: min(382px, calc(100vw - 24px)); max-height: min(50vh, 360px); overflow-y: auto; overflow-x: hidden; }
 .u-grid .u-qr-btn { width: 100%; min-width: 0; }
 .u-actions { display: flex; flex-direction: column; min-width: 220px; padding: 6px 0; border-radius: 16px; background: #2b2b30; box-shadow: 0 8px 24px rgba(0,0,0,.5); align-self: flex-start; }
 .u-menu.right .u-quick, .u-menu.right .u-actions { align-self: flex-end; }
 .u-act { display: flex; align-items: center; gap: 14px; min-height: 46px; padding: 0 18px; border-radius: 0; justify-content: flex-start; background: none; color: var(--ink); font-size: 15px; }
 .u-act svg { width: 20px; height: 20px; }
 .u-act.danger { color: #ff8a8a; }
-.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: linear-gradient(var(--panel-raised-tint), var(--panel-raised-tint)) #3a3a40; color: var(--wz-text, var(--ink)); font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.u-toast { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 48px); text-align: center; line-height: 1.4; z-index: 90; margin: 0; padding: 10px 16px; border-radius: 20px; background: linear-gradient(var(--panel-raised-tint), var(--panel-raised-tint)) var(--panel-solid); color: var(--wz-text, var(--ink)); font-size: 0.875rem; box-shadow: 0 6px 18px color-mix(in srgb, var(--wz-base, var(--bg)) 45%, transparent); }
 /* photo viewer */
 .u-save { display: grid; place-items: center; color: #fff; }
 .u-save svg { width: 22px; height: 22px; }
@@ -868,7 +868,7 @@ html[data-split][data-private-view] #chat-back { display: none !important; }
 /* One-phone linking (James, 28 Oct 2026): same-phone routes first, big copyable code. */
 .u-connectors-title { margin: 4px 0 2px; }
 a.u-connector-open { display: flex; align-items: center; justify-content: center; border-radius: 22px; text-decoration: none; }
-.u-connector-code { font: 600 30px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-align: center; margin: 14px 0 4px; padding: 14px 8px; border-radius: 14px; background: var(--raised-2); user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
+.u-connector-code { font: 600 1.875rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-align: center; margin: 14px 0 4px; padding: 14px 8px; border-radius: 14px; background: var(--raised-2); user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
 .u-connector-copied { text-align: center; min-height: 18px; margin: 0; }
 .u-connector-other { margin-top: 14px; }
 .u-connector-other summary { min-height: 44px; display: flex; align-items: center; color: var(--ink-2); cursor: pointer; }

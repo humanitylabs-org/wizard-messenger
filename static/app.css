@@ -12,10 +12,10 @@
   --msg-bubble-out: var(--bubble-out); --msg-bubble-in: var(--bubble-in); --msg-unread: var(--accent); --msg-ok: var(--ok); --msg-warn: var(--warn); --msg-err: var(--err); --cyan: #7ea4f6;
   /* Anything that floats over content and carries text (sheets, menus, toasts, sticky labels) is fully opaque,
      never see-through: James, 28 Oct 2026. --wz-surface/--wz-overlay are translucent inside the shell, so the
-     panel colour is the skin tint mixed into the opaque skin base, painted over a literal solid fallback. */
-  --panel-solid: #1b1b1e;
-  --panel-tint: color-mix(in srgb, var(--wz-text, #ececee) 7%, var(--wz-base, #121214));
-  --panel-raised-tint: color-mix(in srgb, var(--wz-text, #ececee) 12%, var(--wz-base, #121214));
+     panel uses the shared opaque role, or the skin tint mixed into its opaque base. */
+  --panel-solid: var(--wz-panel, var(--wz-base, var(--bg)));
+  --panel-tint: color-mix(in srgb, var(--ink) 7%, var(--panel-solid));
+  --panel-raised-tint: var(--wz-panel-raised, color-mix(in srgb, var(--ink) 12%, var(--panel-solid)));
   color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -179,5 +179,5 @@ button.pending::before { content: ''; display: inline-block; width: 12px; height
 .bubble-edited { margin-left: 8px; font-size: 11px; font-style: italic; opacity: .7; white-space: nowrap; }
 /* Opaque overlay material (served with the pinned view, so it also covers unified.css until the image catches up). */
 .u-overlay > .u-sheet, .sheet-layer > .sheet { background: linear-gradient(var(--panel-tint), var(--panel-tint)) var(--panel-solid); }
-#messenger .u-toast { background: linear-gradient(var(--panel-raised-tint), var(--panel-raised-tint)) #3a3a40; }
+#messenger .u-toast { background: linear-gradient(var(--panel-raised-tint), var(--panel-raised-tint)) var(--panel-solid); }
 #messenger .u-day { background: linear-gradient(var(--panel-tint), var(--panel-tint)) var(--panel-solid); }
