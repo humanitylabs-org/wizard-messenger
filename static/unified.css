@@ -795,11 +795,14 @@ html[data-split] #messenger { --u-list-w: clamp(320px, 28cqi, 380px); }
 /* A very wide window keeps the conversation at a readable width in the middle of its pane. */
 #unified-inbox[data-split] .u-timeline, #unified-inbox[data-split] .u-composer { padding-left: max(12px, calc((100% - 1000px) / 2)); padding-right: max(12px, calc((100% - 1000px) / 2)); }
 /* Nothing open yet. */
-.u-pick { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 320px; padding: 24px; text-align: center; color: var(--ink-3); }
-.u-pick p { margin: 6px 0 0; font-size: 1.15em; font-weight: 600; color: var(--ink); }
-.u-pick .helper { font-size: .87em; line-height: 1.5; }
-.u-pick-mark { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--link); }
-.u-pick-mark svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* New message on the right when no chat is open (split only). */
+.u-newmsg { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 720px; margin: 0 auto; }
+.u-newmsg-top { display: flex; gap: 10px; align-items: center; padding: 0 20px 4px; }
+.u-newmsg-top .u-search { flex: 1; min-width: 0; }
+.u-newmsg-top button.secondary { flex-shrink: 0; min-height: 44px; border-radius: 22px; padding: 0 16px; }
+.u-newmsg .u-directory { margin: 8px 0 0; }
+.u-newmsg .u-directory-row { border-radius: 12px; }
+.u-newmsg .u-directory-row:hover { background: var(--raised); }
 /* A native Wizard thread (app.js #workspace) takes the right side; the list stays on the left. */
 html[data-split][data-private-view] #messenger { flex-direction: row; }
 html[data-split][data-private-view] #unified-inbox { display: flex !important; flex: 0 0 var(--u-list-w, 360px); }

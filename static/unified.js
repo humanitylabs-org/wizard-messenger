@@ -254,14 +254,45 @@
     return {root, list, thread};
   }
   const hasListPane = () => !!$('u-pane-list')?.querySelector('.u-list');
-  function fillEmpty(thread) {
+  // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
+  // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
+  function fillEmpty(thread, focus = false) {
     thread.replaceChildren(); thread.dataset.view = 'empty';
-    const box = node('div', 'u-pick'); const mark = node('span', 'u-pick-mark'); mark.append(icon('inbox'));
-    box.append(mark, node('p', '', 'Pick a chat'), node('span', 'helper', 'Choose a conversation on the left to read and reply here.'));
-    thread.append(box);
+    const box = node('div', 'u-newmsg'), token = {}; thread.__pick = token;
+    const head = node('header', 'u-header'); head.append(node('h1', '', 'New message')); box.append(head);
+    const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
+    const list = node('div', 'u-directory'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'secondary');
+    const top = node('div', 'u-newmsg-top'); top.append(search, wizard); box.append(top, list); thread.append(box);
+    if (focus) requestAnimationFrame(() => search.focus());
+    const fresh = store.directory && Date.now() - store.directory.at < 60e3;
+    (fresh ? Promise.resolve(store.directory.rows) : call('directory').then(d => {
+      const rows = [...(d.people || []), ...(d.groups || []).map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
+      store.directory = {at: Date.now(), rows}; return rows;
+    })).then(all => {
+      if (thread.__pick !== token) return;
+      const draw = () => {
+        const q = search.value.trim().toLowerCase(); list.replaceChildren(); let letter = '';
+        for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 300)) {
+          const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
+          if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
+          const row = button('', () => openPerson(p.id), 'u-directory-row');
+          const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
+          row.append(netAvatar(p, 'small'), text); list.append(row);
+        }
+        if (!list.children.length) list.append(node('p', 'u-empty', 'No one matches'));
+      };
+      search.oninput = draw; draw();
+    }).catch(e => { if (thread.__pick === token) list.replaceChildren(node('p', 'u-empty', 'Could not load people. ' + (e?.message || ''))); });
   }
   // The right pane with nothing open. The old composer's pending draft save still runs (see composer()).
-  function emptyPane() { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread); root.dataset.view = s.search != null ? 'search' : 'list'; }
+  function emptyPane(focus = false) { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread, focus); root.dataset.view = s.search != null ? 'search' : 'list'; }
+  // New chat / ✕ in the split: leave the open chat (same path as Back) and show New message on the right.
+  function newMessagePane() {
+    if (s.native) returnNative();
+    if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); }
+    if (!hasListPane()) renderList();
+    emptyPane(true); markSelected();
+  }
   // Highlight the open chat's row in place: no list rebuild, so the scroll position stays where it was.
   function markSelected() {
     const list = $('u-pane-list'); if (!list) return;
@@ -316,6 +347,7 @@
     if (network) { const b = netBadge(network, 'u-net'); b.setAttribute('aria-hidden', 'true'); face.append(b); }
     who.append(face, text); head.append(who);
     if (onInfo) { const more = iconButton('more', 'Chat options', () => (view.menu || onInfo)(more)); head.append(more); }
+    if (split.on) head.append(iconButton('close', 'Close chat', newMessagePane, 'u-close'));
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   function when(ms) {
@@ -517,7 +549,7 @@
     if (split.on && !s.person && !s.native && $('u-pane-thread')?.dataset.view !== 'empty') emptyPane();
     if (s.search == null) root.append(filterChips()); // account status lives in Settings, not on top of the Inbox
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
-    if (s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
+    if (s.search == null) root.append(iconButton('compose', 'New chat', () => split.on ? newMessagePane() : newChat(), 'u-fab'));
     refreshAccounts();
     if (store.lists.people && store.lists.groups) { drawList(); if (!store.seq && s.ready) freshen(null, epoch); return; }
     if (store.lists.people) drawList(); else list.append(skeleton(8, 'list'));
