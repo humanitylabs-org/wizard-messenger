@@ -2610,8 +2610,27 @@
   // After a reload, come back to the same tab and chat (saved on pagehide).
   // Any reload (a Wizard update, the Reload strip) comes back on the same tab and chat.
   window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person, nativeGroup: s.nativeGroup})); } catch { /* fresh start */ } });
+  // Wizard inbox "Open" (api/inbox item `open`): `#chat=<chat id>` opens that chat, now or once Messenger is ready.
+  // The fragment is dropped at once so Back/reload never reopens it.
+  let linkedChat = null;
+  function takeChatLink() {
+    const m = /^#chat=([A-Za-z0-9_-]{1,64})$/.exec(location.hash); if (!m) return false;
+    linkedChat = m[1];
+    try { history.replaceState(history.state, '', location.pathname + location.search); } catch { /* keep the fragment */ }
+    return true;
+  }
+  function openLinkedChat() {
+    if (!linkedChat || !s.ready) return false;
+    const id = linkedChat; linkedChat = null;
+    if (s.native) returnNative();
+    if (s.low) setLowView(false);
+    switchTab('people'); openPerson(id); return true;
+  }
+  takeChatLink();
+  addEventListener('hashchange', () => { if (takeChatLink()) openLinkedChat(); });
   function resume() {
     let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
+    if (openLinkedChat()) return;
     switchTab('people');
     if (at?.nativeGroup) s.resumeNative = at.nativeGroup;
     else if (at?.person && at.tab !== 'messenger') openPerson(at.person);
@@ -2691,6 +2710,7 @@
       if (s.ready) return; s.ready = true; restore(); loadContacts();
       const painted = document.documentElement.dataset.inboxTab;
       if (!painted) resume();
+      else if (openLinkedChat()) { /* Wizard inbox deep link */ }
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed(); openFromHash();
       shareTargets(); Promise.resolve(window.WizardApp?.share?.check?.()).catch(() => {}); // a share that waited for unlock
