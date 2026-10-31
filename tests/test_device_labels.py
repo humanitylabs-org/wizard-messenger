@@ -26,6 +26,26 @@ class DeviceLabels(unittest.TestCase):
         for template in ROOT.glob('*-template.json'):
             walk(json.loads(template.read_text()), (template.name,))
 
+    def test_generated_pairing_labels(self):
+        import tempfile
+        from unified_setup import setup
+        from connector_setup import setup_connectors
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            setup(root)
+            setup_connectors(root, enabled=())
+            for network, keys in {
+                'whatsapp': ('os_name',), 'signal': ('device_name',),
+                'telegram': ('device_info', 'device_model'),
+                'gmessages': ('device_meta', 'os'),
+            }.items():
+                value = json.loads((root / network / 'config.yaml').read_text())['network']
+                for key in keys:
+                    value = value[key]
+                with self.subTest(network=network):
+                    self.assertEqual(value, 'Wizard')
+
     def test_network_pairing_labels(self):
         expected = {
             'whatsapp': ('os_name',), 'signal': ('device_name',),

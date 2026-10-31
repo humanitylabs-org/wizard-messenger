@@ -78,7 +78,7 @@ def setup_connectors(root, enabled=()):
             # Upstream refuses to start otherwise (chatgpt-dots docs/README.md).
             config['bridge'].update(split_portals=True, async_events=False, portal_event_buffer=0)
         if name == 'gmessages':
-            config['network']['device_meta']['os'] = 'Wizard Messenger'  # the name on the phone's paired devices
+            config['network']['device_meta']['os'] = 'Wizard'  # the name on the phone's paired devices
         config['database'].update(type='sqlite3-fk-wal', uri='file:/data/%s.db?_txlock=immediate' % name, max_open_conns=1, max_idle_conns=1)
         config['bridge']['permissions'] = {'*': 'block', '@owner:messenger.internal': 'admin'}
         config['matrix']['federate_rooms'] = False
