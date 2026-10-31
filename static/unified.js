@@ -1774,6 +1774,14 @@
 
   // ---------- composer: text, photo, voice; optimistic and idempotent ----------
   function composer(id, p) {
+    // A retained DOM view is not proof that its physical mic is still running (e.g. notification Stop).
+    if (view.recording?.phase === 'recording') {
+      let own; try { own = window.WizardApp?.capture?.current?.(); } catch (_) {}
+      if (!(own?.active && own.recording && own.phase === 'recording' && own.appId === 'messenger' && own.id === view.recording.session?.id && own.meta?.micSession === voiceTapSession)) {
+        clearInterval(view.recording.tick); clearTimeout(view.recording.deadline); view.recording.off?.(); view.recording.offWarn?.();
+        view.recording = null; hold(); // shared service keeps/stops any orphan below, never discard audio here
+      }
+    }
     const form = node('form', 'u-composer');
     const bar = node('div', 'u-bar'); bar.hidden = true;
     const channel = node('select', 'u-channel'); channel.setAttribute('aria-label', 'Send using channel');
