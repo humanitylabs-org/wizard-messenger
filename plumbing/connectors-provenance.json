@@ -27,7 +27,9 @@
       ]
     },
     "binary_sha256": "6ae3dade4888a2ea6ccc87f6902b0faabe47f143ca50c43eb011ad94745bfec8",
-    "template_sha256": "2632697ff43f622626d98dc54b43158388d062d7211e80977657bccafc3ecb66",
+    "upstream_template_sha256": "2632697ff43f622626d98dc54b43158388d062d7211e80977657bccafc3ecb66",
+    "template_overrides": "Pairing/device label changed to Wizard; upstream binary unchanged",
+    "template_sha256": "c44ac662cddb8907dde4356fe441d20a3d3e6d2ea037c44cbd523a5ae51e3734",
     "source": "https://github.com/mautrix/whatsapp/tree/v0.2610.0"
   },
   "signal": {
@@ -58,7 +60,9 @@
       ]
     },
     "binary_sha256": "13867e87604464b7ca848bd0e4b6afdb013710f021cc7477007629d1585f3b5f",
-    "template_sha256": "b35d306cc63d4522adbbe7ede4cc0214d918088127f173319d7f5f30bde0dc76",
+    "upstream_template_sha256": "b35d306cc63d4522adbbe7ede4cc0214d918088127f173319d7f5f30bde0dc76",
+    "template_overrides": "Pairing/device label changed to Wizard; upstream binary unchanged",
+    "template_sha256": "ca06b82c8d01a5ea44417247a52828f70a6d49f6584f12fd869c3904a8504d91",
     "source": "https://github.com/mautrix/signal/tree/v0.2610.0"
   },
   "slack": {
