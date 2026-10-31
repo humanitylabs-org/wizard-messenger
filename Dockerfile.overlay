@@ -4,6 +4,6 @@ ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
       org.opencontainers.image.version="0.2.0-unified.15.3" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
-COPY server.py web.py unified.py connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py /app/
+COPY server.py web.py unified.py connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py agent_tools.py agent_keys.py permissions.py drafts.py /app/
 COPY plumbing /app/plumbing
 COPY static /app/static/
