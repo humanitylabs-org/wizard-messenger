@@ -85,9 +85,10 @@ const sourceHash = createHash('sha256').update(fs.readFileSync(path.join(staticD
           const ticket = (await ticketResponse.json()).result.ticket;
           await page.goto(base + '#ticket=' + ticket);
         }
-        await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
+        // Chats is the start screen; section tabs are hidden in current builds, so wait for the chat list itself.
+    await page.locator('.u-person').first().waitFor({timeout: 60000});
         if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
-        await page.click('#inbox-tabs [data-tab="people"]');
+        if (await page.locator('#inbox-tabs:not([hidden]) [data-tab="people"]').count()) await page.click('#inbox-tabs [data-tab="people"]');
         await page.locator('.u-person', {hasText: person.display_name}).click();
         const field = page.locator('.u-composer textarea'), send = page.locator('.u-compose-row > .u-send');
         await field.waitFor();
