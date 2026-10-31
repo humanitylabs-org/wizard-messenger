@@ -118,8 +118,11 @@ const sourceHash = createHash('sha256').update(fs.readFileSync(path.join(staticD
         if (evidence) await page.screenshot({path: path.join(evidence, mode === 'double-tap' ? 'messenger-single-send.png' : 'messenger-single-enter.png')});
         const checks = {
           checkoutAssets: ['unified.js', 'unified.css'].every(f => assets.includes(f)),
-          slowDraftWindow: settling.draftPostStarted && settling.text === text && settling.sends === 0,
-          disabledWhileSettling: settling.disabled && settling.busy === 'true',
+          // Two valid composer flows: the 15.9 flow settles the draft first (text still visible, Send must be locked),
+          // and Miguel's send-at-once flow empties the box before any draft round-trip (nothing left to send twice).
+          // Either way the second tap must find Send locked or the box empty.
+          secondTapBlocked: (settling.draftPostStarted && settling.text === text && settling.sends === 0 && settling.disabled && settling.busy === 'true')
+            || (settling.text === '' && settling.disabled),
           exactlyOneSend: requests.length === 1, exactlyOneOutgoingBubble: bubbles === 1,
           sentText: requests.every(r => r.text === text), empty, noPageErrors: errors.length === 0
         };
