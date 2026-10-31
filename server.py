@@ -15,6 +15,7 @@ from agent_keys import AgentKeys, LABELS as LEVEL_LABELS
 import agent_tools
 
 MAX_BODY=65536
+AGENT_MCP_MAX_BODY=36*1024*1024  # one 25 MiB file as base64 plus JSON
 MCP_TOOLS=[
     {'name':'messenger_status','description':'Dedicated messaging vault status; no messages, contacts or secrets','inputSchema':{'type':'object','properties':{},'additionalProperties':False}},
     {'name':'messenger_public_identity','description':'Current public messaging identity only; never private keys or message bodies','inputSchema':{'type':'object','properties':{},'additionalProperties':False}},
@@ -109,9 +110,15 @@ class Handler(BaseHTTPRequestHandler):
             raise EngineError('invalid_content_type','Use application/json',415)
         try: length=int(self.headers.get('Content-Length','0'))
         except ValueError: raise EngineError('invalid_length','Invalid body length',400) from None
-        if not 0 < length <= MAX_BODY:
-            raise EngineError('invalid_length','JSON body must be between 1 and 65536 bytes',413)
-        self.connection.settimeout(15)
+        limit=MAX_BODY
+        if urlsplit(self.path).path=='/mcp' and self.headers.get('Authorization'):
+            # Draft attachments arrive as base64 inside the JSON: only a valid per-agent key gets the larger cap.
+            try: caller=self._caller()
+            except EngineError: caller=None
+            if caller and caller[0]=='agent': limit=AGENT_MCP_MAX_BODY
+        if not 0 < length <= limit:
+            raise EngineError('invalid_length','JSON body must be between 1 and %d bytes'%limit,413)
+        self.connection.settimeout(15 if limit==MAX_BODY else 120)
         try: payload=json.loads(self.rfile.read(length))
         except (ValueError,OSError): raise EngineError('invalid_json','Invalid JSON body',400) from None
         if not isinstance(payload,dict): raise EngineError('invalid_json','Use a JSON object',400)
