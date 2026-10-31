@@ -76,7 +76,7 @@ class AgentSend(unittest.TestCase):
         self.assertFalse(error, data)
         self.assertEqual([(a['name'], a['mime'], a['bytes']) for a in data['draft']['attachments']],
                          [('pic.png', 'image/png', len(PNG)), ('plan.pdf', 'application/pdf', len(PDF)), ('Plan v2.pdf', 'application/pdf', len(PDF))])
-        self.assertEqual(data['draft']['revision'], draft['revision'] + 3)
+        self.assertEqual(data['draft']['revision'], draft['revision'] + 1)  # all files of one call: one revision
         # The owner's view serves the exact bytes back.
         att = data['draft']['attachments'][0]
         status, _, body = self.request('GET', '/api/drafts/%s/attachments/%s' % (draft['id'], att['id']), headers={'Cookie': self.owner['Cookie']})
@@ -135,6 +135,37 @@ class AgentSend(unittest.TestCase):
         big = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'pad': 'x' * 100000}
         self.assertEqual(self.request('POST', '/mcp', big, {'Origin': fixtures.ORIGIN})[0], 413)
         self.assertEqual(self.request('POST', '/mcp', big, {'Origin': fixtures.ORIGIN, **self.keys['draft_only']})[0], 200)
+
+    def test_create_with_attachment_is_never_visible_half_built(self):
+        # Regression (31 Oct 2026): create wrote a text-only revision 1, then the attach wrote revision 2. An owner's
+        # open chat polling in between saw a draft without its picture. Every saved state must be all-or-nothing.
+        drafts = self.server.drafts; seen = []; real_save = drafts.save
+        def spy():
+            for row in drafts.rows.values():
+                for a in row.get('attachments', []):
+                    self.assertTrue((drafts.files / row['id'] / a['id']).is_file(), 'attachment record saved before its bytes')
+                seen.append((row['revision'], len(row.get('attachments', []))))
+            real_save()
+        drafts.save = spy
+        att = {'base64': base64.b64encode(PNG).decode(), 'name': 'montrose-mockup.png'}
+        made, error = self.mcp('messenger_create_draft', {'chat_id': self.alice['person_id'], 'text': "Here's a quick mock-up", 'attachments': [att, att]},
+                               self.keys['draft_only'])
+        self.assertFalse(error, made)
+        self.assertEqual((made['draft']['revision'], len(made['draft']['attachments'])), (1, 2))
+        self.assertEqual(seen, [(1, 2)], 'one save, one revision, text and both attachments together')
+        # update_draft with files is one revision too.
+        seen.clear()
+        updated, error = self.mcp('messenger_update_draft', {'draft_id': made['draft']['id'], 'revision': 1, 'text': 'Both', 'attachments': [att]},
+                                  self.keys['draft_only'])
+        self.assertFalse(error, updated)
+        self.assertEqual(seen, [(2, 3)])
+        # A failing attachment after validation leaves no draft and no stray files behind.
+        drafts.save = Mock(side_effect=OSError('disk full'))
+        data, error = self.mcp('messenger_create_draft', {'chat_id': self.wiz['person_id'], 'text': 'x', 'attachments': [att]}, self.keys['draft_only'])
+        drafts.save = real_save
+        self.assertTrue(error)
+        self.assertEqual([r['person_id'] for r in drafts.rows.values()], [self.alice['person_id']])
+        self.assertEqual(sorted(p.name for p in drafts.files.iterdir()), [made['draft']['id']])
 
     # ---- drafts with attachments (Draft-only and up, like the HTTP route) ----
     def test_draft_attachments_create_attach_remove(self):
