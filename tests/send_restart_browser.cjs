@@ -66,6 +66,18 @@ async function exhaustedBudget() {
         }
       }).observe(document, {subtree: true, childList: true, characterData: true});
     });
+    const staticDir = process.env.STATIC_DIR || path.join(__dirname, '../static');
+    await ctx.route(/\/(unified\.js|unified\.css)(\?|$)/, route => {
+      const file = path.basename(new URL(route.request().url()).pathname);
+      return route.fulfill({status: 200, contentType: file.endsWith('.js') ? 'text/javascript' : 'text/css',
+        body: fs.readFileSync(path.join(staticDir, file))});
+    });
+    if (process.env.SHELL_DIR) await ctx.route('**/wizard-os-home/core/**', route => {
+      const file = path.basename(new URL(route.request().url()).pathname);
+      const local = path.join(process.env.SHELL_DIR, 'core', file);
+      return route.fulfill({status: 200, contentType: file.endsWith('.css') ? 'text/css' : 'text/javascript',
+        body: fs.existsSync(local) ? fs.readFileSync(local) : ''});
+    });
     const person = {id: 'restart-fixture', display_name: 'Restart fixture', unread: 0, labels: [],
       identities: [{id: 'fixture-telegram', kind: 'person', network: 'telegram'}], last: {text: 'fixture', timestamp: Date.now()}};
     const reply = (route, result) => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -83,15 +95,23 @@ async function exhaustedBudget() {
     });
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    const ticketResponse = await fetch(new URL('/api/view/ticket', api), {method: 'POST',
-      headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'}, body: JSON.stringify({bootstrap: true})});
-    assert.equal(ticketResponse.status, 200);
-    const ticket = (await ticketResponse.json()).result.ticket;
-    await page.goto(base + '#ticket=' + ticket);
-    await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
+    if (process.env.AGENT_STAGE_DIR) {
+      const st = JSON.parse(fs.readFileSync(path.join(process.env.AGENT_STAGE_DIR, 'state.json')));
+      assert.equal(st.origin, new URL(base).origin, 'cookie must belong to this disposable fixture');
+      await ctx.addCookies([{name: 'wizard_messenger_session', value: st.cookie, url: base}]);
+      await page.goto(base);
+    } else {
+      const ticketResponse = await fetch(new URL('/api/view/ticket', api), {method: 'POST',
+        headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'}, body: JSON.stringify({bootstrap: true})});
+      assert.equal(ticketResponse.status, 200);
+      const ticket = (await ticketResponse.json()).result.ticket;
+      await page.goto(base + '#ticket=' + ticket);
+    }
+    // Chats is the start screen; section tabs are hidden in current builds, so wait for the chat list itself.
+    await page.locator('.u-person').first().waitFor({timeout: 60000});
     // A fresh unified preview is usable without creating a Marmot account or a real login.
     if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
-    await page.click('#inbox-tabs [data-tab="people"]');
+    if (await page.locator('#inbox-tabs:not([hidden]) [data-tab="people"]').count()) await page.click('#inbox-tabs [data-tab="people"]');
     await page.locator('.u-person', {hasText: 'Restart fixture'}).click();
     await page.locator('.u-composer textarea').fill('send survives two empty gateway replies');
     await page.locator('.u-composer').evaluate(form => form.requestSubmit());
