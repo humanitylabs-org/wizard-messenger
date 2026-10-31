@@ -2287,13 +2287,14 @@
     const row = node('div', 'u-more-row u-more-agent');
     const choice = node('select', 'u-more-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
     const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
-    for (const l of shown) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
+    // Short labels keep the picker narrow on a phone; the line under the name says which level is recommended.
+    for (const l of shown) { const opt = node('option', '', l.label); opt.value = l.id; choice.append(opt); }
     choice.value = agent.level;
     choice.onchange = () => action(async () => {
       const level = choice.value;
       await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
     });
-    row.append(node('strong', 'u-agent-name', name), choice, node('small', 'u-more-what', LEVEL_TEXT[agent.level] || ''));
+    row.append(node('strong', 'u-agent-name', name), choice, node('small', 'u-more-what', (shown.find(l => l.id === agent.level)?.recommended ? 'Recommended. ' : '') + (LEVEL_TEXT[agent.level] || '')));
     return row;
   }
   // A quiet list row that opens another page.

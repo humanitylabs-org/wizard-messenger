@@ -19,7 +19,7 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
   const browser = await chromium.launch();
   for (const [skin, p] of Object.entries(P)) for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
     const state = {wizard_agents: [{id: 'hermes', label: 'Oscar', level: 'no_access', last_used: Date.now() - 6e4, main: true}],
-      agents: [{id: 'c4196c9286fa', name: 'Old key', level: 'draft_only', label: 'Draft-only'}], app: 'no_access'};
+      agents: [{id: 'c4196c9286fa', name: 'Old key', level: 'draft_only', label: 'Draft-only'}], app: 'draft_only'}; // like Miguel's box
     const posted = [];
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: p.scheme});
     await ctx.addInitScript(([scheme, t, glass]) => {
@@ -82,7 +82,7 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     const nested = await more.evaluate(g => [...g.querySelectorAll('*')].filter(e => e.getClientRects().length && !['transparent', 'rgba(0, 0, 0, 0)'].includes(getComputedStyle(e).backgroundColor) && e.tagName !== 'OPTION').map(e => e.className));
     assert.deepEqual(nested, [], 'rows paint no background of their own');
     const pick = more.getByLabel('What Oscar may do');
-    assert.deepEqual(await pick.locator('option').allTextContents(), ['No access', 'Read-only', 'Draft-only (Recommended)']);
+    assert.deepEqual(await pick.locator('option').allTextContents(), ['No access', 'Read-only', 'Draft-only']);
     assert.equal(await more.getByText('Draft-and-send').count(), 0, 'no send level for Wizard agents');
     assert.equal(await more.locator('input').count(), 0, 'no key or name fields');
     // Thumb-sized rows; the picker is a full-height target and fits its label on a phone.
@@ -100,6 +100,7 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     assert.deepEqual(posted.at(-1), ['POST', 'api/view/agents/wizard/hermes', {level: 'draft_only'}]);
     assert.equal(await more.getByLabel('What Oscar may do').inputValue(), 'draft_only', 'repainted with the saved level');
     assert.ok(await more.getByText('Only you send them').count(), 'the level explains itself');
+    assert.match(await more.locator('.u-more-what').first().textContent(), /^Recommended\. /, 'Draft-only is marked recommended');
     const ink = await more.locator('.u-agent-name').first().evaluate(e => getComputedStyle(e).color);
     assert.ok(!/rgba?\(0, 0, 0, 0\)/.test(ink), 'agent name is not transparent: ' + ink);
     // Advanced: the address, older keys (folded away from the main view) and the request log.
@@ -109,7 +110,8 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     assert.equal(await adv.locator('.u-more-address').count(), 1, 'address row in Advanced');
     assert.equal(await adv.getByText('Older agent keys').count(), 1, 'existing keys stay reachable');
     assert.equal(await adv.getByLabel('What Old key may do').inputValue(), 'draft_only');
-    assert.equal(await adv.getByLabel('What Wizard app key may do').count(), 0, 'app key at No access stays hidden');
+    for (const h of await adv.locator('.u-agent-name').evaluateAll(els => els.map(e => e.getBoundingClientRect().height))) assert.ok(h < 30, 'key names stay on one line: ' + h);
+    assert.equal(await adv.getByLabel('What Wizard app key may do').inputValue(), 'draft_only', 'shared app key keeps its level, in Advanced only');
     assert.ok(await adv.locator('.u-access-log li').count() >= 1, 'log listed');
     await page.waitForTimeout(2600); // sheet animation and toast settle
     await page.screenshot({path: path.join(out, `advanced-${skin}-${label}.png`)});
