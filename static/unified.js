@@ -904,6 +904,11 @@
 
   // ---------- conversation ----------
   const view = {};  // live DOM handles for the open thread
+  // Only an explicit tap in THIS document can authorize a live voice panel. Never persist this token.
+  const voiceTapSession = uid();
+  const voiceKept = new Map();
+  const voiceQueued = new Set();
+  let voiceRecoveryWork = null;
   const els = new Map(); // message key -> bubble element (keyed render)
   // Voice playback goes through Web Audio, not an <audio> element: media elements take the phone's audio focus
   // and pause the owner's music; Web Audio plays alongside it, like a notification sound.
@@ -1804,6 +1809,18 @@
       }
       // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
       if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }})); bar.append(strip); }
+      for (const take of voiceKept.values()) {
+        if (take.meta?.person !== id) continue;
+        bar.hidden = false;
+        const chip = node('div', 'u-unsent-voice');
+        chip.append(node('span', '', 'Unsent voice note'),
+          button('Send', () => sendKeptVoice(take), 'u-voice-keep-send'),
+          button('Discard', async () => {
+            try { await window.WizardApp.capture.ack(take.id); voiceKept.delete(take.id); view.paintBar?.(); }
+            catch (_) { voiceNotice('Voice note kept. Try Discard again.'); }
+          }, 'u-voice-keep-discard'));
+        bar.append(chip);
+      }
     };
     // One tap is one message. Send settles the server draft and uploads before the box empties, so the text stays
     // visible for a moment; a second tap (or Enter) in that window used to send it twice (James's phone, 31 Oct 2026).
@@ -1879,7 +1896,7 @@
     const paintRecording = () => {
       panel?.remove(); panel = null;
       notice.textContent = view.voiceNotice || ''; notice.hidden = !notice.textContent;
-      const r = view.recording; row.hidden = !!r; mic.disabled = !!r;
+      const r = view.recording?.person === id ? view.recording : null; row.hidden = !!r; mic.disabled = !!view.recording;
       if (!r) return;
       panel = node('div', 'u-recording'); panel.setAttribute('role', 'status');
       const clock = node('span', 'u-rec-time', r.phase === 'starting' ? 'Starting…' : r.phase === 'stopping' ? 'Stopping…' : fmtDur(Date.now() - r.started));
@@ -1891,14 +1908,41 @@
       form.append(panel);
     };
     const voiceNotice = message => { view.voiceNotice = message; view.paintRecording?.(); };
+    function sendKeptVoice(take) {
+      if (!voiceKept.has(take.id)) return;
+      voiceKept.delete(take.id); voiceQueued.add(take.id); view.paintBar?.();
+      const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
+      queueSend(take.meta.person, {voice: {blob: take.blob, take: take.id, duration: take.durationMs, waveform: [], url}, identity_id: take.meta.identity});
+    }
+    function recoverVoice() {
+      const capture = window.WizardApp?.capture;
+      if (!capture || voiceRecoveryWork || view.recording) return;
+      let own; try { own = capture.current?.(); } catch (_) { return; }
+      const keep = own?.active && own.recording && own.phase === 'recording' && own.appId === 'messenger' && own.meta?.micSession === voiceTapSession ? own.id : null;
+      // Old shells have no stop-only salvage. Do not call attach as a fallback (it may start a mic).
+      voiceRecoveryWork = Promise.resolve().then(() => capture.settle ? capture.settle(keep) : capture.pending?.() || []).then(async takes => {
+        for (const take of takes) {
+          if (take.meta?.captureRecovery?.resumable) continue; // uncertain native custody must never be acknowledged
+          if (take.durationMs <= 600 || !take.blob?.size) { await capture.ack(take.id).catch(() => {}); continue; }
+          // Preserve destination: an unidentifiable orphan stays safely in shared custody, never sends to this chat.
+          if (take.meta?.purpose === 'messenger-voice' && take.meta.person && !voiceQueued.has(take.id)) voiceKept.set(take.id, take);
+        }
+        view.paintBar?.();
+      }).catch(() => { /* shared custody is retained; next open retries without a recording panel */ })
+        .finally(() => { voiceRecoveryWork = null; });
+    }
     async function record(recoverOnly = false) {
       if (view.recording) return;
       const capture = window.WizardApp?.capture;
       if (!capture) { if (!recoverOnly) voiceNotice('Voice recording is unavailable. Reload Messenger and try again.'); return; }
       let own;
       try { own = capture.current?.(); } catch (e) { if (!recoverOnly) voiceNotice(e.message); return; }
-      if (recoverOnly && !own && !capture.attach) return;
-      const r = {phase: 'starting', levels: [], started: Date.now(), cancelled: false};
+      // Synchronous, positive proof BEFORE touching the composer. attach() is not a state probe: on
+      // Android it can wait for recovery and even resume an old native take. A saved take is not a mic tap.
+      const liveOwnTap = !!(own?.active && own.recording && own.phase === 'recording' && own.appId === 'messenger' && own.meta?.micSession === voiceTapSession);
+      if (recoverOnly && (!liveOwnTap || own.meta.person !== id)) return;
+      if (!recoverOnly && own && !liveOwnTap) { recoverVoice(); return; }
+      const r = {phase: recoverOnly ? 'recording' : 'starting', person: id, levels: [], started: own?.startedAt || Date.now(), cancelled: false};
       view.recording = r; view.voiceNotice = ''; hold();
       const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); r.offWarn?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
       // An abandoned start may settle long after a newer recording began: it never paints a notice again.
@@ -1933,17 +1977,17 @@
         queueSend(r.person, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply: r.reply, identity_id: r.identity});
       };
       // A late session is ours to cancel only if this attempt started it, or the owner pressed Discard on it.
-      // A recovered take that arrives after the deadline stays in Wizard: the next mic tap reattaches it with Send/Discard.
+      // A recovered take that arrives after the deadline stays in Wizard's pending custody, not a live panel.
       const dropLate = attached => { if (r.session && (!attached || r.discarded)) r.session.cancel().catch(() => {}); };
       const begin = async () => {
         let attached = null;
         try {
-          attached = capture.attach ? await capture.attach() : null;
+          attached = liveOwnTap && capture.attach ? await capture.attach() : null;
           if (r.abandoned) { r.session = attached; dropLate(true); return; }
           own = capture.current?.() || own;
-          if (!attached && recoverOnly && !own) { close(); return; }
+          if (!attached && recoverOnly) { close(); return; } // recovery never falls through to start
           r.person = own?.meta?.person || id; r.identity = own?.meta?.identity || channel.value; r.reply = view.reply;
-          r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
+          r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value, micSession: voiceTapSession}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
           if (r.abandoned) { dropLate(!!attached); return; }
           if (!r.session) throw new Error('That recording has already stopped. Tap the microphone to start again.');
           clearTimeout(r.deadline);
@@ -1986,7 +2030,7 @@
     // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
     const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.busy;
     prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia}, prev?.id === id ? flushing : null);
-    queueMicrotask(() => { if (form.isConnected && !view.recording) record(true); });
+    queueMicrotask(() => { if (!form.isConnected) return; if (!view.recording) record(true); recoverVoice(); });
     return form;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.

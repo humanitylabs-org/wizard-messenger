@@ -9,6 +9,7 @@ const source=fs.readFileSync(process.env.MESSENGER_SOURCE||path.join(__dirname,'
 const composer=source.slice(source.indexOf('  function composer(id, p) {'),source.indexOf('  // WebM (Matroska)'));
 const fixture=`
 window.view={}; const s={drafts:{},person:'synthetic'},localAudio=new Map();
+const voiceTapSession=Math.random().toString(36),voiceKept=new Map(),voiceQueued=new Set();let voiceRecoveryWork=null;
 const node=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e};
 const iconButton=(icon,label,fn,cls)=>{const e=node('button',cls,label);e.type='button';e.setAttribute('aria-label',label);e.onclick=fn;return e;};
 const button=(text,fn,cls)=>{const e=node('button',cls,text);e.type='button';e.onclick=fn;return e;};
@@ -24,7 +25,7 @@ async function setup(mode='pending'){
  const make=id=>({id,onLevel:()=>()=>{},getInfo:()=>({startedAt:Date.now()-1500}),cancel:async()=>{calls.cancel++;calls.cancelled.push(id);if(active===id)active=null;},stop:async()=>{calls.stop++;if(active===id)active=null;return{id,durationMs:1500,blob:new Blob(['synthetic-audio'],{type:'audio/ogg'})};}});
  window.session=make('take-fixture'); window.warnListeners=[]; session.onWarn=fn=>{warnListeners.push(fn);return()=>warnListeners.splice(warnListeners.indexOf(fn),1);};
  window.resolveStart=(i=0)=>starts[i].resolve();
- window.WizardApp={update:{hold:()=>({release(){}})},capture:{current:()=>active?{id:active,meta:{person:'synthetic'}}:null,attach:async()=>{if(!active)return null;calls.attach++;return session;},ack:async()=>{calls.ack++;},start:()=>{calls.start++;if(mode==='fail')return Promise.reject(new Error('Microphone held by Recorder'));
+ window.WizardApp={update:{hold:()=>({release(){}})},capture:{current:()=>active?{id:active,appId:'messenger',active:true,recording:true,phase:'recording',meta:window.activeMeta}:null,attach:async()=>{if(!active)return null;calls.attach++;return session;},ack:async()=>{calls.ack++;},pending:async()=>[],settle:async()=>{if(!active)return [];const take=await session.stop();return [{...take,meta:window.activeMeta}];},start:opts=>{window.activeMeta=opts.meta;calls.start++;if(mode==='fail')return Promise.reject(new Error('Microphone held by Recorder'));
    const n=starts.length,sess=n?make('take-'+n):session;return new Promise(resolve=>{starts.push({session:sess,resolve:()=>{active=sess.id;resolve(sess);}});});}}};
  },mode); await p.evaluate(fixture);
 }
@@ -82,10 +83,10 @@ await setup();await p.getByRole('button',{name:'Record voice message'}).click();
 await p.getByRole('button',{name:'Send voice message'}).waitFor();
 // Re-run the document-scoped production composer with fresh view, preserving the host-owned take.
 await p.evaluate(()=>{view.recording.off?.();clearInterval(view.recording.tick);});await p.evaluate(fixture);
-await p.getByRole('button',{name:'Send voice message'}).waitFor();assert.equal(await p.evaluate(()=>calls.attach),1);assert.equal(await p.evaluate(()=>calls.start),1);
-await p.getByRole('button',{name:'Send voice message'}).click();await p.waitForFunction(()=>!!sent);assert.deepEqual(await p.evaluate(()=>sent),{id:'synthetic',take:'take-fixture'});assert.equal(await p.evaluate(()=>calls.ack),1);assert.equal(await p.evaluate(()=>active),null);
-console.log('PASS app-document reload reattaches own take, sends original target and acknowledges');
-await setup();await p.getByRole('button',{name:'Record voice message'}).click();await p.evaluate(()=>resolveStart());await p.getByRole('button',{name:'Send voice message'}).waitFor();await p.evaluate(()=>{clearInterval(view.recording.tick);view.recording.off?.();});await p.evaluate(fixture);await p.getByRole('button',{name:'Discard recording'}).click();await p.waitForFunction(()=>!active);console.log('PASS app-document reload can discard own take');
+await p.locator('.u-unsent-voice').waitFor();assert.equal(await p.evaluate(()=>calls.attach),0);assert.equal(await p.evaluate(()=>calls.start),1);
+await p.locator('.u-voice-keep-send').click();await p.waitForFunction(()=>!!sent);assert.deepEqual(await p.evaluate(()=>sent),{id:'synthetic',take:'take-fixture'});assert.equal(await p.evaluate(()=>calls.ack),1);assert.equal(await p.evaluate(()=>active),null);
+console.log('PASS app-document reload stops old take to chip, sends original target and acknowledges');
+await setup();await p.getByRole('button',{name:'Record voice message'}).click();await p.evaluate(()=>resolveStart());await p.getByRole('button',{name:'Send voice message'}).waitFor();await p.evaluate(()=>{clearInterval(view.recording.tick);view.recording.off?.();});await p.evaluate(fixture);await p.locator('.u-voice-keep-discard').click();await p.waitForFunction(()=>!active);console.log('PASS app-document reload can discard own take');
 await setup('fail');await p.getByRole('button',{name:'Record voice message'}).click();await p.waitForFunction(()=>document.querySelector('.u-voice-notice')?.textContent);assert.ok(await p.locator('.u-voice-notice').isVisible());assert.match(await p.locator('.u-voice-notice').innerText(),/Recorder/);assert.equal(await p.evaluate(()=>active),null);await composerBack('busy start');console.log('PASS failed/busy start names holder in visible thread notice');
 assert.deepEqual(errors,[]);
 // Leave the composer + notice on screen for the screenshot.

@@ -11,6 +11,7 @@ const out = process.env.EVIDENCE_DIR || path.join(__dirname, '..', 'evidence', '
 const skins = process.env.TOKENS_CSS ? ['nebula', 'grove', 'tide', 'ember', 'signal'] : [];
 const fixture = `
 window.view={}; const s={drafts:{},person:'synthetic'},localAudio=new Map();
+const voiceTapSession=Math.random().toString(36),voiceKept=new Map(),voiceQueued=new Set();let voiceRecoveryWork=null;
 const node=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e};
 const iconButton=(icon,label,fn,cls)=>{const e=node('button',cls?'icon-button '+cls:'icon-button');e.type='button';e.title=label;e.setAttribute('aria-label',label);e.textContent=icon==='mic'?'🎤':icon==='photo'?'＋':'➤';e.onclick=fn;return e;};
 const button=(text,fn,cls)=>{const e=node('button',cls,text);e.type='button';e.onclick=fn;return e;};
