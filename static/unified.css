@@ -795,14 +795,15 @@ html[data-split] #messenger { --u-list-w: clamp(320px, 28cqi, 380px); }
 /* A very wide window keeps the conversation at a readable width in the middle of its pane. */
 #unified-inbox[data-split] .u-timeline, #unified-inbox[data-split] .u-composer { padding-left: max(12px, calc((100% - 1000px) / 2)); padding-right: max(12px, calc((100% - 1000px) / 2)); }
 /* Nothing open yet. */
-/* New message on the right when no chat is open (split only). */
-.u-newmsg { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 720px; margin: 0 auto; }
-.u-newmsg-top { display: flex; gap: 10px; align-items: center; padding: 0 20px 4px; }
-.u-newmsg-top .u-search { flex: 1; min-width: 0; }
-.u-newmsg-top button.secondary { flex-shrink: 0; min-height: 44px; border-radius: 22px; padding: 0 16px; }
-.u-newmsg .u-directory { margin: 8px 0 0; }
-.u-newmsg .u-directory-row { border-radius: 12px; }
-.u-newmsg .u-directory-row:hover { background: var(--raised); }
+/* New message on the right when no chat is open (split only): centred, quiet, names only while typing. */
+.u-newmsg { margin: auto; display: flex; flex-direction: column; align-items: stretch; gap: 12px; width: min(420px, 100% - 48px); padding: 24px 0; }
+.u-newmsg h2 { margin: 0 0 4px; text-align: center; font-size: 1.15em; font-weight: 600; color: var(--ink); }
+.u-newmsg-results { display: flex; flex-direction: column; gap: 2px; }
+.u-newmsg-results:empty { display: none; }
+.u-newmsg .u-directory-row { border-radius: 12px; padding: 8px 10px; }
+.u-newmsg .u-directory-row:hover, .u-newmsg .u-directory-row:focus-visible { background: var(--raised); }
+.u-newmsg .u-empty { text-align: center; color: var(--ink-3); margin: 6px 0; }
+.u-newmsg-wizard { align-self: center; color: var(--ink-3); }
 /* A native Wizard thread (app.js #workspace) takes the right side; the list stays on the left. */
 html[data-split][data-private-view] #messenger { flex-direction: row; }
 html[data-split][data-private-view] #unified-inbox { display: flex !important; flex: 0 0 var(--u-list-w, 360px); }

@@ -122,8 +122,10 @@ function fixture() {
     assert.ok(listBox.width >= 320 && listBox.width <= 380, skin + ': list pane ~340-380px (' + listBox.width + ')');
     assert.ok(threadBox.x >= listBox.x + listBox.width - 1 && threadBox.width > 800, skin + ': thread pane fills the right');
     // Nothing open: the right side is New message (Miguel, 31 Oct 2026), an A-Z list of people to start a chat with.
-    assert.equal(await page.locator('#u-pane-thread .u-newmsg h1').textContent(), 'New message');
-    await page.locator('#u-pane-thread .u-directory-row', {hasText: 'Ana Souza'}).waitFor();
+    assert.equal(await page.locator('#u-pane-thread .u-newmsg h2').textContent(), 'New message');
+    assert.equal(await page.locator('#u-pane-thread .u-directory-row').count(), 0, skin + ': no contact list until typing');
+    { const nb = await box('#u-pane-thread .u-newmsg'), tb = await box('#u-pane-thread');
+      assert.ok(Math.abs(nb.x + nb.width / 2 - (tb.x + tb.width / 2)) < 4 && Math.abs(nb.y + nb.height / 2 - (tb.y + tb.height / 2)) < 40, skin + ': New message centred'); }
     const frame = await box('#unified-inbox'); assert.ok(frame.width >= 1279, skin + ': no max-width on the frame in split mode (' + frame.width + ')');
     if (full) {
       // ---- open two chats in turn: the right pane switches, the list keeps its node and scroll ----
@@ -148,7 +150,8 @@ function fixture() {
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Search people and groups', 'search focused');
       await page.screenshot({path: path.join(out, 'split-new-message-1280.png')});
       await page.keyboard.type('pablo'); await page.locator('#u-pane-thread .u-directory-row').first().waitFor();
-      assert.equal(await page.locator('#u-pane-thread .u-directory-row').count(), 1, 'search narrows the people');
+      assert.equal(await page.locator('#u-pane-thread .u-directory-row').count(), 1, 'typing shows only matching people');
+      await page.screenshot({path: path.join(out, 'split-new-message-typed-1280.png')});
       await page.locator('#u-pane-thread .u-directory-row', {hasText: 'Pablo Ruiz'}).click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Pablo Ruiz'}).waitFor();
       assert.equal(await page.locator('#u-pane-list .u-person', {hasText: 'Pablo Ruiz'}).getAttribute('aria-current'), 'true', 'picked chat highlighted in the list');
       await rowA.click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Kira Novak'}).waitFor();

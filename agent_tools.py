@@ -245,13 +245,25 @@ def _result(data, error=False):
     return out
 
 
+def offered(handler):
+    """Message tools are listed for a per-agent key, and for the Wizard app key (the owner's own agent on this box,
+    reached through the Wizard gateway, which forwards no per-agent header) once the owner has given that key a level
+    above No access in Messenger → Settings → Agents. Every call is still checked against that level."""
+    try:
+        caller = handler._caller()
+    except EngineError:
+        return False
+    if caller is None:
+        return False
+    return caller[0] == 'agent' or handler._caller_mode(caller) != 'no_access'
+
+
 def call(handler, name, args):
     try:
         caller = handler._caller()
-        # Only per-agent keys get message tools; the shared Wizard app key keeps status/identity only.
-        if caller is None or caller[0] != 'agent':
-            raise EngineError('agent_key_required', 'This tool needs a Messenger agent key. The owner adds agents in '
-                              'Messenger → Settings → Agents and chooses each agent\'s level.', 401)
+        if caller is None:
+            raise EngineError('agent_key_required', 'This tool needs a Messenger agent key or the Wizard app key. The owner '
+                              'chooses each agent\'s level in Messenger → Settings → Agents.', 401)
         args = _args(args, name)
         method, path = ROUTES[name]
         level = caller[1]['level'] if caller[0] == 'agent' else None

@@ -258,31 +258,32 @@
   // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
   function fillEmpty(thread, focus = false) {
     thread.replaceChildren(); thread.dataset.view = 'empty';
+    // Calm and centred (Miguel): a title, one "To:" field and New Wizard chat. Names appear only once he types.
     const box = node('div', 'u-newmsg'), token = {}; thread.__pick = token;
-    const head = node('header', 'u-header'); head.append(node('h1', '', 'New message')); box.append(head);
-    const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
-    const list = node('div', 'u-directory'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'secondary');
-    const top = node('div', 'u-newmsg-top'); top.append(search, wizard); box.append(top, list); thread.append(box);
+    const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
+    const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
+    box.append(node('h2', '', 'New message'), search, list, wizard); thread.append(box);
     if (focus) requestAnimationFrame(() => search.focus());
+    let all = null;
+    const draw = () => {
+      const q = search.value.trim().toLowerCase(); list.replaceChildren();
+      if (!q) return;
+      if (!all) { list.append(node('p', 'u-empty', 'Loading…')); return; }
+      for (const p of all.filter(p => p.display_name.toLowerCase().includes(q)).slice(0, 8)) {
+        const row = button('', () => openPerson(p.id), 'u-directory-row');
+        const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
+        row.append(netAvatar(p, 'small'), text); list.append(row);
+      }
+      if (!list.children.length) list.append(node('p', 'u-empty', 'No one matches'));
+    };
+    search.oninput = draw;
+    search.onkeydown = e => { if (e.key === 'Enter') list.querySelector('.u-directory-row')?.click(); };
     const fresh = store.directory && Date.now() - store.directory.at < 60e3;
     (fresh ? Promise.resolve(store.directory.rows) : call('directory').then(d => {
       const rows = [...(d.people || []), ...(d.groups || []).map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
       store.directory = {at: Date.now(), rows}; return rows;
-    })).then(all => {
-      if (thread.__pick !== token) return;
-      const draw = () => {
-        const q = search.value.trim().toLowerCase(); list.replaceChildren(); let letter = '';
-        for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 300)) {
-          const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
-          if (!q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
-          const row = button('', () => openPerson(p.id), 'u-directory-row');
-          const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
-          row.append(netAvatar(p, 'small'), text); list.append(row);
-        }
-        if (!list.children.length) list.append(node('p', 'u-empty', 'No one matches'));
-      };
-      search.oninput = draw; draw();
-    }).catch(e => { if (thread.__pick === token) list.replaceChildren(node('p', 'u-empty', 'Could not load people. ' + (e?.message || ''))); });
+    })).then(rows => { if (thread.__pick === token) { all = rows; draw(); } })
+      .catch(e => { if (thread.__pick === token) list.replaceChildren(node('p', 'u-empty', 'Could not load people. ' + (e?.message || ''))); });
   }
   // The right pane with nothing open. The old composer's pending draft save still runs (see composer()).
   function emptyPane(focus = false) { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread, focus); root.dataset.view = s.search != null ? 'search' : 'list'; }
@@ -931,7 +932,7 @@
     return out;
   }
   const player = (() => {
-    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
+    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0, el = null;
     // Speed, like Telegram's 1x / 1.5x / 2x: one choice for every note, remembered on this device.
     const RATES = [1, 1.5, 2]; let rate = RATES.includes(+localStorage.getItem('messenger.voice.rate')) ? +localStorage.getItem('messenger.voice.rate') : 1;
     const fast = new WeakMap(); // AudioBuffer -> Map(rate -> stretched AudioBuffer)
@@ -952,17 +953,20 @@
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
     // so pause/seek/next note doesn't pump the volume.
     let ducked = false, undock = 0;
+    // iPhone: Web Audio defaults to the "ambient" session, which the silent switch mutes, so a note looked like it
+    // played but made no sound. While a note plays, ask for the "playback" session (Safari 16.4+), then hand it back.
+    const session = type => { try { if (navigator.audioSession && navigator.audioSession.type !== type) navigator.audioSession.type = type; } catch { /* unsupported */ } };
     const music = on => {
       clearTimeout(undock);
-      if (on) { if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
-      undock = setTimeout(() => { if (ducked && !src) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
+      if (on) { session('playback'); if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
+      undock = setTimeout(() => { if (!src && !el) session('auto'); if (ducked && !src && !el) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
     };
     const paint = () => {
       if (!box || !buf) return; const at = pos(), f = Math.min(1, at / buf.duration);
       for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
       const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
     };
-    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
+    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } if (el) { el.onended = el.ontimeupdate = null; el.pause(); el = null; } clearInterval(timer); music(false); };
     const fetchNote = url => {
       if (!fetched.has(url)) {
         fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); noteTypes.set(url, r.headers.get('Content-Type')); return r.arrayBuffer(); }));
@@ -988,6 +992,15 @@
       src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); music(false); };
       timer = setInterval(paint, 100); paint();
     };
+    async function element(url, b) {
+      const a = new Audio(localAudio.has(url) ? URL.createObjectURL(localAudio.get(url)) : url);
+      a.preservesPitch = true; a.playbackRate = rate; el = a;
+      const dur = () => (isFinite(a.duration) ? a.duration : 0);
+      const draw = () => { if (box !== b) return; const f = dur() ? a.currentTime / dur() : 0; for (const i of b.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f); const t = b.querySelector('.u-dur'); if (t && dur()) t.textContent = fmtDur((dur() - a.currentTime) * 1000); };
+      a.ontimeupdate = draw; a.onended = () => { el = null; offset = 0; b.classList.remove('playing'); music(false); };
+      if (offset) a.currentTime = offset;
+      await a.play(); b.classList.add('playing'); music(true); draw();
+    }
     return {
       rateLabel,
       async blob(url, type) { if (localAudio.has(url)) return localAudio.get(url); const bytes = await fetchNote(url); return new Blob([bytes], {type: type || noteTypes.get(url) || 'application/octet-stream'}); },
@@ -996,23 +1009,31 @@
         const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
         try { localStorage.setItem('messenger.voice.rate', String(rate)); } catch { /* private mode */ }
         for (const el of document.querySelectorAll('.u-speed')) el.textContent = rateLabel();
+        if (el) el.playbackRate = rate;
         if (src) { offset = at; start(); }
       },
       preload(url) { if (!localAudio.has(url)) fetchNote(url).catch(() => {}); },
-      playing: b => b === box && !!src,
-      busy: () => !!src || !!view.recording,
+      playing: b => b === box && !!(src || el),
+      busy: () => !!src || !!el || !!view.recording,
       // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
       adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
       async toggle(b, url, k) {
         ctx ||= new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        session('playback'); // inside the tap, before anything awaits (iOS)
+        if (ctx.state !== 'running') ctx.resume().catch(() => {}); // 'suspended', or iOS 'interrupted' after a call or the lock screen
+        if (b === box && el) { offset = el.currentTime; halt(); b.classList.remove('playing'); paint(); return; }
         if (b === box && src) { offset = pos(); halt(); b.classList.remove('playing'); paint(); return; }
         if (b !== box) { halt(); if (box) { box.classList.remove('playing'); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); } box = b; key = k; buf = null; offset = 0; }
         b.classList.add('playing');
         try { const got = await load(url); if (key !== k) return; buf = got; start(); }
-        catch { if (key === k) { box.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+        catch {
+          if (key !== k) return;
+          // This browser cannot decode the note for Web Audio: play it with a plain audio element instead.
+          try { await element(url, b); }
+          catch { if (key === k) { box?.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+        }
       },
-      seek(b, f) { if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
+      seek(b, f) { if (b === box && el && isFinite(el.duration)) { el.currentTime = el.duration * f; return; } if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
       stop() { halt(); box?.classList.remove('playing'); box = key = buf = null; offset = 0; },
     };
   })();
@@ -2313,7 +2334,7 @@
       }), 'secondary wide'));
       const app = st.app_key;
       const legacy = node('details', 'u-log'); legacy.append(node('summary', '', 'Wizard app key: ' + app.label));
-      legacy.append(node('p', 'helper', 'The shared key Wizard uses for this app. Prefer giving each agent its own key.'),
+      legacy.append(node('p', 'helper', 'Your agent on this Wizard uses this key. Draft-only lets it read chats and leave drafts that you send.'),
         levelPicker(app, st, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
       box.append(legacy);
       box.append(node('p', 'helper', 'App permissions only: an agent with host-admin access to this server can bypass them. Same-server isolation is supported.'), button('Saved drafts', agentDrafts, 'secondary wide'));
