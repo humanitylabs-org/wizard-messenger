@@ -1,0 +1,7 @@
+# Code-only overlay on James's exact 15.12 carrier. No binaries or owner data.
+ARG BASE=wizard-messenger:0.2.0-unified.15.12
+FROM ${BASE}
+ARG REVISION
+LABEL org.opencontainers.image.revision=$REVISION org.opencontainers.image.version="0.2.0-unified.15.13"
+COPY --chmod=0644 server.py /app/server.py
+COPY --chmod=0644 static/unified.js static/app.js /app/static/
