@@ -196,11 +196,15 @@ class ViewHandler(Handler):
             self.service.trusted_owner.require(self)
             self._trusted_owner_verified=True
     def _authorize(self):
+        self.gateway_mcp = False  # per request: a keep-alive connection must not carry it to the next call
         if urlsplit(self.path).path=='/mcp' and self.command=='POST':
-            # Standard Wizard gateway currently has no per-app auth-header channel.
-            # This RPC endpoint has only public identity/status tools; the base
-            # dispatcher rejects every private read, send and signer capability.
+            # The standard Wizard gateway sends no per-app auth header. A bare /mcp call on the app's own port (the
+            # gateway, never the owner's Unix hop) speaks as the Wizard app key: status/identity always, and the
+            # message/draft tools only at the level the owner gave that key in Settings -> Agents (default No access).
             self._origin()
+            if not self.headers.get('Authorization'):
+                from owner_unix import OwnerUnixServer
+                self.gateway_mcp = not isinstance(self.server, OwnerUnixServer)
             return
         if self.headers.get('Authorization'):
             return super()._authorize()
