@@ -2,12 +2,14 @@
 # Carrier: the live 12.12 image; its /app md5-matches revision 288927b. Everything the Python/static tree
 # changed since is copied over it with readable modes (12.10 shipped 0600 and crash-looped). Trusted-owner
 # unlock and push need extra OS packages (full Dockerfile) and stay off on installs built from this overlay.
-FROM wizard-messenger:0.2.0-unified.12.12
+# BASE: the exact live carrier (default 12.12; override only with an image whose /app md5-matches 288927b).
+ARG BASE=wizard-messenger:0.2.0-unified.12.12
+FROM ${BASE}
 ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
-      org.opencontainers.image.version="0.2.0-unified.15.8" \
+      org.opencontainers.image.version="0.2.0-unified.15.9" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
-COPY --chmod=0644 engine.py server.py web.py trusted_owner.py unified.py unified_setup.py telegram_application.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py remote_authority.py owner_unix.py API-contract.json /app/
+COPY --chmod=0644 engine.py server.py web.py trusted_owner.py unified.py unified_setup.py telegram_application.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py inbox_feed.py remote_authority.py owner_unix.py API-contract.json /app/
 COPY --chmod=0644 connector_setup.py connectors.py connector_inbox.py connector_sender.py browser_signin.py /app/
 COPY --chmod=0644 readiness/search.py readiness/__init__.py /app/readiness/
 COPY --chmod=0644 push_notifications/__init__.py push_notifications/runtime.py push_notifications/security.py push_notifications/service-worker.js push_notifications/requirements.txt /app/push_notifications/

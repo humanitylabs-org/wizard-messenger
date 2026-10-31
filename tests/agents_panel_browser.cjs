@@ -1,6 +1,8 @@
-// Settings (Miguel, 31 Oct 2026): every account is the same tile (connected = dot + account name, not available yet =
-// dimmed + "Soon"), then More: one plain list with one level picker per Wizard agent (No access / Read-only /
-// Draft-only). No Saved drafts row and no Advanced row: Advanced (older keys, request log) opens only from #advanced.
+// Settings (Miguel, 31 Oct 2026): every account is the same flat tile (the brand mark on its own, the name under it;
+// connected = small green dot, not available yet = dimmed + "Soon"). Your accounts ends in a "+" that opens Add an
+// account. Then "Agent access": one row per Wizard agent, name + level picker (No access / Read-only /
+// Draft-only (recommended)), nothing under it. No Saved drafts row and no Advanced row: Advanced (older keys, request
+// log) opens only from #advanced.
 // Synthetic APIs only.
 // node tests/agents_panel_browser.cjs [outdir]   (needs playwright via PLAYWRIGHT_MODULE)
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -71,21 +73,37 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     await page.goto('https://messenger.test/');
     await page.locator('#u-filters').waitFor({timeout: 15000});
     await page.locator('[aria-label="Settings"]').first().click();
-    // More (Miguel, 31 Oct): one plain list under the accounts. No folds, no eyebrow inside, no boxes in boxes.
-    const more = page.locator('.u-settings .u-more');
+    // Agent access (Miguel, 31 Oct): one plain list under the accounts. No folds, no eyebrow inside, no boxes in boxes.
+    const more = page.locator('.u-settings .u-more-agents');
     await more.locator('.u-more-agent').first().waitFor();
     assert.equal(await page.locator('.u-sheet details').count() - await page.locator('.u-sheet details.c-later').count(), 0, 'no folds below the accounts');
-    const rows = await more.evaluate(g => [...g.querySelectorAll(':scope > :not([hidden]), :scope > .u-more-agents > *')].filter(e => e.getClientRects().length && !e.classList.contains('u-more-agents')).map(e => e.innerText.split('\n')[0].trim()));
+    const rows = await page.locator('.u-settings .u-more').evaluateAll(gs => gs.flatMap(g => [...g.querySelectorAll(':scope > :not([hidden])')]).filter(e => e.getClientRects().length).map(e => e.innerText.split('\n')[0].trim()));
     assert.deepEqual(rows, ['Oscar'], 'only the agents (merges/notifications only when they exist): ' + JSON.stringify(rows));
+    assert.equal(await page.locator('.u-settings .u-more-other').isVisible(), false, 'no empty second list');
     const sheetText = await page.locator('.u-sheet[aria-label="Settings"]').innerText();
     assert.doesNotMatch(sheetText, /Saved drafts|Advanced|Wizard Messenger address|Not available yet/, 'no drafts, Advanced, address or separate "not available" list in Settings');
-    // One tile format for every account: connected, add and soon tiles share size, shape and background.
-    const tiles = await page.locator('.u-settings .c-tile').evaluateAll(els => els.map(e => { const cs = getComputedStyle(e), r = e.getBoundingClientRect();
-      return {net: e.dataset.network, cls: e.className, w: Math.round(r.width), radius: cs.borderRadius, bg: cs.backgroundColor, minH: cs.minHeight, disabled: e.disabled, dot: !!e.querySelector('.c-tile-dot'), sub: e.querySelector('.c-tile-sub')?.textContent || ''}; }));
-    assert.deepEqual(tiles.map(t => t.net), ['whatsapp', 'signal', 'kakaotalk'], 'connected first, then add, then soon: ' + JSON.stringify(tiles));
-    for (const k of ['w', 'radius', 'bg', 'minH']) assert.equal(new Set(tiles.map(t => t[k])).size, 1, 'same tile ' + k + ': ' + JSON.stringify(tiles.map(t => t[k])));
-    assert.deepEqual([tiles[0].dot, tiles[0].sub], [true, '+15550100199'], 'connected tile: dot plus account name');
-    assert.deepEqual([tiles[2].disabled, tiles[2].sub], [true, 'Soon'], 'not-available tile is the same tile, dimmed, with Soon');
+    // Your accounts ends in a "+"; Add an account is closed until it is tapped (no separate always-visible section).
+    const plus = page.locator('.u-settings .c-plus');
+    assert.equal(await plus.getAttribute('aria-expanded'), 'false');
+    assert.equal(await plus.getAttribute('aria-label'), 'Add an account');
+    assert.equal(await page.locator('.u-settings .c-on-grid > .c-tile').last().evaluate(e => e.classList.contains('c-plus')), true, 'the plus is the last tile');
+    assert.equal(await page.locator('.u-settings .c-add-panel').isVisible(), false, 'Add an account is folded behind the plus');
+    assert.ok(!(await page.locator('.u-settings h3:visible').allTextContents()).includes('Add an account'), 'no Add an account heading until the plus');
+    await plus.click();
+    assert.equal(await plus.getAttribute('aria-expanded'), 'true');
+    await page.locator('.u-settings .c-add-panel .c-tile').first().waitFor();
+    assert.ok((await page.locator('.u-settings h3:visible').allTextContents()).includes('Add an account'));
+    await page.mouse.move(1, 1); await page.waitForTimeout(250);
+    // One flat tile format for every account: connected, add, soon and plus tiles share size and paint no card.
+    const tiles = await page.locator('.u-settings .c-tile').evaluateAll(els => els.map(e => { const cs = getComputedStyle(e), r = e.getBoundingClientRect(), m = e.querySelector('.c-mark'), ms = getComputedStyle(m), mr = m.getBoundingClientRect();
+      return {net: e.dataset.network || 'plus', w: Math.round(r.width), bg: cs.backgroundColor, shadow: cs.boxShadow, markW: m.offsetWidth, markBg: m.classList.contains('has-icon') ? ms.backgroundColor : 'shape', disabled: e.disabled, dot: !!e.querySelector('.c-tile-dot'), sub: e.querySelector('.c-tile-sub')?.textContent || ''}; }));
+    assert.deepEqual(tiles.map(t => t.net), ['whatsapp', 'plus', 'signal', 'kakaotalk'], 'connected, plus, then add, then soon: ' + JSON.stringify(tiles));
+    for (const k of ['w', 'markW']) assert.equal(new Set(tiles.map(t => t[k])).size, 1, 'same tile ' + k + ': ' + JSON.stringify(tiles.map(t => t[k])));
+    for (const t of tiles) assert.ok(['transparent', 'rgba(0, 0, 0, 0)'].includes(t.bg) && t.shadow === 'none', 'tile paints no card: ' + JSON.stringify(t));
+    for (const t of tiles.filter(t => t.markBg !== 'shape')) assert.ok(['transparent', 'rgba(0, 0, 0, 0)'].includes(t.markBg), 'brand mark sits on no tile: ' + JSON.stringify(t));
+    assert.deepEqual([tiles[0].dot, tiles[0].sub], [true, ''], 'connected tile: name and a green dot, nothing else');
+    assert.equal(await page.locator('.c-tile.c-on').getAttribute('title'), '+15550100199', 'account name stays in the tooltip');
+    assert.deepEqual([tiles[3].disabled, tiles[3].sub], [true, 'Soon'], 'not-available tile is the same tile, dimmed, with Soon');
     assert.ok(Number(await page.locator('.c-tile.c-soon').evaluate(e => getComputedStyle(e).opacity)) < 0.6, 'soon tile is dimmed');
     assert.equal(await page.locator('.u-settings .c-group, .u-settings .c-row, .u-settings details.c-later').count(), 0, 'no second account format');
     for (const t of await page.locator('.u-settings h3').evaluateAll(els => els.map(e => getComputedStyle(e).textTransform))) assert.notEqual(t, 'uppercase', 'no uppercase eyebrows');
@@ -95,23 +113,29 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     assert.equal(await page.locator('.c-disconnect').textContent(), 'Disconnect WhatsApp');
     await page.locator('.c-back').click();
     await page.locator('.c-tile.c-on').waitFor();
+    assert.equal(await page.locator('.u-settings .c-plus').getAttribute('aria-expanded'), 'true', 'the plus stays open after Back');
+    await page.locator('.u-settings .c-plus').click();
+    assert.equal(await page.locator('.u-settings .c-add-panel').isVisible(), false, 'tapping the plus again folds it');
     assert.equal(posted.filter(x => /connectors/.test(x[1])).length, 0, 'opening and leaving the options writes nothing');
     assert.equal(await more.getByText('Older agent keys').count(), 0, 'older keys are not on the main view');
     assert.equal(await more.getByText('Recent agent requests').count(), 0, 'the request log is not on the main view');
     assert.equal(await more.getByText('Wizard Messenger address').count(), 0, 'the raw address moved to Advanced');
-    assert.equal(await more.locator('.u-settings-group, .c-card, details').count(), 0, 'no nested boxes inside the More list');
+    assert.equal(await more.locator('.u-settings-group, .c-card, details').count(), 0, 'no nested boxes inside the Agent access list');
     await page.mouse.move(1, 1); await page.waitForTimeout(400); // let any hover tint fade
     const nested = await more.evaluate(g => [...g.querySelectorAll('*')].filter(e => e.getClientRects().length && !['transparent', 'rgba(0, 0, 0, 0)'].includes(getComputedStyle(e).backgroundColor) && e.tagName !== 'OPTION').map(e => e.className));
     assert.deepEqual(nested, [], 'rows paint no background of their own');
     const pick = more.getByLabel('What Oscar may do');
-    assert.deepEqual(await pick.locator('option').allTextContents(), ['No access', 'Read-only', 'Draft-only']);
+    assert.deepEqual(await pick.locator('option').allTextContents(), ['No access', 'Read-only', 'Draft-only (recommended)'], 'the recommendation lives in the options');
+    assert.equal(await more.locator('.u-more-what').count(), 0, 'nothing under the agent name');
+    assert.doesNotMatch(await more.innerText(), /Recommended\./, 'no Recommended line under Oscar');
     assert.equal(await more.getByText('Draft-and-send').count(), 0, 'no send level for Wizard agents');
     assert.equal(await more.locator('input').count(), 0, 'no key or name fields');
     // Thumb-sized rows; the picker is a full-height target and fits its label on a phone.
     for (const box of await more.evaluate(g => [...g.querySelectorAll('.u-more-row')].filter(e => e.getClientRects().length).map(e => e.getBoundingClientRect().height))) assert.ok(box >= 48, 'row height ' + box);
     const pb = await pick.boundingBox(); assert.ok(pb.height >= 44, 'picker height ' + pb.height);
     assert.ok(await pick.evaluate(e => e.scrollWidth <= e.clientWidth + 1), 'picker label not clipped');
-    const h3 = await page.locator('.u-sheet h3').allTextContents(); assert.ok(h3.includes('More'), 'More heading kept');
+    const h3 = await page.locator('.u-sheet h3').allTextContents(); assert.ok(h3.includes('Agent access') && !h3.includes('More'), 'More is now Agent access: ' + JSON.stringify(h3));
+    assert.ok((await more.locator('.u-more-agent').boundingBox()).height < 64, 'the agent row is one line');
     await more.scrollIntoViewIfNeeded(); await page.waitForTimeout(200);
     await page.screenshot({path: path.join(out, `more-${skin}-${label}.png`)});
     // Picking a level is the whole flow: no confirm, it saves and repaints.
@@ -121,9 +145,8 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     assert.equal(await page.locator('.u-overlay .u-sheet[aria-label="Settings"]').count(), 1, 'no confirm sheet');
     assert.deepEqual(posted.at(-1), ['POST', 'api/view/agents/wizard/hermes', {level: 'draft_only'}]);
     assert.equal(await more.getByLabel('What Oscar may do').inputValue(), 'draft_only', 'repainted with the saved level');
-    assert.ok(await more.getByText('Only you send.').count(), 'the level explains itself');
-    assert.match(await more.locator('.u-more-what').first().textContent(), /^Recommended\. /, 'Draft-only is marked recommended');
-    assert.ok(await more.locator('.u-more-what').first().evaluate(e => e.getBoundingClientRect().height < 24), 'the description is one line');
+    assert.equal(await more.getByLabel('What Oscar may do').evaluate(e => e.selectedOptions[0].textContent), 'Draft-only (recommended)');
+    assert.equal(await more.locator('.u-more-what').count(), 0, 'still nothing under the name after saving');
     const ink = await more.locator('.u-agent-name').first().evaluate(e => getComputedStyle(e).color);
     assert.ok(!/rgba?\(0, 0, 0, 0\)/.test(ink), 'agent name is not transparent: ' + ink);
     // Advanced has no row; support opens it with #advanced. Older keys and the request log stay reachable there.
@@ -140,7 +163,7 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     await page.screenshot({path: path.join(out, `advanced-${skin}-${label}.png`)});
     // Back returns to Settings, not out of it.
     assert.equal(await page.evaluate(() => window.MessengerUnified.back()), true);
-    await page.locator('.u-sheet[aria-label="Settings"] .u-more').waitFor();
+    await page.locator('.u-sheet[aria-label="Settings"] .u-more-agents').waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
     console.log('ok', skin, label);

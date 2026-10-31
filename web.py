@@ -348,10 +348,34 @@ class ViewHandler(Handler):
         from wizard_agents import LEVELS as WIZARD_LEVELS, LABELS as WIZARD_LABELS
         return {'wizard_agents':self.service.wizard_agents.list(),
                 'wizard_levels':[{'id':l,'label':WIZARD_LABELS[l],'recommended':l==RECOMMENDED} for l in WIZARD_LEVELS],
-                'gateway_connected':bool(self.service.gateway_key.current()),
+                'gateway_connected':bool(self.service.gateway_grant.current()),
                 'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
                 'levels':[{'id':l,'label':LABELS[l],'recommended':l==RECOMMENDED} for l in LEVELS],
                 'log':self.service.agent_access.recent(30)}
+    def _inbox(self,method,path):
+        # Wizard OS inbox feed (inbox_feed.py): owner only, never a bearer; errors in the feed contract's shape.
+        try:
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only','Only the owner can use the Messenger inbox feed',403)
+            if self.service.trusted_owner.enabled:
+                # The authenticated Wizard ingress proves the owner on every request: the same proof that opens a
+                # view session. Writes still need an allowed Origin (never cross-site) and a JSON body.
+                self._trusted_owner()
+                self._origin(required=method!='GET')
+            else:
+                self._authorize()
+            unified=self.service.unified
+            if unified is None or not hasattr(unified,'store') or not hasattr(unified,'dispatch'):
+                raise EngineError('not_configured','Unified inbox is not enabled',503)
+            import inbox_feed
+            if path=='/api/inbox' and method=='GET':
+                return 200,inbox_feed.items(unified.store)
+            if path=='/api/inbox/act' and method=='POST':
+                return 200,inbox_feed.act(unified,self._body())
+            raise EngineError('method_not_allowed','Use GET /api/inbox or POST /api/inbox/act',405)
+        except EngineError as e:
+            self.close_connection=True
+            return e.status,{'ok':False,'error':e.message,'code':e.code}
     def _dispatch(self,method):
         self.pending_cookie=None
         self._trusted_owner_verified=False
@@ -360,6 +384,8 @@ class ViewHandler(Handler):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         self._agent_gate(method,path)
+        if path in ('/api/inbox','/api/inbox/act'):
+            return self._inbox(method,path)
         if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
             raise EngineError('owner_only','Owner browser access is required',403)
         if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/'):

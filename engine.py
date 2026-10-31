@@ -107,6 +107,8 @@ class MarmotEngine:
         self.env.update(WN_HOME=str(self.home), WN_SOCKET=str(self.socket), WN_SECRET_STORE='keychain', WN_KEYCHAIN_SERVICE=self.service, XDG_DATA_HOME=str(self.data), XDG_RUNTIME_DIR=str(self.runtime), GNOME_KEYRING_CONTROL=str(self.runtime / 'keyring'), RUST_LOG='off')
         # Never inherit a development file-store switch or inject one.
         self.env.pop('WN_DEV_SETTLEMENT_QUIESCENCE_MS', None)
+        if os.environ.get('MESSENGER_WND_GUARD', '1') == '1':
+            threading.Thread(target=self._guard_memory, name='wnd-memory-guard', daemon=True).start()
         with self._db() as db:
             db.execute('CREATE TABLE IF NOT EXISTS contacts (pubkey TEXT PRIMARY KEY, label TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS sends (request_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, body_sha256 TEXT NOT NULL, state TEXT NOT NULL, result_json TEXT)')
@@ -119,6 +121,47 @@ class MarmotEngine:
                 yield connection
         finally:
             connection.close()
+
+    def daemon_memory_mb(self):
+        daemon = self.daemon
+        if daemon is None or daemon.poll() is not None:
+            return 0.0
+        try:
+            with open(f'/proc/{daemon.pid}/status') as status:
+                return sum(int(line.split()[1]) for line in status if line.startswith(('VmRSS:', 'VmSwap:'))) / 1024
+        except (OSError, ValueError, IndexError):
+            return 0.0
+
+    def recycle_if_bloated(self, limit_mb=None):
+        """wnd grows a few MB a second even on a tiny account until the container's memory limit swaps everything
+        and the kernel kills it, which slows every Messenger request long before that (31 Oct 2026). Restart only
+        the daemon, and only between operations: every RPC holds the mutex, so no send is ever cut in half.
+        If the relaunch fails the engine reads as locked and keep_unlocked opens it again."""
+        limit = limit_mb or float(os.environ.get('MESSENGER_WND_MAX_MB', '600'))
+        if self.daemon_memory_mb() < limit:
+            return False
+        with self.mutex:
+            if not self.unlocked or self.daemon_memory_mb() < limit:
+                return False
+            daemon = self.daemon
+            try: self._rpc('Shutdown', timeout=5)
+            except EngineError: daemon.terminate()
+            try: daemon.wait(timeout=10)
+            except subprocess.TimeoutExpired: daemon.kill(); daemon.wait()
+            self.daemon = None
+            try:
+                self._launch()
+            except EngineError:
+                if self.daemon is not None and self.daemon.poll() is None: self.daemon.kill()
+                self.daemon, self.unlocked = None, False
+                self._stop_keyring()
+            return True
+
+    def _guard_memory(self):
+        while True:
+            time.sleep(15)
+            try: self.recycle_if_bloated()
+            except Exception: pass
 
     def status(self):
         ready = self.unlocked and self.daemon is not None and self.daemon.poll() is None
