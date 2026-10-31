@@ -780,7 +780,16 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 html[data-split] #messenger { --u-list-w: clamp(320px, 28cqi, 380px); }
 #unified-inbox[data-split] { flex-direction: row; max-width: none; margin: 0; border-left: 0; border-right: 0; }
 #unified-inbox[data-split] > .u-pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-#unified-inbox[data-split] > .u-pane-list { flex: 0 0 var(--u-list-w, 360px); border-right: 1px solid var(--line); }
+#unified-inbox[data-split] > .u-pane-list { flex: 0 0 min(var(--u-list-w, 360px), 60%); border-right: 1px solid var(--line); }
+/* The divider (Miguel, 31 Oct 2026: "drag and resize the divider" like Chats): a 6px grab strip over the list's edge,
+   tinted with the accent on hover, focus and while dragging. unified.js divider() saves the width on this device. */
+#unified-inbox[data-split] > .u-pane-split { flex: 0 0 6px; margin: 0 -3px; position: relative; z-index: 2; cursor: col-resize; touch-action: none; }
+#unified-inbox[data-split] > .u-pane-split::after { content: ''; position: absolute; inset: 0 2px; border-radius: 2px; transition: background-color .15s; }
+#unified-inbox[data-split] > .u-pane-split:focus { outline: none; }
+#unified-inbox[data-split] > .u-pane-split:focus-visible::after, .u-splitting #unified-inbox[data-split] > .u-pane-split::after { background: var(--accent); }
+@media (hover: hover) { #unified-inbox[data-split] > .u-pane-split:hover::after { background: var(--accent); } }
+html.u-splitting, html.u-splitting * { cursor: col-resize !important; user-select: none !important; }
+#unified-inbox:not([data-split]) > .u-pane-split { display: none; }
 #unified-inbox[data-split] > .u-pane-thread { flex: 1 1 auto; }
 #unified-inbox[data-split] > .u-pane > .error { margin: 0 18px 8px; flex-shrink: 0; }
 #unified-inbox[data-split] > .u-pane > .error:empty { margin-bottom: 0; }
@@ -804,7 +813,7 @@ html[data-split] #messenger { --u-list-w: clamp(320px, 28cqi, 380px); }
 .u-newmsg-wizard { align-self: center; color: var(--ink-3); }
 /* A native Wizard thread (app.js #workspace) takes the right side; the list stays on the left. */
 html[data-split][data-private-view] #messenger { flex-direction: row; }
-html[data-split][data-private-view] #unified-inbox { display: flex !important; flex: 0 0 var(--u-list-w, 360px); }
+html[data-split][data-private-view] #unified-inbox { display: flex !important; flex: 0 0 min(var(--u-list-w, 360px), 60%); }
 html[data-split][data-private-view] #unified-inbox > .u-pane-list { flex: 1 1 auto; }
 html[data-split][data-private-view] #unified-inbox > .u-pane-thread { display: none; }
 html[data-split][data-private-view] #workspace { order: 2; min-width: 0; }
