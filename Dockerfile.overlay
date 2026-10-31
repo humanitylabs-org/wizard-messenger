@@ -1,11 +1,21 @@
-# Python/static-only packaging over the exact live binary carrier. No owner data.
-# BASE: the current live private image when the old carrier tag is gone locally.
-ARG BASE=wizard-messenger:0.2.0-unified.11.14
+# Python/static/template-only packaging over the 15.12 binary carrier. No owner data.
+# Carrier source: eefe38a. All /app/*.py hashes match the accepted live image.
+# No binaries or dependencies are rebuilt; existing optional-runtime limitations remain.
+ARG BASE=wizard-messenger:0.2.0-unified.15.12
 FROM ${BASE}
 ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
-      org.opencontainers.image.version="0.2.0-unified.15.11" \
+      org.opencontainers.image.version="0.2.0-unified.15.13" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
-COPY server.py web.py engine.py unified.py connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py agent_tools.py wizard_agents.py agent_keys.py permissions.py drafts.py inbox_feed.py /app/
-COPY plumbing /app/plumbing
-COPY static /app/static/
+COPY --chmod=0644 engine.py server.py web.py trusted_owner.py unified.py unified_setup.py telegram_application.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py inbox_feed.py remote_authority.py owner_unix.py API-contract.json /app/
+COPY --chmod=0644 connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py browser_signin.py /app/
+COPY --chmod=0644 readiness/search.py readiness/__init__.py /app/readiness/
+COPY --chmod=0644 push_notifications/__init__.py push_notifications/runtime.py push_notifications/security.py push_notifications/service-worker.js push_notifications/requirements.txt /app/push_notifications/
+COPY --chmod=0644 plumbing/whatsapp-template.json plumbing/signal-template.json plumbing/telegram-template.json plumbing/connectors-provenance.json plumbing/connectors-view-integration.patch plumbing/connectors-web-integration.patch plumbing/dots-template.json plumbing/dots-upstream-LICENSE plumbing/facebook-template.json plumbing/gmessages-template.json plumbing/instagram-template.json plumbing/line-template.json plumbing/line-upstream-LICENSE plumbing/line.Dockerfile plumbing/linkedin-template.json plumbing/permission-runtime-integration.patch plumbing/slack-template.json plumbing/twitter-template.json /app/plumbing/
+COPY --chmod=0755 engine/entrypoint.sh /app/entrypoint.sh
+COPY --chmod=0644 static/index.html static/app.js static/app.css static/connectors.js static/unified.js static/unified.css /app/static/
+# COPY --chmod also stamps directories it creates (readiness/, push_notifications/ became 0644 and uid 1000 could not
+# enter them: 15.8 first boot crash-looped on "No module named readiness.search"). Directories need their x bit.
+USER 0
+RUN chmod 0755 /app /app/readiness /app/push_notifications /app/plumbing /app/static
+USER 1000:1000

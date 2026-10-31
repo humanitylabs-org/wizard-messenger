@@ -1,0 +1,7 @@
+# Code-only hotfix over the exact 15.11 carrier. No binary rebuild or owner data.
+FROM wizard-messenger:0.2.0-unified.15.11
+ARG REVISION
+LABEL org.opencontainers.image.revision=$REVISION org.opencontainers.image.version="0.2.0-unified.15.12"
+# server.py differs only in the advertised version (healthz/MCP).
+COPY --chmod=0644 server.py /app/server.py
+COPY --chmod=0644 static/unified.js static/unified.css static/app.js /app/static/

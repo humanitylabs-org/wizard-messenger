@@ -91,6 +91,14 @@
     not_configured: ['Needs one-time setup', 'off'], unavailable: ['Bridge offline', 'warn'], unsupported: ['Not available yet', 'off'],
   };
   const isQR = flow => /(^|[._])qr($|[._])/.test(flow.id);
+  // On a phone the owner can't scan their own screen (James, 28 Oct 2026): lead with same-phone routes,
+  // keep QR codes for a second device. A wide screen or a mouse is a computer.
+  const onPhone = () => !!global.matchMedia?.('(pointer: coarse)').matches && Math.min(global.screen?.width || 0, global.innerWidth || 0) < 820;
+  // Signal's own app opens its "Link this device?" screen from its sgnl://linkdevice link; that link is the QR's content.
+  const SIGNAL_LINK = /^sgnl:\/\/linkdevice\?[A-Za-z0-9._~%=&+\/-]+$/;
+  const PHONE_CODE = {
+    whatsapp: ['Tap the WhatsApp notification “Enter code to link new device” and paste the code', 'No notification? In WhatsApp: Settings → Linked devices → Link a device → “Link with phone number instead”'],
+  };
   const SECRET = /password|pass|code|otp|token|cookie|secret|2fa/i;
 
   function qrCanvas(data) {
@@ -106,7 +114,7 @@
   }
 
   global.MessengerConnectors = function (root, api, options = {}) {
-    let generation = 0, active = null, providers = [];
+    let generation = 0, active = null, providers = [], codeCopy = null;
     const element = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
     const request = (network, action, body) => api('/api/unified/connectors/' + network + '/' + action, body === undefined ? 'GET' : 'POST', body);
     const label = network => (providers.find(p => p.network === network) || {}).label || network;
@@ -206,18 +214,47 @@
       });
       if (result.type === 'display_and_wait') {
         const params = result.display_and_wait || {};
-        if (params.type === 'qr') {
+        if (params.type === 'qr' && network === 'signal' && onPhone() && SIGNAL_LINK.test(params.data || '')) {
+          root.append(element('p', 'helper', 'Tap below. Signal opens and asks “Link this device?” — tap Link device, then come back here.'));
+          // A top-level link: the Wizard phone app hands non-web links to the app that owns them.
+          const open = element('a', 'button primary wide u-connector-open', 'Open Signal to link'); open.href = params.data; open.target = '_top'; open.rel = 'noopener';
+          root.append(open);
+          const other = element('details', 'u-connector-other'); other.append(element('summary', '', 'Linking from another phone instead'));
+          const frame = element('div', 'u-connector-qr'); frame.append(qrCanvas(params.data)); other.append(element('p', 'helper', SCAN.signal.join(' → ')), frame);
+          root.append(other);
+        } else if (params.type === 'qr') {
           const steps = SCAN[network];
           if (steps) { const ol = element('ol', 'c-howto'); for (const s of steps) ol.append(element('li', '', s)); root.append(ol); }
           else if (result.instructions) root.append(element('p', 'helper', result.instructions));
           const frame = element('div', 'c-qr-frame'); frame.append(qrCanvas(params.data)); root.append(frame);
+        } else if (params.type === 'code' && PHONE_CODE[network]) {
+          const code = String(params.data || '');
+          const copy = async () => { try { await global.navigator.clipboard.writeText(code); copied.textContent = 'Copied'; return true; } catch { return false; } };
+          const early = codeCopy; codeCopy = null;
+          const box = element('p', 'u-connector-code', code); box.setAttribute('aria-label', 'Linking code ' + code.split('').join(' '));
+          const copied = element('p', 'helper u-connector-copied', '');
+          const ol = element('ol', 'helper'); for (const s of PHONE_CODE[network]) ol.append(element('li', '', s));
+          root.append(box, copied);
+          button(root, 'Copy code', async () => { if (!await copy()) copied.textContent = 'Press and hold the code to copy it'; }, 'primary wide');
+          root.append(ol);
+          // The clipboard write started on the owner's Continue tap and is waiting for this code.
+          if (early) { early.resolve(code); early.done.then(() => { copied.textContent = 'Copied'; }, () => {}); }
         } else if (params.type === 'code' || params.type === 'emoji') {
           root.append(element('p', 'helper', result.instructions || 'Enter this code on your phone.'), element('p', 'c-code', params.data));
         } else if (params.type === 'nothing') {
           root.append(element('p', 'helper', result.instructions || 'Approve the login in the app on your phone.'));
         } else throw new Error('Unsupported login display type');
         const wait = element('p', 'c-waiting'); wait.append(element('span', 'spinner'), element('span', '', 'Waiting for your phone…'));
-        root.append(wait); back();
+        root.append(wait);
+        if (network === 'telegram') button(root, 'I scanned it', async () => {
+          const status = await request(network, 'status');
+          if (mine !== generation) return;
+          if (status.logins?.length) { active = null; await step(network, flow, {type: 'complete'}, ++generation); }
+          else wait.textContent = 'Waiting for Telegram to confirm…';
+        });
+        if (params.type === 'qr') button(root, network === 'signal' && root.querySelector('.u-connector-open') ? 'Get a new link' : 'Refresh QR code', () => { start(network, flow); });
+        else if (params.type === 'code') button(root, 'Get a new code', () => { start(network, flow); });
+        back();
         // The bridge answers once the phone acts, or with a refreshed code, so wait while this owner
         // screen is open. Closing the sheet bumps the generation and cancels the login.
         let next;
@@ -236,6 +273,8 @@
         if (result.instructions) root.append(element('p', 'helper', result.instructions));
         const form = element('form', 'c-form'), inputs = {}; form.autocomplete = 'off';
         for (const field of (result.user_input || {}).fields || []) {
+          // Country picker + national number for every network: nobody types a + sign.
+          if (options.phoneField && (/phone/.test(field.type) || field.id === 'phone_number')) { inputs[field.id] = options.phoneField(form, options.phoneFor?.(network)); continue; }
           const wrap = element('label', '', field.name || field.id);
           const input = element(field.type === 'select' ? 'select' : 'input'); input.name = field.id;
           if (field.type === 'select') for (const value of field.options || []) { const option = element('option', '', value); option.value = value; input.append(option); }
@@ -258,7 +297,16 @@
           e.preventDefault(); if (submit.disabled || mine !== generation) return; submit.disabled = true;
           submit.textContent = 'Waiting for bridge…';
           const fields = Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, v.value]));
-          for (const input of Object.values(inputs)) input.value = '';
+          // Browsers only copy during a tap, so start the copy now and fill it with the code when it arrives.
+          if (PHONE_CODE[network] && global.ClipboardItem && global.navigator.clipboard?.write) {
+            let resolve, reject; const text = new Promise((y, n) => { resolve = y; reject = n; });
+            try {
+              const done = global.navigator.clipboard.write([new global.ClipboardItem({'text/plain': text.then(t => new Blob([t], {type: 'text/plain'}))})]);
+              done.catch(() => {}); codeCopy = {resolve, done};
+              global.setTimeout(() => { reject(new Error('no code')); }, 60000);
+            } catch { codeCopy = null; }
+          }
+          for (const input of Object.values(inputs)) { if ('clear' in input) input.clear(); else input.value = ''; }
           try { await step(network, flow, await advance(network, payload(), fields, mine), mine); }
           catch (err) {
             if (mine !== generation) return;
@@ -494,8 +542,13 @@
         const bf = BROWSER_FLOW[provider.network];
         shown = [...flows.filter(f => isQR(f)), {id: 'browser:' + bf, name: provider.network === 'gmessages' ? 'Sign in with Google' : 'Sign in with your browser'}];
       }
-      [...shown].sort((a, b) => isQR(b) - isQR(a)).forEach((flow, i) => {
-        const name = FLOW_LABEL[flow.id] || flow.name;
+      // On a phone, same-phone routes lead and QR codes are for a second device (one-phone linking, 28 Oct 2026).
+      const phone = onPhone();
+      [...shown].sort((a, b) => phone ? isQR(a) - isQR(b) : isQR(b) - isQR(a)).forEach((flow, i) => {
+        let name = FLOW_LABEL[flow.id] || flow.name;
+        if (phone && provider.network === 'signal' && isQR(flow)) name = 'Link on this phone';
+        else if (phone && isQR(flow) && shown.length > 1) name = 'Show QR code for another device';
+        else if (phone && flow.id === 'phone' && provider.network !== 'telegram') name = 'Link on this phone';
         button(section, name, async () => start(provider.network, flow.id), i === 0 ? 'primary c-go' : 'c-link').setAttribute('aria-label', name + ' for ' + provider.label);
       });
       return section;

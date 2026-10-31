@@ -2,7 +2,7 @@
  "network": {
   "displayname_template": "{{or .FullName .PhoneNumber}}",
   "device_meta": {
-   "os": "mautrix-gmessages",
+   "os": "Wizard",
    "browser": "OTHER",
    "type": "TABLET"
   },

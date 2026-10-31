@@ -10,6 +10,12 @@
   /* Legacy names still used by older rules. */
   --glass: var(--surface); --glass-2: var(--raised); --violet: var(--accent); --violet-2: #7ea4f6;
   --msg-bubble-out: var(--bubble-out); --msg-bubble-in: var(--bubble-in); --msg-unread: var(--accent); --msg-ok: var(--ok); --msg-warn: var(--warn); --msg-err: var(--err); --cyan: #7ea4f6;
+  /* Anything that floats over content and carries text (sheets, menus, toasts, sticky labels) is fully opaque,
+     never see-through: James, 28 Oct 2026. --wz-surface/--wz-overlay are translucent inside the shell, so the
+     panel uses the shared opaque role, or the skin tint mixed into its opaque base. */
+  --panel-solid: var(--wz-panel, var(--wz-base, var(--bg)));
+  --panel-tint: color-mix(in srgb, var(--ink) 7%, var(--panel-solid));
+  --panel-raised-tint: var(--wz-panel-raised, color-mix(in srgb, var(--ink) 12%, var(--panel-solid)));
   color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -132,7 +138,7 @@ button.pending::before { content: ''; display: inline-block; width: 12px; height
 
 /* Sheets */
 .sheet-layer { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,.82); animation: sheet-in 140ms var(--ease); }
-.sheet { width: 100%; max-width: 480px; max-height: 92%; overflow-y: auto; padding: 8px 20px max(24px,env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; background: var(--surface); animation: sheet-up 200ms var(--ease); }
+.sheet { width: 100%; max-width: 480px; max-height: 92%; overflow-y: auto; padding: 8px 20px max(24px,env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; background: linear-gradient(var(--panel-tint), var(--panel-tint)) var(--panel-solid); animation: sheet-up 200ms var(--ease); }
 .grabber { display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--raised-2); margin: 2px auto 6px; }
 .sheet-header { display: flex; align-items: center; justify-content: space-between; margin: 0 -8px 4px 0; }
 .address-card { display: block; font: 13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; background: var(--raised); border-radius: 12px; padding: 14px; margin-top: 16px; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
@@ -171,3 +177,7 @@ button.pending::before { content: ''; display: inline-block; width: 12px; height
 .compose-bar .compose-cancel { flex: none; }
 .message.flash .bubble { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bubble-edited { margin-left: 8px; font-size: 11px; font-style: italic; opacity: .7; white-space: nowrap; }
+/* Opaque overlay material (served with the pinned view, so it also covers unified.css until the image catches up). */
+.u-overlay > .u-sheet, .sheet-layer > .sheet { background: linear-gradient(var(--panel-tint), var(--panel-tint)) var(--panel-solid); }
+#messenger .u-toast { background: linear-gradient(var(--panel-raised-tint), var(--panel-raised-tint)) var(--panel-solid); }
+#messenger .u-day { background: linear-gradient(var(--panel-tint), var(--panel-tint)) var(--panel-solid); }
