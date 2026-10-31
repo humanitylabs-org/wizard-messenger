@@ -109,7 +109,7 @@
   if (typeof document === 'undefined') return;
 
   if (!window.WizardApp) throw new Error('Messenger requires the shared WizardApp client');
-  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.15.1'});
+  window.WizardApp.ready({name: 'messenger', version: '0.2.0-unified.15.4'});
 
   const $ = id => document.getElementById(id);
   const state = {

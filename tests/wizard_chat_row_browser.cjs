@@ -93,7 +93,7 @@ async function scenario(browser, width, mirrored) {
       // Desktop split: the native thread sits beside the list; Back (no header button there) returns to the empty pane.
       assert.equal(await page.locator('#u-pane-list').isVisible(), true, 'list stays beside the native thread');
       assert.equal(await page.locator('#chat-back').isVisible(), false, 'no Back button in the split');
-      await page.evaluate(() => window.__back.back()); await page.locator('#u-pane-thread .u-pick').waitFor();
+      await page.evaluate(() => window.__back.back()); await page.locator('#u-pane-thread .u-newmsg').waitFor();
     } else await page.locator('#chat-back').click();
     await row.waitFor();
   }

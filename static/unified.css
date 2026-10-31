@@ -124,7 +124,11 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-access-log li { padding: 3px 0; } .u-access-log li.blocked { color: var(--err); }
 /* Agents (Settings) and agent drafts waiting in a chat */
 .u-agent { padding: 10px 0; border-top: 1px solid var(--line); }
-.u-agent-name { font-weight: 600; margin: 0 0 6px; }
+.u-agent-name { font-weight: 600; margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.u-agent-head { display: flex; align-items: center; gap: 10px; }
+.u-agent-head .u-agent-level { flex: none; width: auto; max-width: 60%; }
+.u-agent .helper { margin: 4px 0 0; }
+.u-agent-access .helper.warn { color: var(--danger, currentColor); }
 .u-agent-key { margin-top: 10px; display: grid; gap: 8px; }
 .u-agent-key .u-key { font-family: ui-monospace, monospace; font-size: 12px; width: 100%; }
 .u-agent-drafts { padding: 8px 12px 0; display: grid; gap: 8px; }
@@ -795,11 +799,15 @@ html[data-split] #messenger { --u-list-w: clamp(320px, 28cqi, 380px); }
 /* A very wide window keeps the conversation at a readable width in the middle of its pane. */
 #unified-inbox[data-split] .u-timeline, #unified-inbox[data-split] .u-composer { padding-left: max(12px, calc((100% - 1000px) / 2)); padding-right: max(12px, calc((100% - 1000px) / 2)); }
 /* Nothing open yet. */
-.u-pick { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 320px; padding: 24px; text-align: center; color: var(--ink-3); }
-.u-pick p { margin: 6px 0 0; font-size: 1.15em; font-weight: 600; color: var(--ink); }
-.u-pick .helper { font-size: .87em; line-height: 1.5; }
-.u-pick-mark { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--link); }
-.u-pick-mark svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* New message on the right when no chat is open (split only): centred, quiet, names only while typing. */
+.u-newmsg { margin: auto; display: flex; flex-direction: column; align-items: stretch; gap: 12px; width: min(420px, 100% - 48px); padding: 24px 0; }
+.u-newmsg h2 { margin: 0 0 4px; text-align: center; font-size: 1.15em; font-weight: 600; color: var(--ink); }
+.u-newmsg-results { display: flex; flex-direction: column; gap: 2px; }
+.u-newmsg-results:empty { display: none; }
+.u-newmsg .u-directory-row { border-radius: 12px; padding: 8px 10px; }
+.u-newmsg .u-directory-row:hover, .u-newmsg .u-directory-row:focus-visible { background: var(--raised); }
+.u-newmsg .u-empty { text-align: center; color: var(--ink-3); margin: 6px 0; }
+.u-newmsg-wizard { align-self: center; color: var(--ink-3); }
 /* A native Wizard thread (app.js #workspace) takes the right side; the list stays on the left. */
 html[data-split][data-private-view] #messenger { flex-direction: row; }
 html[data-split][data-private-view] #unified-inbox { display: flex !important; flex: 0 0 var(--u-list-w, 360px); }

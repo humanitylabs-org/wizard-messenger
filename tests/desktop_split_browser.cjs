@@ -82,6 +82,7 @@ function fixture() {
       if (p.startsWith('api/dms/') && p.endsWith('/messages')) return ok({messages: PRIVATE, next_cursor: null});
       if (p === 'api/unified/people') return ok({people, seq: 5});
       if (p === 'api/unified/groups') return ok({groups: [], seq: 5});
+      if (p === 'api/unified/directory') return ok({people: people.map(({id, display_name, identities}) => ({id, display_name, identities})), groups: []});
       if (p === 'api/unified/search') {
         const q = (url.searchParams.get('q') || '').toLowerCase();
         const hits = []; for (const pr of people) for (const m of threads[pr.id]) if (m.original.toLowerCase().includes(q)) hits.push({person_id: pr.id, message_id: m.id, display_name: pr.display_name, network: m.network, original: m.original, timestamp: m.timestamp});
@@ -120,7 +121,11 @@ function fixture() {
     assert.ok(await page.evaluate(() => document.documentElement.hasAttribute('data-split')), skin + ': split on at 1280');
     assert.ok(listBox.width >= 320 && listBox.width <= 380, skin + ': list pane ~340-380px (' + listBox.width + ')');
     assert.ok(threadBox.x >= listBox.x + listBox.width - 1 && threadBox.width > 800, skin + ': thread pane fills the right');
-    assert.equal(await page.locator('#u-pane-thread .u-pick p').textContent(), 'Pick a chat');
+    // Nothing open: the right side is New message (Miguel, 31 Oct 2026), an A-Z list of people to start a chat with.
+    assert.equal(await page.locator('#u-pane-thread .u-newmsg h2').textContent(), 'New message');
+    assert.equal(await page.locator('#u-pane-thread .u-directory-row').count(), 0, skin + ': no contact list until typing');
+    { const nb = await box('#u-pane-thread .u-newmsg'), tb = await box('#u-pane-thread');
+      assert.ok(Math.abs(nb.x + nb.width / 2 - (tb.x + tb.width / 2)) < 4 && Math.abs(nb.y + nb.height / 2 - (tb.y + tb.height / 2)) < 40, skin + ': New message centred'); }
     const frame = await box('#unified-inbox'); assert.ok(frame.width >= 1279, skin + ': no max-width on the frame in split mode (' + frame.width + ')');
     if (full) {
       // ---- open two chats in turn: the right pane switches, the list keeps its node and scroll ----
@@ -133,6 +138,23 @@ function fixture() {
       assert.ok(Math.abs(await list.evaluate(el => el.scrollTop) - scrolled) < 2, 'list scroll kept after opening a chat');
       assert.equal(await rowA.getAttribute('aria-current'), 'true'); assert.ok((await rowA.getAttribute('class')).includes('selected'));
       assert.equal(await page.locator('#u-pane-thread .u-back').isVisible(), false, 'no Back in the split thread header');
+      // ---- ✕ closes the chat back to New message; the list stays put ----
+      await page.locator('#u-pane-thread').getByRole('button', {name: 'Close chat'}).click(); await page.locator('#u-pane-thread .u-newmsg').waitFor();
+      assert.equal(await page.locator('#u-pane-list .u-person[aria-current]').count(), 0, 'no row selected after ✕');
+      assert.equal(await list.evaluate(el => el.__kept === true), true, 'list not rebuilt by ✕');
+      // ---- New chat button opens New message with the search focused; picking someone opens that chat ----
+      await rowA.click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Kira Novak'}).waitFor();
+      await page.locator('#u-pane-list .u-fab').click(); await page.locator('#u-pane-thread .u-newmsg').waitFor();
+      assert.equal(await page.locator('.u-sheet').count(), 0, 'no New chat sheet in the split');
+      await page.waitForTimeout(100);
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Search people and groups', 'search focused');
+      await page.screenshot({path: path.join(out, 'split-new-message-1280.png')});
+      await page.keyboard.type('pablo'); await page.locator('#u-pane-thread .u-directory-row').first().waitFor();
+      assert.equal(await page.locator('#u-pane-thread .u-directory-row').count(), 1, 'typing shows only matching people');
+      await page.screenshot({path: path.join(out, 'split-new-message-typed-1280.png')});
+      await page.locator('#u-pane-thread .u-directory-row', {hasText: 'Pablo Ruiz'}).click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Pablo Ruiz'}).waitFor();
+      assert.equal(await page.locator('#u-pane-list .u-person', {hasText: 'Pablo Ruiz'}).getAttribute('aria-current'), 'true', 'picked chat highlighted in the list');
+      await rowA.click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Kira Novak'}).waitFor();
       assert.ok(await page.locator('#u-pane-thread .u-message', {hasText: 'Hi from Kira'}).count() > 0, 'timeline shows the chat');
       const field = page.locator('#u-pane-thread textarea[aria-label="Message"]');
       await field.fill('Draft for Kira'); await page.waitForTimeout(1500);
@@ -166,7 +188,7 @@ function fixture() {
       assert.equal(await page.locator('#u-pane-list input.u-search').count(), 1, 'search results stay on the left');
       // ---- Escape: first clears the chat (empty state), then closes search ----
       await page.locator('#u-pane-thread .u-timeline').click({position: {x: 5, y: 5}});
-      await page.keyboard.press('Escape'); await page.locator('#u-pane-thread .u-pick').waitFor();
+      await page.keyboard.press('Escape'); await page.locator('#u-pane-thread .u-newmsg').waitFor();
       assert.equal(await page.locator('#u-pane-list input.u-search').count(), 1, 'Escape cleared the chat, search still open');
       await page.keyboard.press('Escape'); await page.locator('#u-pane-list .u-chips').waitFor();
       assert.equal(await page.locator('#u-pane-list input.u-search').count(), 0, 'second Escape closes search');
@@ -208,7 +230,7 @@ function fixture() {
     await page.setViewportSize({width: 1600, height: 960}); await page.waitForTimeout(400);
     const lw = (await box('#u-pane-list')).width; assert.ok(lw >= 340 && lw <= 380, skin + ': list width at 1600 (' + lw + ')');
     await page.screenshot({path: path.join(out, 'split-' + skin + '-1600.png')});
-    await page.keyboard.press('Escape'); await page.locator('#u-pane-thread .u-pick').waitFor();
+    await page.keyboard.press('Escape'); await page.locator('#u-pane-thread .u-newmsg').waitFor();
     assert.equal(await page.locator('#u-pane-list .u-person.selected, #u-pane-list .u-person[aria-current]').count(), 0, skin + ': no row selected on the empty state');
     await page.mouse.move(1500, 900); await page.waitForTimeout(150);
     await page.screenshot({path: path.join(out, 'split-' + skin + '-1600-empty.png')});
@@ -217,6 +239,6 @@ function fixture() {
   }
   await browser.close();
   console.log('PASS desktop split: both panes at 1280/1600, list kept (node + scroll), selected row, autosaved drafts across switches,'
-    + ' live unread + timeline, search on the left, Escape to empty state, menus/sheets placed, native Wizard thread on the right,'
+    + ' live unread + timeline, search on the left, Escape/✕/New chat to New message, menus/sheets placed, native Wizard thread on the right,'
     + ' resize 1280 -> 600 -> 1280 keeps the chat; skins ' + results.join(', ') + '; shots in ' + out);
 })().catch(e => { console.error(e); process.exitCode = 1; });

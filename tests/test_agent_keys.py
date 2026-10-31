@@ -199,11 +199,30 @@ class AgentKeyHTTP(unittest.TestCase):
         anonymous = {t['name'] for t in self.mcp(None, method='tools/list')['tools']}
         self.assertEqual(anonymous, {'messenger_status', 'messenger_public_identity'})
         app_key = {'Authorization': 'Bearer ' + fixtures.TOKEN}
-        self.request('POST', '/api/view/agents/app-key', {'level': 'draft_and_send'}, self.owner)
-        for headers in ({}, app_key):
-            data, error = self.mcp('messenger_list_chats', {}, headers)
-            self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_key_required')
-        self.assertEqual({t['name'] for t in self.mcp(None, headers=app_key, method='tools/list')['tools']}, anonymous)
+        # The Wizard app key (the owner's own agent through the Wizard gateway) follows its owner-chosen level:
+        # No access lists nothing and refuses; Draft-only lists the tools and can draft, never send.
+        # A bare /mcp call (no header) is never trusted: the app port is also reachable from the tailnet.
+        self.request('POST', '/api/view/agents/app-key', {'level': 'draft_only'}, self.owner)
+        self.assertEqual({t['name'] for t in self.mcp(None, method='tools/list')['tools']}, anonymous)
+        data, error = self.mcp('messenger_list_chats', {}, {})
+        self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_key_required')
+        for gw in (app_key,):
+            self.request('POST', '/api/view/agents/app-key', {'level': 'no_access'}, self.owner)
+            self.assertEqual({t['name'] for t in self.mcp(None, headers=gw, method='tools/list')['tools']}, anonymous)
+            data, error = self.mcp('messenger_list_chats', {}, gw)
+            self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_access_off')
+            self.request('POST', '/api/view/agents/app-key', {'level': 'draft_only'}, self.owner)
+            app_names = {t['name'] for t in self.mcp(None, headers=gw, method='tools/list')['tools']}
+            self.assertTrue({'messenger_list_chats', 'messenger_create_draft'} <= app_names); self.assertFalse(any('send' in n for n in app_names))
+            chats, error = self.mcp('messenger_list_chats', {}, gw); self.assertFalse(error, chats)
+            made, error = self.mcp('messenger_create_draft', {'chat_id': self.alice['person_id'], 'text': 'From the Wizard agent'}, gw)
+            self.assertFalse(error, made)
+            listed, _ = self.mcp('messenger_list_drafts', {}, gw)
+            self.assertIn('From the Wizard agent', json.dumps(listed))
+            self.mcp('messenger_delete_draft', {'draft_id': made['draft']['id'], 'revision': made['draft']['revision']}, gw)
+            # Draft-only still never reaches the send route, and a bare non-MCP call stays refused.
+            self.assertEqual(self.request('GET', '/api/unified/people')[0], 401)
+        self.request('POST', '/api/view/agents/app-key', {'level': 'no_access'}, self.owner)
         names = {t['name'] for t in self.mcp(None, headers=self.keys['read_only'], method='tools/list')['tools']}
         self.assertTrue({'messenger_list_chats', 'messenger_read_thread', 'messenger_create_draft'} <= names)
         self.assertFalse(any('send' in n for n in names))

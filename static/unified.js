@@ -254,14 +254,46 @@
     return {root, list, thread};
   }
   const hasListPane = () => !!$('u-pane-list')?.querySelector('.u-list');
-  function fillEmpty(thread) {
+  // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
+  // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
+  function fillEmpty(thread, focus = false) {
     thread.replaceChildren(); thread.dataset.view = 'empty';
-    const box = node('div', 'u-pick'); const mark = node('span', 'u-pick-mark'); mark.append(icon('inbox'));
-    box.append(mark, node('p', '', 'Pick a chat'), node('span', 'helper', 'Choose a conversation on the left to read and reply here.'));
-    thread.append(box);
+    // Calm and centred (Miguel): a title, one "To:" field and New Wizard chat. Names appear only once he types.
+    const box = node('div', 'u-newmsg'), token = {}; thread.__pick = token;
+    const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
+    const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
+    box.append(node('h2', '', 'New message'), search, list, wizard); thread.append(box);
+    if (focus) requestAnimationFrame(() => search.focus());
+    let all = null;
+    const draw = () => {
+      const q = search.value.trim().toLowerCase(); list.replaceChildren();
+      if (!q) return;
+      if (!all) { list.append(node('p', 'u-empty', 'Loading…')); return; }
+      for (const p of all.filter(p => p.display_name.toLowerCase().includes(q)).slice(0, 8)) {
+        const row = button('', () => openPerson(p.id), 'u-directory-row');
+        const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
+        row.append(netAvatar(p, 'small'), text); list.append(row);
+      }
+      if (!list.children.length) list.append(node('p', 'u-empty', 'No one matches'));
+    };
+    search.oninput = draw;
+    search.onkeydown = e => { if (e.key === 'Enter') list.querySelector('.u-directory-row')?.click(); };
+    const fresh = store.directory && Date.now() - store.directory.at < 60e3;
+    (fresh ? Promise.resolve(store.directory.rows) : call('directory').then(d => {
+      const rows = [...(d.people || []), ...(d.groups || []).map(g => ({...g, group: true}))].sort((a, b) => a.display_name.localeCompare(b.display_name));
+      store.directory = {at: Date.now(), rows}; return rows;
+    })).then(rows => { if (thread.__pick === token) { all = rows; draw(); } })
+      .catch(e => { if (thread.__pick === token) list.replaceChildren(node('p', 'u-empty', 'Could not load people. ' + (e?.message || ''))); });
   }
   // The right pane with nothing open. The old composer's pending draft save still runs (see composer()).
-  function emptyPane() { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread); root.dataset.view = s.search != null ? 'search' : 'list'; }
+  function emptyPane(focus = false) { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread, focus); root.dataset.view = s.search != null ? 'search' : 'list'; }
+  // New chat / ✕ in the split: leave the open chat (same path as Back) and show New message on the right.
+  function newMessagePane() {
+    if (s.native) returnNative();
+    if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); }
+    if (!hasListPane()) renderList();
+    emptyPane(true); markSelected();
+  }
   // Highlight the open chat's row in place: no list rebuild, so the scroll position stays where it was.
   function markSelected() {
     const list = $('u-pane-list'); if (!list) return;
@@ -316,6 +348,7 @@
     if (network) { const b = netBadge(network, 'u-net'); b.setAttribute('aria-hidden', 'true'); face.append(b); }
     who.append(face, text); head.append(who);
     if (onInfo) { const more = iconButton('more', 'Chat options', () => (view.menu || onInfo)(more)); head.append(more); }
+    if (split.on) head.append(iconButton('close', 'Close chat', newMessagePane, 'u-close'));
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   function when(ms) {
@@ -517,7 +550,7 @@
     if (split.on && !s.person && !s.native && $('u-pane-thread')?.dataset.view !== 'empty') emptyPane();
     if (s.search == null) root.append(filterChips()); // account status lives in Settings, not on top of the Inbox
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
-    if (s.search == null) root.append(iconButton('compose', 'New chat', () => newChat(), 'u-fab'));
+    if (s.search == null) root.append(iconButton('compose', 'New chat', () => split.on ? newMessagePane() : newChat(), 'u-fab'));
     refreshAccounts();
     if (store.lists.people && store.lists.groups) { drawList(); if (!store.seq && s.ready) freshen(null, epoch); return; }
     if (store.lists.people) drawList(); else list.append(skeleton(8, 'list'));
@@ -899,7 +932,7 @@
     return out;
   }
   const player = (() => {
-    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0;
+    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0, el = null;
     // Speed, like Telegram's 1x / 1.5x / 2x: one choice for every note, remembered on this device.
     const RATES = [1, 1.5, 2]; let rate = RATES.includes(+localStorage.getItem('messenger.voice.rate')) ? +localStorage.getItem('messenger.voice.rate') : 1;
     const fast = new WeakMap(); // AudioBuffer -> Map(rate -> stretched AudioBuffer)
@@ -920,17 +953,20 @@
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
     // so pause/seek/next note doesn't pump the volume.
     let ducked = false, undock = 0;
+    // iPhone: Web Audio defaults to the "ambient" session, which the silent switch mutes, so a note looked like it
+    // played but made no sound. While a note plays, ask for the "playback" session (Safari 16.4+), then hand it back.
+    const session = type => { try { if (navigator.audioSession && navigator.audioSession.type !== type) navigator.audioSession.type = type; } catch { /* unsupported */ } };
     const music = on => {
       clearTimeout(undock);
-      if (on) { if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
-      undock = setTimeout(() => { if (ducked && !src) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
+      if (on) { session('playback'); if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
+      undock = setTimeout(() => { if (!src && !el) session('auto'); if (ducked && !src && !el) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
     };
     const paint = () => {
       if (!box || !buf) return; const at = pos(), f = Math.min(1, at / buf.duration);
       for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
       const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
     };
-    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } clearInterval(timer); music(false); };
+    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } if (el) { el.onended = el.ontimeupdate = null; el.pause(); el = null; } clearInterval(timer); music(false); };
     const fetchNote = url => {
       if (!fetched.has(url)) {
         fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); noteTypes.set(url, r.headers.get('Content-Type')); return r.arrayBuffer(); }));
@@ -956,6 +992,15 @@
       src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); music(false); };
       timer = setInterval(paint, 100); paint();
     };
+    async function element(url, b) {
+      const a = new Audio(localAudio.has(url) ? URL.createObjectURL(localAudio.get(url)) : url);
+      a.preservesPitch = true; a.playbackRate = rate; el = a;
+      const dur = () => (isFinite(a.duration) ? a.duration : 0);
+      const draw = () => { if (box !== b) return; const f = dur() ? a.currentTime / dur() : 0; for (const i of b.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f); const t = b.querySelector('.u-dur'); if (t && dur()) t.textContent = fmtDur((dur() - a.currentTime) * 1000); };
+      a.ontimeupdate = draw; a.onended = () => { el = null; offset = 0; b.classList.remove('playing'); music(false); };
+      if (offset) a.currentTime = offset;
+      await a.play(); b.classList.add('playing'); music(true); draw();
+    }
     return {
       rateLabel,
       async blob(url, type) { if (localAudio.has(url)) return localAudio.get(url); const bytes = await fetchNote(url); return new Blob([bytes], {type: type || noteTypes.get(url) || 'application/octet-stream'}); },
@@ -964,23 +1009,31 @@
         const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
         try { localStorage.setItem('messenger.voice.rate', String(rate)); } catch { /* private mode */ }
         for (const el of document.querySelectorAll('.u-speed')) el.textContent = rateLabel();
+        if (el) el.playbackRate = rate;
         if (src) { offset = at; start(); }
       },
       preload(url) { if (!localAudio.has(url)) fetchNote(url).catch(() => {}); },
-      playing: b => b === box && !!src,
-      busy: () => !!src || !!view.recording,
+      playing: b => b === box && !!(src || el),
+      busy: () => !!src || !!el || !!view.recording,
       // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
       adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
       async toggle(b, url, k) {
         ctx ||= new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        session('playback'); // inside the tap, before anything awaits (iOS)
+        if (ctx.state !== 'running') ctx.resume().catch(() => {}); // 'suspended', or iOS 'interrupted' after a call or the lock screen
+        if (b === box && el) { offset = el.currentTime; halt(); b.classList.remove('playing'); paint(); return; }
         if (b === box && src) { offset = pos(); halt(); b.classList.remove('playing'); paint(); return; }
         if (b !== box) { halt(); if (box) { box.classList.remove('playing'); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); } box = b; key = k; buf = null; offset = 0; }
         b.classList.add('playing');
         try { const got = await load(url); if (key !== k) return; buf = got; start(); }
-        catch { if (key === k) { box.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+        catch {
+          if (key !== k) return;
+          // This browser cannot decode the note for Web Audio: play it with a plain audio element instead.
+          try { await element(url, b); }
+          catch { if (key === k) { box?.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+        }
       },
-      seek(b, f) { if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
+      seek(b, f) { if (b === box && el && isFinite(el.duration)) { el.currentTime = el.duration * f; return; } if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
       stop() { halt(); box?.classList.remove('playing'); box = key = buf = null; offset = 0; },
     };
   })();
@@ -2236,63 +2289,64 @@
   // Agents: each agent has its own Messenger key and its own level. Draft-only is the recommended level:
   // the agent reads and writes drafts, and only this signed-in screen can send them.
   const LEVEL_TEXT = {no_access: 'Status only. Cannot read your chats.', read_only: 'Reads chats. Cannot draft or change anything.',
-    draft_only: 'Reads chats and writes drafts. Only you can send them.', draft_and_send: 'Reads and sends, reacts, edits and deletes messages without your review.'};
+    draft_only: 'Reads chats and writes drafts, with photos and files. Only you send them.', draft_and_send: 'Reads and sends, reacts, edits and deletes messages without your review.'};
   async function agentAccess(sheet) {
+    // Miguel: the agents this Wizard already has, each with one level. Picking a level is the whole setup:
+    // the Wizard gateway carries each agent's identity, so there is no key to create or copy. Nothing here sends.
     const box = node('section', 'u-agent-access'); sheet.append(box);
-    const levelPicker = (agent, st, save) => {
+    const when = t => new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+    const levelPicker = (agent, name, levels, save) => {
       const wrap = node('div', 'u-agent');
-      const head = node('p', 'u-agent-name', agent.name);
-      const choice = node('select', 'u-channel'); choice.setAttribute('aria-label', 'Level for ' + agent.name);
-      for (const l of st.levels) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
+      const head = node('div', 'u-agent-head');
+      head.append(node('p', 'u-agent-name', name));
+      const choice = node('select', 'u-channel u-agent-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
+      const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
+      for (const l of shown) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
       choice.value = agent.level;
+      head.append(choice);
       const what = node('p', 'helper', LEVEL_TEXT[agent.level] || '');
       choice.onchange = () => action(async () => {
         const level = choice.value;
-        // Settings is itself a sheet, so this one question uses the same confirm the old control used.
-        if (level === 'draft_and_send' && !confirm('Let ' + agent.name + ' send, edit and delete messages without your review? Draft-only is safer: you send.')) { choice.value = agent.level; return; }
-        await save(level); toast(agent.name + ': ' + st.levels.find(l => l.id === level).label);
+        await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
       });
-      wrap.append(head, choice, what);
-      if (agent.last_used) wrap.append(node('p', 'helper', 'Last used ' + new Date(agent.last_used).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})));
+      wrap.append(head, what);
       return wrap;
     };
     const paint = st => {
-      box.replaceChildren(node('h3', '', 'Agents'), node('p', 'helper', 'Each agent gets its own key and level. Draft-only is recommended: the agent can read your chats and write drafts, and only you can send them.'));
+      box.replaceChildren(node('h3', '', 'Agents'), node('p', 'helper', 'Your Wizard\'s agents. Pick what each one may do in Messenger. Only you send messages.'));
       const reload = async () => paint(await api('api/view/agents'));
-      for (const agent of st.agents) {
-        const row = levelPicker(agent, st, async level => { await api('api/view/agents/' + agent.id, {method: 'POST', body: {level}}); await reload(); });
-        row.append(button('Remove ' + agent.name, () => action(async () => {
-          if (!confirm('Remove ' + agent.name + '? Its key stops working at once. Drafts it wrote stay until you send or discard them.')) return;
-          await api('api/view/agents/' + agent.id, {method: 'DELETE', body: {}}); await reload();
-        }), 'c-link danger'));
+      if (st.gateway_connected === false) box.append(node('p', 'helper warn', 'Your agents can\'t reach Messenger on this Wizard yet. Ask your Wizard to finish connecting it.'));
+      for (const agent of st.wizard_agents || []) {
+        const name = agent.label || 'Your Wizard agent';
+        const row = levelPicker(agent, name, st.wizard_levels || [], async level => { await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}}); await reload(); });
+        if (agent.last_used) row.append(node('p', 'helper', 'Last asked ' + when(agent.last_used)));
         box.append(row);
       }
-      if (!st.agents.length) box.append(node('p', 'helper', 'No agents yet.'));
-      const created = node('div', 'u-agent-key');
-      const name = node('input'); name.placeholder = 'Agent name, e.g. Oscar'; name.setAttribute('aria-label', 'New agent name'); name.maxLength = 60; name.autocomplete = 'off';
-      box.append(name, button('Add agent', () => action(async () => {
-        const made = await api('api/view/agents', {method: 'POST', body: {name: name.value}});
-        await reload();
-        const key = node('input', 'u-key'); key.readOnly = true; key.value = made.key; key.setAttribute('aria-label', 'New agent key');
-        created.replaceChildren(node('p', '', 'Key for ' + made.agent.name + ' (shown only once):'), key,
-          button('Copy key', async () => { try { await navigator.clipboard.writeText(made.key); toast('Key copied'); } catch { key.select?.(); } }, 'secondary'),
-          node('p', 'helper', 'Put it in that agent\'s Messenger connection settings, never in a chat. It starts with No access: pick its level above.'));
-        box.append(created);
-      }), 'secondary wide'));
+      box.append(button('Saved drafts', agentDrafts, 'secondary wide'));
+      // Keys made before this (and the shared app key) keep working; they only show while one exists.
       const app = st.app_key;
-      const legacy = node('details', 'u-log'); legacy.append(node('summary', '', 'Wizard app key: ' + app.label));
-      legacy.append(node('p', 'helper', 'The shared key Wizard uses for this app. Prefer giving each agent its own key.'),
-        levelPicker(app, st, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
-      box.append(legacy);
-      box.append(node('p', 'helper', 'App permissions only: an agent with host-admin access to this server can bypass them. Same-server isolation is supported.'), button('Saved drafts', agentDrafts, 'secondary wide'));
+      if ((st.agents || []).length || (app && app.level !== 'no_access')) {
+        const older = node('details', 'u-log'); older.append(node('summary', '', 'Older agent keys'));
+        older.append(node('p', 'helper', 'Keys for agents outside this Wizard. You don\'t need them for your Wizard\'s agents.'));
+        for (const agent of st.agents || []) {
+          const row = levelPicker(agent, agent.name, st.levels, async level => { await api('api/view/agents/' + agent.id, {method: 'POST', body: {level}}); await reload(); });
+          row.append(button('Remove ' + agent.name, () => action(async () => {
+            await api('api/view/agents/' + agent.id, {method: 'DELETE', body: {}}); await reload(); toast(agent.name + ' removed');
+          }), 'c-link danger'));
+          older.append(row);
+        }
+        if (app && app.level !== 'no_access') older.append(levelPicker(app, 'Wizard app key', st.levels, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
+        box.append(older);
+      }
       if (st.log.length) {
         const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
         const list = node('ul', 'u-access-log');
-        for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', new Date(e.t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) + ' · ' + (e.agent ? e.agent + ' · ' : '') + e.outcome + ' · ' + e.method + ' ' + e.route));
+        for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', when(e.t) + ' · ' + (e.agent ? e.agent + ' · ' : '') + e.outcome + ' · ' + e.method + ' ' + e.route));
         details.append(list); box.append(details);
       }
+      box.append(node('p', 'helper', 'App permissions only: an agent with admin access to this server can bypass them.'));
     };
-    try { const st = await api('api/view/agents'); if (s.overlay === 'Settings') paint(st); } catch (e) { error(e); }
+    try { const st = await api('api/view/agents'); if (box.isConnected) paint(st); } catch (e) { error(e); }
   }
   // Drafts an agent saved for this chat appear above the composer. The owner edits, sends or discards them; agents never send.
   function agentDraftStrip(id, active = () => s.person === id) {
