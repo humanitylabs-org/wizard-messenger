@@ -23,13 +23,19 @@ if len(a.revision) != 40 or any(c not in '0123456789abcdef' for c in a.revision)
     raise SystemExit('Use the exact pushed source revision')
 os.environ['PATH'] = '/opt/homebrew/bin:' + os.environ.get('PATH', '')
 docker = ['docker', '--context', a.context]
-provenance = json.loads((root / 'engine/provenance.json').read_text())[a.arch]
-expected = {name: provenance[name + '_sha256'] for name in ('wn', 'wnd')}
+# Check the same patch/provenance binding as Docker before touching a carrier.
+subprocess.run(['sh', str(root / 'engine/admit-prebuilt.sh'), 'check',
+                str(root / 'engine/prebuilt-manifest.txt'), str(root / 'engine/provenance.json'),
+                str(root / 'engine/patches')], check=True)
+provenance = json.loads((root / 'engine/provenance.json').read_text())['patched_binaries'].get(a.arch, {})
+expected = {name: provenance.get(name + '_sha256', '') for name in ('wn', 'wnd')}
+if not all(expected.values()):
+    raise SystemExit('No patched hashes for ' + a.arch + '; use a source build with the default MDK_BUILD_IMAGE instead')
 def verify(image):
     output = subprocess.check_output(docker + ['run', '--rm', '--platform', 'linux/' + a.arch, '--network', 'none', '--entrypoint', 'sha256sum', image, '/usr/local/bin/wn', '/usr/local/bin/wnd'], text=True)
     hashes = {Path(line.split()[1]).name: line.split()[0] for line in output.splitlines()}
     if hashes != expected:
-        raise SystemExit('Audited MDK binary checksum mismatch')
+        raise SystemExit('Patched MDK binary checksum mismatch; supply a matching patched carrier or use a source build with the default MDK_BUILD_IMAGE')
     return hashes
 verify(a.carrier)
 subprocess.run(docker + ['build', '--platform', 'linux/' + a.arch, '--build-arg', 'MDK_BUILD_IMAGE=' + a.carrier, '--build-arg', 'MESSENGER_RUNTIME_BASE=' + a.carrier, '--label', 'org.opencontainers.image.revision=' + a.revision, '-t', a.tag, '.'], cwd=root, check=True)

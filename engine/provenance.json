@@ -1,12 +1,32 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "upstream": {"repository": "https://github.com/marmot-protocol/mdk", "version": "0.12.0", "commit": "122bd90ffac60bb6311346e228d0f609a18521ee", "cargo_lock_sha256": "c245642970ffd60b0a8c5e9264a8b8d2695ad8f2c08c290a42a3d1ef2b47604b", "git_archive_sha256": "7d07d8ffebdc68379c6b8bed261aca4cae13767495f0356403e58478932d0dc0", "license": "MIT", "license_sha256": "ec82e39802b46dd9e0c80c198c46617680d49a79c38ffc7feb42f0b3b0fd1be2"},
+  "patches": [{"file": "engine/patches/0001-relay-plane-drop.patch", "sha256": "7a552464730c87883036ab971d5741e6971306ddba6a63e61506dbb8d83a6ab8", "upstream": "https://github.com/marmot-protocol/mdk/pull/2792", "fixes": "wnd kept ~3 MB per Execute request (the relay plane router and forwarders held every dropped plane), growing to the container limit within minutes", "amd64_wn_sha256": "8d476965db54a17edd8f7fd32640bf64c25203976caded9a18c591d5ca820ae2", "amd64_wnd_sha256": "932b1e19c7c32ee4ac8bc5043afea91a3c09d6a7f373195a62e6c100a0202657", "amd64_build_method": "rust:1.97.1-bookworm native amd64, cargo build --locked -p wn-cli --bins, dev profile debug=0"}],
   "build_profile": "dev, debug=0, incremental=false, jobs=1",
-  "arm64": {"wn_sha256": "d035d1df7fc55dd77f797bf72b745aa984e23d8e980cb056d418146db39606a7", "wnd_sha256": "452fc73d01c60b78de0f374a3445497a49f3e14e035b8270c375b4ba55f2fbea", "proof_image_id": "sha256:bf4c39e4cd80052db4f201d82cdcc8028808b05dc75b2eb83a640c7151e310e8"},
-  "amd64": {"wn_sha256": "929059319a0256a1c89825859ed79c03bf75c48c4036cf4ffb4000d837c83bfb", "wnd_sha256": "d6fa0360c0f3fb8177bf5f35b6eca06a2783a6d88dca82120798381bf0885066", "build_method": "Thales aarch64 Rust 1.97.1 cross-compilation with x86_64-linux-gnu-gcc and locked upstream dependencies", "binary_image_id": "sha256:9a3e2b5c1e6d3d7eb6e905dae59ca9ab337ae2ed62f5741cea2a29d49d3cc6ec"},
-  "proof": {"receipt": ".hermes/proof-receipt.json", "two_disposable_accounts": true, "invitation_accepted": true, "encrypted_text_both_directions": true, "container_restart_history_and_new_text": true, "wire_kind": 445, "plaintext_markers_absent_from_relay": true, "secret_store": "upstream keychain / private GNOME Secret Service", "vault_password_transport": "stdin, held only in QA orchestrator RAM", "root_identity_used": false, "development_secret_files_used": false},
+  "patched_binaries": {
+    "amd64": {"wn_sha256": "8d476965db54a17edd8f7fd32640bf64c25203976caded9a18c591d5ca820ae2", "wnd_sha256": "932b1e19c7c32ee4ac8bc5043afea91a3c09d6a7f373195a62e6c100a0202657", "build_method": "rust:1.97.1-bookworm native amd64, cargo build --locked -p wn-cli --bins, dev profile debug=0", "evidence_scope": "Identities supplied by the proposal patch only; binaries and packaged runtime not independently exercised by this correction"}
+  },
+  "prebuilt_admission": {
+    "helper": "engine/admit-prebuilt.sh",
+    "manifest": "engine/prebuilt-manifest.txt",
+    "policy": "Only patched_binaries identities for the target architecture, bound to this provenance file and the complete current patch set, may skip compilation. Historical unpatched identities are not admissible.",
+    "arm64": "No patched binary hashes supplied. Refuse prebuilt arm64; use the default Rust source-build path instead."
+  },
+  "patched_runtime_coverage": {
+    "native_packaged_amd64": false,
+    "native_packaged_arm64": false,
+    "120_request_two_account_proof": false,
+    "merge_blocking": true,
+    "scope": "Synthetic admission tests are not runtime proof. Native packaged engines on both architectures and a 120-request/two-disposable-account memory, delivery and restart campaign remain unrun. Historical receipts below do not cover the source patch."
+  },
+  "historical_unpatched": {
+    "scope": "Preserved pre-patch identities and proof claims only; not evidence for patched binaries or patched runtime coverage.",
+    "arm64": {"wn_sha256": "d035d1df7fc55dd77f797bf72b745aa984e23d8e980cb056d418146db39606a7", "wnd_sha256": "452fc73d01c60b78de0f374a3445497a49f3e14e035b8270c375b4ba55f2fbea", "proof_image_id": "sha256:bf4c39e4cd80052db4f201d82cdcc8028808b05dc75b2eb83a640c7151e310e8"},
+    "amd64": {"wn_sha256": "929059319a0256a1c89825859ed79c03bf75c48c4036cf4ffb4000d837c83bfb", "wnd_sha256": "d6fa0360c0f3fb8177bf5f35b6eca06a2783a6d88dca82120798381bf0885066", "build_method": "Thales aarch64 Rust 1.97.1 cross-compilation with x86_64-linux-gnu-gcc and locked upstream dependencies", "binary_image_id": "sha256:9a3e2b5c1e6d3d7eb6e905dae59ca9ab337ae2ed62f5741cea2a29d49d3cc6ec"},
+    "proof": {"receipt": ".hermes/proof-receipt.json", "two_disposable_accounts": true, "invitation_accepted": true, "encrypted_text_both_directions": true, "container_restart_history_and_new_text": true, "wire_kind": 445, "plaintext_markers_absent_from_relay": true, "secret_store": "upstream keychain / private GNOME Secret Service", "vault_password_transport": "stdin, held only in QA orchestrator RAM", "root_identity_used": false, "development_secret_files_used": false},
+    "http_proof": {"receipt": ".hermes/http-proof-receipt.json", "thales_arm64_two_container_campaign": true, "contacts_invites_dm_text": true, "both_containers_restart": true, "wrong_password_rejected_then_correct_password_succeeds": true, "explicit_lock_unlock": true, "bearer_origin_boundary": true, "mcp_only_status_public_identity": true, "read_only_root_cap_drop_all_no_new_privileges": true}
+  },
   "production_unlock": "Explicit dedicated vault passphrase is required after restart. The app does not persist this passphrase or silently downgrade to file-secret storage. Do not use a Wizard root key.",
   "runtime_requirements": ["non-root uid/gid 1000", "only /data persistent mount", "private writable runtime /run/messenger", "MESSENGER_API_TOKEN at least 32 characters", "MESSENGER_ALLOWED_ORIGINS exact browser origin list", "HTTPS or authenticated local reverse-proxy transport for setup secrets"],
-  "http_proof": {"receipt": ".hermes/http-proof-receipt.json", "thales_arm64_two_container_campaign": true, "contacts_invites_dm_text": true, "both_containers_restart": true, "wrong_password_rejected_then_correct_password_succeeds": true, "explicit_lock_unlock": true, "bearer_origin_boundary": true, "mcp_only_status_public_identity": true, "read_only_root_cap_drop_all_no_new_privileges": true},
-  "not_proved_yet": ["nsec import", "OS app-manager installation", "browser views"]
+  "not_proved_yet": ["native patched amd64 packaged engine", "native patched arm64 packaged engine and hashes", "patched 120-request/two-account runtime proof", "nsec import", "OS app-manager installation", "browser views"]
 }

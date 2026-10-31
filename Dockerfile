@@ -4,12 +4,17 @@ FROM ${MDK_BUILD_IMAGE} AS mdk
 USER root
 WORKDIR /build/mdk
 ENV CARGO_BUILD_JOBS=1 CARGO_HOME=/build/cache CARGO_TARGET_DIR=/build/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
-# A received, hash-audited prebuilt binary image may be supplied for packaging.
-# The default path always builds the exact upstream source and Cargo.lock.
+# Local fixes on top of the pinned upstream source; each is also proposed upstream (see engine/provenance.json).
+COPY engine/patches/ /patches/
+COPY engine/admit-prebuilt.sh engine/prebuilt-manifest.txt engine/provenance.json /engine-admission/
+ARG TARGETARCH
+# Only the patched pair for TARGETARCH may bypass compilation; partial/unknown carriers fail closed.
+# For a source build use the default Rust image, with neither wn nor wnd present.
 RUN --mount=type=cache,target=/build/cache --mount=type=cache,target=/build/target \
+    sh /engine-admission/admit-prebuilt.sh check /engine-admission/prebuilt-manifest.txt /engine-admission/provenance.json /patches && \
     mkdir -p /out && \
-    if [ -x /usr/local/bin/wn ] && [ -x /usr/local/bin/wnd ]; then \
-      cp /usr/local/bin/wn /usr/local/bin/wnd /out/; \
+    if [ -e /usr/local/bin/wn ] || [ -L /usr/local/bin/wn ] || [ -e /usr/local/bin/wnd ] || [ -L /usr/local/bin/wnd ]; then \
+      sh /engine-admission/admit-prebuilt.sh admit /engine-admission/prebuilt-manifest.txt /engine-admission/provenance.json /patches "$TARGETARCH" /usr/local/bin /out; \
     else \
       apt-get update && apt-get install -y --no-install-recommends git pkg-config libssl-dev ca-certificates && \
       git init . && git remote add origin https://github.com/marmot-protocol/mdk.git && \
@@ -17,6 +22,7 @@ RUN --mount=type=cache,target=/build/cache --mount=type=cache,target=/build/targ
       git checkout --detach FETCH_HEAD && \
       test "$(git rev-parse HEAD)" = 122bd90ffac60bb6311346e228d0f609a18521ee && \
       printf '%s\n' 'c245642970ffd60b0a8c5e9264a8b8d2695ad8f2c08c290a42a3d1ef2b47604b  Cargo.lock' | sha256sum -c - && \
+      git -c user.name=build -c user.email=build@localhost am /patches/*.patch && \
       cargo build --locked -p wn-cli --bins -j1 && \
       cp /build/target/debug/wn /build/target/debug/wnd /out/; \
     fi
