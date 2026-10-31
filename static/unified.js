@@ -210,10 +210,11 @@
     if (s.overlay === 'Edit QR codes') { myCodes(); return true; }
     if (s.overlay === 'Suggested merges') { accounts(); return true; } // nested: Back returns to the codes, not the list
     if (s.overlay === 'Advanced' || s.overlay === 'Agent drafts') { accounts(); return true; } // pages opened from Settings return to it
+    if (!s.overlay && !s.person && detailOpen()) { closePane(); return true; } // New message beside the list
     const next = backState(s);
     if (!next.handled) return false;
     if (s.overlay) closeOverlay();
-    else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); if (split.on && hasListPane()) { emptyPane(); markSelected(); } else renderList(); }
+    else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); if (split.on && hasListPane()) { closePane(); markSelected(); } else { renderList(); keepListTop(); } }
     else if (s.search != null) { s.search = null; s.epoch++; renderList(); }
     else { setLowView(false); s.epoch++; renderList(); }
     return true;
@@ -250,7 +251,7 @@
       root.replaceChildren();
       list = node('div', 'u-pane u-pane-list'); list.id = 'u-pane-list'; list.setAttribute('aria-label', 'Chats');
       thread = node('section', 'u-pane u-pane-thread'); thread.id = 'u-pane-thread'; thread.setAttribute('aria-label', 'Conversation');
-      root.append(list, divider(), thread); fillEmpty(thread);
+      root.append(list, divider(), thread); thread.dataset.view = 'closed'; root.dataset.detail = 'none';
     }
     return {root, list, thread};
   }
@@ -297,12 +298,12 @@
   // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
   // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
   function fillEmpty(thread, focus = false) {
-    thread.replaceChildren(); thread.dataset.view = 'empty';
+    thread.replaceChildren(); thread.dataset.view = 'empty'; $('unified-inbox').dataset.detail = 'open';
     // Calm and centred (Miguel): a title, one "To:" field and New Wizard chat. Names appear only once he types.
     const box = node('div', 'u-newmsg'), token = {}; thread.__pick = token;
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
-    box.append(node('h2', '', 'New message'), search, list, wizard); thread.append(box);
+    box.append(node('h2', '', 'New message'), search, list, wizard); thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
     if (focus) requestAnimationFrame(() => search.focus());
     let all = null;
     const draw = () => {
@@ -327,7 +328,21 @@
   }
   // The right pane with nothing open. The old composer's pending draft save still runs (see composer()).
   function emptyPane(focus = false) { if (!split.on) return; view.id = null; view.scroll = null; view.root = null; const {root, thread} = panes(); fillEmpty(thread, focus); root.dataset.view = s.search != null ? 'search' : 'list'; }
-  // New chat / ✕ in the split: leave the open chat (same path as Back) and show New message on the right.
+  // List and detail (Miguel, 31 Oct 2026): with nothing open the list fills the window; a chat or New message opens
+  // beside it, and ✕ / Back / Escape close that pane so the full-width list comes back (scroll and filters kept).
+  function closePane() {
+    if (!split.on) return; view.id = null; view.scroll = null; view.root = null;
+    const {root, thread} = panes(); thread.__pick = null; thread.replaceChildren(); thread.dataset.view = 'closed';
+    root.dataset.detail = 'none'; root.dataset.view = s.search != null ? 'search' : 'list';
+  }
+  const detailOpen = () => split.on && $('u-pane-thread')?.dataset.view === 'empty';
+  function closeDetail() {
+    if (s.native) returnNative();
+    if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); }
+    if (!hasListPane()) renderList();
+    closePane(); markSelected(); syncBar();
+  }
+  // New chat in the split: leave the open chat (same path as Back) and show New message on the right.
   function newMessagePane() {
     if (s.native) returnNative();
     if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); }
@@ -341,6 +356,17 @@
       const on = !!(split.on && (el.dataset.nativeGroup ? s.native && s.nativeGroup === el.dataset.nativeGroup : el.dataset.pid === s.person));
       el.classList.toggle('selected', on); if (on) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
     }
+  }
+  // Narrow windows: the chat slides in over the list; Back puts the list back where it was scrolled.
+  function slideIn() {
+    const r = $('unified-inbox'); if (!r || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    r.classList.remove('u-enter'); void r.offsetWidth; r.classList.add('u-enter');
+    r.addEventListener('animationend', () => r.classList.remove('u-enter'), {once: true});
+  }
+  function keepListTop() {
+    const top = split.listTop || 0; split.listTop = 0; if (!top) return;
+    const put = () => { const l = $('unified-inbox')?.querySelector(':scope > .u-list'); if (l && !s.person) l.scrollTop = top; };
+    put(); requestAnimationFrame(put);
   }
   // Crossing the width line keeps the open chat: wide shows list + chat, narrow shows just that chat.
   function relayout() {
@@ -388,7 +414,7 @@
     if (network) { const b = netBadge(network, 'u-net'); b.setAttribute('aria-hidden', 'true'); face.append(b); }
     who.append(face, text); head.append(who);
     if (onInfo) { const more = iconButton('more', 'Chat options', () => (view.menu || onInfo)(more)); head.append(more); }
-    if (split.on) head.append(iconButton('close', 'Close chat', newMessagePane, 'u-close'));
+    if (split.on) { $('unified-inbox').dataset.detail = 'open'; head.append(iconButton('close', 'Close chat', closeDetail, 'u-close')); }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
   }
   function when(ms) {
@@ -586,8 +612,9 @@
   const listLive = (epoch, gen) => split.on ? gen === split.listGen && s.ready : s.epoch === epoch && !s.person;
   async function renderList() {
     const epoch = ++s.epoch, gen = ++split.listGen;
+    $('messenger')?.classList.toggle('u-compact', !previewsOn());
     const root = listBase('Inbox');
-    if (split.on && !s.person && !s.native && $('u-pane-thread')?.dataset.view !== 'empty') emptyPane();
+    if (split.on && !s.person && !s.native && !detailOpen()) closePane();
     if (s.search == null) root.append(filterChips()); // account status lives in Settings, not on top of the Inbox
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
     if (s.search == null) root.append(iconButton('compose', 'New chat', () => split.on ? newMessagePane() : newChat(), 'u-fab'));
@@ -767,7 +794,8 @@
     if (s.low && !low.length) setLowView(false);
     const people = s.low ? low : everyone.filter(p => !isLow(p));
     const filter = paintFilters(everyone, people, low.length) || 'all';
-    const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment();
+    const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment(), compact = !previewsOn();
+    $('messenger')?.classList.toggle('u-compact', compact);
     for (const p of people.filter(p => matchesFilter(p, filter) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
       const groups = listKey(p) === 'groups';
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
@@ -775,15 +803,24 @@
       if (p.native) card.dataset.nativeGroup = p.group_id;
       card.dataset.pid = p.native ? 'native:' + p.group_id : p.id;
       if (split.on && (p.native ? s.native && s.nativeGroup === p.group_id : p.id === s.person)) { card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
-      card.append(netAvatar(p)); card.dataset.network = networksOf(p)[0] || '';
+      card.append(netAvatar(p, compact ? 'small' : '')); card.dataset.network = networksOf(p)[0] || '';
       const info = node('span', 'u-person-info');
       const top = node('span', 'u-chat-top'); const name = node('strong', '', p.display_name);
       if (p.muted) { const m = icon('belloff'); m.classList.add('u-muted-mark'); m.setAttribute('aria-label', 'Muted'); m.removeAttribute('aria-hidden'); name.append(m); }
       top.append(name);
-      if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
-      const bottom = node('span', 'u-chat-bottom');
       const typing = (store.typing[p.id] || []).length;
       const dr = s.person !== p.id && !p.native ? (s.draftIndex?.[p.id] || ((s.drafts[p.id] || '').trim() ? {text: s.drafts[p.id]} : null)) : null;
+      if (compact) {
+        // Compact list (Miguel's default): the name, a one-word state, the time and the unread count. No last line.
+        if (typing) top.append(node('span', 'u-state typing', 'typing…'));
+        else if (dr) top.append(node('span', 'u-state draft', 'Draft'));
+        if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
+        if (p.unread) top.append(node('span', 'u-badge' + (p.muted || isLow(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
+        info.append(top); card.append(info); frag.append(card);
+        continue;
+      }
+      if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
+      const bottom = node('span', 'u-chat-bottom');
       if (typing) bottom.append(node('span', 'u-snippet typing', 'typing…'));
       else if (dr) {
         // A waiting draft (yours or your Wizard's) leads the row, like every messenger shows an unsent reply.
@@ -1081,10 +1118,13 @@
   async function openPerson(id, hint) {
     view.selection?.clear();
     if (split.on && s.native) native?.close?.(); // the native Wizard thread on the right gives way
+    const fromList = !split.on && !s.person ? $('unified-inbox')?.querySelector(':scope > .u-list') : null;
+    if (fromList) split.listTop = fromList.scrollTop;
     s.person = id; const epoch = ++s.epoch, gen = ++split.threadGen; inChat(true); els.clear(); view.reply = view.edit = view.attach = null;
     if (split.on) { if (!hasListPane()) renderList(); markSelected(); }
     const cached = store.threads[id];
     buildThread(id, cached?.person || hint || {display_name: '', identities: []});
+    if (fromList) slideIn();
     savedOrder = [id, ...savedOrder.filter(x => x !== id)];
     if (cached) { paintThread(true); if (!cached.stale) { markRead(); persist(); return; } }
     else view.scroll.append(skeleton(6, 'bubbles'));
@@ -2436,6 +2476,19 @@
     row.append(node('strong', 'u-agent-name', name), choice);
     return row;
   }
+  // Message previews in the chat list: off by default (compact list), remembered on this device.
+  const PREVIEWS_KEY = 'messenger.previews';
+  function previewsOn() { try { return localStorage.getItem(PREVIEWS_KEY) === '1'; } catch { return false; } }
+  function setPreviews(on) {
+    try { if (on) localStorage.setItem(PREVIEWS_KEY, '1'); else localStorage.removeItem(PREVIEWS_KEY); } catch { /* this visit only */ }
+    $('messenger')?.classList.toggle('u-compact', !on); drawList();
+  }
+  function previewsRow() {
+    const row = node('label', 'u-more-row u-more-previews'), sw = node('input', 'u-switch');
+    sw.type = 'checkbox'; sw.setAttribute('role', 'switch'); sw.checked = previewsOn(); sw.onchange = () => setPreviews(sw.checked);
+    row.append(node('span', 'u-more-label', 'Message previews in the list'), sw);
+    return row;
+  }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
     const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
@@ -2448,6 +2501,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
+    group.append(previewsRow());
     sheet.append(head, agents, group);
     // Each part stays away while it has nothing to show.
     const sync = () => {
@@ -2769,7 +2823,7 @@
     s.native = true; s.person = null; view.id = null; s.epoch++;
     document.documentElement.dataset.privateView = '';
     // Desktop split: the native Wizard thread takes the right side and the list stays on the left.
-    if (split.on) { if (!hasListPane()) renderList(); emptyPane(); markSelected(); inChat(true); return; }
+    if (split.on) { if (!hasListPane()) renderList(); closePane(); markSelected(); inChat(true); return; }
     $('unified-inbox').hidden = true; inChat(true);
   }
   function openNative(group, card) {
@@ -2785,7 +2839,7 @@
     s.native = false; s.nativeGroup = null; document.getElementById('native-agent-drafts')?.remove();
     delete document.documentElement.dataset.privateView;
     $('unified-inbox').hidden = false; inChat(false);
-    if (split.on && hasListPane()) { if (!s.person) emptyPane(); drawList(); } else renderList();
+    if (split.on && hasListPane()) { if (!s.person) closePane(); drawList(); } else renderList();
     // List rendering is synchronous when cached; focus the same row after Back.
     const group = nativeFocus?.dataset.nativeGroup;
     if (group) [...document.querySelectorAll('.u-person')].find(el => el.dataset.nativeGroup === group)?.focus();
@@ -2845,7 +2899,7 @@
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
-    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low), back,
+    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low || detailOpen()), back,
     signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; split.threadGen++; split.listGen++; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();
