@@ -3,11 +3,14 @@
 The Wizard Agent Service (the gateway every agent on this box uses for app tools) calls Messenger's
 /mcp with its app grant key in X-Wizard-Grant (wizard-os spec/PERMISSIONS.md layer 2: the App
 Manager mints it, keeps it in <wizard-os>/grants/agent-service.json and puts only its SHA-256 in the
-`incoming` list of this app's grants file, $WIZARD_GRANTS_FILE, as `from: agent-service`). Only a
+`incoming` list of this app's grants file, $WIZARD_GRANTS_FILE, as `from: host:agent-service`, a name no
+app ID can take). Only a
 request carrying that key may name an agent in X-Wizard-Agent; Messenger then applies the level the
 owner picked for that agent in Settings → Agents. The gateway authenticates each agent with the
 agent's own gateway token, so an agent cannot speak as another one, and only the owner's signed-in
-screen can change a level.
+screen can change a level. This separates agents that cannot read the box's Wizard files (agents in
+their own containers); an agent running as the same user as the Agent Service can read the gateway's
+keys and tokens, so for it the levels are defense in depth until privilege separation lands.
 
 Levels for Wizard agents stop at Draft-only: nothing here lets an agent send. The main agent
 ('hermes', the Wizard's own agent) is always listed; other agents appear after their first call.
@@ -20,6 +23,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import threading
 import time
 from urllib.parse import unquote
@@ -47,7 +51,7 @@ def clean_label(value, fallback):
     return text or fallback
 
 
-GATEWAY = 'agent-service'
+GATEWAY = 'host:agent-service'  # outside the app-ID namespace: no app grant can produce this row
 SHA256_HEX = re.compile(r'[0-9a-f]{64}')
 MAX_GRANTS_FILE = 256 * 1024
 
@@ -55,7 +59,8 @@ MAX_GRANTS_FILE = 256 * 1024
 class GatewayGrant:
     """The gateway's grant, from this app's grants file (only key hashes, never keys), re-read when it changes.
 
-    A missing, oversized or malformed file holds no gateway row: the gateway is then an unknown caller.
+    A missing, oversized, non-regular or malformed file holds no gateway row: the gateway is then an unknown caller.
+    The file is only read for a request that carries a well-formed grant, so a bad file never affects other callers.
     """
     def __init__(self, path=None):
         self.path = Path(path) if path else None
@@ -63,34 +68,51 @@ class GatewayGrant:
         self.hashes = ()
         self.lock = threading.Lock()
 
+    def _read(self):
+        """(stamp, hashes) through one no-follow, non-blocking, bounded read."""
+        fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            st = os.fstat(fd)
+            stamp = (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino)  # ctime: utime cannot fake it
+            if stamp == self.stamp:
+                return stamp, self.hashes
+            if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_GRANTS_FILE:
+                return stamp, ()
+            data = b''
+            while len(data) <= MAX_GRANTS_FILE:
+                chunk = os.read(fd, MAX_GRANTS_FILE + 1 - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            if len(data) > MAX_GRANTS_FILE:
+                return stamp, ()
+        finally:
+            os.close(fd)
+        doc = json.loads(data)
+        rows = doc.get('incoming') if isinstance(doc, dict) else None
+        return stamp, tuple(row['sha256'] for row in (rows if isinstance(rows, list) else ())
+                            if isinstance(row, dict) and row.get('from') == GATEWAY
+                            and isinstance(row.get('sha256'), str) and SHA256_HEX.fullmatch(row['sha256']))
+
     def current(self):
         if not self.path:
             return ()
-        try:
-            st = self.path.stat()
-        except OSError:
-            return ()
-        stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
         with self.lock:
-            if stamp != self.stamp:
-                hashes = []
-                try:
-                    if st.st_size <= MAX_GRANTS_FILE:
-                        doc = json.loads(self.path.read_text())
-                        rows = doc.get('incoming') if isinstance(doc, dict) else None
-                        for row in rows if isinstance(rows, list) else ():
-                            if isinstance(row, dict) and row.get('from') == GATEWAY and isinstance(row.get('sha256'), str) \
-                                    and SHA256_HEX.fullmatch(row['sha256']):
-                                hashes.append(row['sha256'])
-                except (OSError, ValueError, TypeError):
-                    hashes = []
-                self.hashes = tuple(hashes)
-                self.stamp = stamp
-            return self.hashes
+            try:
+                stamp, hashes = self._read()
+            except Exception:  # missing, unreadable, malformed or pathological (deep nesting): no gateway row
+                self.stamp, self.hashes = None, ()
+                return ()
+            # A stamp younger than 2 s is not trusted: an in-place rewrite within one mtime tick keeps inode and size.
+            self.stamp = stamp if time.time_ns() - max(stamp[0], stamp[1]) > 2_000_000_000 else None
+            self.hashes = hashes
+            return hashes
 
     def matches(self, grant):
+        if not isinstance(grant, str) or not KEY_RE.fullmatch(grant):
+            return False
         hashes = self.current()
-        if not hashes or not isinstance(grant, str) or not KEY_RE.fullmatch(grant):
+        if not hashes:
             return False
         digest = hashlib.sha256(grant.encode()).hexdigest().encode()
         return any(hmac.compare_digest(digest, h.encode()) for h in hashes)

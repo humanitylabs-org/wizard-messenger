@@ -35,10 +35,10 @@ class WizardAgentGateway(unittest.TestCase):
 
     def setUp(self):
         base.AgentKeyHTTP.setUp(self)
-        # Only the key's hash is in this app's grants file, as the App Manager writes it (`from: agent-service`).
+        # Only the key's hash is in this app's grants file, as the App Manager writes it (`from: host:agent-service`).
         self.grants = grants_file(Path(self.temp.name, 'grants.json'), [
             {'from': 'wisdom', 'sha256': hashlib.sha256(b'w' * 64).hexdigest()},
-            {'from': 'agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
+            {'from': 'host:agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
         self.server.gateway_grant = GatewayGrant(self.grants)
         self.server.wizard_agents = WizardAgents(self.temp.name)
 
@@ -101,6 +101,26 @@ class WizardAgentGateway(unittest.TestCase):
         for path in ('/api/unified/people/p/send', '/api/drafts/d/send'):
             self.assertIn(self.request('POST', path, {}, self.gw())[0], (401, 403))
 
+    def test_gateway_row_is_outside_app_ids_and_a_bad_file_harms_nobody(self):
+        self.pick('hermes', 'draft_only')
+        # An app whose ID is `agent-service` got an ordinary grant: its row is not the gateway's.
+        grants_file(self.grants, [{'from': 'agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
+        os.utime(self.grants, ns=(time.time_ns() + 5 * 10**9,) * 2)
+        self.assertTrue(self.mcp('messenger_list_chats', {}, self.gw())[1])
+        # A pathological file (deep nesting) gives no gateway row and never breaks other callers.
+        self.grants.write_text('[' * 5000 + ']' * 5000)
+        self.assertTrue(self.mcp('messenger_list_chats', {}, self.gw())[1])
+        self.assertFalse(self.listing()['gateway_connected'])
+        self.assertFalse(self.mcp('messenger_list_chats', {}, self.keys['read_only'])[1])  # Per-agent keys still work.
+        # A rotation written in place within one mtime tick (same size, no utime) is seen at once.
+        grants_file(self.grants, [{'from': 'host:agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
+        self.assertFalse(self.mcp('messenger_list_chats', {}, self.gw())[1])
+        grants_file(self.grants, [{'from': 'host:agent-service', 'sha256': hashlib.sha256(b'z' * 64).hexdigest()}])
+        self.assertTrue(self.mcp('messenger_list_chats', {}, self.gw())[1])
+        # The rotated-out grant grants nothing; the per-agent key beside it still decides.
+        self.assertFalse(self.mcp('messenger_list_chats', {}, {'X-Wizard-Grant': KEY, **self.keys['read_only']})[1])
+        self.assertEqual(self.request('GET', '/api/drafts', headers={'X-Wizard-Grant': KEY})[0], 401)
+
     def test_gateway_key_is_mcp_only_and_required(self):
         self.pick('hermes', 'draft_only')
         self.assertEqual(self.request('GET', '/api/unified/people', headers=self.gw())[0], 401)
@@ -129,7 +149,7 @@ class WizardAgentGateway(unittest.TestCase):
         os.utime(self.grants, ns=(time.time_ns() + 5 * 10**9,) * 2)
         self.assertTrue(self.mcp('messenger_list_chats', {}, self.gw())[1])  # A revoke applies without a restart.
         self.assertFalse(self.listing()['gateway_connected'])
-        grants_file(self.grants, [{'from': 'agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
+        grants_file(self.grants, [{'from': 'host:agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
         os.utime(self.grants, ns=(time.time_ns() + 10 * 10**9,) * 2)
         # Gateway calls without an agent name list tools but run nothing.
         data, error = self.mcp('messenger_list_chats', {}, self.gw(None, None))

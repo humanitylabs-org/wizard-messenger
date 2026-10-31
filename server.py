@@ -73,7 +73,8 @@ class Handler(BaseHTTPRequestHandler):
         Unknown bearers are refused."""
         if self.service.gateway_grant.matches(self.headers.get('X-Wizard-Grant')):
             # The Wizard gateway (its app grant key, wizard_agents.py) may name the agent it speaks for, on /mcp
-            # only; each agent has the owner's level for it.
+            # only; each agent has the owner's level for it. Elsewhere a request carrying it is refused, even
+            # beside an owner cookie, so the gateway's credential can never ride along an owner action.
             if urlsplit(self.path).path != '/mcp':
                 raise EngineError('unauthorized', 'A Messenger API capability is required', 401)
             row = self.service.wizard_agents.caller(self.headers.get('X-Wizard-Agent'), self.headers.get('X-Wizard-Agent-Label'))
