@@ -366,9 +366,6 @@ button { touch-action: manipulation; }
 .c-code { margin: 14px 0 4px; padding: 16px; border-radius: 14px; background: var(--raised); font: 600 28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-align: center; overflow-wrap: anywhere; user-select: all; }
 .c-waiting { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; font-size: 14px; color: var(--ink-2); }
 .c-form label:first-child { margin-top: 6px; }
-.c-later { margin-top: 6px; color: var(--ink-3); font-size: 13px; }
-.c-later summary { cursor: pointer; padding: 8px 2px; }
-.c-later-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px; }
 .c-problem { margin-top: 10px; }
 @media (min-width: 900px) { .u-sheet { max-width: 520px; border-radius: 20px; margin-bottom: 24px; } .u-overlay { align-items: center; } }
 /* Review fixes: chips never shrink or overlap; unread rows carry the weight; compose is the accent. */
@@ -572,9 +569,6 @@ button:not(:disabled):active { background-color: color-mix(in srgb, var(--ink) 1
 .u-sheet .u-accounts .u-acct-open { cursor: default; }
 .c-add-title { margin: 18px 0 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .c-add-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
-.c-add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 84px; padding: 10px 6px; border-radius: 14px; background: var(--raised); color: var(--ink); font-size: 12.5px; line-height: 1.2; text-align: center; white-space: normal; }
-.c-add .c-mark { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; }
-.c-add.busy { opacity: .6; cursor: progress; }
 .c-steps textarea, .c-form textarea { width: 100%; min-height: 72px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 /* Platform chips: the bare brand glyph on the chip itself (no white disc inside a dark pill). */
 .u-chips .u-chip.net .net-badge.u-chip-icon:not(.text) { width: 22px; height: 22px; background: transparent; box-shadow: none; border-radius: 0; overflow: visible; }
@@ -638,19 +632,7 @@ html[data-color-scheme=light] { --sheet-solid: #f6f6f8; }
 .u-settings .c-card .c-link { margin: 8px 0 0 12px; font-size: 14px; }
 .u-settings .c-card-text strong { font-size: 15px; }
 .u-settings .c-card-top .net-badge, .u-settings .c-card-top > :first-child { width: 30px; height: 30px; }
-.c-group { border-radius: 14px; background: var(--raised); overflow: hidden; }
-.c-group .c-card.c-row { margin: 0; padding: 0; border-radius: 0; background: none; box-shadow: none; }
-.c-group .c-card.c-row + .c-card.c-row { border-top: 1px solid var(--line); }
-.c-row .c-card-top { min-height: 52px; padding: 0 12px; cursor: pointer; }
-.c-row .c-card-text { display: grid; grid-template-columns: 1fr; gap: 1px; justify-content: start; }
-.c-row .c-card-text .c-who { color: var(--ink-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.c-row .c-card-text .c-pill { display: none; }
-.c-row .c-card-top::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
-.c-row > :not(.c-card-top) { display: none; }
-.c-row.open > .c-link { display: block; margin: 0 0 10px 54px; }
 .c-add-title { margin: 18px 0 8px !important; }
-.u-settings .c-add-grid { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
-.u-settings .c-add { min-height: 64px; padding: 8px 4px; gap: 4px; font-size: 12px; border-radius: 12px; }
 .u-settings-group { border-radius: 14px; background: var(--raised); overflow: hidden; }
 .u-settings-group > * + * { border-top: 1px solid var(--line); }
 .u-settings-group .u-settings-row { margin: 0; border-radius: 0; background: none; min-height: 48px; cursor: pointer; list-style: none; }
@@ -827,3 +809,27 @@ html[data-split][data-private-view] #unified-inbox > .u-pane-list { flex: 1 1 au
 html[data-split][data-private-view] #unified-inbox > .u-pane-thread { display: none; }
 html[data-split][data-private-view] #workspace { order: 2; min-width: 0; }
 html[data-split][data-private-view] #chat-back { display: none !important; }
+
+/* Settings 15.6 (Miguel): one tile for every account. Connected tiles add a green dot and the account name;
+   networks that aren't available yet are the same tile, dimmed, with a small "Soon". */
+.u-settings h3.c-add-title, .u-sheet > h3.u-more-head { text-transform: none; letter-spacing: 0; font-size: 0.875rem; color: var(--ink-2); }
+.c-add-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.c-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 0; min-height: 88px; padding: 10px 6px; border-radius: 14px; background: var(--raised); color: var(--ink); font-size: 0.78rem; line-height: 1.2; text-align: center; white-space: normal; }
+.c-tile-icon { position: relative; display: inline-flex; margin-bottom: 2px; }
+.c-tile .c-mark { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; }
+.c-tile-name { max-width: 100%; overflow-wrap: anywhere; }
+.c-tile-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 0.7rem; }
+.c-tile-dot { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 2px var(--raised); }
+.c-tile.busy { opacity: .6; cursor: progress; }
+.c-tile.c-soon:disabled { opacity: .45; cursor: default; }
+.u-sheet > h3.u-more-head[hidden], .u-settings-group.u-more[hidden] { display: none; }
+.c-manage-who { margin: 2px 0 4px; }
+.u-settings .c-back { display: block; margin: 10px auto 0; }
+/* My QR codes: the Wizard Messenger address under the code, with Copy. */
+.u-myqr-address { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 340px; margin: 12px auto 0; padding-top: 12px; border-top: 1px solid var(--line); text-align: left; }
+.u-myqr-address[hidden] { display: none; }
+.u-myqr-address-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.u-myqr-address-text small { color: var(--ink-3); font-size: 0.8125rem; }
+.u-myqr-address-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 0.875rem; }
+.u-myqr-actions + .u-myqr-address { margin-top: 14px; }
+.u-myqr-card:has(.u-myqr-address:not([hidden])) .u-myqr { width: min(100%, 300px, max(150px, calc(92dvh - 360px))); }

@@ -135,10 +135,10 @@ const providers = [
     // Accounts strip (inside Settings): real glyphs, connected first, degraded flagged.
     await page.locator('.u-settings-btn').click(); await page.locator('.u-sheet .c-card').first().waitFor();
     // Settings: accounts needing attention first, then connected ones as compact rows with real glyphs.
-    const settingsCards = await page.locator('.u-sheet .c-card').evaluateAll(els => els.map(e => [e.dataset.network, e.classList.contains('c-row'), !!e.querySelector('svg path')]));
+    const settingsCards = await page.locator('.u-sheet .c-card, .u-sheet .c-tile.c-on').evaluateAll(els => els.map(e => [e.dataset.network, e.classList.contains('c-tile'), !!e.querySelector('svg path')]));
     assert.ok(settingsCards.every(s => s[2]), 'settingsCards use glyphs');
     assert.equal(settingsCards[0][0], 'instagram'); assert.equal(settingsCards[0][1], false, 'needs-attention account is a full card');
-    assert.ok(settingsCards.slice(1).some(s => s[1]), 'connected accounts are rows');
+    assert.ok(settingsCards.slice(1).some(s => s[1]), 'connected accounts are tiles');
     await page.keyboard.press('Escape'); await page.locator('#u-overlay').waitFor({state: 'detached'}).catch(() => {}); if (await page.locator('#u-overlay').count()) await page.locator('#u-overlay .icon-button[aria-label=Close]').click();
     await shot('inbox');
 
@@ -206,7 +206,7 @@ const providers = [
     // Accounts sheet cards use the same glyphs.
     await page.locator('.u-settings-btn').click();
     await page.locator('.c-card').first().waitFor(); await page.waitForTimeout(450);
-    const cards = await page.locator('.c-card').evaluateAll(els => els.map(e => [e.dataset.network, !!e.querySelector('.c-mark svg.brand-icon path')]));
+    const cards = await page.locator('.c-card, .c-tile.c-on').evaluateAll(els => els.map(e => [e.dataset.network, !!e.querySelector('.c-mark svg.brand-icon path')]));
     assert.ok(cards.length >= 6 && cards.every(c => c[1]), 'every account card has its glyph: ' + JSON.stringify(cards));
     await shot('accounts');
     await page.keyboard.press('Escape');

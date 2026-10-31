@@ -1,5 +1,7 @@
-// Settings → More (Miguel, 31 Oct 2026): one plain list under the accounts. Each Wizard agent has one level picker
-// (No access / Read-only / Draft-only), then Saved drafts and Advanced (address, older keys, request log). Synthetic APIs only.
+// Settings (Miguel, 31 Oct 2026): every account is the same tile (connected = dot + account name, not available yet =
+// dimmed + "Soon"), then More: one plain list with one level picker per Wizard agent (No access / Read-only /
+// Draft-only). No Saved drafts row and no Advanced row: Advanced (older keys, request log) opens only from #advanced.
+// Synthetic APIs only.
 // node tests/agents_panel_browser.cjs [outdir]   (needs playwright via PLAYWRIGHT_MODULE)
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -49,7 +51,8 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
       if (['api/contacts', 'api/invites', 'api/dms'].includes(p2)) return ok({contacts: [], invites: [], dms: []});
       if (p2 === 'api/unified/people') return ok({people: [], seq: 1});
       if (p2 === 'api/unified/groups') return ok({groups: [], seq: 1});
-      if (p2 === 'api/unified/connectors') return ok({providers: [{network: 'whatsapp', label: 'WhatsApp', supported: true, state: 'connected', flows: [], logins: [{id: 'l'}]}]});
+      if (p2 === 'api/unified/connectors') return ok({providers: [{network: 'whatsapp', label: 'WhatsApp', supported: true, state: 'connected', flows: [], logins: [{id: 'l', name: '+15550100199'}]},
+        {network: 'signal', label: 'Signal', supported: true, state: 'not_configured', flows: []}, {network: 'kakaotalk', label: 'KakaoTalk', supported: false, state: 'unsupported', flows: [], message: 'Coming later'}]});
       if (p2.startsWith('api/unified/updates')) { await new Promise(r => setTimeout(r, 20000)); return ok({seq: 1}); }
       if (p2.startsWith('api/view/agents')) {
         if (req.method() !== 'GET') {
@@ -73,7 +76,26 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     await more.locator('.u-more-agent').first().waitFor();
     assert.equal(await page.locator('.u-sheet details').count() - await page.locator('.u-sheet details.c-later').count(), 0, 'no folds below the accounts');
     const rows = await more.evaluate(g => [...g.querySelectorAll(':scope > :not([hidden]), :scope > .u-more-agents > *')].filter(e => e.getClientRects().length && !e.classList.contains('u-more-agents')).map(e => e.innerText.split('\n')[0].trim()));
-    assert.deepEqual(rows, ['Oscar', 'Saved drafts', 'Advanced'], 'agents, drafts, Advanced (merges/notifications only when they exist): ' + JSON.stringify(rows));
+    assert.deepEqual(rows, ['Oscar'], 'only the agents (merges/notifications only when they exist): ' + JSON.stringify(rows));
+    const sheetText = await page.locator('.u-sheet[aria-label="Settings"]').innerText();
+    assert.doesNotMatch(sheetText, /Saved drafts|Advanced|Wizard Messenger address|Not available yet/, 'no drafts, Advanced, address or separate "not available" list in Settings');
+    // One tile format for every account: connected, add and soon tiles share size, shape and background.
+    const tiles = await page.locator('.u-settings .c-tile').evaluateAll(els => els.map(e => { const cs = getComputedStyle(e), r = e.getBoundingClientRect();
+      return {net: e.dataset.network, cls: e.className, w: Math.round(r.width), radius: cs.borderRadius, bg: cs.backgroundColor, minH: cs.minHeight, disabled: e.disabled, dot: !!e.querySelector('.c-tile-dot'), sub: e.querySelector('.c-tile-sub')?.textContent || ''}; }));
+    assert.deepEqual(tiles.map(t => t.net), ['whatsapp', 'signal', 'kakaotalk'], 'connected first, then add, then soon: ' + JSON.stringify(tiles));
+    for (const k of ['w', 'radius', 'bg', 'minH']) assert.equal(new Set(tiles.map(t => t[k])).size, 1, 'same tile ' + k + ': ' + JSON.stringify(tiles.map(t => t[k])));
+    assert.deepEqual([tiles[0].dot, tiles[0].sub], [true, '+15550100199'], 'connected tile: dot plus account name');
+    assert.deepEqual([tiles[2].disabled, tiles[2].sub], [true, 'Soon'], 'not-available tile is the same tile, dimmed, with Soon');
+    assert.ok(Number(await page.locator('.c-tile.c-soon').evaluate(e => getComputedStyle(e).opacity)) < 0.6, 'soon tile is dimmed');
+    assert.equal(await page.locator('.u-settings .c-group, .u-settings .c-row, .u-settings details.c-later').count(), 0, 'no second account format');
+    for (const t of await page.locator('.u-settings h3').evaluateAll(els => els.map(e => getComputedStyle(e).textTransform))) assert.notEqual(t, 'uppercase', 'no uppercase eyebrows');
+    // Tapping a connected tile opens its options (Disconnect, Back); Back returns to the tiles. Nothing is disconnected here.
+    await page.locator('.c-tile.c-on').click();
+    await page.locator('.c-disconnect').waitFor();
+    assert.equal(await page.locator('.c-disconnect').textContent(), 'Disconnect WhatsApp');
+    await page.locator('.c-back').click();
+    await page.locator('.c-tile.c-on').waitFor();
+    assert.equal(posted.filter(x => /connectors/.test(x[1])).length, 0, 'opening and leaving the options writes nothing');
     assert.equal(await more.getByText('Older agent keys').count(), 0, 'older keys are not on the main view');
     assert.equal(await more.getByText('Recent agent requests').count(), 0, 'the request log is not on the main view');
     assert.equal(await more.getByText('Wizard Messenger address').count(), 0, 'the raw address moved to Advanced');
@@ -104,8 +126,8 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     assert.ok(await more.locator('.u-more-what').first().evaluate(e => e.getBoundingClientRect().height < 24), 'the description is one line');
     const ink = await more.locator('.u-agent-name').first().evaluate(e => getComputedStyle(e).color);
     assert.ok(!/rgba?\(0, 0, 0, 0\)/.test(ink), 'agent name is not transparent: ' + ink);
-    // Advanced: the address, older keys (folded away from the main view) and the request log.
-    await more.locator('.u-more-advanced').click();
+    // Advanced has no row; support opens it with #advanced. Older keys and the request log stay reachable there.
+    await page.evaluate(() => { location.hash = 'advanced'; });
     const adv = page.locator('.u-sheet.u-advanced');
     await adv.getByText('Recent agent requests').waitFor();
     assert.equal(await adv.locator('.u-more-address').count(), 1, 'address row in Advanced');

@@ -2123,7 +2123,9 @@
     let data; try { data = await call('qr-codes'); } catch (e) { body.replaceChildren(); return error(e); }
     if (s.overlay !== 'My QR codes') return;
     const codes = data.codes || []; body.replaceChildren(); shareToContacts(data);
-    if (!codes.length) { body.append(node('p', 'helper', 'Connect an account in Settings and its code appears here automatically. You can also add others, like an email or a link.'), button('Add a code', () => editCodes(data), 'primary wide')); return; }
+    // The Wizard Messenger address lives here, beside the codes people scan to add you (it left Settings).
+    const address = addressRow(data);
+    if (!codes.length) { body.append(node('p', 'helper', 'Connect an account in Settings and its code appears here automatically. You can also add others, like an email or a link.'), ...(address ? [address] : []), button('Add a code', () => editCodes(data), 'primary wide')); return; }
     let current = Math.min(pick | 0, codes.length - 1);
     // Edit sits in the sheet header so the code, its link and the actions fit one phone screen.
     sheet.querySelector('header').insertBefore(iconButton('compose', 'Edit codes', () => editCodes(data)), sheet.querySelector('header .icon-button'));
@@ -2134,7 +2136,9 @@
       const actions = node('div', 'u-myqr-actions');
       actions.append(button('Copy link', async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Could not copy'); } }, 'secondary'));
       if (window.WizardApp?.share?.text && /^https?:/.test(link)) actions.append(button('Share', () => Promise.resolve(WizardApp.share.text({text: link, title: qrTitle(c)})).catch(() => {}), 'secondary'));
-      card.replaceChildren(...(codes.length > 1 ? [] : [node('h3', 'u-myqr-name', qrTitle(c))]), qrCanvas(link), node('p', 'u-myqr-value', c.value), actions);
+      // On the Wizard Messenger code itself the address is already the code, so the extra row hides.
+      if (address) address.hidden = c.network === 'messenger';
+      card.replaceChildren(...(codes.length > 1 ? [] : [node('h3', 'u-myqr-name', qrTitle(c))]), qrCanvas(link), node('p', 'u-myqr-value', c.value), actions, ...(address ? [address] : []));
     };
     codes.forEach((c, i) => { const chip = button(qrTitle(c), () => { current = i; draw(); }, 'u-chip'); chips.append(chip); });
     // Swipe between codes, like flipping cards.
@@ -2142,6 +2146,17 @@
     card.ontouchend = e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) < 50) return; current = (current + (dx < 0 ? 1 : -1) + codes.length) % codes.length; draw(); };
     body.append(...(codes.length > 1 ? [chips] : []), card);
     draw();
+  }
+  // One quiet line: the owner's Wizard Messenger address (what another Wizard pastes to message him) and Copy.
+  function addressRow(data) {
+    const value = native?.address?.() || (data.connected || []).find(c => c.network === 'messenger')?.value || '';
+    if (!value) return null;
+    const row = node('div', 'u-myqr-address'), text = node('span', 'u-myqr-address-text');
+    const code = node('code', 'u-myqr-address-value', value.length > 24 ? value.slice(0, 12) + '…' + value.slice(-8) : value); code.title = value;
+    text.append(node('small', '', 'Wizard Messenger address'), code);
+    const copy = button('Copy', async () => { try { await navigator.clipboard.writeText(value); toast('Address copied'); } catch { toast('Could not copy'); } }, 'secondary u-myqr-copy');
+    copy.setAttribute('aria-label', 'Copy Wizard Messenger address');
+    row.append(text, copy); return row;
   }
   function editCodes(data) {
     const codes = data.extras || [], hidden = new Set(data.hidden || []);
@@ -2303,11 +2318,13 @@
     row.append(node('span', 'u-more-label', label), node('span', 'u-more-value'), node('span', 'u-row-caret', '›'));
     return row;
   }
-  // Miguel: everything under the accounts is one short list. Agents (one picker each), drafts, merges,
-  // notifications, then a single Advanced row for addresses, older keys and the request log.
+  // Miguel: everything under the accounts is one short list: agents (one picker each), then Suggested merges
+  // and Notifications only when there are any. Drafts live in their chats; Advanced is hidden (#advanced).
   function moreSettings(sheet) {
-    const group = node('div', 'u-settings-group u-more');
-    sheet.append(node('h3', 'u-more-head', 'More'), group);
+    const group = node('div', 'u-settings-group u-more'), head = node('h3', 'u-more-head', 'More');
+    sheet.append(head, group);
+    // With nothing to show (no agents, merges or notifications) the heading and list stay away.
+    const sync = () => { head.hidden = group.hidden = ![...group.children].some(c => !c.hidden); };
     const agents = node('div', 'u-more-agents'); agents.hidden = true; group.append(agents);
     const paintAgents = st => {
       agents.replaceChildren();
@@ -2318,18 +2335,25 @@
           const next = await api('api/view/agents'); if (agents.isConnected) paintAgents(next);
         }));
       }
-      agents.hidden = !agents.children.length;
+      agents.hidden = !agents.children.length; sync();
     };
     api('api/view/agents').then(st => { if (agents.isConnected) paintAgents(st); }).catch(e => error(e));
-    const drafts = moreLink('Saved drafts', agentDrafts, 'u-more-drafts'); group.append(drafts);
-    api('api/drafts').then(r => { const n = (r.drafts || []).filter(d => d.state === 'draft').length; if (n && drafts.isConnected) drafts.querySelector('.u-more-value').textContent = String(n); }).catch(() => {});
+    // Saved drafts stay in their chats (above the composer); Settings has no list of them.
     const merges = moreLink('Suggested merges', () => mergeSuggestions(), 'u-settings-row'); merges.hidden = true; group.append(merges);
-    call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; merges.hidden = false; merges.querySelector('.u-more-value').textContent = String(n); merges.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
+    call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; merges.hidden = false; sync(); merges.querySelector('.u-more-value').textContent = String(n); merges.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
     // Notifications show only where this Wizard offers them: one row that turns them on or off.
     const notify = node('div', 'u-more-row u-more-notify'); notify.hidden = true; group.append(notify);
-    notificationSettings(notify, api).then(() => { if (notify.querySelector('button')) notify.hidden = false; });
-    group.append(moreLink('Advanced', advancedSettings, 'u-more-advanced'));
+    notificationSettings(notify, api).then(() => { if (notify.querySelector('button')) { notify.hidden = false; sync(); } });
+    sync();
+    // Advanced has no row: support opens it with #advanced (see openFromHash).
   }
+  // Support only, no visible row: open the view with #advanced (or set it while open) to reach Advanced.
+  function openFromHash() {
+    if (location.hash !== '#advanced' || !s.ready) return;
+    history.replaceState(history.state, '', location.pathname + location.search);
+    advancedSettings();
+  }
+  addEventListener('hashchange', openFromHash);
   // Rarely needed: the Wizard-to-Wizard address, keys made for agents outside this Wizard, and what agents asked for.
   async function advancedSettings() {
     const sheet = overlay('Advanced'); sheet.classList.add('u-settings', 'u-advanced');
@@ -2668,7 +2692,7 @@
       const painted = document.documentElement.dataset.inboxTab;
       if (!painted) resume();
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
-      resumeLogin(); if (store.seq) feed();
+      resumeLogin(); if (store.seq) feed(); openFromHash();
       shareTargets(); Promise.resolve(window.WizardApp?.share?.check?.()).catch(() => {}); // a share that waited for unlock
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});

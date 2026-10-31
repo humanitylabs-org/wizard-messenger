@@ -1157,7 +1157,7 @@
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
   function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.authenticated = false; }
   addEventListener('online', () => { if (state.mode === 'reconnect' || state.mode === 'opening' || bootTries) { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); } });
-  window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, close: () => { if (state.sheet) closeSheet(); if (state.group) leaveChat(); window.MessengerUnified?.returnNative?.(); }, newChat: () => openSheet('contact'), settings: () => openSheet('address')}});
+  window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, close: () => { if (state.sheet) closeSheet(); if (state.group) leaveChat(); window.MessengerUnified?.returnNative?.(); }, newChat: () => openSheet('contact'), settings: () => openSheet('address'), address: () => { try { return state.identity ? publicAddress(state.identity) || '' : ''; } catch { return ''; } }}});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = () => { trustedTries = 0; bootTries = 0; clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(true); };
   refreshPasskey(); refreshPhoneVault();
