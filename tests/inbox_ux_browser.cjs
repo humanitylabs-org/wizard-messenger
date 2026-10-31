@@ -87,7 +87,8 @@ let providers = [
     // Accounts sheet: one tap from the Inbox, QR first.
     await page.locator('.u-settings-btn').click();
     await page.locator('.c-card').first().waitFor();
-    const cards = await page.locator('.c-card strong').allTextContents();
+    await page.locator('.c-tile.c-on').first().waitFor();
+    const cards = await page.locator('.c-card strong, .c-tile.c-on .c-tile-name').allTextContents();
     assert.deepEqual(cards, ['Slack', 'LINE', 'Instagram DMs', 'Telegram', 'WhatsApp'], 'unconnected first, connected last');
     assert.equal(await page.locator('.c-card[data-network=line] .primary').textContent(), 'Show QR code', 'QR is LINE\'s primary action');
     assert.equal(await page.locator('.u-sheet', {hasText: /of \d+ (accounts )?connected/}).count(), 0, 'no x-of-y score');

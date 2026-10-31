@@ -22,7 +22,7 @@ const stub = `
     if (p === 'api/unified/qr-codes') return view();
     return {};
   }
-  window.MessengerUnified.mount({api, csrf: () => 'x'});
+  window.MessengerUnified.mount({api, csrf: () => 'x', native: {address: () => 'nprofile1qqsexampleaddressforthetest0000000000000000hghwk3ls'}});
   window.MessengerUnified.authenticated();`;
 (async () => {
   const browser = await chromium.launch({headless: true});
@@ -58,6 +58,11 @@ const stub = `
   assert.equal((await page.evaluate(() => window.shared)).text, 'https://wa.me/15550100199');
   const fit = await page.evaluate(() => { const b = document.querySelector('.u-myqr-body'), sh = document.querySelector('.u-sheet'), a = document.querySelector('.u-myqr-actions').getBoundingClientRect(); return {body: b.scrollHeight - b.clientHeight, sheet: sh.scrollHeight - sh.clientHeight, bottom: a.bottom, vh: innerHeight}; });
   assert.ok(fit.body <= 1 && fit.sheet <= 1 && fit.bottom <= fit.vh, 'fits one screen: ' + JSON.stringify(fit));
+  // The Wizard Messenger address sits under the code people scan, with its own Copy (it left Settings).
+  assert.equal(await page.locator('.u-myqr-address').isVisible(), true, 'address beside the codes');
+  assert.match(await page.locator('.u-myqr-address').innerText(), /Wizard Messenger address/);
+  assert.equal(await page.getByRole('button', {name: 'Copy Wizard Messenger address'}).count(), 1);
+  const ab = await page.locator('.u-myqr-address').boundingBox(); assert.ok(ab.y + ab.height <= fit.vh, 'address fits on screen');
   await page.getByRole('button', {name: 'Edit codes'}).click();
   assert.equal(await page.locator('.u-myqr-autorow').count(), 2);
   await page.screenshot({path: evidence + '/2-edit.png'});

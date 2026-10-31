@@ -31,8 +31,11 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   const ui = window.MessengerConnectors(root,api); await ui.show();
   const buttons = nodes(root).filter(x => x.tag === 'button');
   assert.equal(buttons[0].textContent, 'Show QR code', 'QR is the primary action, ahead of pairing code');
-  assert.equal(buttons.length, 2, 'no fake button for an unsupported network');
-  assert.ok(texts(root).some(t => /KakaoTalk/.test(t)), 'unsupported networks fold into More networks');
+  // An unsupported network is the same tile as the others, disabled with "Soon": never a working connect button.
+  const soon = buttons.filter(x => /c-soon/.test(x.className));
+  assert.equal(buttons.length - soon.length, 2, 'no fake button for an unsupported network');
+  assert.equal(soon.length, 1); assert.equal(soon[0].disabled, true, 'the Soon tile cannot be pressed');
+  assert.ok(texts(soon[0]).includes('KakaoTalk') && texts(soon[0]).includes('Soon'), 'unsupported networks show as a dimmed Soon tile');
   const started = buttons[0].onclick(); await tick(); await tick(); await tick();
   assert.ok(nodes(root).some(x => x.tag === 'canvas'), 'QR rendered');
   assert.ok(texts(root).some(t => /Linked devices/.test(t)), 'phone scan steps shown');

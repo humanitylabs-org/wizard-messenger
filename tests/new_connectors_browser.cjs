@@ -76,18 +76,19 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
     // No duplicate banner: the account's own row says it needs reconnecting, above the connected list.
     assert.equal(await page.locator('.u-sheet .u-acct-text').count(), 0);
     assert.match(await page.locator('.u-sheet .c-card').first().textContent(), /Instagram DMs.*Needs reconnecting/s);
-    assert.ok(await page.locator('.c-group .c-card.c-row').count() >= 1, 'connected accounts are compact rows');
-    const row = page.locator('.c-group .c-card.c-row').first();
-    assert.equal(await row.getByRole('button', {name: /Disconnect/}).isVisible(), false, 'Disconnect hidden until the row is opened');
-    await row.locator('.c-card-top').click();
-    assert.equal(await row.getByRole('button', {name: /Disconnect/}).isVisible(), true);
-    await row.locator('.c-card-top').click();
-    await page.locator('.u-more .u-more-advanced').waitFor();
-    assert.equal(await page.locator('.u-more .u-more-link', {hasText: 'Saved drafts'}).count(), 1, 'More is one plain list');
+    // Every account is the same tile: connected tiles (dot + account) first, then Add, then dimmed "Soon" tiles.
+    assert.ok(await page.locator('.c-tile.c-on').count() >= 1, 'connected accounts are tiles');
+    assert.equal(await page.locator('.c-group, .c-row, details.c-later').count(), 0, 'no second account format');
+    await page.locator('.c-tile.c-on').first().click();
+    assert.equal(await page.getByRole('button', {name: /^Disconnect /}).isVisible(), true, 'a connected tile opens its options');
+    await page.locator('.c-back').click();
+    await page.locator('.c-tile.c-on').first().waitFor();
+    assert.equal(await page.locator('.u-more .u-more-link', {hasText: /Saved drafts|Advanced/}).count(), 0, 'no drafts or Advanced rows');
     assert.equal(await page.locator('.u-sheet details.u-fold').count(), 0, 'no folds under More');
-    const tiles = await page.locator('.c-add').evaluateAll(els => els.map(e => e.querySelector(':scope > span:last-child').textContent.trim()));
+    const tiles = await page.locator('.c-add').evaluateAll(els => els.map(e => e.querySelector('.c-tile-name').textContent.trim()));
     assert.deepEqual(tiles, ['ChatGPT Dots', 'Facebook Messenger', 'Google Messages', 'LinkedIn', 'X']);
-    assert.equal(await page.locator('.c-later summary', {hasText: 'Not available yet'}).count(), 1);
+    assert.ok(await page.locator('.c-tile.c-soon').count() >= 1, 'not-available networks are dimmed tiles');
+    assert.ok(await page.locator('.c-tile.c-soon').evaluateAll(els => els.every(e => e.disabled && /Soon/.test(e.textContent))));
     await shot('settings');
 
     // Add X → it wakes, then the browser sign-in accepts a pasted "Copy as cURL" and fills ct0 + auth_token.

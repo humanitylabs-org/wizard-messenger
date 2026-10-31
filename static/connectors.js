@@ -467,21 +467,6 @@
       const text = element('div', 'c-card-text'); text.append(element('strong', '', provider.label), element('span', 'c-pill ' + tone, stateText));
       top.append(text); section.append(top);
       const flows = provider.flows || [];
-      if (provider.state === 'connected') {
-        // One quiet row: icon, name, account. Tap it to reveal Disconnect.
-        section.classList.add('c-row');
-        const who = (provider.logins || []).map(l => l.name).filter(Boolean).join(', ');
-        if (who) text.querySelector('strong').after(element('small', 'c-who', who));
-        text.querySelector('.c-pill').textContent = '';
-        top.setAttribute('role', 'button'); top.tabIndex = 0; top.setAttribute('aria-expanded', 'false'); top.setAttribute('aria-label', provider.label + ' connected' + (who ? ', ' + who : '') + '. Options');
-        const toggle = () => { const open = section.classList.toggle('open'); top.setAttribute('aria-expanded', String(open)); };
-        top.onclick = toggle; top.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
-        button(section, 'Disconnect', async () => {
-          if (global.confirm && !global.confirm('Disconnect ' + provider.label + '? Its chats leave this Messenger. Nothing changes on ' + provider.label + ' itself.')) return;
-          await request(provider.network, 'disconnect', {}); await show(); options.onChange?.(provider.network);
-        }, 'c-link danger').setAttribute('aria-label', 'Disconnect ' + provider.label);
-        return section;
-      }
       if (ABOUT[provider.network] && flows.length) section.append(element('p', 'helper', ABOUT[provider.network]));
       if (provider.state === 'not_configured' && provider.network === 'telegram') {
         section.append(element('p', 'helper', 'Add Telegram application keys once, then scan a QR code with your phone.'));
@@ -504,6 +489,38 @@
       });
       return section;
     }
+    // A connected account's options: who it is, Disconnect, and Back. Opened from its tile.
+    async function manage(provider) {
+      const mine = generation + 1;
+      await cancel(); if (mine !== generation) return;
+      const who = (provider.logins || []).map(l => l.name).filter(Boolean).join(', ');
+      root.replaceChildren(heading(provider.network, provider.label), element('p', 'helper c-manage-who', (who ? who + ' · ' : '') + 'Connected'));
+      button(root, 'Disconnect ' + provider.label, async () => {
+        if (global.confirm && !global.confirm('Disconnect ' + provider.label + '? Its chats leave this Messenger. Nothing changes on ' + provider.label + ' itself.')) return;
+        await request(provider.network, 'disconnect', {}); await show(); options.onChange?.(provider.network);
+      }, 'secondary wide danger c-disconnect');
+      button(root, 'Back to accounts', async () => show(), 'c-link c-back');
+      root.querySelector('.c-disconnect')?.focus?.();
+    }
+    // Miguel: one tile for every account. Connected tiles add a green dot and the account name; tiles for
+    // networks that aren't available yet are the same tile, dimmed, with a small "Soon".
+    function tile(p, kind) {
+      const t = element('button', 'c-tile' + (kind === 'add' ? ' c-add' : kind === 'on' ? ' c-on' : ' c-soon')); t.type = 'button'; t.dataset.network = p.network;
+      const icon = element('span', 'c-tile-icon'); icon.append(mark(p.network));
+      if (kind === 'on') icon.append(element('span', 'c-tile-dot'));
+      t.append(icon, element('span', 'c-tile-name', p.label));
+      if (kind === 'on') {
+        const who = (p.logins || []).map(l => l.name).filter(Boolean).join(', ');
+        t.append(element('small', 'c-tile-sub', who || 'Connected'));
+        t.setAttribute('aria-label', p.label + ' connected' + (who ? ', ' + who : '') + '. Options');
+        t.onclick = () => manage(p).catch(e => problem(e));
+      } else if (kind === 'soon') {
+        t.append(element('small', 'c-tile-sub', 'Soon'));
+        t.disabled = true; t.setAttribute('aria-label', p.label + ', not available yet');
+        if (p.message) t.title = p.message;
+      } else t.setAttribute('aria-label', 'Add ' + p.label);
+      return t;
+    }
     async function show({focus} = {}) {
       const mine = generation + 1;
       await cancel(); if (mine !== generation) return;
@@ -519,21 +536,21 @@
       const order = p => p.state === 'connected' ? 2 : p.state === 'not_configured' ? 1 : 0;
       const sorted = [...usable].sort((a, b) => order(a) - order(b));
       for (const provider of sorted.filter(p => p.state !== 'connected')) root.append(card(provider));
-      // Connected accounts: one grouped list, like a phone's settings.
+      // Connected accounts: tiles, the same as the ones for adding an account.
       if (connected.length) {
-        root.append(element('h3', 'c-add-title', 'Connected'));
-        const group = element('div', 'c-group'); for (const provider of sorted.filter(p => p.state === 'connected')) group.append(card(provider)); root.append(group);
+        root.append(element('h3', 'c-add-title', 'Your accounts'));
+        const mine = element('div', 'c-add-grid c-on-grid'); for (const provider of sorted.filter(p => p.state === 'connected')) mine.append(tile(provider, 'on')); root.append(mine);
       }
       // Every other network sits dormant (no process work) until the owner picks it here.
       const addable = later.filter(p => p.supported && p.state === 'not_configured');
-      if (addable.length) {
+      const gone = later.filter(p => !p.supported);
+      if (addable.length || gone.length) {
         root.append(element('h3', 'c-add-title', 'Add an account'));
         const grid = element('div', 'c-add-grid');
         for (const p of addable.sort((a, b) => a.label.localeCompare(b.label))) {
-          const tile = element('button', 'c-add'); tile.type = 'button'; tile.dataset.network = p.network;
-          tile.append(mark(p.network), element('span', '', p.label)); tile.setAttribute('aria-label', 'Add ' + p.label);
-          tile.onclick = async () => {
-            if (tile.disabled) return; tile.disabled = true; tile.classList.add('busy');
+          const t = tile(p, 'add');
+          t.onclick = async () => {
+            if (t.disabled) return; t.disabled = true; t.classList.add('busy');
             try {
               await request(p.network, 'enable', {});
               for (let attempt = 0; attempt < 60; attempt++) {
@@ -543,17 +560,12 @@
                 if (status.state !== 'unavailable' && status.state !== 'not_configured') break;
               }
               await show({focus: p.network});
-            } catch (e) { problem(e); tile.disabled = false; tile.classList.remove('busy'); }
+            } catch (e) { problem(e); t.disabled = false; t.classList.remove('busy'); }
           };
-          grid.append(tile);
+          grid.append(t);
         }
+        for (const p of gone.sort((a, b) => a.label.localeCompare(b.label))) grid.append(tile(p, 'soon'));
         root.append(grid);
-      }
-      const gone = later.filter(p => !p.supported);
-      if (gone.length) {
-        const more = element('details', 'c-later'); more.append(element('summary', '', 'Not available yet'));
-        for (const p of gone) { const row = element('p', 'c-later-row'); row.append(mark(p.network, 'small'), element('span', '', p.label + (p.message ? ' · ' + p.message : ''))); more.append(row); }
-        root.append(more);
       }
       const resumed = providers.find(p => p.pending_login);
       if (resumed) step(resumed.network, 'phone', resumed.pending_login, mine);
