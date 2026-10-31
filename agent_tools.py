@@ -311,21 +311,19 @@ def _load(items):
 
 
 def _attach(handler, caller, unified, draft_id, revision, files):
-    row = None
-    for data, name in files:
-        row = handler.service.drafts.dispatch('PUT', [draft_id, 'attachments'], {}, unified, owner=False, actor=_actor(caller),
-                                              raw=data, query={'revision': [str(revision)], 'name': [name]})['draft']
-        revision = row['revision']
-    return row
+    # All files in one call, one revision: the owner's open chat never sees a partly attached draft.
+    if not files: return None
+    return handler.service.drafts.dispatch('PUT', [draft_id, 'attachments'], {}, unified, owner=False, actor=_actor(caller),
+                                           query={'revision': [str(revision)]}, files=files)['draft']
 
 
 def create_draft(handler, caller, args):
     unified = _unified(handler)
     person_id, identity_id = _channel(unified, args['chat_id'], args.get('channel_id'))
     files = _load(args.get('attachments'))
+    # Text and attachments are created together as revision 1 (never a text-only draft first).
     row = handler.service.drafts.dispatch('POST', [], {'person_id': person_id, 'identity_id': identity_id, 'text': args['text']},
-                                          unified, owner=False, actor=_actor(caller))['draft']
-    row = _attach(handler, caller, unified, row['id'], row['revision'], files) or row
+                                          unified, owner=False, actor=_actor(caller), files=files)['draft']
     return {'draft': _draft(row), 'note': 'Saved as a draft. Nothing was sent; the owner reviews and sends it from Messenger.'}
 
 
@@ -336,8 +334,7 @@ def update_draft(handler, caller, args):
     files = _load(args.get('attachments'))
     row = handler.service.drafts.dispatch('POST', [args['draft_id']], {'revision': args['revision'], 'person_id': person_id,
                                           'identity_id': identity_id, 'text': args['text']},
-                                          unified, owner=False, actor=_actor(caller))['draft']
-    row = _attach(handler, caller, unified, row['id'], row['revision'], files) or row
+                                          unified, owner=False, actor=_actor(caller), files=files)['draft']
     return {'draft': _draft(row), 'note': 'Draft updated. Nothing was sent.'}
 
 

@@ -54,7 +54,50 @@ class Drafts:
         row['updated_by'] = {'id': 'owner', 'name': 'You'} if owner else {'id': str(actor['id'])[:80], 'name': str(actor['name'])[:60]}
     def drop_files(self, ident):
         shutil.rmtree(self.files / ident, ignore_errors=True)
-    def attachments(self, method, row, rest, payload, raw, query, owner, actor):
+    @staticmethod
+    def sniff(raw):
+        # Never treat agent-supplied MIME as proof that untrusted bytes are an image.
+        if raw.startswith(b'\x89PNG\r\n\x1a\n'): return 'image/png'
+        if raw.startswith(b'\xff\xd8\xff'): return 'image/jpeg'
+        if raw.startswith((b'GIF87a', b'GIF89a')): return 'image/gif'
+        if raw.startswith(b'RIFF') and raw[8:12] == b'WEBP': return 'image/webp'
+        if raw.startswith(b'%PDF-'): return 'application/pdf'
+        return 'application/octet-stream'
+    def store_files(self, ident, existing, files):
+        """Validate every file first, then write them all. Returns the attachment records to add; the caller
+        publishes them with the row in one revision (and one save), so no reader sees a record without its bytes
+        or a draft that is only half built."""
+        files = list(files or [])
+        if len(existing) + len(files) > ATTACH_COUNT:
+            raise EngineError('attach_limit', 'Up to 10 attachments per draft', 409)
+        for data, _ in files:
+            if not data or len(data) > ATTACH_MAX: raise EngineError('too_large', 'Files up to 25 MB can be attached', 413)
+        used = sum(a.get('bytes', 0) for draft in self.rows.values() for a in draft.get('attachments', []))
+        if used + sum(len(data) for data, _ in files) > STORAGE_MAX:
+            raise EngineError('draft_storage_full', 'Draft attachments have reached their storage limit', 413)
+        added, folder = [], self.files / ident
+        try:
+            for data, name in files:
+                name = re.sub(r'[\x00-\x1f/\\]', '', str(name or 'Attachment')).strip()[:120] or 'Attachment'
+                aid = secrets.token_hex(8)
+                folder.mkdir(parents=True, exist_ok=True); os.chmod(folder, 0o700)
+                tmp = folder / (aid + '.tmp')
+                with tmp.open('wb') as f:
+                    os.chmod(tmp, 0o600); f.write(data); f.flush(); os.fsync(f.fileno())
+                os.replace(tmp, folder / aid)
+                added.append({'id': aid, 'name': name, 'mime': self.sniff(data), 'bytes': len(data)})
+        except BaseException:
+            self.unlink_files(ident, added); raise
+        return added
+    def unlink_files(self, ident, added):
+        for a in added:
+            try: (self.files / ident / a['id']).unlink()
+            except FileNotFoundError: pass
+    def commit(self, ident, added):
+        try: self.save()
+        except BaseException:
+            self.unlink_files(ident, added); raise
+    def attachments(self, method, row, rest, payload, raw, query, owner, actor, files=None):
         ident = row['id']
         if method == 'GET' and len(rest) == 1:
             item = next((a for a in row.get('attachments', []) if a['id'] == rest[0]), None)
@@ -68,28 +111,17 @@ class Drafts:
             try: revision = int((query.get('revision') or [''])[0])
             except ValueError: revision = None
             self.check(row, {'revision': revision})
-            if len(row.get('attachments', [])) >= ATTACH_COUNT:
-                raise EngineError('attach_limit', 'Up to 10 attachments per draft', 409)
-            if not raw or len(raw) > ATTACH_MAX: raise EngineError('too_large', 'Files up to 25 MB can be attached', 413)
-            # Never treat agent-supplied MIME as proof that untrusted bytes are an image.
-            if raw.startswith(b'\x89PNG\r\n\x1a\n'): mime = 'image/png'
-            elif raw.startswith(b'\xff\xd8\xff'): mime = 'image/jpeg'
-            elif raw.startswith((b'GIF87a', b'GIF89a')): mime = 'image/gif'
-            elif raw.startswith(b'RIFF') and raw[8:12] == b'WEBP': mime = 'image/webp'
-            elif raw.startswith(b'%PDF-'): mime = 'application/pdf'
-            else: mime = 'application/octet-stream'
-            used = sum(a.get('bytes', 0) for draft in self.rows.values() for a in draft.get('attachments', []))
-            if used + len(raw) > STORAGE_MAX:
-                raise EngineError('draft_storage_full', 'Draft attachments have reached their storage limit', 413)
-            name = re.sub(r'[\x00-\x1f/\\]', '', (query.get('name') or ['Attachment'])[0]).strip()[:120] or 'Attachment'
-            aid = secrets.token_hex(8)
-            folder = self.files / ident; folder.mkdir(parents=True, exist_ok=True); os.chmod(folder, 0o700)
-            tmp = folder / (aid + '.tmp')
-            with tmp.open('wb') as f:
-                os.chmod(tmp, 0o600); f.write(raw); f.flush(); os.fsync(f.fileno())
-            os.replace(tmp, folder / aid)
-            row.setdefault('attachments', []).append({'id': aid, 'name': name, 'mime': mime, 'bytes': len(raw)})
-            self.stamp(row, owner, actor); self.save(); return {'draft': copy.deepcopy(row)}
+            if files is None:
+                files = [(raw, (query.get('name') or ['Attachment'])[0])]
+            # Every file of one call lands in ONE revision, so a viewer never sees a half-attached draft.
+            added = self.store_files(ident, row.get('attachments', []), files)
+            before = copy.deepcopy(row)
+            row.setdefault('attachments', []).extend(added)
+            self.stamp(row, owner, actor)
+            try: self.commit(ident, added)
+            except BaseException:
+                self.rows[ident] = before; raise
+            return {'draft': copy.deepcopy(row)}
         if method == 'DELETE' and len(rest) == 1:
             self.check(row, payload)
             kept = [a for a in row.get('attachments', []) if a['id'] != rest[0]]
@@ -99,7 +131,8 @@ class Drafts:
             except FileNotFoundError: pass
             self.stamp(row, owner, actor); self.save(); return {'draft': copy.deepcopy(row)}
         raise EngineError('not_found', 'No such draft route', 404)
-    def dispatch(self, method, suffix, payload, unified, owner=False, authority=None, remote_required=False, can_send=False, actor=None, raw=None, query=None):
+    def dispatch(self, method, suffix, payload, unified, owner=False, authority=None, remote_required=False, can_send=False, actor=None, raw=None, query=None, files=None):
+        """files: optional [(bytes, name)] stored with a create/update POST or an attachments PUT in the same revision."""
         if not owner and actor is None:
             actor = {'id': 'machine', 'name': 'Wizard app key'}
         with self.lock:
@@ -115,7 +148,7 @@ class Drafts:
                 ident = suffix[0]; row = self.get(ident)
             else: raise EngineError('not_found', 'No such draft route', 404)
             if len(suffix) >= 2 and suffix[1] == 'attachments':
-                return self.attachments(method, row, suffix[2:], payload, raw, query or {}, owner, actor)
+                return self.attachments(method, row, suffix[2:], payload, raw, query or {}, owner, actor, files)
             if len(suffix) <= 1:
                 if method == 'GET': return {'draft': copy.deepcopy(row)}
                 if method == 'DELETE' and owner:
@@ -145,10 +178,19 @@ class Drafts:
                     # No client supplied approval, preview, status, upload or send fields are ever retained.
                     created_by = row.get('created_by') or ({'id': 'owner', 'name': 'You'} if owner else
                                                            {'id': str(actor['id'])[:80], 'name': str(actor['name'])[:60]})
+                    # Text and any files arrive together as ONE revision: a create with attachments is never visible
+                    # as a text-only draft (revision 1) followed by an attach (revision 2).
+                    added = self.store_files(ident, row.get('attachments', []), files) if files else []
                     row = {**fields, 'id': ident, 'revision': row['revision'], 'state': 'draft', 'created_by': created_by,
-                           'attachments': row.get('attachments', [])}
+                           'attachments': row.get('attachments', []) + added}
                     self.stamp(row, owner, actor)
-                    self.rows[ident] = row; self.save(); return {'draft': copy.deepcopy(row)}
+                    previous = self.rows.get(ident); self.rows[ident] = row
+                    try: self.commit(ident, added)
+                    except BaseException:
+                        if previous is None: self.rows.pop(ident, None); self.drop_files(ident)
+                        else: self.rows[ident] = previous
+                        raise
+                    return {'draft': copy.deepcopy(row)}
             if len(suffix) == 2 and method == 'POST' and (owner or (can_send and suffix[1] in ('preview', 'send'))):
                 self.check(row, payload)
                 if suffix[1] in ('export', 'authority-status'):

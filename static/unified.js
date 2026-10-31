@@ -1554,16 +1554,25 @@
   const draftsFor = (rows, id) => rows.filter(d => d.person_id === id && d.state === 'draft').sort((a, b) => (b.updated || 0) - (a.updated || 0));
   // One drafts request at a time, shared by the Inbox's draft labels and the open chat's composer poll; nothing
   // polls while Messenger is hidden or not signed in.
-  let draftsReq = null, draftsAt = 0, draftsRows = null;
+  // draftWrites counts this screen's own draft writes. A list fetched across one of them may be older than the
+  // write (31 Oct 2026: a poll in flight while Send deleted the draft brought the sent draft back, its picture 404'd
+  // and the attachment warning stuck), so such a list is never reused and callers drop it.
+  let draftsReq = null, draftsAt = 0, draftsRows = null, draftWrites = 0;
+  const closedDrafts = new Set(); // drafts this screen sent or discarded; a late list never revives them
+  const draftWrote = () => { draftWrites++; draftsRows = null; };
   function fetchDrafts(fresh = false) {
-    if (draftsReq) return draftsReq;
+    if (draftsReq && draftsReq.gen === draftWrites) return draftsReq;
     if (!fresh && draftsRows && performance.now() - draftsAt < 2000) return Promise.resolve(draftsRows);
-    draftsReq = api('api/drafts').then(r => { draftsRows = r.drafts || []; draftsAt = performance.now(); return draftsRows; }).finally(() => { draftsReq = null; });
-    return draftsReq;
+    const gen = draftWrites;
+    const req = api('api/drafts').then(r => { const rows = (r.drafts || []).filter(d => !closedDrafts.has(d.id)); if (gen === draftWrites) { draftsRows = rows; draftsAt = performance.now(); } return rows; })
+      .finally(() => { if (draftsReq === req) draftsReq = null; });
+    req.gen = gen; draftsReq = req;
+    return req;
   }
   async function refreshDraftIndex() {
     if (!s.ready || document.hidden) return;
     let rows; try { rows = await fetchDrafts(); } catch { return; }
+    rows = rows.filter(d => !closedDrafts.has(d.id));
     const next = {}; for (const d of rows) if (d.state === 'draft' && (!next[d.person_id] || (d.updated || 0) > (next[d.person_id].updated || 0))) next[d.person_id] = d;
     const key = JSON.stringify(Object.entries(next).map(([k, d]) => [k, d.revision, d.text, (d.attachments || []).length]));
     if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
@@ -1605,14 +1614,21 @@
       sd.row = row; sd.saved = row.text; sd.conflict = null; sd.loadError = false;
       if (!view.edit) { ui.draft.value = row.text; s.drafts[id] = row.text; saveDrafts(); }
       if (row.identity_id && [...ui.channel.options].some(o => o.value === row.identity_id)) { ui.channel.value = row.identity_id; ui.paintVia(); }
+      await loadItems(row);
+    }
+    // Bring the tray in line with the draft's attachments. One that fails to load (a blip, a restart) shows the
+    // warning and is tried again on the next poll, which clears the warning once it loads; no reload needed.
+    async function loadItems(row) {
       const want = row.attachments || [], have = view.attach || [];
-      let tray = have.filter(it => !it.sid || want.some(a => a.id === it.sid));
-      for (const a of want) if (!tray.some(it => it.sid === a.id)) { try { tray.push(await itemFor(a, row.id)); } catch (e) { sd.loadError = true; error(e); } }
-      if (!alive()) return;
+      const tray = have.filter(it => !it.sid || want.some(a => a.id === it.sid));
+      let failed = false;
+      for (const a of want) if (!tray.some(it => it.sid === a.id)) { try { tray.push(await itemFor(a, row.id)); } catch { failed = true; } }
+      if (!alive() || sd.row?.id !== row.id) return;
+      sd.loadError = failed;
       view.attach = tray.length ? tray : null; ui.grow(); ui.paintBar();
     }
     async function save() {
-      clearTimeout(sd.timer); sd.timer = null; draftsRows = null;
+      clearTimeout(sd.timer); sd.timer = null; draftWrote();
       if (sd.busy) { await sd.busy.catch(() => {}); if (sd.timer) return; }
       if (view.edit || sd.conflict) return;
       const run = (async () => {
@@ -1636,7 +1652,7 @@
         else if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; } catch { /* next poll */ } }
         else if (e.code === 'not_found' || e.code === 'draft_closed') { sd.row = null; sd.saved = null; }
         else if (e.code !== 'server_restarting') error(e);
-      } finally { if (sd.busy === run) sd.busy = null; }
+      } finally { if (sd.busy === run) sd.busy = null; draftWrote(); }
       if (alive()) { ui.paintBar(); if (!sd.conflict && dirty()) schedule(); } refreshDraftIndex();
     }
     const schedule = () => { clearTimeout(sd.timer); sd.timer = setTimeout(save, SD_SAVE_MS); };
@@ -1646,47 +1662,62 @@
       for (const it of items) {
         try {
           await sd.busy?.catch(() => {}); const row = await ensure(); if (!row) return;
-          const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
+          draftWrote(); const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
           sd.row = r.draft; it.sid = r.draft.attachments[r.draft.attachments.length - 1].id;
         } catch (e) { sd.uploadError = true; if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; ui.paintBar(); } catch { /* next poll */ } } else error(e); ui.paintBar(); }
       }
-      refreshDraftIndex();
+      draftWrote(); refreshDraftIndex();
     }
     async function detach(it) {
       // Removing a failed local upload clears the block; any other bad attachment remains visible in the tray.
       if (!it.sid) { sd.uploadError = false; ui.paintBar(); return; }
       if (!sd.row) return;
+      draftWrote();
       try { const r = await api('api/drafts/' + sd.row.id + '/attachments/' + it.sid, {method: 'DELETE', body: {revision: sd.row.revision}}); sd.row = r.draft; }
       catch (e) { if (e.code !== 'not_found') error(e); }
+      draftWrote();
       if (!ui.draft.value.trim() && !(view.attach || []).length) save();
     }
     // Sent (or emptied): the draft is done. Delete it so it never comes back.
     async function clear() {
       clearTimeout(sd.timer); sd.timer = null; await sd.busy?.catch(() => {});
-      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; if (!row) return;
+      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; sd.loadError = false; if (!row) return;
+      closedDrafts.add(row.id); draftWrote();
       try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); }
-      catch (e) { if (e.code !== 'draft_changed' && e.code !== 'not_found') error(e); /* never delete someone else's newer revision */ }
-      refreshDraftIndex();
+      catch (e) {
+        // Someone else changed it after our send: their newer revision stays, and may show again.
+        if (e.code === 'draft_changed') closedDrafts.delete(row.id);
+        if (e.code !== 'draft_changed' && e.code !== 'not_found') error(e); /* never delete someone else's newer revision */
+      }
+      draftWrote(); refreshDraftIndex();
     }
     async function check(first) {
       if (!alive()) { clearInterval(sd.poll); return; }
       if (!first && document.hidden) return;
+      const gen = draftWrites;
       let rows; try { rows = await fetchDrafts(first); } catch { return; }
       if (!alive() || sd.busy || sd.timer || sd.sendPending) return;
+      if (gen !== draftWrites) return check(first); // this screen wrote meanwhile: that list may predate it
+      rows = rows.filter(d => !closedDrafts.has(d.id));
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
       const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) s.bindDraft = null;
       const latest = pick || mine || (!sd.row && draftsFor(rows, id)[0]);
       if (!latest) {
+        if (sd.loadError) { sd.loadError = false; ui.paintBar(); } // the draft (and the attachment that failed) is gone
         if (sd.row && !dirty()) { sd.row = null; sd.saved = null; ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = (view.attach || []).filter(it => !it.sid); if (!view.attach.length) view.attach = null; ui.grow(); ui.paintBar(); }
         else if (first && !sd.row && ui.draft.value.trim()) schedule(); // a draft kept only on this device moves to the server
         return;
       }
-      if (sd.row && latest.id === sd.row.id && latest.revision <= sd.row.revision) return; // same, or a read from before our own save
+      if (sd.row && latest.id === sd.row.id && latest.revision <= sd.row.revision) { // same, or a read from before our own save
+        if (sd.loadError && latest.revision === sd.row.revision) await loadItems(sd.row); // retry what failed to load
+        return;
+      }
       if (dirty() && !(first && !sd.row && ui.draft.value === latest.text)) { sd.conflict = latest; ui.paintBar(); return; }
       await apply(latest);
     }
     sd.poll = setInterval(() => check(false), SD_POLL_MS);
-    Object.assign(sd, {schedule, save, attach, detach, clear, note, check, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
+    const retry = async () => { if (sd.loadError && sd.row) await loadItems(sd.row); };
+    Object.assign(sd, {schedule, save, attach, detach, clear, note, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
     setTimeout(() => Promise.resolve(after).catch(() => {}).then(() => check(true)), 0);
     return sd;
   }
@@ -1756,6 +1787,7 @@
     form.onsubmit = e => { e.preventDefault(); submit(); };
     async function submit() {
       if (view.sd?.conflict) return toast('Choose which draft to keep first');
+      await view.sd?.retry?.();
       if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
       const text = draft.value.trim(), a = view.attach || [];
       if (!text && !a.length) return;
