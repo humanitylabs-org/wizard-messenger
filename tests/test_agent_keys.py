@@ -201,8 +201,12 @@ class AgentKeyHTTP(unittest.TestCase):
         app_key = {'Authorization': 'Bearer ' + fixtures.TOKEN}
         # The Wizard app key (the owner's own agent through the Wizard gateway) follows its owner-chosen level:
         # No access lists nothing and refuses; Draft-only lists the tools and can draft, never send.
-        # The bare /mcp call on the app port is the Wizard gateway, which sends no header: same app-key level.
-        for gw in (app_key, {}):
+        # A bare /mcp call (no header) is never trusted: the app port is also reachable from the tailnet.
+        self.request('POST', '/api/view/agents/app-key', {'level': 'draft_only'}, self.owner)
+        self.assertEqual({t['name'] for t in self.mcp(None, method='tools/list')['tools']}, anonymous)
+        data, error = self.mcp('messenger_list_chats', {}, {})
+        self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_key_required')
+        for gw in (app_key,):
             self.request('POST', '/api/view/agents/app-key', {'level': 'no_access'}, self.owner)
             self.assertEqual({t['name'] for t in self.mcp(None, headers=gw, method='tools/list')['tools']}, anonymous)
             data, error = self.mcp('messenger_list_chats', {}, gw)

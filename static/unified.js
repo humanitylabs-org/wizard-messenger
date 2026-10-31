@@ -2289,63 +2289,64 @@
   // Agents: each agent has its own Messenger key and its own level. Draft-only is the recommended level:
   // the agent reads and writes drafts, and only this signed-in screen can send them.
   const LEVEL_TEXT = {no_access: 'Status only. Cannot read your chats.', read_only: 'Reads chats. Cannot draft or change anything.',
-    draft_only: 'Reads chats and writes drafts. Only you can send them.', draft_and_send: 'Reads and sends, reacts, edits and deletes messages without your review.'};
+    draft_only: 'Reads chats and writes drafts, with photos and files. Only you send them.', draft_and_send: 'Reads and sends, reacts, edits and deletes messages without your review.'};
   async function agentAccess(sheet) {
+    // Miguel: the agents this Wizard already has, each with one level. Picking a level is the whole setup:
+    // the Wizard gateway carries each agent's identity, so there is no key to create or copy. Nothing here sends.
     const box = node('section', 'u-agent-access'); sheet.append(box);
-    const levelPicker = (agent, st, save) => {
+    const when = t => new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+    const levelPicker = (agent, name, levels, save) => {
       const wrap = node('div', 'u-agent');
-      const head = node('p', 'u-agent-name', agent.name);
-      const choice = node('select', 'u-channel'); choice.setAttribute('aria-label', 'Level for ' + agent.name);
-      for (const l of st.levels) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
+      const head = node('div', 'u-agent-head');
+      head.append(node('p', 'u-agent-name', name));
+      const choice = node('select', 'u-channel u-agent-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
+      const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
+      for (const l of shown) { const opt = node('option', '', l.label + (l.recommended ? ' (Recommended)' : '')); opt.value = l.id; choice.append(opt); }
       choice.value = agent.level;
+      head.append(choice);
       const what = node('p', 'helper', LEVEL_TEXT[agent.level] || '');
       choice.onchange = () => action(async () => {
         const level = choice.value;
-        // Settings is itself a sheet, so this one question uses the same confirm the old control used.
-        if (level === 'draft_and_send' && !confirm('Let ' + agent.name + ' send, edit and delete messages without your review? Draft-only is safer: you send.')) { choice.value = agent.level; return; }
-        await save(level); toast(agent.name + ': ' + st.levels.find(l => l.id === level).label);
+        await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
       });
-      wrap.append(head, choice, what);
-      if (agent.last_used) wrap.append(node('p', 'helper', 'Last used ' + new Date(agent.last_used).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})));
+      wrap.append(head, what);
       return wrap;
     };
     const paint = st => {
-      box.replaceChildren(node('h3', '', 'Agents'), node('p', 'helper', 'Each agent gets its own key and level. Draft-only is recommended: the agent can read your chats and write drafts, and only you can send them.'));
+      box.replaceChildren(node('h3', '', 'Agents'), node('p', 'helper', 'Your Wizard\'s agents. Pick what each one may do in Messenger. Only you send messages.'));
       const reload = async () => paint(await api('api/view/agents'));
-      for (const agent of st.agents) {
-        const row = levelPicker(agent, st, async level => { await api('api/view/agents/' + agent.id, {method: 'POST', body: {level}}); await reload(); });
-        row.append(button('Remove ' + agent.name, () => action(async () => {
-          if (!confirm('Remove ' + agent.name + '? Its key stops working at once. Drafts it wrote stay until you send or discard them.')) return;
-          await api('api/view/agents/' + agent.id, {method: 'DELETE', body: {}}); await reload();
-        }), 'c-link danger'));
+      if (st.gateway_connected === false) box.append(node('p', 'helper warn', 'Your agents can\'t reach Messenger on this Wizard yet. Ask your Wizard to finish connecting it.'));
+      for (const agent of st.wizard_agents || []) {
+        const name = agent.label || 'Your Wizard agent';
+        const row = levelPicker(agent, name, st.wizard_levels || [], async level => { await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}}); await reload(); });
+        if (agent.last_used) row.append(node('p', 'helper', 'Last asked ' + when(agent.last_used)));
         box.append(row);
       }
-      if (!st.agents.length) box.append(node('p', 'helper', 'No agents yet.'));
-      const created = node('div', 'u-agent-key');
-      const name = node('input'); name.placeholder = 'Agent name, e.g. Oscar'; name.setAttribute('aria-label', 'New agent name'); name.maxLength = 60; name.autocomplete = 'off';
-      box.append(name, button('Add agent', () => action(async () => {
-        const made = await api('api/view/agents', {method: 'POST', body: {name: name.value}});
-        await reload();
-        const key = node('input', 'u-key'); key.readOnly = true; key.value = made.key; key.setAttribute('aria-label', 'New agent key');
-        created.replaceChildren(node('p', '', 'Key for ' + made.agent.name + ' (shown only once):'), key,
-          button('Copy key', async () => { try { await navigator.clipboard.writeText(made.key); toast('Key copied'); } catch { key.select?.(); } }, 'secondary'),
-          node('p', 'helper', 'Put it in that agent\'s Messenger connection settings, never in a chat. It starts with No access: pick its level above.'));
-        box.append(created);
-      }), 'secondary wide'));
+      box.append(button('Saved drafts', agentDrafts, 'secondary wide'));
+      // Keys made before this (and the shared app key) keep working; they only show while one exists.
       const app = st.app_key;
-      const legacy = node('details', 'u-log'); legacy.append(node('summary', '', 'Wizard app key: ' + app.label));
-      legacy.append(node('p', 'helper', 'Your agent on this Wizard uses this key. Draft-only lets it read chats and leave drafts that you send.'),
-        levelPicker(app, st, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
-      box.append(legacy);
-      box.append(node('p', 'helper', 'App permissions only: an agent with host-admin access to this server can bypass them. Same-server isolation is supported.'), button('Saved drafts', agentDrafts, 'secondary wide'));
+      if ((st.agents || []).length || (app && app.level !== 'no_access')) {
+        const older = node('details', 'u-log'); older.append(node('summary', '', 'Older agent keys'));
+        older.append(node('p', 'helper', 'Keys for agents outside this Wizard. You don\'t need them for your Wizard\'s agents.'));
+        for (const agent of st.agents || []) {
+          const row = levelPicker(agent, agent.name, st.levels, async level => { await api('api/view/agents/' + agent.id, {method: 'POST', body: {level}}); await reload(); });
+          row.append(button('Remove ' + agent.name, () => action(async () => {
+            await api('api/view/agents/' + agent.id, {method: 'DELETE', body: {}}); await reload(); toast(agent.name + ' removed');
+          }), 'c-link danger'));
+          older.append(row);
+        }
+        if (app && app.level !== 'no_access') older.append(levelPicker(app, 'Wizard app key', st.levels, async level => { await api('api/view/agents/app-key', {method: 'POST', body: {level}}); await reload(); }));
+        box.append(older);
+      }
       if (st.log.length) {
         const details = node('details', 'u-log'); details.append(node('summary', '', 'Recent agent requests'));
         const list = node('ul', 'u-access-log');
-        for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', new Date(e.t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) + ' · ' + (e.agent ? e.agent + ' · ' : '') + e.outcome + ' · ' + e.method + ' ' + e.route));
+        for (const e of st.log.slice(0, 20)) list.append(node('li', e.outcome === 'blocked' ? 'blocked' : '', when(e.t) + ' · ' + (e.agent ? e.agent + ' · ' : '') + e.outcome + ' · ' + e.method + ' ' + e.route));
         details.append(list); box.append(details);
       }
+      box.append(node('p', 'helper', 'App permissions only: an agent with admin access to this server can bypass them.'));
     };
-    try { const st = await api('api/view/agents'); if (s.overlay === 'Settings') paint(st); } catch (e) { error(e); }
+    try { const st = await api('api/view/agents'); if (box.isConnected) paint(st); } catch (e) { error(e); }
   }
   // Drafts an agent saved for this chat appear above the composer. The owner edits, sends or discards them; agents never send.
   function agentDraftStrip(id, active = () => s.person === id) {

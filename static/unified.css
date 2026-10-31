@@ -124,7 +124,11 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-access-log li { padding: 3px 0; } .u-access-log li.blocked { color: var(--err); }
 /* Agents (Settings) and agent drafts waiting in a chat */
 .u-agent { padding: 10px 0; border-top: 1px solid var(--line); }
-.u-agent-name { font-weight: 600; margin: 0 0 6px; }
+.u-agent-name { font-weight: 600; margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.u-agent-head { display: flex; align-items: center; gap: 10px; }
+.u-agent-head .u-agent-level { flex: none; width: auto; max-width: 60%; }
+.u-agent .helper { margin: 4px 0 0; }
+.u-agent-access .helper.warn { color: var(--danger, currentColor); }
 .u-agent-key { margin-top: 10px; display: grid; gap: 8px; }
 .u-agent-key .u-key { font-family: ui-monospace, monospace; font-size: 12px; width: 100%; }
 .u-agent-drafts { padding: 8px 12px 0; display: grid; gap: 8px; }

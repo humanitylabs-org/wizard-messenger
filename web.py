@@ -196,15 +196,11 @@ class ViewHandler(Handler):
             self.service.trusted_owner.require(self)
             self._trusted_owner_verified=True
     def _authorize(self):
-        self.gateway_mcp = False  # per request: a keep-alive connection must not carry it to the next call
         if urlsplit(self.path).path=='/mcp' and self.command=='POST':
-            # The standard Wizard gateway sends no per-app auth header. A bare /mcp call on the app's own port (the
-            # gateway, never the owner's Unix hop) speaks as the Wizard app key: status/identity always, and the
-            # message/draft tools only at the level the owner gave that key in Settings -> Agents (default No access).
+            # Without a key /mcp offers only status/identity. The Wizard gateway authenticates with its per-app key
+            # and names the calling agent (wizard_agents.py); a bare call is never trusted, because the app port is
+            # also reachable from the tailnet.
             self._origin()
-            if not self.headers.get('Authorization'):
-                from owner_unix import OwnerUnixServer
-                self.gateway_mcp = not isinstance(self.server, OwnerUnixServer)
             return
         if self.headers.get('Authorization'):
             return super()._authorize()
@@ -323,6 +319,13 @@ class ViewHandler(Handler):
         keys=self.service.agent_keys
         parts=path.split('/')[4:]
         try:
+            if len(parts)==2 and parts[0]=='wizard' and method=='POST':
+                # The Wizard's own agents: picking a level is the whole setup (no key to copy).
+                from wizard_agents import WizardAgentError
+                try: row=self.service.wizard_agents.set_level(parts[1],self._body().get('level'))
+                except WizardAgentError as e: raise EngineError(e.code,e.message,e.status) from None
+                self.service.agent_access.record('OWNER','/agents','%s → %s'%(row['label'],row['label_level']))
+                parts=[]; method='GET'
             if not parts and method=='POST':
                 created=keys.create(self._body().get('name'))
                 self.service.agent_access.record('OWNER','/agents','added '+created['agent']['name'])
@@ -342,7 +345,11 @@ class ViewHandler(Handler):
         except AgentKeyError as e:
             raise EngineError(e.code,e.message,e.status) from None
         app_level=self.service.agent_access.effective_mode()
-        return {'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
+        from wizard_agents import LEVELS as WIZARD_LEVELS, LABELS as WIZARD_LABELS
+        return {'wizard_agents':self.service.wizard_agents.list(),
+                'wizard_levels':[{'id':l,'label':WIZARD_LABELS[l],'recommended':l==RECOMMENDED} for l in WIZARD_LEVELS],
+                'gateway_connected':bool(self.service.gateway_key.current()),
+                'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
                 'levels':[{'id':l,'label':LABELS[l],'recommended':l==RECOMMENDED} for l in LEVELS],
                 'log':self.service.agent_access.recent(30)}
     def _dispatch(self,method):
