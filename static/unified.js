@@ -1529,7 +1529,7 @@
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
       for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn' + (mine === k ? ' mine' : '')));
-      const more = button('＋', () => { panel.replaceChildren(grid(m)); panel.querySelector('button')?.focus(); }, 'u-qr-btn more');
+      const more = button('＋', () => { panel.replaceChildren(grid(m)); placeMenu(panel, b, m.outgoing); panel.querySelector('button')?.focus(); }, 'u-qr-btn more');
       more.setAttribute('aria-label', 'More reactions'); strip.append(more);
       panel.append(strip);
     }

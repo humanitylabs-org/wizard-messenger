@@ -48,7 +48,7 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
       await context.route('**/*',route=>new URL(route.request().url()).origin===new URL(url).origin?route.continue():route.abort());
       const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(url);await page.locator('.u-person').click();await page.locator('.u-message').first().waitFor();
       const t=skins.find(s=>s.id===skin).t;await page.evaluate(({skin,t})=>{document.documentElement.dataset.skin=skin; const map={base:'bg',canvas:'bg',text:'ink','text-secondary':'ink-2','text-muted':'ink-3',surface:'glass','surface-raised':'glass-2',accent:'violet',border:'line'};for(const [role,key] of Object.entries(map))document.documentElement.style.setProperty('--wz-'+role,t[key]);}, {skin,t});
-      const open=async()=>{await page.locator('.u-message .u-text').first().click();await page.getByRole('button',{name:'More reactions',exact:true}).click();await page.locator('.u-grid').waitFor();};
+      const open=async()=>{await page.locator('.u-message .u-text').first().tap();await page.getByRole('button',{name:'More reactions',exact:true}).click();await page.locator('.u-grid').waitFor();};
       await open();const rect=await page.locator('.u-grid').boundingBox();assert(rect.x>=0&&rect.x+rect.width<=390&&rect.y+rect.height<=844);assert.equal(await page.locator('.u-grid button').count(),72);
       const label=`${skin}-${album?'album':'text'}`; await page.screenshot({path:path.join(out,label+'-picker.png')});
       // Outside and shared Back entry both close, without leaving the thread.
