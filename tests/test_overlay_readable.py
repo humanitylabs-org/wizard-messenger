@@ -8,7 +8,8 @@ class OverlayReadable(unittest.TestCase):
         self.assertTrue(copies)
         for line in copies:
             # Use numeric modes: symbolic chmod was ignored by the forum builder.
-            self.assertRegex(line, r'^COPY --chmod=0644 ', line)
+            # The entrypoint is the one executable: readable and executable, never owner-only.
+            self.assertRegex(line, r'^COPY --chmod=0755 engine/entrypoint\.sh /app/entrypoint\.sh$' if 'entrypoint.sh' in line else r'^COPY --chmod=0644 ', line)
 
 if __name__ == '__main__':
     unittest.main()
