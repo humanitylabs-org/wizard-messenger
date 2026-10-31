@@ -1,9 +1,7 @@
-# Python/static-only packaging over the exact live binary carrier. No owner data.
-# Carrier: the live 12.12 image; its /app md5-matches revision 288927b. Everything the Python/static tree
-# changed since is copied over it with readable modes (12.10 shipped 0600 and crash-looped). Trusted-owner
-# unlock and push need extra OS packages (full Dockerfile) and stay off on installs built from this overlay.
-# BASE: the exact live carrier (default 12.12; override only with an image whose /app md5-matches 288927b).
-ARG BASE=wizard-messenger:0.2.0-unified.12.12
+# Python/static/template-only packaging over the 15.12 binary carrier. No owner data.
+# Carrier source: eefe38a. All /app/*.py hashes match the accepted live image.
+# No binaries or dependencies are rebuilt; existing optional-runtime limitations remain.
+ARG BASE=wizard-messenger:0.2.0-unified.15.12
 FROM ${BASE}
 ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
