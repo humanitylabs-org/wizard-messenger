@@ -9,6 +9,17 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
   let rows, pending = 0, fail = false; const requests = [], measurements = [], errors = [];
   function reset(album) { const base = {network:'telegram', identity_id:'fixture-telegram', sender:'Preview', outgoing:false, timestamp:Date.now()-60000, msgtype:album?'m.image':'m.text', media:album?{w:640,h:480,mime:'image/svg+xml'}:undefined, original:'Synthetic reaction preview', reactions:[]}; rows = album ? [{...base,id:'part-1',album:'fixture-album'}, {...base,id:'part-2',original:'',album:'fixture-album', reactions:[{key:'👍',count:3,mine:true},{key:'😁',count:2,mine:false}]}] : [{...base,id:'text-1',reactions:[{key:'👍',count:3,mine:true},{key:'😁',count:2,mine:false}]}]; }
   const fixtureJS = `window.WizardApp={update:{hold:()=>({release(){}})},share:{targets:()=>Promise.resolve(),check:()=>Promise.resolve()}}; document.getElementById('gate').hidden=true; MessengerUnified.mount({api:async(p,o={})=>{const r=await fetch('/'+p,{...o,body:o.body===undefined?undefined:JSON.stringify(o.body),headers:{'Content-Type':'application/json'}});const d=await r.json();if(!r.ok)throw Error(d.error);return d.result;}}); MessengerUnified.authenticated();`;
+  const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
+  const parser=await browser.newPage();
+  const fixtureHTML=await parser.evaluate(source=>{
+    const doc=new DOMParser().parseFromString(source,'text/html');
+    doc.querySelectorAll('script').forEach(el=>el.remove());
+    for(const src of ['/unified.js','/fixture.js']) {
+      const script=doc.createElement('script');script.src=src;script.defer=true;doc.head.append(script);
+    }
+    return '<!doctype html>'+doc.documentElement.outerHTML;
+  },fs.readFileSync(path.join(root,'index.html'),'utf8'));
+  await parser.close();
   const server = http.createServer(async (req,res) => {
     const pathname = new URL(req.url,'http://localhost').pathname, send = (body,type='application/json',status=200) => {res.writeHead(status,{'Content-Type':type});res.end(body);}, ok = result => send(JSON.stringify({ok:true,result}));
     if (pathname.includes('/updates')) return; // long poll remains pending until browser closes
@@ -25,12 +36,11 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
     }
     if (pathname.startsWith('/api/')) return ok({});
     if (pathname === '/fixture.js') return send(fixtureJS,'text/javascript');
-    if (pathname === '/') { const html=fs.readFileSync(path.join(root,'index.html'),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace('</head>','<script src="/unified.js" defer></script><script src="/fixture.js" defer></script></head>'); return send(html,'text/html'); }
+    if (pathname === '/') return send(fixtureHTML,'text/html');
     const name=pathname.slice(1); if(!['app.css','unified.css','unified.js','favicon.svg','icon-192.png'].includes(name)){res.writeHead(404);return res.end();}
     send(fs.readFileSync(path.join(root,name)),name.endsWith('.css')?'text/css':name.endsWith('.js')?'text/javascript':'image/svg+xml');
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r)); const url=`http://127.0.0.1:${server.address().port}/`;
-  const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
   try {
     for(const skin of ['nebula','sepia']) for(const album of [false,true]) {
       reset(album); const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,deviceScaleFactor:1});

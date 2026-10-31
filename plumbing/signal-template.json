@@ -5,7 +5,7 @@
     "sync_contacts_on_startup": true,
     "use_outdated_profiles": false,
     "number_in_topic": true,
-    "device_name": "mautrix-signal",
+    "device_name": "Wizard",
     "note_to_self_avatar": "mxc://maunium.net/REBIVrqjZwmaWpssCZpBlmlL",
     "location_format": "https://www.google.com/maps/place/%[1]s,%[2]s",
     "extev_polls": false
