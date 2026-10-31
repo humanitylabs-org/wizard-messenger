@@ -382,6 +382,8 @@ def offered(handler):
         return False
     if caller is None:
         return False
+    # The Wizard gateway caches one tool list for all of its agents, so it always gets the list; each call is still
+    # checked against the level the owner picked for the agent that call speaks for.
     return caller[0] == 'agent' or handler._caller_mode(caller) != 'no_access'
 
 
@@ -402,7 +404,9 @@ def call(handler, name, args):
             current = handler._caller_mode(caller)
             from agent_keys import LABELS
             raise EngineError('agent_access_off' if current == 'no_access' else 'agent_permission_denied',
-                              'The owner set this agent to %s; this tool needs %s.' % (LABELS[current], LEVEL_HINT.get(capability_for(method, path) or '', 'a higher level')), 403)
+                              'The owner set %s to %s in Messenger; this tool needs %s. Only the owner can change it, in '
+                              'Messenger → Settings → Agents.' % ((caller[1] or {}).get('name') or 'this agent', LABELS[current],
+                                                                  LEVEL_HINT.get(capability_for(method, path) or '', 'a higher level')), 403)
         return _result(BODIES[name](handler, caller, args))
     except EngineError as e:
         return _result({'error': {'code': e.code, 'message': e.message}}, True)

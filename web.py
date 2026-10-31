@@ -323,6 +323,13 @@ class ViewHandler(Handler):
         keys=self.service.agent_keys
         parts=path.split('/')[4:]
         try:
+            if len(parts)==2 and parts[0]=='wizard' and method=='POST':
+                # The Wizard's own agents: picking a level is the whole setup (no key to copy).
+                from wizard_agents import WizardAgentError
+                try: row=self.service.wizard_agents.set_level(parts[1],self._body().get('level'))
+                except WizardAgentError as e: raise EngineError(e.code,e.message,e.status) from None
+                self.service.agent_access.record('OWNER','/agents','%s → %s'%(row['label'],row['label_level']))
+                parts=[]; method='GET'
             if not parts and method=='POST':
                 created=keys.create(self._body().get('name'))
                 self.service.agent_access.record('OWNER','/agents','added '+created['agent']['name'])
@@ -342,7 +349,11 @@ class ViewHandler(Handler):
         except AgentKeyError as e:
             raise EngineError(e.code,e.message,e.status) from None
         app_level=self.service.agent_access.effective_mode()
-        return {'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
+        from wizard_agents import LEVELS as WIZARD_LEVELS, LABELS as WIZARD_LABELS
+        return {'wizard_agents':self.service.wizard_agents.list(),
+                'wizard_levels':[{'id':l,'label':WIZARD_LABELS[l],'recommended':l==RECOMMENDED} for l in WIZARD_LEVELS],
+                'gateway_connected':bool(self.service.gateway_key.current()),
+                'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
                 'levels':[{'id':l,'label':LABELS[l],'recommended':l==RECOMMENDED} for l in LEVELS],
                 'log':self.service.agent_access.recent(30)}
     def _dispatch(self,method):
