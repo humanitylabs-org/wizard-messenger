@@ -432,7 +432,7 @@
     return settled;
   }
   // ---------- live store: lists and open threads stay in memory and follow the change feed ----------
-  const store = {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}, pending: 0};
+  const store = {seq: 0, lists: {people: null, groups: null}, threads: Object.create(null), typing: {}, pending: 0};
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 32);
   const listKey = p => (p.identities || []).some(i => i.kind === 'group') ? 'groups' : 'people';
@@ -449,7 +449,7 @@
   function persist() {
     syncBadge(); shareTargets(); clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      const threads = {};
+      const threads = Object.create(null);
       for (const id of savedOrder.slice(0, THREADS_KEPT)) { const t = store.threads[id]; if (t) threads[id] = {person: t.person, has_more: true, messages: t.messages.filter(m => !m.pending && !m.failed).slice(-MESSAGES_KEPT).map(({retry, local, ...m}) => m)}; }
       try { localStorage.setItem(CACHE_KEY, JSON.stringify({lists: store.lists, threads, order: savedOrder.slice(0, THREADS_KEPT)})); } catch { /* storage full or blocked: still works online */ }
     }, 400);
@@ -539,7 +539,7 @@
     t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
   }
   function apply(r) {
-    if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = {}; if (s.person) openPerson(s.person); else renderList(); return; }
+    if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = Object.create(null); if (s.person) openPerson(s.person); else renderList(); return; }
     store.seq = Math.max(store.seq, r.seq);
     for (const id of r.removed || []) {
       for (const k of ['people', 'groups']) if (store.lists[k]) store.lists[k] = store.lists[k].filter(p => p.id !== id);
