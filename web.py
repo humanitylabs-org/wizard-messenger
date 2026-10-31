@@ -348,7 +348,7 @@ class ViewHandler(Handler):
         from wizard_agents import LEVELS as WIZARD_LEVELS, LABELS as WIZARD_LABELS
         return {'wizard_agents':self.service.wizard_agents.list(),
                 'wizard_levels':[{'id':l,'label':WIZARD_LABELS[l],'recommended':l==RECOMMENDED} for l in WIZARD_LEVELS],
-                'gateway_connected':bool(self.service.gateway_key.current()),
+                'gateway_connected':bool(self.service.gateway_grant.current()),
                 'agents':keys.list(),'app_key':{'id':'app-key','name':'Wizard app key','level':app_level,'label':LABELS[app_level]},
                 'levels':[{'id':l,'label':LABELS[l],'recommended':l==RECOMMENDED} for l in LEVELS],
                 'log':self.service.agent_access.recent(30)}
