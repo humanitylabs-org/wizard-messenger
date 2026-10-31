@@ -110,10 +110,21 @@
     const element = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
     const request = (network, action, body) => api('/api/unified/connectors/' + network + '/' + action, body === undefined ? 'GET' : 'POST', body);
     const label = network => (providers.find(p => p.network === network) || {}).label || network;
+    // Settings marks are the brand mark itself (no tile behind it). Slack keeps its four colours; networks without a
+    // glyph (LinkedIn, ChatGPT Dots) get one rounded square in the brand colour.
+    const SLACK_COLORS = ['#E01E5A', '#E01E5A', '#36C5F0', '#36C5F0', '#2EB67D', '#2EB67D', '#ECB22E', '#ECB22E'];
     function mark(network, cls = '') {
       const b = BRAND[network] || {color: '#555', mark: (network[0] || '?').toUpperCase()};
       const glyph = brandIcon(network), m = element('span', 'c-mark' + (cls ? ' ' + cls : '') + (glyph ? ' has-icon' : ''), glyph ? null : b.mark);
+      if (glyph && network === 'slack' && typeof glyph.querySelector === 'function') {
+        const path = glyph.querySelector('path'), parts = (GLYPH.slack.match(/M[^M]*/g) || []);
+        if (path && parts.length === SLACK_COLORS.length) {
+          path.remove();
+          parts.forEach((d, i) => { const piece = global.document.createElementNS(SVG_NS, 'path'); piece.setAttribute('d', d); piece.setAttribute('fill', SLACK_COLORS[i]); glyph.append(piece); });
+        }
+      }
       if (glyph) m.append(glyph); else m.style.background = b.color;
+      m.dataset.network = network;
       m.setAttribute('aria-hidden', 'true'); return m;
     }
     function problem(e, where = root) {
@@ -502,8 +513,8 @@
       button(root, 'Back to accounts', async () => show(), 'c-link c-back');
       root.querySelector('.c-disconnect')?.focus?.();
     }
-    // Miguel: one tile for every account. Connected tiles add a green dot and the account name; tiles for
-    // networks that aren't available yet are the same tile, dimmed, with a small "Soon".
+    // Miguel: one flat tile for every account: the brand mark on its own, the name under it. Connected tiles add a small
+    // green dot; networks that aren't available yet are the same tile, dimmed, with a small "Soon".
     function tile(p, kind) {
       const t = element('button', 'c-tile' + (kind === 'add' ? ' c-add' : kind === 'on' ? ' c-on' : ' c-soon')); t.type = 'button'; t.dataset.network = p.network;
       const icon = element('span', 'c-tile-icon'); icon.append(mark(p.network));
@@ -511,7 +522,7 @@
       t.append(icon, element('span', 'c-tile-name', p.label));
       if (kind === 'on') {
         const who = (p.logins || []).map(l => l.name).filter(Boolean).join(', ');
-        t.append(element('small', 'c-tile-sub', who || 'Connected'));
+        if (who) t.title = who;
         t.setAttribute('aria-label', p.label + ' connected' + (who ? ', ' + who : '') + '. Options');
         t.onclick = () => manage(p).catch(e => problem(e));
       } else if (kind === 'soon') {
@@ -520,6 +531,17 @@
         if (p.message) t.title = p.message;
       } else t.setAttribute('aria-label', 'Add ' + p.label);
       return t;
+    }
+    // The last tile of Your accounts: a plus that opens the networks you can add, right under the grid.
+    let addOpen = false;
+    function plusTile(panel) {
+      const t = element('button', 'c-tile c-plus'); t.type = 'button';
+      const icon = element('span', 'c-tile-icon'), shape = element('span', 'c-mark c-plus-mark'); shape.setAttribute('aria-hidden', 'true');
+      icon.append(shape); t.append(icon, element('span', 'c-tile-name', 'Add'));
+      t.setAttribute('aria-label', 'Add an account');
+      const sync = () => { t.setAttribute('aria-expanded', String(addOpen)); panel.hidden = !addOpen; };
+      t.onclick = () => { addOpen = !addOpen; sync(); if (addOpen) panel.scrollIntoView?.({block: 'nearest', behavior: 'smooth'}); };
+      sync(); return t;
     }
     async function show({focus} = {}) {
       const mine = generation + 1;
@@ -536,16 +558,12 @@
       const order = p => p.state === 'connected' ? 2 : p.state === 'not_configured' ? 1 : 0;
       const sorted = [...usable].sort((a, b) => order(a) - order(b));
       for (const provider of sorted.filter(p => p.state !== 'connected')) root.append(card(provider));
-      // Connected accounts: tiles, the same as the ones for adding an account.
-      if (connected.length) {
-        root.append(element('h3', 'c-add-title', 'Your accounts'));
-        const mine = element('div', 'c-add-grid c-on-grid'); for (const provider of sorted.filter(p => p.state === 'connected')) mine.append(tile(provider, 'on')); root.append(mine);
-      }
       // Every other network sits dormant (no process work) until the owner picks it here.
       const addable = later.filter(p => p.supported && p.state === 'not_configured');
       const gone = later.filter(p => !p.supported);
+      const panel = element('div', 'c-add-panel');
       if (addable.length || gone.length) {
-        root.append(element('h3', 'c-add-title', 'Add an account'));
+        panel.append(element('h3', 'c-add-title', 'Add an account'));
         const grid = element('div', 'c-add-grid');
         for (const p of addable.sort((a, b) => a.label.localeCompare(b.label))) {
           const t = tile(p, 'add');
@@ -559,14 +577,24 @@
                 const status = await request(p.network, 'status');
                 if (status.state !== 'unavailable' && status.state !== 'not_configured') break;
               }
+              addOpen = false;
               await show({focus: p.network});
             } catch (e) { problem(e); t.disabled = false; t.classList.remove('busy'); }
           };
           grid.append(t);
         }
         for (const p of gone.sort((a, b) => a.label.localeCompare(b.label))) grid.append(tile(p, 'soon'));
-        root.append(grid);
+        panel.append(grid);
       }
+      // Connected accounts: flat tiles ending in a plus that opens Add an account. With nothing connected yet the
+      // choices simply show.
+      if (connected.length) {
+        root.append(element('h3', 'c-add-title', 'Your accounts'));
+        const mine = element('div', 'c-add-grid c-on-grid'); for (const provider of sorted.filter(p => p.state === 'connected')) mine.append(tile(provider, 'on'));
+        if (panel.children.length) mine.append(plusTile(panel));
+        root.append(mine);
+      }
+      if (panel.children.length) root.append(panel);
       const resumed = providers.find(p => p.pending_login);
       if (resumed) step(resumed.network, 'phone', resumed.pending_login, mine);
       if (focus) { const c = root.querySelector('.c-card[data-network="' + focus + '"]'); c?.scrollIntoView?.({block: 'nearest'}); c?.querySelector('.primary')?.focus(); }

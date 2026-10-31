@@ -2260,7 +2260,7 @@
     empty();
   }
   async function accounts(focus) {
-    // Accounts first: linking is the main job of this sheet. Everything else sits in one short "More" list below.
+    // Accounts first: linking is the main job of this sheet. Agent access and the rest sit below.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
     sheet.classList.add('u-settings'); refreshAccounts();
     if (window.MessengerConnectors) {
@@ -2297,19 +2297,23 @@
   // the agent reads and writes drafts, and only this signed-in screen can send them.
   const LEVEL_TEXT = {no_access: 'Can\'t read your chats.', read_only: 'Reads chats. Can\'t draft.',
     draft_only: 'Reads and drafts. Only you send.', draft_and_send: 'Reads and sends without your review.'};
-  // One agent row: name and what it may do on the left, a plain level picker on the right. A change saves at once.
-  function levelRow(agent, name, levels, save) {
+  // One agent row (Miguel): the agent's name and its level picker, nothing under it. The recommended level says so
+  // inside the picker's options (Settings only; Advanced's older keys keep short labels). A change saves at once.
+  function levelRow(agent, name, levels, save, {recommend = false} = {}) {
     const row = node('div', 'u-more-row u-more-agent');
     const choice = node('select', 'u-more-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
     const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
-    // Short labels keep the picker narrow on a phone; the line under the name says which level is recommended.
-    for (const l of shown) { const opt = node('option', '', l.label); opt.value = l.id; choice.append(opt); }
-    choice.value = agent.level;
+    for (const l of shown) {
+      const opt = node('option', '', l.label + (recommend && l.recommended ? ' (recommended)' : '')); opt.value = l.id;
+      if (LEVEL_TEXT[l.id]) opt.title = LEVEL_TEXT[l.id];
+      choice.append(opt);
+    }
+    choice.value = agent.level; choice.title = LEVEL_TEXT[agent.level] || '';
     choice.onchange = () => action(async () => {
       const level = choice.value;
       await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
     });
-    row.append(node('strong', 'u-agent-name', name), choice, node('small', 'u-more-what', (shown.find(l => l.id === agent.level)?.recommended ? 'Recommended. ' : '') + (LEVEL_TEXT[agent.level] || '')));
+    row.append(node('strong', 'u-agent-name', name), choice);
     return row;
   }
   // A quiet list row that opens another page.
@@ -2318,14 +2322,18 @@
     row.append(node('span', 'u-more-label', label), node('span', 'u-more-value'), node('span', 'u-row-caret', '›'));
     return row;
   }
-  // Miguel: everything under the accounts is one short list: agents (one picker each), then Suggested merges
-  // and Notifications only when there are any. Drafts live in their chats; Advanced is hidden (#advanced).
+  // Miguel: under the accounts, "Agent access" lists the Wizard's agents (one picker each). Suggested merges and
+  // Notifications follow in their own short list, only when there are any. Drafts live in their chats; Advanced is
+  // hidden (#advanced).
   function moreSettings(sheet) {
-    const group = node('div', 'u-settings-group u-more'), head = node('h3', 'u-more-head', 'More');
-    sheet.append(head, group);
-    // With nothing to show (no agents, merges or notifications) the heading and list stay away.
-    const sync = () => { head.hidden = group.hidden = ![...group.children].some(c => !c.hidden); };
-    const agents = node('div', 'u-more-agents'); agents.hidden = true; group.append(agents);
+    const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
+    const group = node('div', 'u-settings-group u-more u-more-other');
+    sheet.append(head, agents, group);
+    // Each part stays away while it has nothing to show.
+    const sync = () => {
+      head.hidden = agents.hidden = !agents.children.length;
+      group.hidden = ![...group.children].some(c => !c.hidden);
+    };
     const paintAgents = st => {
       agents.replaceChildren();
       if (st.gateway_connected === false) agents.append(node('p', 'u-more-note warn', 'Your agents can\'t reach Messenger yet. Ask your Wizard to finish connecting it.'));
@@ -2333,9 +2341,9 @@
         agents.append(levelRow(agent, agent.label || 'Your Wizard agent', st.wizard_levels || [], async level => {
           await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}});
           const next = await api('api/view/agents'); if (agents.isConnected) paintAgents(next);
-        }));
+        }, {recommend: true}));
       }
-      agents.hidden = !agents.children.length; sync();
+      sync();
     };
     api('api/view/agents').then(st => { if (agents.isConnected) paintAgents(st); }).catch(e => error(e));
     // Saved drafts stay in their chats (above the composer); Settings has no list of them.

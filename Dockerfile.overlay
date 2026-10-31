@@ -4,7 +4,7 @@ ARG BASE=wizard-messenger:0.2.0-unified.11.14
 FROM ${BASE}
 ARG REVISION
 LABEL org.opencontainers.image.revision=$REVISION \
-      org.opencontainers.image.version="0.2.0-unified.15.6" \
+      org.opencontainers.image.version="0.2.0-unified.15.7" \
       org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
 COPY server.py web.py unified.py connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py agent_tools.py wizard_agents.py agent_keys.py permissions.py drafts.py inbox_feed.py /app/
 COPY plumbing /app/plumbing
