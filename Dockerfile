@@ -4,22 +4,25 @@ FROM ${MDK_BUILD_IMAGE} AS mdk
 USER root
 WORKDIR /build/mdk
 ENV CARGO_BUILD_JOBS=1 CARGO_HOME=/build/cache CARGO_TARGET_DIR=/build/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
-# A received, hash-audited prebuilt binary image may be supplied for packaging.
-# The default path always builds the exact upstream source and Cargo.lock.
+COPY engine/patches/0001-rustls-0.23.46.patch /engine-patches/0001-rustls-0.23.46.patch
+# The default path builds the exact upstream source with the tracked security overlay.
+# Prebuilt wn/wnd carriers are refused until their rustls 0.23.46 provenance is audited.
 RUN --mount=type=cache,target=/build/cache --mount=type=cache,target=/build/target \
     mkdir -p /out && \
-    if [ -x /usr/local/bin/wn ] && [ -x /usr/local/bin/wnd ]; then \
-      cp /usr/local/bin/wn /usr/local/bin/wnd /out/; \
-    else \
-      apt-get update && apt-get install -y --no-install-recommends git pkg-config libssl-dev ca-certificates && \
-      git init . && git remote add origin https://github.com/marmot-protocol/mdk.git && \
-      git fetch --depth=1 origin 122bd90ffac60bb6311346e228d0f609a18521ee && \
-      git checkout --detach FETCH_HEAD && \
-      test "$(git rev-parse HEAD)" = 122bd90ffac60bb6311346e228d0f609a18521ee && \
-      printf '%s\n' 'c245642970ffd60b0a8c5e9264a8b8d2695ad8f2c08c290a42a3d1ef2b47604b  Cargo.lock' | sha256sum -c - && \
-      cargo build --locked -p wn-cli --bins -j1 && \
-      cp /build/target/debug/wn /build/target/debug/wnd /out/; \
-    fi
+    if [ -e /usr/local/bin/wn ] || [ -e /usr/local/bin/wnd ]; then \
+      echo 'unproven prebuilt wn/wnd carrier refused; use the source-build path with the rustls security overlay' >&2; exit 1; \
+    fi && \
+    apt-get update && apt-get install -y --no-install-recommends git pkg-config libssl-dev ca-certificates && \
+    git init . && git remote add origin https://github.com/marmot-protocol/mdk.git && \
+    git fetch --depth=1 origin 122bd90ffac60bb6311346e228d0f609a18521ee && \
+    git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = 122bd90ffac60bb6311346e228d0f609a18521ee && \
+    printf '%s\n' 'c245642970ffd60b0a8c5e9264a8b8d2695ad8f2c08c290a42a3d1ef2b47604b  Cargo.lock' | sha256sum -c - && \
+    git apply --check /engine-patches/0001-rustls-0.23.46.patch && \
+    git apply --whitespace=error /engine-patches/0001-rustls-0.23.46.patch && \
+    printf '%s\n' 'dac950e433d49280ebb9f8c46cfe4432287e0812186115e077bf83fee953377a  Cargo.lock' | sha256sum -c - && \
+    cargo build --locked -p wn-cli --bins -j1 && \
+    cp /build/target/debug/wn /build/target/debug/wnd /out/
 
 FROM ${MESSENGER_RUNTIME_BASE} AS runtime
 USER root
