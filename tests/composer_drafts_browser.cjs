@@ -15,7 +15,19 @@ async function edit(d, text) {
   for (const width of [390,1280]) {
     const ctx=await browser.newContext({viewport:{width,height:844}});
     await ctx.addCookies([{name:'wizard_messenger_session',value:st.cookie,url:st.origin}]);
-    await ctx.route('**/wizard-os-home/**',r=>{const u=new URL(r.request().url());r.continue({url:'http://127.0.0.1:8796'+u.pathname});});
+    const staticDir = process.env.STATIC_DIR || path.join(__dirname, '../static');
+    await ctx.route(/\/(unified\.js|unified\.css)(\?|$)/, route => {
+      const file = path.basename(new URL(route.request().url()).pathname);
+      return route.fulfill({status: 200, contentType: file.endsWith('.js') ? 'text/javascript' : 'text/css',
+        body: fs.readFileSync(path.join(staticDir, file))});
+    });
+    await ctx.route('**/wizard-os-home/**', r => {
+      const u = new URL(r.request().url());
+      if (!process.env.SHELL_DIR) return r.continue({url:'http://127.0.0.1:8796'+u.pathname});
+      const file = path.join(process.env.SHELL_DIR, 'core', path.basename(u.pathname));
+      return r.fulfill({status: 200, contentType: file.endsWith('.css') ? 'text/css' : 'text/javascript',
+        body: fs.existsSync(file) ? fs.readFileSync(file) : ''});
+    });
     const page=await ctx.newPage(), errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.goto(st.origin+'/'); await page.locator('.u-person',{hasText:'Alice Example'}).first().click();
     const field=page.locator('textarea[aria-label="Message"]'); await field.waitFor();
