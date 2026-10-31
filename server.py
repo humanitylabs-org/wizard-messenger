@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from engine import EngineError, MarmotEngine
 from permissions import AgentAccess, PUBLIC, route_shape
 from agent_keys import AgentKeys, LABELS as LEVEL_LABELS
-from wizard_agents import GatewayKey, WizardAgents
+from wizard_agents import GatewayGrant, WizardAgents
 import agent_tools
 
 MAX_BODY=65536
@@ -35,9 +35,9 @@ class MessengerServer(ThreadingHTTPServer):
         self.agent_access = AgentAccess(getattr(engine, 'data', None))
         # Per-agent keys, each with its own owner-chosen level (agent_keys.py).
         self.agent_keys = AgentKeys(getattr(engine, 'data', None))
-        # The Wizard's own agents, reached through the Agent Service gateway with its per-app key (wizard_agents.py).
+        # The Wizard's own agents, reached through the Agent Service gateway with its app grant key (wizard_agents.py).
         self.wizard_agents = WizardAgents(getattr(engine, 'data', None))
-        self.gateway_key = GatewayKey(os.environ.get('MESSENGER_GATEWAY_KEY_FILE') or None)
+        self.gateway_grant = GatewayGrant(os.environ.get('WIZARD_GRANTS_FILE') or None)
         super().__init__(address,Handler)
 
 class Handler(BaseHTTPRequestHandler):
@@ -68,23 +68,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def _caller(self):
-        """None without a bearer; ('machine', None) for the app's machine key (global level);
-        ('agent', row) for a per-agent key (its own level). Unknown bearers are refused."""
-        authorization = self.headers.get('Authorization')
-        if not authorization:
-            # A bare call names nobody: the app port is also reachable on the tailnet (Serve), so the Wizard gateway
-            # proves itself with its per-app key instead (wizard_agents.py).
-            return None
-        if hmac.compare_digest(authorization.encode(), ('Bearer ' + self.service.token).encode()):
-            return ('machine', None)
-        if self.service.gateway_key.matches(authorization):
-            # The Wizard gateway may name the agent it speaks for, on /mcp only; each agent has the owner's level for it.
+        """None without credentials; ('machine', None) for the app's machine key (global level);
+        ('agent', row) for a per-agent key or a Wizard agent named by the gateway (its own level).
+        Unknown bearers are refused."""
+        if self.service.gateway_grant.matches(self.headers.get('X-Wizard-Grant')):
+            # The Wizard gateway (its app grant key, wizard_agents.py) may name the agent it speaks for, on /mcp
+            # only; each agent has the owner's level for it.
             if urlsplit(self.path).path != '/mcp':
                 raise EngineError('unauthorized', 'A Messenger API capability is required', 401)
             row = self.service.wizard_agents.caller(self.headers.get('X-Wizard-Agent'), self.headers.get('X-Wizard-Agent-Label'))
             if row is None:
                 return ('agent', {'id': 'wizard-gateway', 'name': 'Wizard gateway', 'level': 'no_access', 'kind': 'gateway'})
             return ('agent', {'id': 'wizard-' + row['id'], 'name': row['label'], 'level': row['level'], 'kind': 'wizard'})
+        authorization = self.headers.get('Authorization')
+        if not authorization:
+            # A bare call names nobody: the app port is also reachable on the tailnet (Serve), so the Wizard gateway
+            # proves itself with its app grant key instead (wizard_agents.py).
+            return None
+        if hmac.compare_digest(authorization.encode(), ('Bearer ' + self.service.token).encode()):
+            return ('machine', None)
         agent = self.service.agent_keys.lookup(authorization)
         if agent is not None:
             return ('agent', agent)
@@ -124,8 +126,8 @@ class Handler(BaseHTTPRequestHandler):
         try: length=int(self.headers.get('Content-Length','0'))
         except ValueError: raise EngineError('invalid_length','Invalid body length',400) from None
         limit=MAX_BODY
-        if urlsplit(self.path).path=='/mcp' and self.headers.get('Authorization'):
-            # Draft attachments arrive as base64 inside the JSON: only a valid per-agent key gets the larger cap.
+        if urlsplit(self.path).path=='/mcp' and (self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant')):
+            # Draft attachments arrive as base64 inside the JSON: only a valid per-agent key or the gateway gets the larger cap.
             try: caller=self._caller()
             except EngineError: caller=None
             if caller and caller[0]=='agent': limit=AGENT_MCP_MAX_BODY

@@ -1,18 +1,20 @@
 """The Wizard's own agents, each with one owner-chosen Messenger level. No keys to copy.
 
 The Wizard Agent Service (the gateway every agent on this box uses for app tools) calls Messenger's
-/mcp with a per-app gateway key that the box operator provisioned once into both sides
-(MESSENGER_GATEWAY_KEY_FILE here, <wizard-os>/app-mcp-keys/messenger there). Only a request
-carrying that key may name an agent in X-Wizard-Agent; Messenger then applies the level the owner
-picked for that agent in Settings → Agents. The gateway authenticates each agent with the agent's
-own gateway token, so an agent cannot speak as another one, and only the owner's signed-in screen
-can change a level.
+/mcp with its app grant key in X-Wizard-Grant (wizard-os spec/PERMISSIONS.md layer 2: the App
+Manager mints it, keeps it in <wizard-os>/grants/agent-service.json and puts only its SHA-256 in the
+`incoming` list of this app's grants file, $WIZARD_GRANTS_FILE, as `from: agent-service`). Only a
+request carrying that key may name an agent in X-Wizard-Agent; Messenger then applies the level the
+owner picked for that agent in Settings → Agents. The gateway authenticates each agent with the
+agent's own gateway token, so an agent cannot speak as another one, and only the owner's signed-in
+screen can change a level.
 
 Levels for Wizard agents stop at Draft-only: nothing here lets an agent send. The main agent
 ('hermes', the Wizard's own agent) is always listed; other agents appear after their first call.
 Application defense in depth, not protection against host root.
 """
 from __future__ import annotations
+import hashlib
 import hmac
 import json
 import os
@@ -45,35 +47,53 @@ def clean_label(value, fallback):
     return text or fallback
 
 
-class GatewayKey:
-    """The per-app gateway key, read from a private file and re-read when it changes."""
+GATEWAY = 'agent-service'
+SHA256_HEX = re.compile(r'[0-9a-f]{64}')
+MAX_GRANTS_FILE = 256 * 1024
+
+
+class GatewayGrant:
+    """The gateway's grant, from this app's grants file (only key hashes, never keys), re-read when it changes.
+
+    A missing, oversized or malformed file holds no gateway row: the gateway is then an unknown caller.
+    """
     def __init__(self, path=None):
         self.path = Path(path) if path else None
         self.stamp = None
-        self.key = ''
+        self.hashes = ()
         self.lock = threading.Lock()
 
     def current(self):
         if not self.path:
-            return ''
+            return ()
         try:
             st = self.path.stat()
         except OSError:
-            return ''
+            return ()
         stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
         with self.lock:
             if stamp != self.stamp:
+                hashes = []
                 try:
-                    key = self.path.read_text().strip() if st.st_size <= 512 else ''
-                except OSError:
-                    key = ''
-                self.key = key if KEY_RE.fullmatch(key) else ''
+                    if st.st_size <= MAX_GRANTS_FILE:
+                        doc = json.loads(self.path.read_text())
+                        rows = doc.get('incoming') if isinstance(doc, dict) else None
+                        for row in rows if isinstance(rows, list) else ():
+                            if isinstance(row, dict) and row.get('from') == GATEWAY and isinstance(row.get('sha256'), str) \
+                                    and SHA256_HEX.fullmatch(row['sha256']):
+                                hashes.append(row['sha256'])
+                except (OSError, ValueError, TypeError):
+                    hashes = []
+                self.hashes = tuple(hashes)
                 self.stamp = stamp
-            return self.key
+            return self.hashes
 
-    def matches(self, authorization):
-        key = self.current()
-        return bool(key) and isinstance(authorization, str) and hmac.compare_digest(authorization.encode(), ('Bearer ' + key).encode())
+    def matches(self, grant):
+        hashes = self.current()
+        if not hashes or not isinstance(grant, str) or not KEY_RE.fullmatch(grant):
+            return False
+        digest = hashlib.sha256(grant.encode()).hexdigest().encode()
+        return any(hmac.compare_digest(digest, h.encode()) for h in hashes)
 
 
 class WizardAgents:

@@ -1,19 +1,26 @@
 """The Wizard's own agents reach Messenger through the Agent Service gateway: the gateway proves itself with
-its per-app key and names the agent; the owner picks each agent's level. No keys to copy, no send.
+its app grant key (X-Wizard-Grant, checked against this app's grants file) and names the agent; the owner picks each agent's level. No keys to copy, no send.
 
 Real loopback handlers, fake provider I/O. No accounts, networks or real messages.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock
 import test_web as fixtures
 import test_agent_keys as base
-from wizard_agents import GatewayKey, WizardAgents
+from wizard_agents import GatewayGrant, WizardAgents
 
-KEY = 'g' * 43
+KEY = 'a1' * 32  # what the App Manager mints: 32 random bytes, hex
+
+
+def grants_file(path, rows):
+    path.write_text(json.dumps({'outgoing': {}, 'incoming': rows, 'enforce': False}))
+    return path
 
 
 class WizardAgentGateway(unittest.TestCase):
@@ -28,13 +35,15 @@ class WizardAgentGateway(unittest.TestCase):
 
     def setUp(self):
         base.AgentKeyHTTP.setUp(self)
-        key_file = Path(self.temp.name, 'gateway-key')
-        key_file.write_text(KEY + '\n'); os.chmod(key_file, 0o600)
-        self.server.gateway_key = GatewayKey(key_file)
+        # Only the key's hash is in this app's grants file, as the App Manager writes it (`from: agent-service`).
+        self.grants = grants_file(Path(self.temp.name, 'grants.json'), [
+            {'from': 'wisdom', 'sha256': hashlib.sha256(b'w' * 64).hexdigest()},
+            {'from': 'agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
+        self.server.gateway_grant = GatewayGrant(self.grants)
         self.server.wizard_agents = WizardAgents(self.temp.name)
 
     def gw(self, agent='hermes', label='Oscar', key=KEY):
-        h = {'Authorization': 'Bearer ' + key}
+        h = {'X-Wizard-Grant': key}
         if agent is not None:
             h['X-Wizard-Agent'] = agent
         if label is not None:
@@ -96,20 +105,33 @@ class WizardAgentGateway(unittest.TestCase):
         self.pick('hermes', 'draft_only')
         self.assertEqual(self.request('GET', '/api/unified/people', headers=self.gw())[0], 401)
         self.assertEqual(self.request('GET', '/api/drafts', headers=self.gw())[0], 401)
-        wrong = self.gw(key='h' * 43)
-        self.assertEqual(self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}, wrong)[0], 401)
+        # A wrong grant, or another app's grant, is not the gateway: it names nobody and gets the public tools only.
+        for wrong in (self.gw(key='h' * 64), self.gw(key='w' * 64)):
+            names = {t['name'] for t in self.mcp(None, headers=wrong, method='tools/list')['tools']}
+            self.assertEqual(names, {'messenger_status', 'messenger_public_identity'})
+            self.assertTrue(self.mcp('messenger_list_chats', {}, wrong)[1])
+        # The old hand-written gateway bearer is no longer a second key system.
+        self.assertEqual(self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+                                      {'Authorization': 'Bearer ' + KEY, 'X-Wizard-Agent': 'hermes'})[0], 401)
         # The agent header alone (no gateway key) names nobody.
         anon = {'X-Wizard-Agent': 'hermes', 'X-Wizard-Agent-Label': 'Oscar'}
         names = {t['name'] for t in self.mcp(None, headers=anon, method='tools/list')['tools']}
         self.assertEqual(names, {'messenger_status', 'messenger_public_identity'})
         data, error = self.mcp('messenger_list_chats', {}, anon)
         self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_key_required')
-        # Without a provisioned key file the gateway bearer is just an unknown bearer.
-        self.server.gateway_key = GatewayKey(None)
-        self.assertEqual(self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}, self.gw())[0], 401)
+        # Without the gateway row (no grants file, or the grant revoked) the gateway names nobody.
+        self.server.gateway_grant = GatewayGrant(None)
+        self.assertTrue(self.mcp('messenger_list_chats', {}, self.gw())[1])
         self.assertFalse(self.listing()['gateway_connected'])
+        self.server.gateway_grant = GatewayGrant(self.grants)
+        self.assertFalse(self.mcp('messenger_list_chats', {}, self.gw())[1])
+        grants_file(self.grants, [{'from': 'wisdom', 'sha256': hashlib.sha256(b'w' * 64).hexdigest()}])
+        os.utime(self.grants, ns=(time.time_ns() + 5 * 10**9,) * 2)
+        self.assertTrue(self.mcp('messenger_list_chats', {}, self.gw())[1])  # A revoke applies without a restart.
+        self.assertFalse(self.listing()['gateway_connected'])
+        grants_file(self.grants, [{'from': 'agent-service', 'sha256': hashlib.sha256(KEY.encode()).hexdigest()}])
+        os.utime(self.grants, ns=(time.time_ns() + 10 * 10**9,) * 2)
         # Gateway calls without an agent name list tools but run nothing.
-        self.server.gateway_key = GatewayKey(Path(self.temp.name, 'gateway-key'))
         data, error = self.mcp('messenger_list_chats', {}, self.gw(None, None))
         self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_access_off')
 

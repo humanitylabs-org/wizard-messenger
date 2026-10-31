@@ -737,7 +737,7 @@
       "tools": "messenger_create_draft and messenger_update_draft accept attachments (added after the text write); messenger_attach_to_draft adds; messenger_remove_draft_attachment removes by id. Every edit is revision-fenced.",
       "item": "{\"path\": file inside the shared folder} or {\"base64\": bytes, \"name\": optional display name}; 1..10 per call, 10 per draft, 25 MiB each, 100 MiB across all drafts; type sniffed from bytes",
       "shared_folder": "MESSENGER_AGENT_FILES_DIR (default /attachments, mounted read-only; Wizard: Files Messenger/Attachments). Relative paths, or absolute paths under MESSENGER_AGENT_FILES_HOST_DIR; .., other absolute paths, symlinks out and non-regular files are refused (invalid_attachment) before any draft write.",
-      "body_limit": "POST /mcp accepts up to 36 MiB only with a valid per-agent key; otherwise 64 KiB."
+      "body_limit": "POST /mcp accepts up to 36 MiB only with a valid per-agent key or the gateway's grant; otherwise 64 KiB."
     },
     "mcp_auth": "Per-agent key in the Authorization header of POST /mcp. Without one (or with the shared Wizard app key) /mcp exposes only messenger_status and messenger_public_identity.",
     "sending": "No MCP send tool for any key or Wizard agent. Only the owner's signed-in browser session sends a draft (preview then send, revision-fenced).",
@@ -749,8 +749,8 @@
   "unified_privacy": "Matrix and Telegram history and translations are plaintext in app-local SQLite. Telegram cloud chats are not end-to-end encrypted. Text selected for translation is sent only to Tinfoil. Existing Marmot keyring/history is unchanged.",
   "wizard_agents": {
     "what": "The Wizard's own agents (Agent Service registry ids; main agent 'hermes'), each with one owner-picked level. No key to create or copy.",
-    "gateway_auth": "POST /mcp with Authorization: Bearer <per-app gateway key>. The key is provisioned once by the box operator into MESSENGER_GATEWAY_KEY_FILE (Messenger) and <wizard-os home>/app-mcp-keys/messenger (Agent Service, wizard-agent-service >= the per-app key change). Accepted on /mcp only; any other route refuses it (401).",
-    "agent_identity": "X-Wizard-Agent (^[a-z0-9][a-z0-9_-]{0,63}$) and URI-encoded X-Wizard-Agent-Label, trusted only together with the gateway key. The gateway authenticates each agent with that agent's own gateway token.",
+    "gateway_auth": "POST /mcp with X-Wizard-Grant: <the Agent Service gateway's app grant key> (wizard-os spec/PERMISSIONS.md layer 2). Messenger hashes it and accepts it only when it matches the from: agent-service row in the incoming list of its grants file ($WIZARD_GRANTS_FILE, written by the App Manager); Authorization is not used for it. Accepted on /mcp only; any other route refuses it (401). A wrong or other app's grant names nobody.",
+    "agent_identity": "X-Wizard-Agent (^[a-z0-9][a-z0-9_-]{0,63}$) and URI-encoded X-Wizard-Agent-Label, trusted only together with the gateway's grant. The gateway authenticates each agent with that agent's own gateway token.",
     "levels": "no_access (default, also for unknown agents), read_only, draft_only. Never draft_and_send.",
     "tools_list": "The gateway gets the full message tool list (it caches one list for all agents); each tools/call is checked against the named agent's level. A gateway call naming no agent runs nothing.",
     "storage": "/data/wizard-agents.json, mode 0600; corrupt store fails closed (every agent No access).",
