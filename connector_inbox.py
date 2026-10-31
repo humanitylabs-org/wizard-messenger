@@ -14,12 +14,21 @@ META_VERSION = 3  # 3: member and room pictures
 # Bridged history (bridgev2 backfill on stock Synapse) arrives through /sync with
 # its original timestamps; only recent lines may notify.
 LIVE_WINDOW_MS = 15 * 60 * 1000
+# WhatsApp fetches a contact's profile photo once, when the bridge first meets them. If that one request
+# fails the bridge stores the photo as unknown and does not ask again until something else resyncs that
+# contact, so the chat keeps its initials although WhatsApp has a photo (Parinda, 31 Oct 2026). The
+# bridge's own `sync contacts` command retries exactly the unknown photos. Messenger asks for it while a
+# chat on that network still has no picture: soon after a new one shows up, then backing off, because most
+# missing pictures belong to people who hide theirs (the bridge remembers those and does not refetch).
+PICTURE_RETRY_COMMANDS = {'whatsapp': 'sync contacts'}
+PICTURE_RETRY_FIRST, PICTURE_RETRY_MIN, PICTURE_RETRY_MAX = 600, 6 * 3600, 7 * 86400
 HISTORY_PAGES, HISTORY_PAGE = 5, 100
 
 
 class ConnectorInbox(UnifiedInbox):
     def __init__(self, data, engine, sender=None):
         self._picture_skip = set()
+        self.management_rooms = {}
         super().__init__(data, engine)
         self.importing = set()
         self.import_slots = threading.Semaphore(2)
@@ -142,9 +151,20 @@ class ConnectorInbox(UnifiedInbox):
             if not label or (meta['kind'] == 'person' and label in own):
                 label = PROVIDERS[network].label + ' conversation'
             meta['label'] = label
+        old = self.rooms.get(room)
+        if old is None:
+            with self.store.db() as db:
+                row = db.execute('SELECT json FROM room_meta WHERE room=?', (room,)).fetchone()
+            old = json.loads(row[0]) if row else None
         with self.store.db() as db:
             db.execute('INSERT OR REPLACE INTO room_meta VALUES (?,?)', (room, json.dumps(meta, ensure_ascii=False)))
+            # A picture that arrives (or changes) later must reach an Inbox that is already open: bump the
+            # chat so the list long-poll repaints it with the new picture tag, even with no new message.
+            touched = old is not None and (old.get('avatar'), old.get('avatars')) != (meta.get('avatar'), meta.get('avatars')) and \
+                db.execute('UPDATE identity SET seq=? WHERE address=?', (self.store.next_seq(), room)).rowcount
         self.rooms[room] = meta
+        if touched:
+            self.store.changed()
         return meta
 
     def ingest(self, identity, meta, event, *, live=False):
@@ -180,11 +200,14 @@ class ConnectorInbox(UnifiedInbox):
         for network in sorted(MATRIX_NETWORKS):
             try:
                 self.connectors.config(network)
-                logins = self.connectors.request(network, '/whoami').get('logins') or []
+                whoami = self.connectors.request(network, '/whoami')
+                logins = whoami.get('logins') or []
             except EngineError:
                 continue
             except Exception:
                 continue
+            if isinstance(whoami.get('management_room'), str) and whoami['management_room'].startswith('!'):
+                self.management_rooms[network] = whoami['management_room']
             names = set()
             for login in logins:
                 if not isinstance(login, dict):
@@ -202,6 +225,52 @@ class ConnectorInbox(UnifiedInbox):
             if not self.store.get('own_fixed:' + ghost):
                 self.store.claim_own(ghost)
                 self.store.put('own_fixed:' + ghost, '1')
+        self.retry_pictures()
+
+    def rooms_without_picture(self, network):
+        """Inbox chats on a network whose bridge has not given us a picture (spaces and hidden rooms excluded)."""
+        out = []
+        with self.store.db() as db:
+            rows = db.execute('SELECT r.room,r.json FROM room_meta r JOIN identity i ON i.address=r.room WHERE i.network=?', (network,)).fetchall()
+        for room, raw in rows:
+            try:
+                meta = json.loads(raw)
+            except ValueError:
+                continue
+            if meta.get('network') == network and not meta.get('space') and not meta.get('avatar'):
+                out.append(room)
+        return sorted(set(out))
+
+    def retry_pictures(self, now=None):
+        """Ask a bridge to refetch the profile photos it failed to get (see PICTURE_RETRY_COMMANDS)."""
+        now = time.time() if now is None else now
+        for network, command in PICTURE_RETRY_COMMANDS.items():
+            room = self.management_rooms.get(network)
+            if not room or self.sender is None:
+                continue
+            key = 'picture_retry:' + network
+            try:
+                state = json.loads(self.store.get(key) or '{}')
+            except ValueError:
+                state = {}
+            missing = self.rooms_without_picture(network)
+            if not missing:
+                if state:
+                    self.store.put(key, '')
+                continue
+            new = bool(set(missing) - set(state.get('rooms') or []))
+            wait = PICTURE_RETRY_FIRST if new else state.get('wait', PICTURE_RETRY_MIN)
+            if now - state.get('at', 0) < wait:
+                continue
+            try:
+                self.mx(self.room(room) + '/send/m.room.message/wizard-pictures-' + str(int(now * 1000)), 'PUT',
+                        {'msgtype': 'm.text', 'body': command})
+            except Exception as error:  # the next pass tries again
+                print('picture retry %s: failed %s' % (network, type(error).__name__), flush=True)
+                continue
+            self.store.put(key, json.dumps({'at': now, 'rooms': missing,
+                                            'wait': PICTURE_RETRY_MIN if new else min(wait * 2, PICTURE_RETRY_MAX)}))
+            print('picture retry %s: %d chats without a picture' % (network, len(missing)), flush=True)
 
     def matrix_upload(self, data, filename, mime):
         if self.sender is None:
