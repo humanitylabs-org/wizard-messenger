@@ -45,12 +45,12 @@ async function mcp(key, name, args) {
     await page.goto(st.origin + '/'); await page.waitForTimeout(1500);
     if (!(await page.getByRole('button', {name: 'Settings', exact: true}).count())) { await page.locator('header button').first().click(); await page.waitForTimeout(500); }
     await page.getByRole('button', {name: 'Settings', exact: true}).first().click();
-    await page.locator('.u-agent-access').waitFor({timeout: 40000}).catch(() => {});
-    if (await page.locator('.u-agent-access').count()) {
-      await page.locator('.u-agent-access').scrollIntoViewIfNeeded();
+    await page.locator('.u-settings .u-more').waitFor({timeout: 40000}).catch(() => {});
+    if (await page.locator('.u-settings .u-more').count()) {
+      await page.locator('.u-settings .u-more').scrollIntoViewIfNeeded();
       await page.waitForTimeout(300);
-      await page.locator('.u-agent-access').screenshot({path: `${dir}/agents-${width}.png`});
-      out['levels' + width] = await page.locator('select[aria-label="Level for Oscar"] option').allTextContents();
+      await page.locator('.u-settings .u-more').screenshot({path: `${dir}/agents-${width}.png`});
+      out['levels' + width] = await page.locator('select[aria-label="What Oscar may do"] option').allTextContents();
     } else out['settings' + width] = 'not found';
     if (width === 1280) {
       await page.goto(st.origin + '/'); await page.waitForTimeout(1500);
