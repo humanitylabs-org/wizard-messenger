@@ -156,9 +156,11 @@ class TrustedOwnerHTTP(unittest.TestCase):
         (self.root/'link').symlink_to(self.root/'proof')
         with self.assertRaises(OSError):
             TrustedOwner(self.data, enabled=True, proof_file=self.root/'link', wrap_file=self.root/'wrap')
-        self.unlock(); self.server.trusted_owner.path.chmod(0o644)
-        self.assertEqual(self.request('GET', '/api/view/session')[0], 401)
-        self.assertTrue(self.server.trusted_owner.path.exists())
+        # App Manager backups widen app-data modes while Messenger runs: our own envelope is tightened back
+        # and still opens (it is encrypted under the out-of-data wrap key), instead of locking the owner out.
+        self.unlock(); self.server.trusted_owner.path.chmod(0o777)
+        self.assertEqual(self.server.trusted_owner.password(self.server.auth.credential) is not None, True)
+        self.assertEqual(self.server.trusted_owner.path.stat().st_mode & 0o777, 0o600)
     def test_origin_missing_and_cross_site_cannot_enroll(self):
         for headers in ({'Origin': ''}, {'Sec-Fetch-Site': 'cross-site'}):
             self.assertEqual(self.request('POST', '/api/view/unlock', {'vault_password': PASSWORD, 'remember_wizard': True}, headers=headers)[0], 403)
