@@ -1,0 +1,21 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 562fcf6e..37aed06c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -5420,5 +5420,5 @@
+ name = "rustls"
+-version = "0.23.45"
++version = "0.23.46"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
++checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
+ dependencies = [
+diff --git a/Cargo.toml b/Cargo.toml
+index 1aacaedc..b9d69ee5 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -102,3 +102,3 @@
+ rcgen = "0.14"
+-rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
++rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+ # Already in the graph through quinn's platform-verifier feature; direct dep so
