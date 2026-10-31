@@ -1830,6 +1830,10 @@
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
     // elsewhere it is the shared browser recorder with the same external-mic guard. Messenger never opens the mic itself.
     // The recorder is state, not a promise's old DOM closure: openPerson builds this form twice.
+    // Voice-note start budget. Wizard's shared capture gives up on a hung start after ~10 s and frees the mic;
+    // Messenger hands the composer back sooner and waits (bounded) for that release on the next tap.
+    const VOICE_START_MS = 8000, VOICE_PRIOR_MS = 3000;
+    const VOICE_START_FAILED = 'The microphone didn\'t start. Tap the mic to try again.';
     const notice = node('p', 'u-voice-notice'); notice.setAttribute('role', 'alert');
     let panel;
     const paintRecording = () => {
@@ -1857,12 +1861,21 @@
       const r = {phase: 'starting', levels: [], started: Date.now(), cancelled: false};
       view.recording = r; view.voiceNotice = ''; hold();
       const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
-      const failed = e => { voiceNotice(e?.message || 'Could not start recording. Try again.'); };
+      // An abandoned start may settle long after a newer recording began: it never paints a notice again.
+      const failed = e => { if (!r.abandoned) voiceNotice(e?.message || 'Could not start recording. Try again.'); };
       const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
+      // A start that has not answered gives the composer back at once (James's phone, 31 Oct 2026: the old path
+      // waited on "Stopping…" for a start that never settled, hiding the composer and disabling the mic). The
+      // pending start is cancelled in the background when, and if, it ever settles.
+      const abandon = (message, discarded = false) => {
+        if (r.abandoned) return;
+        r.abandoned = r.cancelled = true; r.discarded = discarded; close();
+        if (message) voiceNotice(message);
+      };
       r.cancel = async () => {
-        if (r.phase === 'stopping') return;
+        if (r.phase === 'stopping' || r.abandoned) return;
+        if (!r.session) { abandon('', true); return; } // Discard while Starting
         r.cancelled = true; r.phase = 'stopping'; view.paintRecording?.();
-        if (!r.session) return; // the pending start cancels its late result before clearing the hold
         try { await r.session.cancel(); close(); }
         catch (e) { r.phase = 'recording'; r.cancelled = false; failed(new Error(discardFailure(e))); }
       };
@@ -1879,33 +1892,46 @@
         const url = URL.createObjectURL(take.blob); localAudio.set(url, take.blob);
         queueSend(r.person, {voice: {blob: take.blob, take: take.id, duration, waveform, url}, reply: r.reply, identity_id: r.identity});
       };
+      // A late session is ours to cancel only if this attempt started it, or the owner pressed Discard on it.
+      // A recovered take that arrives after the deadline stays in Wizard: the next mic tap reattaches it with Send/Discard.
+      const dropLate = attached => { if (r.session && (!attached || r.discarded)) r.session.cancel().catch(() => {}); };
+      const begin = async () => {
+        let attached = null;
+        try {
+          attached = capture.attach ? await capture.attach() : null;
+          if (r.abandoned) { r.session = attached; dropLate(true); return; }
+          own = capture.current?.() || own;
+          if (!attached && recoverOnly && !own) { close(); return; }
+          r.person = own?.meta?.person || id; r.identity = own?.meta?.identity || channel.value; r.reply = view.reply;
+          r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
+          if (r.abandoned) { dropLate(!!attached); return; }
+          if (!r.session) throw new Error('That recording has already stopped. Tap the microphone to start again.');
+          clearTimeout(r.deadline);
+          r.phase = 'recording';
+          const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
+          let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
+          r.tick = setInterval(() => {
+            if (r.phase !== 'recording') return;
+            const level = Math.round(Math.min(1, last * 1.6) * 1024); r.levels.push(level);
+            if (r.levels.length > 9600) r.levels.splice(0, 3200);
+            view.paintRecordingTick?.(r, level);
+          }, 100);
+          view.paintRecording?.();
+        } catch (e) {
+          if (r.abandoned) { dropLate(!!attached); return; }
+          // Listener/bridge setup can throw after start succeeded: keep custody but stop the physical mic.
+          if (r.session) { try { await r.session.stop(); } catch (_) { r.phase = 'recording'; failed(e); return; } }
+          close(); failed(e);
+        }
+      };
       view.paintRecording?.();
-      r.deadline = setTimeout(() => { voiceNotice('The microphone took too long to start. Cancelling the recording…'); r.cancel(); }, 8000);
-      try {
-        const attached = capture.attach ? await capture.attach() : null;
-        own = capture.current?.() || own;
-        if (!attached && recoverOnly && !own) { close(); return; }
-        if (r.cancelled && !attached) { close(); return; }
-        r.person = own?.meta?.person || id; r.identity = own?.meta?.identity || channel.value; r.reply = view.reply;
-        r.session = attached || await capture.start({kind: 'audio', meta: {purpose: 'messenger-voice', person: id, identity: channel.value}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
-        if (!r.session) throw new Error('That recording has already stopped. Tap the microphone to start again.');
-        clearTimeout(r.deadline);
-        if (r.cancelled) { await r.session.cancel(); close(); return; }
-        r.phase = 'recording';
-        const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
-        let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
-        r.tick = setInterval(() => {
-          if (r.phase !== 'recording') return;
-          const level = Math.round(Math.min(1, last * 1.6) * 1024); r.levels.push(level);
-          if (r.levels.length > 9600) r.levels.splice(0, 3200);
-          view.paintRecordingTick?.(r, level);
-        }, 100);
-        view.paintRecording?.();
-      } catch (e) {
-        // Listener/bridge setup can throw after start succeeded: keep custody but stop the physical mic.
-        if (r.session) { try { await r.session.stop(); } catch (_) { r.phase = 'recording'; failed(e); return; } }
-        close(); failed(e);
-      }
+      r.deadline = setTimeout(() => abandon(recoverOnly ? '' : VOICE_START_FAILED), VOICE_START_MS);
+      // A start abandoned a moment ago may still hold Wizard's microphone until Wizard gives up on it: let it settle
+      // (bounded) so this tap starts cleanly instead of reporting Messenger itself as the busy recorder.
+      const prior = view.voiceStartPending;
+      const attempt = (async () => { if (prior) await Promise.race([prior, new Promise(res => setTimeout(res, VOICE_PRIOR_MS))]); if (!r.abandoned) await begin(); })();
+      view.voiceStartPending = attempt;
+      try { await attempt; } finally { if (view.voiceStartPending === attempt) view.voiceStartPending = null; }
     }
     const paintRecordingTick = (r, level) => {
       if (!panel?.isConnected) return;
