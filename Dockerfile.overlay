@@ -14,3 +14,8 @@ COPY --chmod=0644 push_notifications/__init__.py push_notifications/runtime.py p
 COPY --chmod=0644 plumbing/connectors-provenance.json plumbing/connectors-view-integration.patch plumbing/connectors-web-integration.patch plumbing/dots-template.json plumbing/dots-upstream-LICENSE plumbing/facebook-template.json plumbing/gmessages-template.json plumbing/instagram-template.json plumbing/line-template.json plumbing/line-upstream-LICENSE plumbing/line.Dockerfile plumbing/linkedin-template.json plumbing/permission-runtime-integration.patch plumbing/slack-template.json plumbing/twitter-template.json /app/plumbing/
 COPY --chmod=0755 engine/entrypoint.sh /app/entrypoint.sh
 COPY --chmod=0644 static/index.html static/app.js static/app.css static/connectors.js static/unified.js static/unified.css /app/static/
+# COPY --chmod also stamps directories it creates (readiness/, push_notifications/ became 0644 and uid 1000 could not
+# enter them: 15.8 first boot crash-looped on "No module named readiness.search"). Directories need their x bit.
+USER 0
+RUN chmod 0755 /app /app/readiness /app/push_notifications /app/plumbing /app/static
+USER 1000:1000
