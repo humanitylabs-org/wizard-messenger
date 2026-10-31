@@ -107,10 +107,11 @@ async function exhaustedBudget() {
       const ticket = (await ticketResponse.json()).result.ticket;
       await page.goto(base + '#ticket=' + ticket);
     }
-    await page.locator('#inbox-tabs').waitFor({state: 'visible', timeout: 60000});
+    // Chats is the start screen; section tabs are hidden in current builds, so wait for the chat list itself.
+    await page.locator('.u-person').first().waitFor({timeout: 60000});
     // A fresh unified preview is usable without creating a Marmot account or a real login.
     if (await page.locator('#sheet-layer:not([hidden])').count()) await page.click('#close-sheet');
-    await page.click('#inbox-tabs [data-tab="people"]');
+    if (await page.locator('#inbox-tabs:not([hidden]) [data-tab="people"]').count()) await page.click('#inbox-tabs [data-tab="people"]');
     await page.locator('.u-person', {hasText: 'Restart fixture'}).click();
     await page.locator('.u-composer textarea').fill('send survives two empty gateway replies');
     await page.locator('.u-composer').evaluate(form => form.requestSubmit());
