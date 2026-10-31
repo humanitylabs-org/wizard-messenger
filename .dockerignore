@@ -1,5 +1,6 @@
 .git
 .hermes
+.hourly-evidence
 .env
 .env.*
 **/__pycache__

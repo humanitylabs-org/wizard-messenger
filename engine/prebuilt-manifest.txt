@@ -1,0 +1,6 @@
+# Patched-only admission manifest v1. Data, not shell code.
+# Binary identities copied from proposal provenance, not independently reproduced here.
+# No patched arm64 identity is available; do not substitute historical hashes.
+provenance f35b3a0b7686d8505cd4cbeac7f5d5bdeaabc7fd664e3def2f06536144f56a27
+patch 0001-relay-plane-drop.patch 7a552464730c87883036ab971d5741e6971306ddba6a63e61506dbb8d83a6ab8
+binary amd64 8d476965db54a17edd8f7fd32640bf64c25203976caded9a18c591d5ca820ae2 932b1e19c7c32ee4ac8bc5043afea91a3c09d6a7f373195a62e6c100a0202657

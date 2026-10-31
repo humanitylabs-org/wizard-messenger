@@ -37,7 +37,11 @@ Dedicated Messenger account and public npub/nprofile contact code; contact resol
 
 ## Build and install
 
-Sustained Rust/image builds and integration campaigns run on the remote build machine. The default Dockerfile builds the exact MDK source/lock. Audited matching binary carriers can be supplied using `MDK_BUILD_IMAGE`; distinguish this route from a clean default build.
+Sustained Rust/image builds and integration campaigns run on the remote build machine. The default Dockerfile builds the exact MDK source/lock plus `engine/patches/`. A carrier supplied using `MDK_BUILD_IMAGE` may skip compilation only when both binaries match the patched hashes for Docker's `TARGETARCH` in `engine/prebuilt-manifest.txt`. The shared shell helper binds admission to the current provenance bytes and complete patch set, without Python in the Rust builder. Unknown, old, partial or mismatched carriers fail rather than silently falling back. For a source build, omit `MDK_BUILD_IMAGE` (default `rust:1.97.1-bookworm`, with neither binary present).
+
+Only the proposal's patched amd64 identities are recorded; no patched arm64 hash is known, so arm64 prebuilt packaging is refused. `tools/build_unified_thales.py` is carrier-only and follows this same patched-only policy; its historical default carrier is no longer admissible, so supply a matching patched `--carrier`. Keeping audited amd64 carrier reuse avoids mandatory recompilation, but an exact hash match establishes identity, not runtime correctness. Old identities and receipts remain under `historical_unpatched` in `engine/provenance.json`; they do not prove the patch. Native packaged amd64 and arm64 engines and the patched 120-request/two-disposable-account memory, delivery and restart proof remain unrun and merge-blocking.
+
+The selected synthetic admission check is `nice -n 19 python3 -B -W error::ResourceWarning tests/test_engine_admission.py -v`. It executes the same admission helper and the Docker RUN admission seam with fixture hashes, not real engine artifacts or Docker.
 
 This private beta uses `wizard-messenger:0.1.2-beta.1` with `pull_policy: never`; load the architecture-matching image before installation. The Runtipi definition maps only its own `/data`, limits resources and exposes internal port 8765. The installer supplies a generated 32+ character application capability, exact private HTTPS origin and public app path through normal app-secret/configuration mechanisms. Keep secrets out of output and URL queries.
 
