@@ -1,5 +1,5 @@
 // New connectors (Miguel, 30 Oct 2026): account status lives in Settings (no "x of y connected" on the Inbox),
-// an "Add an account" grid for dormant networks, and browser sign-in by pasting one copied request.
+// an "Add an account" grid (behind the + tile) for dormant networks, and browser sign-in by pasting one copied request.
 // node tests/new_connectors_browser.cjs [outdir]   (needs playwright via PLAYWRIGHT_MODULE). Synthetic APIs only.
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -84,7 +84,11 @@ const prov = (network, label, state, flows = []) => ({network, label, supported:
     await page.locator('.c-back').click();
     await page.locator('.c-tile.c-on').first().waitFor();
     assert.equal(await page.locator('.u-more .u-more-link', {hasText: /Saved drafts|Advanced/}).count(), 0, 'no drafts or Advanced rows');
-    assert.equal(await page.locator('.u-sheet details.u-fold').count(), 0, 'no folds under More');
+    assert.equal(await page.locator('.u-sheet details.u-fold').count(), 0, 'no folds under Agent access');
+    // Add an account sits behind the "+" at the end of Your accounts (Miguel, 15.7).
+    assert.equal(await page.locator('.c-add-panel').isVisible(), false, 'Add an account starts folded');
+    await page.locator('.c-plus').click();
+    await page.locator('.c-add').first().waitFor();
     const tiles = await page.locator('.c-add').evaluateAll(els => els.map(e => e.querySelector('.c-tile-name').textContent.trim()));
     assert.deepEqual(tiles, ['ChatGPT Dots', 'Facebook Messenger', 'Google Messages', 'LinkedIn', 'X']);
     assert.ok(await page.locator('.c-tile.c-soon').count() >= 1, 'not-available networks are dimmed tiles');

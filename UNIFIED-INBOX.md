@@ -52,6 +52,12 @@ The existing Marmot keyring remains encrypted, but the unified history mirror, M
 
 Text only. No media, edits/reactions, group creation, delivery/read receipts, remote contact discovery or phone push. Latest 2,000 local messages per merged thread are shown; initial Matrix sync is bounded, and a limited sync honestly warns that older history may be incomplete. Full historical backfill/pagination is follow-up work. Server-side Matrix sync continues while the browser is closed. Marmot ingestion/translation happens when the relevant API/view is opened.
 
+## Wizard OS inbox feed
+
+`GET /api/inbox` (`inbox_feed.py`) lists one item per chat the app badge counts: unread incoming messages, never muted or Low priority chats. Key `chat:<chat id>`, title = chat name, text = newest unread line (`N new · …` when more than one), time = its unix seconds, priority 3 (Messenger has no mentions yet), `open` = `#chat=<chat id>` (unified.js opens that chat on load or hashchange and drops the fragment), actions Reply (input), Draft me a reply (`ask`, handled by the shell's agent, never posted here) and Mark as read. Read-only, one SQL query.
+
+`POST /api/inbox/act` `{key, action, text}`: `read` runs the same `people/<id>/read` route as opening the chat (badge, list and feed clear, read receipts go out); `reply` sends `text` through the view's `people/<id>/send` route (client id derived from chat + newest unread + text, so a retried tap never sends twice), then reads the chat. Anything else is 400; non-JSON is 415; body cap is the normal 64 KiB. Owner only, never a bearer: on a trusted Wizard install the authenticated ingress's per-request owner proof is the authority (the same proof that opens a view session) and writes need an allowed Origin and never `Sec-Fetch-Site: cross-site`; without trusted ingress the routes need the owner's view session plus CSRF like every other owner route. Errors use the feed contract's shape `{ok:false, error:"<message>", code}`. Wizard chats that exist only on this device (native rows without a mirrored chat, pending invites) keep their unread state in the browser and are not in the feed. Tests: `tests/test_inbox_feed.py`, `tests/inbox_link_browser.cjs`.
+
 ## Verification and preview
 
 Light checks:

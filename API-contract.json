@@ -734,7 +734,7 @@
     ],
     "mcp_attachments": {
       "levels": "draft_only and draft_and_send (same capability as PUT/DELETE /api/drafts/{id}/attachments)",
-      "tools": "messenger_create_draft and messenger_update_draft accept attachments (added after the text write); messenger_attach_to_draft adds; messenger_remove_draft_attachment removes by id. Every edit is revision-fenced.",
+      "tools": "messenger_create_draft and messenger_update_draft accept attachments, stored with the text in the same single revision (a viewer never sees a text-only or partly attached draft); messenger_attach_to_draft adds all its files in one revision; messenger_remove_draft_attachment removes by id. Every edit is revision-fenced.",
       "item": "{\"path\": file inside the shared folder} or {\"base64\": bytes, \"name\": optional display name}; 1..10 per call, 10 per draft, 25 MiB each, 100 MiB across all drafts; type sniffed from bytes",
       "shared_folder": "MESSENGER_AGENT_FILES_DIR (default /attachments, mounted read-only; Wizard: Files Messenger/Attachments). Relative paths, or absolute paths under MESSENGER_AGENT_FILES_HOST_DIR; .., other absolute paths, symlinks out and non-regular files are refused (invalid_attachment) before any draft write.",
       "body_limit": "POST /mcp accepts up to 36 MiB only with a valid per-agent key or the gateway's grant; otherwise 64 KiB."

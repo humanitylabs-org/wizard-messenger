@@ -1554,16 +1554,25 @@
   const draftsFor = (rows, id) => rows.filter(d => d.person_id === id && d.state === 'draft').sort((a, b) => (b.updated || 0) - (a.updated || 0));
   // One drafts request at a time, shared by the Inbox's draft labels and the open chat's composer poll; nothing
   // polls while Messenger is hidden or not signed in.
-  let draftsReq = null, draftsAt = 0, draftsRows = null;
+  // draftWrites counts this screen's own draft writes. A list fetched across one of them may be older than the
+  // write (31 Oct 2026: a poll in flight while Send deleted the draft brought the sent draft back, its picture 404'd
+  // and the attachment warning stuck), so such a list is never reused and callers drop it.
+  let draftsReq = null, draftsAt = 0, draftsRows = null, draftWrites = 0;
+  const closedDrafts = new Set(); // drafts this screen sent or discarded; a late list never revives them
+  const draftWrote = () => { draftWrites++; draftsRows = null; };
   function fetchDrafts(fresh = false) {
-    if (draftsReq) return draftsReq;
+    if (draftsReq && draftsReq.gen === draftWrites) return draftsReq;
     if (!fresh && draftsRows && performance.now() - draftsAt < 2000) return Promise.resolve(draftsRows);
-    draftsReq = api('api/drafts').then(r => { draftsRows = r.drafts || []; draftsAt = performance.now(); return draftsRows; }).finally(() => { draftsReq = null; });
-    return draftsReq;
+    const gen = draftWrites;
+    const req = api('api/drafts').then(r => { const rows = (r.drafts || []).filter(d => !closedDrafts.has(d.id)); if (gen === draftWrites) { draftsRows = rows; draftsAt = performance.now(); } return rows; })
+      .finally(() => { if (draftsReq === req) draftsReq = null; });
+    req.gen = gen; draftsReq = req;
+    return req;
   }
   async function refreshDraftIndex() {
     if (!s.ready || document.hidden) return;
     let rows; try { rows = await fetchDrafts(); } catch { return; }
+    rows = rows.filter(d => !closedDrafts.has(d.id));
     const next = {}; for (const d of rows) if (d.state === 'draft' && (!next[d.person_id] || (d.updated || 0) > (next[d.person_id].updated || 0))) next[d.person_id] = d;
     const key = JSON.stringify(Object.entries(next).map(([k, d]) => [k, d.revision, d.text, (d.attachments || []).length]));
     if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
@@ -1605,14 +1614,21 @@
       sd.row = row; sd.saved = row.text; sd.conflict = null; sd.loadError = false;
       if (!view.edit) { ui.draft.value = row.text; s.drafts[id] = row.text; saveDrafts(); }
       if (row.identity_id && [...ui.channel.options].some(o => o.value === row.identity_id)) { ui.channel.value = row.identity_id; ui.paintVia(); }
+      await loadItems(row);
+    }
+    // Bring the tray in line with the draft's attachments. One that fails to load (a blip, a restart) shows the
+    // warning and is tried again on the next poll, which clears the warning once it loads; no reload needed.
+    async function loadItems(row) {
       const want = row.attachments || [], have = view.attach || [];
-      let tray = have.filter(it => !it.sid || want.some(a => a.id === it.sid));
-      for (const a of want) if (!tray.some(it => it.sid === a.id)) { try { tray.push(await itemFor(a, row.id)); } catch (e) { sd.loadError = true; error(e); } }
-      if (!alive()) return;
+      const tray = have.filter(it => !it.sid || want.some(a => a.id === it.sid));
+      let failed = false;
+      for (const a of want) if (!tray.some(it => it.sid === a.id)) { try { tray.push(await itemFor(a, row.id)); } catch { failed = true; } }
+      if (!alive() || sd.row?.id !== row.id) return;
+      sd.loadError = failed;
       view.attach = tray.length ? tray : null; ui.grow(); ui.paintBar();
     }
     async function save() {
-      clearTimeout(sd.timer); sd.timer = null; draftsRows = null;
+      clearTimeout(sd.timer); sd.timer = null; draftWrote();
       if (sd.busy) { await sd.busy.catch(() => {}); if (sd.timer) return; }
       if (view.edit || sd.conflict) return;
       const run = (async () => {
@@ -1636,7 +1652,7 @@
         else if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; } catch { /* next poll */ } }
         else if (e.code === 'not_found' || e.code === 'draft_closed') { sd.row = null; sd.saved = null; }
         else if (e.code !== 'server_restarting') error(e);
-      } finally { if (sd.busy === run) sd.busy = null; }
+      } finally { if (sd.busy === run) sd.busy = null; draftWrote(); }
       if (alive()) { ui.paintBar(); if (!sd.conflict && dirty()) schedule(); } refreshDraftIndex();
     }
     const schedule = () => { clearTimeout(sd.timer); sd.timer = setTimeout(save, SD_SAVE_MS); };
@@ -1646,47 +1662,62 @@
       for (const it of items) {
         try {
           await sd.busy?.catch(() => {}); const row = await ensure(); if (!row) return;
-          const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
+          draftWrote(); const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
           sd.row = r.draft; it.sid = r.draft.attachments[r.draft.attachments.length - 1].id;
         } catch (e) { sd.uploadError = true; if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; ui.paintBar(); } catch { /* next poll */ } } else error(e); ui.paintBar(); }
       }
-      refreshDraftIndex();
+      draftWrote(); refreshDraftIndex();
     }
     async function detach(it) {
       // Removing a failed local upload clears the block; any other bad attachment remains visible in the tray.
       if (!it.sid) { sd.uploadError = false; ui.paintBar(); return; }
       if (!sd.row) return;
+      draftWrote();
       try { const r = await api('api/drafts/' + sd.row.id + '/attachments/' + it.sid, {method: 'DELETE', body: {revision: sd.row.revision}}); sd.row = r.draft; }
       catch (e) { if (e.code !== 'not_found') error(e); }
+      draftWrote();
       if (!ui.draft.value.trim() && !(view.attach || []).length) save();
     }
     // Sent (or emptied): the draft is done. Delete it so it never comes back.
     async function clear() {
       clearTimeout(sd.timer); sd.timer = null; await sd.busy?.catch(() => {});
-      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; if (!row) return;
+      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; sd.loadError = false; if (!row) return;
+      closedDrafts.add(row.id); draftWrote();
       try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); }
-      catch (e) { if (e.code !== 'draft_changed' && e.code !== 'not_found') error(e); /* never delete someone else's newer revision */ }
-      refreshDraftIndex();
+      catch (e) {
+        // Someone else changed it after our send: their newer revision stays, and may show again.
+        if (e.code === 'draft_changed') closedDrafts.delete(row.id);
+        if (e.code !== 'draft_changed' && e.code !== 'not_found') error(e); /* never delete someone else's newer revision */
+      }
+      draftWrote(); refreshDraftIndex();
     }
     async function check(first) {
       if (!alive()) { clearInterval(sd.poll); return; }
       if (!first && document.hidden) return;
+      const gen = draftWrites;
       let rows; try { rows = await fetchDrafts(first); } catch { return; }
       if (!alive() || sd.busy || sd.timer || sd.sendPending) return;
+      if (gen !== draftWrites) return check(first); // this screen wrote meanwhile: that list may predate it
+      rows = rows.filter(d => !closedDrafts.has(d.id));
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
       const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) s.bindDraft = null;
       const latest = pick || mine || (!sd.row && draftsFor(rows, id)[0]);
       if (!latest) {
+        if (sd.loadError) { sd.loadError = false; ui.paintBar(); } // the draft (and the attachment that failed) is gone
         if (sd.row && !dirty()) { sd.row = null; sd.saved = null; ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = (view.attach || []).filter(it => !it.sid); if (!view.attach.length) view.attach = null; ui.grow(); ui.paintBar(); }
         else if (first && !sd.row && ui.draft.value.trim()) schedule(); // a draft kept only on this device moves to the server
         return;
       }
-      if (sd.row && latest.id === sd.row.id && latest.revision <= sd.row.revision) return; // same, or a read from before our own save
+      if (sd.row && latest.id === sd.row.id && latest.revision <= sd.row.revision) { // same, or a read from before our own save
+        if (sd.loadError && latest.revision === sd.row.revision) await loadItems(sd.row); // retry what failed to load
+        return;
+      }
       if (dirty() && !(first && !sd.row && ui.draft.value === latest.text)) { sd.conflict = latest; ui.paintBar(); return; }
       await apply(latest);
     }
     sd.poll = setInterval(() => check(false), SD_POLL_MS);
-    Object.assign(sd, {schedule, save, attach, detach, clear, note, check, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
+    const retry = async () => { if (sd.loadError && sd.row) await loadItems(sd.row); };
+    Object.assign(sd, {schedule, save, attach, detach, clear, note, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
     setTimeout(() => Promise.resolve(after).catch(() => {}).then(() => check(true)), 0);
     return sd;
   }
@@ -1756,6 +1787,7 @@
     form.onsubmit = e => { e.preventDefault(); submit(); };
     async function submit() {
       if (view.sd?.conflict) return toast('Choose which draft to keep first');
+      await view.sd?.retry?.();
       if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
       const text = draft.value.trim(), a = view.attach || [];
       if (!text && !a.length) return;
@@ -2260,7 +2292,7 @@
     empty();
   }
   async function accounts(focus) {
-    // Accounts first: linking is the main job of this sheet. Everything else sits in one short "More" list below.
+    // Accounts first: linking is the main job of this sheet. Agent access and the rest sit below.
     const sheet = overlay(focus === 'accounts' ? 'Accounts' : 'Settings');
     sheet.classList.add('u-settings'); refreshAccounts();
     if (window.MessengerConnectors) {
@@ -2297,19 +2329,23 @@
   // the agent reads and writes drafts, and only this signed-in screen can send them.
   const LEVEL_TEXT = {no_access: 'Can\'t read your chats.', read_only: 'Reads chats. Can\'t draft.',
     draft_only: 'Reads and drafts. Only you send.', draft_and_send: 'Reads and sends without your review.'};
-  // One agent row: name and what it may do on the left, a plain level picker on the right. A change saves at once.
-  function levelRow(agent, name, levels, save) {
+  // One agent row (Miguel): the agent's name and its level picker, nothing under it. The recommended level says so
+  // inside the picker's options (Settings only; Advanced's older keys keep short labels). A change saves at once.
+  function levelRow(agent, name, levels, save, {recommend = false} = {}) {
     const row = node('div', 'u-more-row u-more-agent');
     const choice = node('select', 'u-more-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
     const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
-    // Short labels keep the picker narrow on a phone; the line under the name says which level is recommended.
-    for (const l of shown) { const opt = node('option', '', l.label); opt.value = l.id; choice.append(opt); }
-    choice.value = agent.level;
+    for (const l of shown) {
+      const opt = node('option', '', l.label + (recommend && l.recommended ? ' (recommended)' : '')); opt.value = l.id;
+      if (LEVEL_TEXT[l.id]) opt.title = LEVEL_TEXT[l.id];
+      choice.append(opt);
+    }
+    choice.value = agent.level; choice.title = LEVEL_TEXT[agent.level] || '';
     choice.onchange = () => action(async () => {
       const level = choice.value;
       await save(level); toast(name + ': ' + shown.find(l => l.id === level).label);
     });
-    row.append(node('strong', 'u-agent-name', name), choice, node('small', 'u-more-what', (shown.find(l => l.id === agent.level)?.recommended ? 'Recommended. ' : '') + (LEVEL_TEXT[agent.level] || '')));
+    row.append(node('strong', 'u-agent-name', name), choice);
     return row;
   }
   // A quiet list row that opens another page.
@@ -2318,14 +2354,18 @@
     row.append(node('span', 'u-more-label', label), node('span', 'u-more-value'), node('span', 'u-row-caret', '›'));
     return row;
   }
-  // Miguel: everything under the accounts is one short list: agents (one picker each), then Suggested merges
-  // and Notifications only when there are any. Drafts live in their chats; Advanced is hidden (#advanced).
+  // Miguel: under the accounts, "Agent access" lists the Wizard's agents (one picker each). Suggested merges and
+  // Notifications follow in their own short list, only when there are any. Drafts live in their chats; Advanced is
+  // hidden (#advanced).
   function moreSettings(sheet) {
-    const group = node('div', 'u-settings-group u-more'), head = node('h3', 'u-more-head', 'More');
-    sheet.append(head, group);
-    // With nothing to show (no agents, merges or notifications) the heading and list stay away.
-    const sync = () => { head.hidden = group.hidden = ![...group.children].some(c => !c.hidden); };
-    const agents = node('div', 'u-more-agents'); agents.hidden = true; group.append(agents);
+    const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
+    const group = node('div', 'u-settings-group u-more u-more-other');
+    sheet.append(head, agents, group);
+    // Each part stays away while it has nothing to show.
+    const sync = () => {
+      head.hidden = agents.hidden = !agents.children.length;
+      group.hidden = ![...group.children].some(c => !c.hidden);
+    };
     const paintAgents = st => {
       agents.replaceChildren();
       if (st.gateway_connected === false) agents.append(node('p', 'u-more-note warn', 'Your agents can\'t reach Messenger yet. Ask your Wizard to finish connecting it.'));
@@ -2333,9 +2373,9 @@
         agents.append(levelRow(agent, agent.label || 'Your Wizard agent', st.wizard_levels || [], async level => {
           await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}});
           const next = await api('api/view/agents'); if (agents.isConnected) paintAgents(next);
-        }));
+        }, {recommend: true}));
       }
-      agents.hidden = !agents.children.length; sync();
+      sync();
     };
     api('api/view/agents').then(st => { if (agents.isConnected) paintAgents(st); }).catch(e => error(e));
     // Saved drafts stay in their chats (above the composer); Settings has no list of them.
@@ -2610,8 +2650,27 @@
   // After a reload, come back to the same tab and chat (saved on pagehide).
   // Any reload (a Wizard update, the Reload strip) comes back on the same tab and chat.
   window.addEventListener('pagehide', () => { try { if (s.ready || s.tab) sessionStorage.setItem('messenger.resume', JSON.stringify({tab: s.tab, person: s.person, nativeGroup: s.nativeGroup})); } catch { /* fresh start */ } });
+  // Wizard inbox "Open" (api/inbox item `open`): `#chat=<chat id>` opens that chat, now or once Messenger is ready.
+  // The fragment is dropped at once so Back/reload never reopens it.
+  let linkedChat = null;
+  function takeChatLink() {
+    const m = /^#chat=([A-Za-z0-9_-]{1,64})$/.exec(location.hash); if (!m) return false;
+    linkedChat = m[1];
+    try { history.replaceState(history.state, '', location.pathname + location.search); } catch { /* keep the fragment */ }
+    return true;
+  }
+  function openLinkedChat() {
+    if (!linkedChat || !s.ready) return false;
+    const id = linkedChat; linkedChat = null;
+    if (s.native) returnNative();
+    if (s.low) setLowView(false);
+    switchTab('people'); openPerson(id); return true;
+  }
+  takeChatLink();
+  addEventListener('hashchange', () => { if (takeChatLink()) openLinkedChat(); });
   function resume() {
     let at = null; try { at = JSON.parse(sessionStorage.getItem('messenger.resume') || 'null'); sessionStorage.removeItem('messenger.resume'); } catch { /* none */ }
+    if (openLinkedChat()) return;
     switchTab('people');
     if (at?.nativeGroup) s.resumeNative = at.nativeGroup;
     else if (at?.person && at.tab !== 'messenger') openPerson(at.person);
@@ -2691,6 +2750,7 @@
       if (s.ready) return; s.ready = true; restore(); loadContacts();
       const painted = document.documentElement.dataset.inboxTab;
       if (!painted) resume();
+      else if (openLinkedChat()) { /* Wizard inbox deep link */ }
       else if (s.tab !== 'messenger') { if (s.person) openPerson(s.person); else freshen(s.tab === 'groups' ? 'groups' : 'people', s.epoch); }
       resumeLogin(); if (store.seq) feed(); openFromHash();
       shareTargets(); Promise.resolve(window.WizardApp?.share?.check?.()).catch(() => {}); // a share that waited for unlock
