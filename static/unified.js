@@ -250,9 +250,48 @@
       root.replaceChildren();
       list = node('div', 'u-pane u-pane-list'); list.id = 'u-pane-list'; list.setAttribute('aria-label', 'Chats');
       thread = node('section', 'u-pane u-pane-thread'); thread.id = 'u-pane-thread'; thread.setAttribute('aria-label', 'Conversation');
-      root.append(list, thread); fillEmpty(thread);
+      root.append(list, divider(), thread); fillEmpty(thread);
     }
     return {root, list, thread};
+  }
+  // The divider between the chat list and the open chat, like Chats' list/thread splitter in the Wizard shell
+  // (desktop.js setListW): drag it, ←/→ nudge it by 24px, double-click puts it back. Saved on this device. Desktop
+  // split only; the phone layout has no split and no divider.
+  const LIST_W = {min: 260, max: 640, key: 'messenger.listW'};
+  const listW = () => { let v = 0; try { v = +localStorage.getItem(LIST_W.key); } catch { /* blocked */ } return v >= LIST_W.min && v <= LIST_W.max ? v : 0; };
+  function setListW(px) {
+    const m = $('messenger'), cap = Math.min(LIST_W.max, Math.round((m?.clientWidth || innerWidth) * 0.6));
+    if (px) px = Math.round(Math.max(LIST_W.min, Math.min(cap, px)));
+    try { if (px) localStorage.setItem(LIST_W.key, String(px)); else localStorage.removeItem(LIST_W.key); } catch { /* private mode: this visit only */ }
+    paintListW(px); return px;
+  }
+  function paintListW(px = listW()) {
+    const m = $('messenger'); if (!m) return;
+    if (px) m.style.setProperty('--u-list-w', px + 'px'); else m.style.removeProperty('--u-list-w');
+    const h = $('u-pane-split'), w = $('u-pane-list')?.getBoundingClientRect().width;
+    if (h && w) h.setAttribute('aria-valuenow', String(Math.round(w)));
+  }
+  function divider() {
+    const h = node('div', 'u-pane-split'); h.id = 'u-pane-split'; h.tabIndex = 0;
+    h.setAttribute('role', 'separator'); h.setAttribute('aria-orientation', 'vertical'); h.setAttribute('aria-label', 'Resize the chat list');
+    h.setAttribute('aria-valuemin', String(LIST_W.min)); h.setAttribute('aria-valuemax', String(LIST_W.max)); h.title = 'Drag to resize · double-click to reset';
+    let drag = null;
+    h.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return; e.preventDefault(); e.stopPropagation();
+      drag = {left: $('unified-inbox').getBoundingClientRect().left, id: e.pointerId};
+      h.setPointerCapture?.(e.pointerId); document.documentElement.classList.add('u-splitting');
+    });
+    h.addEventListener('pointermove', e => { if (drag) setListW(e.clientX - drag.left); });
+    const end = () => { if (!drag) return; drag = null; document.documentElement.classList.remove('u-splitting'); };
+    h.addEventListener('pointerup', end); h.addEventListener('pointercancel', end); h.addEventListener('lostpointercapture', end);
+    h.addEventListener('dblclick', e => { e.stopPropagation(); setListW(0); });
+    h.addEventListener('keydown', e => {
+      const d = {ArrowLeft: -24, ArrowRight: 24}[e.key]; if (!d && e.key !== 'Home') return;
+      e.preventDefault(); e.stopPropagation();
+      setListW(e.key === 'Home' ? 0 : ($('u-pane-list')?.getBoundingClientRect().width || listW() || 340) + d);
+    });
+    requestAnimationFrame(() => paintListW());
+    return h;
   }
   const hasListPane = () => !!$('u-pane-list')?.querySelector('.u-list');
   // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
@@ -1578,7 +1617,7 @@
     if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
   }
   function serverDraft(id, ui, after = null) {
-    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false};
+    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false, epoch: 0, closing: null, late: null};
     const by = row => row?.updated_by || row?.created_by;
     const byAgent = row => by(row) && by(row).id !== 'owner';
     const dirty = () => sd.row ? ui.draft.value !== sd.saved || ui.channel.value !== sd.row.identity_id : !!ui.draft.value.trim();
@@ -1629,6 +1668,7 @@
     }
     async function save() {
       clearTimeout(sd.timer); sd.timer = null; draftWrote();
+      if (sd.closing) { await sd.closing; if (sd.timer) return; } // a just-sent draft is deleted first; new text starts a new one
       if (sd.busy) { await sd.busy.catch(() => {}); if (sd.timer) return; }
       if (view.edit || sd.conflict) return;
       const run = (async () => {
@@ -1659,12 +1699,15 @@
     async function ensure() { if (!sd.row) { if (!ui.draft.value.trim()) { const r = await api('api/drafts', {method: 'POST', body: {person_id: id, identity_id: ui.channel.value, text: ''}}); sd.row = r.draft; sd.saved = ''; } else await save(); } return sd.row; }
     // A photo or file put in the tray is stored with the draft at once, so it is there on every device and for agents.
     async function attach(items) {
+      if (sd.closing) await sd.closing;
+      const epoch = sd.epoch;
       for (const it of items) {
+        if (sd.epoch !== epoch) return; // sent meanwhile: the rest went with the message, not into a deleted draft
         try {
           await sd.busy?.catch(() => {}); const row = await ensure(); if (!row) return;
           draftWrote(); const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
-          sd.row = r.draft; it.sid = r.draft.attachments[r.draft.attachments.length - 1].id;
-        } catch (e) { sd.uploadError = true; if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; ui.paintBar(); } catch { /* next poll */ } } else error(e); ui.paintBar(); }
+          sd.row = r.draft; it.sid = r.draft.attachments[r.draft.attachments.length - 1].id; // (when sent meanwhile, the send's delete waits for this and needs the new revision)
+        } catch (e) { if (sd.epoch !== epoch) return; sd.uploadError = true; if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; ui.paintBar(); } catch { /* next poll */ } } else error(e); ui.paintBar(); }
       }
       draftWrote(); refreshDraftIndex();
     }
@@ -1679,24 +1722,46 @@
       if (!ui.draft.value.trim() && !(view.attach || []).length) save();
     }
     // Sent (or emptied): the draft is done. Delete it so it never comes back.
-    async function clear() {
-      clearTimeout(sd.timer); sd.timer = null; await sd.busy?.catch(() => {});
-      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; sd.loadError = false; if (!row) return;
+    async function clear(quiet = false) {
+      if (!quiet) { clearTimeout(sd.timer); sd.timer = null; } // (after Send, a timer is new text for a new draft)
+      await sd.busy?.catch(() => {});
+      const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; sd.loadError = false; if (!row) return true;
       closedDrafts.add(row.id); draftWrote();
+      let done = true;
       try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); }
       catch (e) {
         // Someone else changed it after our send: their newer revision stays, and may show again.
         if (e.code === 'draft_changed') closedDrafts.delete(row.id);
-        if (e.code !== 'draft_changed' && e.code !== 'not_found') error(e); /* never delete someone else's newer revision */
+        else if (e.code !== 'not_found') { if (quiet && offline(e)) { sd.late = row; done = false; } else error(e); } /* never delete someone else's newer revision */
       }
       draftWrote(); refreshDraftIndex();
+      return done;
     }
+    // Send pressed (Miguel, 31 Oct 2026: "when I send a message it shouldn't be a draft anymore"): the draft ends now,
+    // not when the provider answers. The text and tray already went to the send, so nothing waits on a save: drop the
+    // pending autosave, let a write already in flight land (its revision is the one to delete), then delete the server
+    // copy. A send that fails puts the message back (restoreSend). Restarting Messenger: deleted after delivery instead.
+    function closeForSend() {
+      clearTimeout(sd.timer); sd.timer = null; sd.epoch++;
+      const up = sd.uploading, wait = sd.closing;
+      const run = (async () => {
+        await wait; await sd.busy?.catch(() => {}); await Promise.resolve(up).catch(() => {});
+        return clear(true);
+      })();
+      sd.closing = run.finally(() => { if (sd.closing === closing) sd.closing = null; });
+      const closing = sd.closing;
+      // Gone from the Inbox row at once, before the server answers.
+      if (s.draftIndex?.[id]) { const next = {...s.draftIndex}; delete next[id]; s.draftIndex = next; s.draftKey = null; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
+      return closing;
+    }
+    // Delivered after a delete that could not reach Messenger (restarting): delete it now.
+    async function afterSend() { await sd.closing; const row = sd.late; if (!row) return; sd.late = null; try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); } catch { /* changed or gone: leave it */ } draftWrote(); refreshDraftIndex(); }
     async function check(first) {
       if (!alive()) { clearInterval(sd.poll); return; }
       if (!first && document.hidden) return;
       const gen = draftWrites;
       let rows; try { rows = await fetchDrafts(first); } catch { return; }
-      if (!alive() || sd.busy || sd.timer || sd.sendPending) return;
+      if (!alive() || sd.busy || sd.timer || sd.closing) return;
       if (gen !== draftWrites) return check(first); // this screen wrote meanwhile: that list may predate it
       rows = rows.filter(d => !closedDrafts.has(d.id));
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
@@ -1717,7 +1782,7 @@
     }
     sd.poll = setInterval(() => check(false), SD_POLL_MS);
     const retry = async () => { if (sd.loadError && sd.row) await loadItems(sd.row); };
-    Object.assign(sd, {schedule, save, attach, detach, clear, note, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
+    Object.assign(sd, {schedule, save, attach, detach, clear, closeForSend, afterSend, note, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
     setTimeout(() => Promise.resolve(after).catch(() => {}).then(() => check(true)), 0);
     return sd;
   }
@@ -1792,17 +1857,14 @@
       const text = draft.value.trim(), a = view.attach || [];
       if (!text && !a.length) return;
       if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }
-      // Do not cross the provider boundary until server-side draft saves/uploads settle. If a concurrent
-      // edit wins, stop here instead of sending an old copy or deleting the other writer's changes.
-      await view.sd?.save();
-      await view.sd?.uploading;
-      if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
       if (view.sd?.conflict) return toast('This draft changed elsewhere. Choose which version to keep.');
-      if (reviewed && !a.length) return reviewSend(id, p, text, channel.value);
+      if (reviewed && !a.length) { await view.sd?.save(); if (view.sd?.conflict) return toast('This draft changed elsewhere. Choose which version to keep.'); return reviewSend(id, p, text, channel.value); }
       if (typingAt) { typingAt = 0; typing(false); }
+      // Sent means sent at once (Miguel, 31 Oct 2026): the box empties, the bubble shows "sending" in the thread, and the
+      // draft ends now (closeForSend), never after the provider answers. A send the server refuses comes back into the
+      // box and the server draft (restoreSend); one cut off by a restart keeps its Retry bubble (same client id).
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
-      // Only clear the saved draft after provider acknowledgement for every post, never on submit.
-      // A failed/ambiguous send retains the draft; the pending bubble handles idempotent retry.
+      const sendingDraft = view.sd; sendingDraft?.closeForSend();
       const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
       const jobs = [];
       if (!a.length) jobs.push({text, photo: null, reply, identity_id: channel.value});
@@ -1810,8 +1872,7 @@
       else if (photos.length) jobs.push({text, photos, reply, identity_id: channel.value});
       files.forEach((f, i) => jobs.push({text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
       let delivered = 0;
-      const sendingDraft = view.sd; if (sendingDraft) sendingDraft.sendPending = true;
-      for (const job of jobs) queueSend(id, {...job, onDelivered: () => { if (++delivered === jobs.length) { sendingDraft?.clear(); if (sendingDraft) sendingDraft.sendPending = false; } }, onFailure: () => { if (sendingDraft) sendingDraft.sendPending = false; }});
+      for (const job of jobs) queueSend(id, {...job, onDelivered: () => { if (++delivered === jobs.length) sendingDraft?.afterSend(); }, onFailure: e => restoreSend(id, job, e)});
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -2008,11 +2069,38 @@
         }
         m.waited = 0;
         m.pending = false; m.failed = offline(e) ? 'Messenger was restarting' : e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
-        job.onFailure?.(); store.pending--; hold(); // failed: shown with Retry; no longer blocks updates
+        store.pending--; hold(); // failed: no longer blocks updates
+        // Refused by Messenger (never sent): the message goes back into the box, so the bubble leaves the thread.
+        // Anything else keeps its Retry bubble, which resends with the same client id (never a second copy).
+        if (job.onFailure?.(e) === true) { t.messages = t.messages.filter(x => x !== m); }
       }
       if (s.person === id) paintThread();
     };
     queues[id] = (queues[id] || Promise.resolve()).then(run);
+  }
+  // A send Messenger refused comes back as the chat's draft: into the open box (with its photos and files) when that
+  // box is empty, else as the server draft so it is there on every device. Returns true when nothing was lost.
+  function restoreSend(id, job, e) {
+    // Refused (4xx) or an upload that never finished: certainly not sent. Restarts and 5xx may still land, so they keep
+    // the Retry bubble, which resends with the same client id.
+    if (offline(e) || e?.status >= 500) return false;
+    const items = job.photos || (job.photo ? [job.photo] : job.file ? [job.file] : []);
+    const text = job.text || '', who = store.threads[id]?.person?.display_name || 'this chat';
+    const reason = e?.message && e.message.length < 80 ? e.message : 'Not sent';
+    const here = s.person === id && view.draft?.isConnected && view.sd?.id === id && !view.edit;
+    if (here && !view.draft.value.trim() && !(view.attach || []).length) {
+      for (const it of items) delete it.sid;
+      view.draft.value = text; s.drafts[id] = text; saveDrafts();
+      if (items.length) { view.attach = [...items]; view.sd.uploading = view.sd.attach(items); } else view.sd.schedule();
+      if (job.reply && !view.reply) view.reply = job.reply;
+      view.grow(); view.paintBar(); toast(reason + '. Your message is back in the box.');
+      return true;
+    }
+    if (items.length || !text || (s.drafts[id] || '').trim()) { toast(reason + '. Tap the message to retry.'); return false; }
+    s.drafts[id] = text; saveDrafts();
+    api('api/drafts', {method: 'POST', body: {person_id: id, identity_id: job.identity_id, text}}).then(() => refreshDraftIndex(), () => {});
+    toast(reason + '. Kept as a draft in ' + who + '.');
+    return true;
   }
   async function editMsg(m, text) {
     const before = m.original; m.original = text; m.edited = true; paintThread();
