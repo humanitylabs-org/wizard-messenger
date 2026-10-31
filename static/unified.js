@@ -1825,7 +1825,10 @@
       // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
       if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }})); bar.append(strip); }
     };
-    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has; };
+    // One tap is one message. Send settles the server draft and uploads before the box empties, so the text stays
+    // visible for a moment; a second tap (or Enter) in that window used to send it twice (James's phone, 31 Oct 2026).
+    let sending = false;
+    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; const has = !!draft.value.trim() || !!view.attach?.length; send.hidden = !has && telegramOnly && !view.edit; mic.hidden = !telegramOnly || !send.hidden; send.disabled = !has || sending; send.classList.toggle('busy', sending); send.setAttribute('aria-busy', String(sending)); };
     // The thread rebuilds its composer once the person loads: keep photos/reply already in the tray visible.
     if (view.attach?.length || view.reply) queueMicrotask(() => { paintBar(); grow(); });
     let typingAt = 0, idle = null;
@@ -1851,6 +1854,11 @@
     window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takeFiles, onSubmit: () => submit(), notice: msg => toast(msg)});
     form.onsubmit = e => { e.preventDefault(); submit(); };
     async function submit() {
+      if (sending) return;
+      sending = true; grow();
+      try { await submitOnce(); } finally { sending = false; grow(); }
+    }
+    async function submitOnce() {
       if (view.sd?.conflict) return toast('Choose which draft to keep first');
       await view.sd?.retry?.();
       if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
