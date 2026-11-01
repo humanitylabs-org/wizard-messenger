@@ -1,0 +1,91 @@
+name: Publish bridge images
+# Builds the two connector bridges that have no public upstream image (LINE: beeper/line, MIT; ChatGPT Dots:
+# beeper/chatgpt-dots, AGPL-3.0) from pinned upstream commits, natively on amd64 and arm64 GitHub-hosted runners,
+# smoke-tests each binary, and publishes multi-arch tags to GHCR so the Store recipe can pin them by digest.
+# Tags are immutable: sha-<this repo's commit> always, plus the upstream commit the first time it is built.
+on:
+  push:
+    branches: [feature/unified-inbox, main]
+    paths: [.github/workflows/bridges.yml, plumbing/line.Dockerfile, plumbing/connectors-provenance.json]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: bridges-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  # Upstream source pins (full commit ids). LINE: plumbing/connectors-provenance.json "line".
+  LINE_COMMIT: 72c7a51a44f344966b916bd2f42a734381061186
+  DOTS_COMMIT: 265398af80d5f75c6ee0d9ff835fcffcd8afabc0
+  SOURCE_LABEL: org.opencontainers.image.source=https://github.com/humanitylabs-org/wizard-messenger
+jobs:
+  build:
+    if: github.repository == 'humanitylabs-org/wizard-messenger'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch pinned upstream sources
+        run: |
+          set -eu
+          test "$(python3 -c "import json;print(json.load(open('plumbing/connectors-provenance.json'))['line']['source_commit'])")" = "$LINE_COMMIT"
+          fetch() { git init -q "$1"; git -C "$1" fetch -q --depth 1 "https://github.com/$2" "$3"; git -C "$1" checkout -q FETCH_HEAD; test "$(git -C "$1" rev-parse HEAD)" = "$3"; }
+          fetch "$RUNNER_TEMP/line" beeper/line "$LINE_COMMIT"
+          fetch "$RUNNER_TEMP/dots" beeper/chatgpt-dots "$DOTS_COMMIT"
+      - name: Build LINE bridge
+        run: |
+          set -eu
+          umask 022
+          img=ghcr.io/humanitylabs-org/wizard-line-bridge:sha-$GITHUB_SHA-${{ matrix.arch }}
+          DOCKER_BUILDKIT=1 docker build -f plumbing/line.Dockerfile --label "$SOURCE_LABEL" \
+            --label org.opencontainers.image.revision=$LINE_COMMIT -t "$img" "$RUNNER_TEMP/line"
+          test "$(docker image inspect "$img" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+          docker run --rm --network none --entrypoint /usr/bin/matrix-line "$img" --version
+          echo "LINE=$img" >> "$GITHUB_ENV"
+      - name: Build ChatGPT Dots bridge
+        run: |
+          set -eu
+          umask 022
+          img=ghcr.io/humanitylabs-org/wizard-dots-bridge:sha-$GITHUB_SHA-${{ matrix.arch }}
+          DOCKER_BUILDKIT=1 docker build --build-arg CI_COMMIT_SHA=$DOTS_COMMIT --label "$SOURCE_LABEL" \
+            --label org.opencontainers.image.revision=$DOTS_COMMIT -t "$img" "$RUNNER_TEMP/dots"
+          test "$(docker image inspect "$img" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+          docker run --rm --network none --entrypoint /usr/bin/chatgpt-dots "$img" --version
+          echo "DOTS=$img" >> "$GITHUB_ENV"
+      - name: Push per-architecture images
+        run: docker push "$LINE" && docker push "$DOTS"
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Multi-arch tags (never overwrite an upstream tag)
+        run: |
+          set -eu
+          for pair in "wizard-line-bridge ${LINE_COMMIT:0:7}" "wizard-dots-bridge ${DOTS_COMMIT:0:7}"; do
+            set -- $pair
+            repo=ghcr.io/humanitylabs-org/$1
+            tags="-t $repo:sha-$GITHUB_SHA"
+            if ! docker buildx imagetools inspect "$repo:$2" >/dev/null 2>&1; then tags="$tags -t $repo:$2"; fi
+            docker buildx imagetools create $tags "$repo:sha-$GITHUB_SHA-amd64" "$repo:sha-$GITHUB_SHA-arm64"
+            docker buildx imagetools inspect "$repo:sha-$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          done

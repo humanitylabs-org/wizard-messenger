@@ -59,5 +59,5 @@ USER 1000:1000
 WORKDIR /app
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"
-LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.2.0-unified.15.15" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee" org.wizardos.messenger.mdk-patches="rustls-0.23.46,relay-plane-drop" org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
+LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.2.0-unified.16.0" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee" org.wizardos.messenger.mdk-patches="rustls-0.23.46,relay-plane-drop" org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
 ENTRYPOINT ["/app/entrypoint.sh"]
