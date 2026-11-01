@@ -1,7 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.15.15}
-    pull_policy: never
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -16,8 +15,7 @@ services:
       - ${APP_DATA_DIR}/data:/data
     restart: "no"
   messenger:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.15.15}
-    pull_policy: never
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -79,8 +77,7 @@ services:
     restart: unless-stopped
   telegram:
     # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
-    image: ${TELEGRAM_IMAGE:-wizard-telegram-bridge:0.2610.0-albums1}
-    pull_policy: never
+    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:832b81e593da270a3e4666840f04290ac282dde6c1daaef478924b5ee6c1c935}
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -104,8 +101,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.15.15}
-    pull_policy: never
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -128,8 +124,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.15.15}
-    pull_policy: never
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
     user: 0:0
     entrypoint:
     - python3
