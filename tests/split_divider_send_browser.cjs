@@ -87,7 +87,10 @@ async function stage(browser, {width, height, tokens = DARK}) {
   // ---------- 1. Divider: drag, limits, keyboard, double-click reset, saved across a reload ----------
   {
     const {ctx, page, errors} = await stage(browser, {width: 1280, height: 860});
+    // 15.12 list and detail: with nothing open the list fills the window and there is no divider; open a chat first.
+    const openChat = async name => { await page.locator('#u-pane-list .u-person', {hasText: name}).click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: name}).waitFor(); await page.waitForTimeout(300); };
     await page.locator('#u-pane-list .u-person', {hasText: 'Ana Souza'}).waitFor(); await page.waitForTimeout(300);
+    await openChat('Ana Souza');
     const handle = page.locator('#u-pane-split');
     assert.equal(await handle.getAttribute('role'), 'separator');
     const start = await listWidth(page); assert.ok(start >= 320 && start <= 380, 'default list width (' + start + ')');
@@ -112,6 +115,7 @@ async function stage(browser, {width, height, tokens = DARK}) {
     // open a chat, then reload: the width comes back
     await page.locator('#u-pane-list .u-person', {hasText: 'Kira Novak'}).click(); await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Kira Novak'}).waitFor();
     await page.reload(); await page.locator('#u-pane-list .u-person', {hasText: 'Ana Souza'}).waitFor(); await page.waitForTimeout(300);
+    await openChat('Kira Novak');
     assert.equal(Math.round(await listWidth(page)), 616, 'width restored after reload');
     // double-click resets to the default
     hb = await handle.boundingBox(); await page.mouse.dblclick(hb.x + 3, hb.y + 300);
@@ -119,6 +123,7 @@ async function stage(browser, {width, height, tokens = DARK}) {
     assert.equal(await page.evaluate(() => localStorage.getItem('messenger.listW')), null, 'reset forgets the saved width');
     // a narrower window caps a saved width at 60%
     await page.evaluate(() => localStorage.setItem('messenger.listW', '640')); await page.reload(); await page.locator('#u-pane-list .u-person').first().waitFor();
+    await openChat('Kira Novak');
     await page.setViewportSize({width: 960, height: 860}); await page.waitForTimeout(300);
     assert.ok(await listWidth(page) <= 960 * 0.6 + 1, '60% cap at 960');
     // phone width: no split, no divider
