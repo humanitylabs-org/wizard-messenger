@@ -725,6 +725,7 @@
     "mcp_tools": [
       "messenger_list_chats",
       "messenger_read_thread",
+      "messenger_get_attachment",
       "messenger_list_drafts",
       "messenger_create_draft",
       "messenger_update_draft",
@@ -732,6 +733,11 @@
       "messenger_attach_to_draft",
       "messenger_remove_draft_attachment"
     ],
+    "mcp_media": {
+      "levels": "read_only and up (same capability as GET /api/unified/media/{id}, the view's own media route; No access refuses before any fetch)",
+      "reference": "messenger_read_thread messages with media carry attachment {index:0, kind: image|sticker|video|audio|voice|file, mime, name, size, w, h, duration, fetch:{tool:'messenger_get_attachment', chat_id, message_id, index}}; never an mxc URI or homeserver token",
+      "get_attachment": "messenger_get_attachment {chat_id, message_id, index?}: the message must belong to chat_id (otherwise not_found). Images use the view's media cache/fetch (full, else the homeserver 800 px preview; Pillow downscales to 1600 px when present) and return MCP content [text JSON metadata, {type:'image', data: base64, mimeType}] capped at 1.5 MiB; larger pictures return metadata with image:'not_returned'. Non-images return metadata only (no download), except text files up to 64 KiB, returned as text. Metadata carries the untrusted-content note."
+    },
     "mcp_attachments": {
       "levels": "draft_only and draft_and_send (same capability as PUT/DELETE /api/drafts/{id}/attachments)",
       "tools": "messenger_create_draft and messenger_update_draft accept attachments, stored with the text in the same single revision (a viewer never sees a text-only or partly attached draft); messenger_attach_to_draft adds all its files in one revision; messenger_remove_draft_attachment removes by id. Every edit is revision-fenced.",
