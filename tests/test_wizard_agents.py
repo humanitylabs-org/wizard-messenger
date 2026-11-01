@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import Mock
 import test_web as fixtures
 import test_agent_keys as base
-from wizard_agents import GatewayGrant, WizardAgents
+from wizard_agents import GatewayGrant, GatewayKey, WizardAgents
 
 KEY = 'a1' * 32  # what the App Manager mints: 32 random bytes, hex
 
@@ -154,6 +154,27 @@ class WizardAgentGateway(unittest.TestCase):
         # Gateway calls without an agent name list tools but run nothing.
         data, error = self.mcp('messenger_list_chats', {}, self.gw(None, None))
         self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_access_off')
+
+    def test_legacy_per_app_key_only_where_the_operator_provisioned_it(self):
+        """Agent Services that predate app grants send the per-app key as a bearer (MESSENGER_GATEWAY_KEY_FILE)."""
+        self.pick('hermes', 'draft_only')
+        legacy = 'b2' * 32
+        bearer = {'Authorization': 'Bearer ' + legacy, 'X-Wizard-Agent': 'hermes', 'X-Wizard-Agent-Label': 'Oscar'}
+        # Not provisioned (stock install): the bearer is an unknown key.
+        self.assertEqual(self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}, bearer)[0], 401)
+        keyfile = Path(self.temp.name, 'gateway-key'); keyfile.write_text(legacy + '\n')
+        self.server.gateway_key = GatewayKey(keyfile)
+        self.server.gateway_grant = GatewayGrant(None)
+        chats, error = self.mcp('messenger_list_chats', {}, bearer)
+        self.assertFalse(error, chats); self.assertEqual({c['title'] for c in chats['chats']}, {'Alice', 'Bob'})
+        self.assertTrue(self.listing()['gateway_connected'])
+        # Same rules as the grant: MCP only, each agent at its own level, a wrong key is nobody.
+        self.assertEqual(self.request('GET', '/api/drafts', headers=bearer)[0], 401)
+        data, error = self.mcp('messenger_list_chats', {}, {**bearer, 'X-Wizard-Agent': 'helper', 'X-Wizard-Agent-Label': 'Helper'})
+        self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_access_off')
+        self.assertEqual(self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+                                      {'Authorization': 'Bearer ' + 'c3' * 32, 'X-Wizard-Agent': 'hermes'})[0], 401)
+        self.assertFalse(any('send' in t['name'] for t in self.mcp(None, headers=bearer, method='tools/list')['tools']))
 
     def test_levels_persist_and_corrupt_store_fails_closed(self):
         self.pick('hermes', 'draft_only')
