@@ -10,6 +10,7 @@ fs.mkdirSync(out, {recursive: true});
 
 async function scenario(browser, width, mirrored) {
   const ctx = await browser.newContext({viewport: {width, height: 844}});
+  await ctx.addInitScript(() => { try { localStorage.setItem('messenger.previews', '1'); } catch {} }); // previews are opt-in since 15.11; this test reads them
   await ctx.addInitScript(() => {
     const noop = () => {}; window.__badges = [];
     window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: hooks => { window.__back = hooks; }}, on: noop, badge: {set: n => window.__badges.push(n)}};
@@ -93,7 +94,7 @@ async function scenario(browser, width, mirrored) {
       // Desktop split: the native thread sits beside the list; Back (no header button there) returns to the empty pane.
       assert.equal(await page.locator('#u-pane-list').isVisible(), true, 'list stays beside the native thread');
       assert.equal(await page.locator('#chat-back').isVisible(), false, 'no Back button in the split');
-      await page.evaluate(() => window.__back.back()); await page.locator('#u-pane-thread .u-newmsg').waitFor();
+      await page.evaluate(() => window.__back.back()); await page.locator('#unified-inbox[data-detail=none]').waitFor();
     } else await page.locator('#chat-back').click();
     await row.waitFor();
   }

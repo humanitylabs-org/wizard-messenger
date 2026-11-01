@@ -78,8 +78,8 @@ const tokens = p => ({canvas: 'transparent', base: p.bg, surface: `color-mix(in 
     await more.locator('.u-more-agent').first().waitFor();
     assert.equal(await page.locator('.u-sheet details').count() - await page.locator('.u-sheet details.c-later').count(), 0, 'no folds below the accounts');
     const rows = await page.locator('.u-settings .u-more').evaluateAll(gs => gs.flatMap(g => [...g.querySelectorAll(':scope > :not([hidden])')]).filter(e => e.getClientRects().length).map(e => e.innerText.split('\n')[0].trim()));
-    assert.deepEqual(rows, ['Oscar'], 'only the agents (merges/notifications only when they exist): ' + JSON.stringify(rows));
-    assert.equal(await page.locator('.u-settings .u-more-other').isVisible(), false, 'no empty second list');
+    assert.deepEqual(rows, ['Oscar', 'Message previews in the list'], 'the agents, then the list option (merges/notifications only when they exist): ' + JSON.stringify(rows));
+    assert.equal(await page.locator('.u-settings .u-more-other .u-more-previews').isVisible(), true, 'the list option sits in the second list');
     const sheetText = await page.locator('.u-sheet[aria-label="Settings"]').innerText();
     assert.doesNotMatch(sheetText, /Saved drafts|Advanced|Wizard Messenger address|Not available yet/, 'no drafts, Advanced, address or separate "not available" list in Settings');
     // Your accounts ends in a "+"; Add an account is closed until it is tapped (no separate always-visible section).

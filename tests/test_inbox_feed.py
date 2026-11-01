@@ -93,6 +93,82 @@ class FeedTests(FeedFixture):
         self.assertEqual(inbox_feed.items(self.store)['items'][0]['text'], 'again')
 
 
+class WaitTests(FeedFixture):
+    """The shell's change signal: GET api/inbox/wait?v=<version> returns as soon as the feed changes."""
+
+    def waiter(self, version, hold=5):
+        out = {}
+        def run():
+            t = time.monotonic()
+            out['result'] = inbox_feed.wait(self.inbox, version, hold)
+            out['took'] = time.monotonic() - t
+        th = threading.Thread(target=run, daemon=True); th.start()
+        time.sleep(0.2)  # parked on the condition
+        return th, out
+
+    def test_feed_carries_version_and_watch(self):
+        f = inbox_feed.feed(self.inbox)
+        self.assertEqual((f['inbox'], f['items'], f['watch']), (1, [], 'api/inbox/wait'))
+        self.assertIsInstance(f['version'], str)
+        self.assertIs(inbox_feed.feed(self.inbox), f)  # cached while nothing was written
+
+    def test_stale_version_answers_at_once(self):
+        r = inbox_feed.wait(self.inbox, 'old', 5)
+        self.assertTrue(r['changed']); self.assertEqual(r['items'], [])
+
+    def test_wakes_on_a_new_incoming_message(self):
+        amy = self.chat('!amy', 'Amy')
+        v = inbox_feed.feed(self.inbox)['version']
+        th, out = self.waiter(v)
+        with patch.object(self.store, 'db', wraps=self.store.db) as db:
+            time.sleep(0.3)
+            self.assertEqual(db.call_count, 0)  # no DB work while it waits
+        self.store.add_message('$a1', amy, 'Amy', False, 'hello', now_ms())
+        th.join(3)
+        r = out['result']
+        self.assertTrue(r['changed']); self.assertLess(out['took'], 1.5)
+        self.assertEqual([i['title'] for i in r['items']], ['Amy'])
+        self.assertNotEqual(r['version'], v)
+        self.assertEqual(self.inbox.inbox_waiters, 0)
+
+    def test_wakes_when_the_chat_is_read(self):
+        amy = self.chat('!amy', 'Amy'); t = now_ms()
+        self.store.add_message('$a1', amy, 'Amy', False, 'hello', t)
+        v = inbox_feed.feed(self.inbox)['version']
+        th, out = self.waiter(v)
+        self.inbox.dispatch('POST', '/api/unified/people/%s/read' % amy['person_id'], {'timestamp': t})
+        th.join(3)
+        self.assertTrue(out['result']['changed']); self.assertEqual(out['result']['items'], [])
+
+    def test_ignores_writes_the_feed_does_not_show_and_times_out_cleanly(self):
+        amy = self.chat('!amy', 'Amy'); quiet = self.chat('!quiet', 'Quiet')
+        self.store.update(quiet['person_id'], {'muted': True})
+        v = inbox_feed.feed(self.inbox)['version']
+        th, out = self.waiter(v, hold=1.2)
+        self.store.add_message('$o1', amy, 'me', True, 'outgoing', now_ms())   # own message
+        self.store.add_message('$q1', quiet, 'Q', False, 'muted', now_ms())     # muted chat
+        th.join(4)
+        r = out['result']
+        self.assertEqual(r, {'inbox': 1, 'changed': False, 'version': v, 'watch': 'api/inbox/wait'})
+        self.assertGreaterEqual(out['took'], 1.1); self.assertLess(out['took'], 2.0)
+        self.assertEqual(self.inbox.inbox_waiters, 0)
+
+    def test_stop_ends_waits_and_too_many_waiters_get_429(self):
+        v = inbox_feed.feed(self.inbox)['version']
+        threads = [self.waiter(v, hold=10) for _ in range(inbox_feed.WAITERS_MAX)]
+        with self.assertRaises(EngineError) as err:
+            inbox_feed.wait(self.inbox, v, 10)
+        self.assertEqual(err.exception.status, 429)
+        self.inbox.stop.set(); self.inbox.notify()
+        for th, out in threads:
+            th.join(3); self.assertFalse(out['result']['changed'])
+        self.assertEqual(self.inbox.inbox_waiters, 0)
+        with self.assertRaises(EngineError):
+            inbox_feed.wait(self.inbox, v, 'soon')
+        with self.assertRaises(EngineError):
+            inbox_feed.wait(self.inbox, 'x' * 65, 1)
+
+
 class ActTests(FeedFixture):
     def setUp(self):
         super().setUp()
@@ -162,13 +238,15 @@ class FeedHTTP(unittest.TestCase):
         self.server = ViewServer(('127.0.0.1', 0), engine, TOKEN, [ORIGIN])
         self.server.unified = self.unified = Mock()
         self.unified.store = Mock()
-        self.feed = patch('inbox_feed.items', return_value={'inbox': 1, 'items': []}); self.items = self.feed.start()
+        self.unified.store.seq = 1
+        self.feed = patch('inbox_feed.items', side_effect=lambda store: {'inbox': 1, 'items': []}); self.items = self.feed.start()
+        self.waitp = patch('inbox_feed.wait', return_value={'inbox': 1, 'changed': False, 'version': 'v1', 'watch': 'api/inbox/wait'}); self.waitf = self.waitp.start()
         self.actp = patch('inbox_feed.act', return_value={'ok': True}); self.act = self.actp.start()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
 
     def tearDown(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join()
-        self.feed.stop(); self.actp.stop(); self.env.stop(); self.temp.cleanup()
+        self.feed.stop(); self.actp.stop(); self.waitp.stop(); self.env.stop(); self.temp.cleanup()
 
     def request(self, method, target, body=None, *, proof=True, headers=None, raw=None, ctype='application/json'):
         h = dict(headers or {})
@@ -186,9 +264,17 @@ class FeedHTTP(unittest.TestCase):
 
     def test_get_feed(self):
         status, ctype, body = self.request('GET', '/api/inbox')
-        self.assertEqual((status, body), (200, {'inbox': 1, 'items': []}))
+        self.assertEqual((status, body['inbox'], body['items'], body['watch']), (200, 1, [], 'api/inbox/wait'))
+        self.assertEqual(body['version'], inbox_feed.version([]))
         self.assertTrue(ctype.startswith('application/json'))
         self.items.assert_called_once_with(self.unified.store)
+
+    def test_wait_route(self):
+        status, _, body = self.request('GET', '/api/inbox/wait?v=v1&hold=3')
+        self.assertEqual((status, body['changed']), (200, False))
+        self.waitf.assert_called_once_with(self.unified, 'v1', '3')
+        self.assertEqual(self.request('GET', '/api/inbox/wait?v=v1', proof=False)[0], 403 if self.trusted else 401)
+        self.assertEqual(self.request('POST', '/api/inbox/wait', {}, headers={'Origin': ORIGIN})[0], 405)
 
     def test_owner_proof_required_and_bearers_refused(self):
         status, _, body = self.request('GET', '/api/inbox', proof=False)

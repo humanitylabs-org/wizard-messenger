@@ -28,7 +28,8 @@ const ident = (id, net, kind = 'person') => ({id: id + '-' + net, network: net, 
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2});
     // Desktop split (Messenger 900px and wider): no Back button beside the list; Back (Escape) clears the open chat.
     const closeChat = async () => (await page.evaluate(() => document.documentElement.hasAttribute('data-split'))) ? page.keyboard.press('Escape') : page.getByRole('button', {name: 'Back', exact: true}).click();
-    await ctx.addInitScript(() => { const noop = () => {}; window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}}; });
+    await ctx.addInitScript(() => { try { localStorage.setItem('messenger.previews', '1'); } catch {} }); // previews are opt-in since 15.11; this test reads them
+await ctx.addInitScript(() => { const noop = () => {}; window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}}; });
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
     const ownKey = '11'.repeat(32);

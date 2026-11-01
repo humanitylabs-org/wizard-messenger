@@ -54,6 +54,7 @@ const providers = [
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: scheme});
     // Desktop split (>= 900px): no Back button beside the list; Back (Escape) clears the open chat instead.
     const closeChat = () => viewport.width >= 900 ? page.keyboard.press('Escape') : page.getByRole('button', {name: 'Back', exact: true}).click();
+    await ctx.addInitScript(() => { try { localStorage.setItem('messenger.previews', '1'); } catch {} }); // previews are opt-in since 15.11; this test reads them
     await ctx.addInitScript(s => {
       const noop = () => {};
       window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}};
