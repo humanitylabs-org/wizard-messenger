@@ -1,0 +1,90 @@
+name: Publish images
+# Builds the Messenger and Telegram bridge images natively on amd64 and arm64 GitHub-hosted runners
+# (no emulation, no self-hosted worker), smoke-tests each, and publishes multi-arch tags to GHCR so any
+# Wizard can install Messenger from the Store. Tags are immutable: sha-<commit> always, plus the release
+# version the first time it is built.
+on:
+  push:
+    branches: [feature/unified-inbox, main]
+    paths-ignore: [runtipi/**, wizard.md, '**/*.md', tests/**, evidence/**]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'humanitylabs-org/wizard-messenger'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Messenger
+        run: |
+          set -eu
+          umask 022
+          img=ghcr.io/humanitylabs-org/wizard-messenger:sha-$GITHUB_SHA-${{ matrix.arch }}
+          DOCKER_BUILDKIT=1 docker build --build-arg CARGO_JOBS=$(nproc) \
+            --label org.opencontainers.image.revision=$GITHUB_SHA -t "$img" .
+          echo "MESSENGER=$img" >> "$GITHUB_ENV"
+      - name: Smoke Messenger (fresh data, no networks, no owner)
+        run: |
+          set -eu
+          test "$(docker image inspect "$MESSENGER" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+          docker run --rm --entrypoint wnd "$MESSENGER" --version
+          docker run -d --name smoke --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --tmpfs /tmp:uid=1000,gid=1000 --tmpfs /run/messenger:mode=0700,uid=1000,gid=1000 \
+            -v smoke-data:/data -e MESSENGER_API_TOKEN=smoke-only -e UNIFIED_ENABLED=0 -e CONNECTORS_ENABLED=0 \
+            -e MESSENGER_COOKIE_SECURE=0 -e MESSENGER_PUBLIC_PATH=/ -p 127.0.0.1:18765:8765 "$MESSENGER"
+          for i in $(seq 60); do curl -fsS http://127.0.0.1:18765/healthz && exit 0; sleep 2; done
+          docker logs smoke; exit 1
+      - name: Build Telegram bridge
+        run: |
+          set -eu
+          img=ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-$GITHUB_SHA-${{ matrix.arch }}
+          docker build -f plumbing/telegram-bridge/Dockerfile -t "$img" .
+          test "$(docker image inspect "$img" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+          echo "TELEGRAM=$img" >> "$GITHUB_ENV"
+      - name: Push per-architecture images
+        run: docker push "$MESSENGER" && docker push "$TELEGRAM"
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Multi-arch tags (never overwrite a version)
+        run: |
+          set -eu
+          version=$(python3 -c "import json;print(json.load(open('runtipi/config.json'))['version'])")
+          telegram=$(sed -n 's/.*wizard-telegram-bridge:\([^ }]*\).*/\1/p' plumbing/telegram-bridge/Dockerfile | head -1)
+          for pair in "wizard-messenger $version" "wizard-telegram-bridge $telegram"; do
+            set -- $pair
+            repo=ghcr.io/humanitylabs-org/$1
+            tags="-t $repo:sha-$GITHUB_SHA"
+            if [ -n "$2" ] && ! docker buildx imagetools inspect "$repo:$2" >/dev/null 2>&1; then tags="$tags -t $repo:$2"; fi
+            docker buildx imagetools create $tags "$repo:sha-$GITHUB_SHA-amd64" "$repo:sha-$GITHUB_SHA-arm64"
+            docker buildx imagetools inspect "$repo:sha-$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          done

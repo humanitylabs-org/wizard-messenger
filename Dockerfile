@@ -3,8 +3,9 @@ ARG MESSENGER_RUNTIME_BASE=debian:bookworm-slim
 FROM ${MDK_BUILD_IMAGE} AS mdk
 USER root
 WORKDIR /build/mdk
-ENV CARGO_BUILD_JOBS=1 CARGO_HOME=/build/cache CARGO_TARGET_DIR=/build/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
-COPY engine/patches/0001-rustls-0.23.46.patch /engine-patches/0001-rustls-0.23.46.patch
+ARG CARGO_JOBS=1
+ENV CARGO_BUILD_JOBS=${CARGO_JOBS} CARGO_HOME=/build/cache CARGO_TARGET_DIR=/build/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false
+COPY engine/patches/0001-rustls-0.23.46.patch engine/patches/0002-relay-plane-drop.patch /engine-patches/
 # The default path builds the exact upstream source with the tracked security overlay.
 # Prebuilt wn/wnd carriers are refused until their rustls 0.23.46 provenance is audited.
 RUN --mount=type=cache,target=/build/cache --mount=type=cache,target=/build/target \
@@ -21,7 +22,8 @@ RUN --mount=type=cache,target=/build/cache --mount=type=cache,target=/build/targ
     git apply --check /engine-patches/0001-rustls-0.23.46.patch && \
     git apply --whitespace=error /engine-patches/0001-rustls-0.23.46.patch && \
     printf '%s\n' 'dac950e433d49280ebb9f8c46cfe4432287e0812186115e077bf83fee953377a  Cargo.lock' | sha256sum -c - && \
-    cargo build --locked -p wn-cli --bins -j1 && \
+    git -c user.name=build -c user.email=build@localhost am /engine-patches/0002-relay-plane-drop.patch && \
+    cargo build --locked -p wn-cli --bins -j${CARGO_JOBS} && \
     cp /build/target/debug/wn /build/target/debug/wnd /out/
 
 FROM ${MESSENGER_RUNTIME_BASE} AS runtime
@@ -57,5 +59,5 @@ USER 1000:1000
 WORKDIR /app
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"
-LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.2.0-unified.15.12" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee"
+LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.2.0-unified.15.15" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee" org.wizardos.messenger.mdk-patches="rustls-0.23.46,relay-plane-drop" org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
 ENTRYPOINT ["/app/entrypoint.sh"]
