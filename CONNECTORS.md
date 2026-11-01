@@ -82,10 +82,12 @@ supports private Synapse. `bbctl` is Beeper-server-only and is **not used** here
    this callback. Strong mode needs its independently restricted sender/read
    facade and separate owner authority; same-host unrestricted tokens are not
    read-only capabilities.
-4. Merge the optional `runtipi/connectors.compose.yml` with the base Compose.
-   Set `MESSENGER_IMAGE` to the parent's tested integrated image; the overlay
-   refuses to fall back to live .10, which lacks these modules. Keep
-   `MESSENGER_CONNECTORS` empty and omit the `connectors` profile by default.
+4. Every connector bridge is part of the Store recipe `runtipi/docker-compose.yml`
+   (public images pinned by digest; LINE and ChatGPT Dots are built from pinned
+   upstream commits by `.github/workflows/bridges.yml`). Each bridge waits for its
+   `/data/configured` marker, so an unpicked network does no work. Keep
+   `MESSENGER_CONNECTORS` empty by default; networks the owner picks in Settings
+   are remembered in `unified/connectors.json`.
    Explicit `whatsapp,slack,line,instagram` enables these registrations/configured
    markers. The extra `signal` value is optional. No optional bridge publishes
    host ports. Telegram retains its existing private API configuration contract.
@@ -182,8 +184,7 @@ node --test tests/test_connectors_view.cjs
 python tools/prove_connector_stack.py
 git apply --check plumbing/connectors-web-integration.patch
 APP_DATA_DIR=<scratch> APP_PORT=18799 MESSENGER_API_TOKEN=<test-only> MESSENGER_IMAGE=<integrated-image> \
-  docker compose -f runtipi/docker-compose.yml -f runtipi/connectors.compose.yml \
-  --profile connectors config --quiet
+  docker compose -f runtipi/docker-compose.yml config --quiet
 ```
 
 The stack proof uses only already-present pinned images, a private scratch state
