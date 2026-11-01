@@ -1,7 +1,6 @@
 services:
   connector-init:
-    image: ${MESSENGER_IMAGE:-wizard-messenger:0.2.0-unified.15.15}
-    pull_policy: never
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
     user: 0:0
     entrypoint:
     - python3
