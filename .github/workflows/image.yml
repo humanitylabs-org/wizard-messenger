@@ -46,7 +46,7 @@ jobs:
         run: |
           set -eu
           test "$(docker image inspect "$MESSENGER" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
-          docker run --rm --entrypoint wnd "$MESSENGER" --version
+          test "$(docker run --rm --entrypoint wn "$MESSENGER" --version)" = "wn 0.12.0"
           docker run -d --name smoke --read-only --cap-drop ALL --security-opt no-new-privileges:true \
             --tmpfs /tmp:uid=1000,gid=1000 --tmpfs /run/messenger:mode=0700,uid=1000,gid=1000 \
             -v smoke-data:/data -e MESSENGER_API_TOKEN=smoke-only -e UNIFIED_ENABLED=0 -e CONNECTORS_ENABLED=0 \
