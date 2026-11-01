@@ -2,6 +2,8 @@
 
 Real loopback handlers, fake provider I/O. No accounts, networks or real messages.
 """
+import base64
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -11,6 +13,7 @@ import test_web as fixtures
 from agent_keys import AgentKeys, LEVELS
 from drafts import Drafts
 from unified import UnifiedInbox
+import agent_tools
 
 # Every provider write an agent could attempt: send, retry, edit, delete, react, plus
 # preview/read/typing/translate and the draft preview/send pair. Draft-only must refuse all.
@@ -308,6 +311,114 @@ class AgentKeyHTTP(unittest.TestCase):
         log = self.request('GET', '/api/view/agents', headers={'Cookie': self.owner['Cookie']})[2]['result']['log']
         self.assertTrue(any(e.get('agent') == 'Drafter' and e['outcome'] == 'blocked' for e in log), log)
 
+
+    # ---- attachments: an agent can look at a received photo ----
+    def _mcp_raw(self, args, headers):
+        body = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'messenger_get_attachment', 'arguments': args}}
+        status, _, data = self.request('POST', '/mcp', body, {'Origin': fixtures.ORIGIN, **headers})
+        self.assertEqual(status, 200, data)
+        result = data['result']
+        return json.loads(result['content'][0]['text']), result.get('isError', False), result['content'][1:]
+
+    def _homeserver(self, files):
+        """Fake private homeserver for the view's own media path (UnifiedInbox.media_blob)."""
+        seen = []
+        class Response(io.BytesIO):
+            headers = {'Content-Type': 'image/jpeg'}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        def urlopen(req, timeout=None):
+            url = req.full_url; seen.append(url)
+            for key, data in files.items():
+                if key in url:
+                    return Response(data)
+            raise AssertionError('unexpected fetch ' + url)
+        self.inbox.matrix_token = Mock(return_value='tok')
+        return patch('unified.urlopen', urlopen), seen
+
+    def _photo(self, event='$photo', size=2000, **extra):
+        media = {'mxc': 'mxc://hs.local/abc' + event.strip('$'), 'mime': 'image/jpeg', 'size': size, 'w': 960, 'h': 1280, **extra}
+        self.inbox.store.add_message(event, self.alice, '@alice', False, '', 1700000003000, msgtype='m.image', media=media)
+        return event
+
+    def test_read_thread_gives_a_stable_media_reference(self):
+        self._photo(filename='poster.jpg')
+        thread, error = self.mcp('messenger_read_thread', {'chat_id': self.alice['person_id']}, self.keys['read_only'])
+        self.assertFalse(error, thread)
+        ref = thread['messages'][-1]['attachment']
+        self.assertEqual((ref['kind'], ref['mime'], ref['name'], ref['size'], ref['index']), ('image', 'image/jpeg', 'poster.jpg', 2000, 0))
+        self.assertEqual(ref['fetch'], {'tool': 'messenger_get_attachment', 'chat_id': self.alice['person_id'], 'message_id': '$photo', 'index': 0})
+        self.assertNotIn('mxc', json.dumps(thread))
+
+    def test_get_attachment_permissions_follow_the_route_table(self):
+        self._photo()
+        jpeg = b'\xff\xd8\xff\xe0' + b'x' * 1000
+        fake, seen = self._homeserver({'/download/hs.local/abcphoto': jpeg})
+        with fake:
+            data, error, _ = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$photo'}, self.keys['no_access'])
+            self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_access_off')
+            data, error, _ = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$photo'}, {})
+            self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_key_required')
+            self.request('POST', '/api/view/agents/app-key', {'level': 'no_access'}, self.owner)
+            data, error, _ = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$photo'}, {'Authorization': 'Bearer ' + fixtures.TOKEN})
+            self.assertTrue(error); self.assertEqual(data['error']['code'], 'agent_access_off')
+            self.assertEqual(seen, [])  # refused callers never reach the media fetch
+            for level in ('read_only', 'draft_only', 'draft_and_send'):
+                data, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$photo'}, self.keys[level])
+                self.assertFalse(error, data)
+                self.assertEqual(images[0]['type'], 'image'); self.assertEqual(images[0]['mimeType'], 'image/jpeg')
+                self.assertEqual(base64.b64decode(images[0]['data']), jpeg)
+                self.assertIn('untrusted', data['note']); self.assertEqual(data['kind'], 'image')
+        self.assertEqual(len(seen), 1)  # later calls are served from the view's media cache
+        from permissions import capability_for
+        self.assertEqual(capability_for('GET', '/api/unified/media/x'), 'read')
+        names = {t['name'] for t in self.mcp(None, headers=self.keys['read_only'], method='tools/list')['tools']}
+        self.assertIn('messenger_get_attachment', names)
+
+    def test_get_attachment_checks_the_chat_and_hides_other_chats(self):
+        self._photo()
+        bob = self.inbox.store.identity('telegram', '!bob', 'Bob T')
+        self.inbox.store.add_message('$bobmsg', bob, '@bob', False, 'hi', 1700000004000)
+        fake, seen = self._homeserver({})
+        with fake:
+            for args in ({'chat_id': bob['person_id'], 'message_id': '$photo'},     # wrong chat
+                         {'chat_id': self.alice['person_id'], 'message_id': '$nope'},  # unknown message
+                         {'chat_id': bob['person_id'], 'message_id': '$bobmsg'},      # no attachment
+                         {'chat_id': self.alice['person_id'], 'message_id': '$photo', 'index': 1}):
+                data, error, images = self._mcp_raw(args, self.keys['read_only'])
+                self.assertTrue(error, args); self.assertEqual(data['error']['code'], 'not_found'); self.assertEqual(images, [])
+        self.assertEqual(seen, [])
+
+    def test_get_attachment_caps_size_with_the_homeserver_preview(self):
+        self._photo(size=3 * 1024 * 1024)
+        big = b'\xff\xd8\xff\xe0' + b'B' * (3 * 1024 * 1024)
+        small = b'\xff\xd8\xff\xe0' + b's' * 5000
+        fake, seen = self._homeserver({'/download/hs.local/abcphoto': big, '/thumbnail/hs.local/abcphoto': small})
+        with fake, patch('agent_tools._shrink', return_value=None):  # as in an image without Pillow
+            data, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$photo'}, self.keys['read_only'])
+        self.assertFalse(error, data)
+        self.assertEqual(base64.b64decode(images[0]['data']), small)
+        self.assertTrue(data['returned']['scaled']); self.assertLessEqual(data['returned']['bytes'], agent_tools.IMAGE_MAX_BYTES)
+        # Preview still too big: details only, no image, never an oversized payload.
+        self._photo('$huge', size=3 * 1024 * 1024)
+        fake, _ = self._homeserver({'/download/hs.local/abchuge': big, '/thumbnail/hs.local/abchuge': big})
+        with fake, patch('agent_tools._shrink', return_value=None):
+            data, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$huge'}, self.keys['read_only'])
+        self.assertFalse(error, data); self.assertEqual(images, []); self.assertEqual(data['image'], 'not_returned')
+
+    def test_get_attachment_non_image_returns_details_and_small_text(self):
+        self.inbox.store.add_message('$pdf', self.alice, '@alice', False, '', 1700000005000, msgtype='m.file',
+                                     media={'mxc': 'mxc://hs.local/pdf1', 'mime': 'application/pdf', 'size': 900000, 'filename': 'lease.pdf'})
+        self.inbox.store.add_message('$txt', self.alice, '@alice', False, '', 1700000006000, msgtype='m.file',
+                                     media={'mxc': 'mxc://hs.local/txt1', 'mime': 'text/plain', 'size': 11, 'filename': 'notes.txt'})
+        fake, seen = self._homeserver({'/download/hs.local/txt1': b'hello notes'})
+        with fake:
+            pdf, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$pdf'}, self.keys['read_only'])
+            self.assertFalse(error, pdf); self.assertEqual(images, [])
+            self.assertEqual((pdf['kind'], pdf['name'], pdf['size'], pdf['content']), ('file', 'lease.pdf', 900000, 'not_returned'))
+            txt, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$txt'}, self.keys['read_only'])
+            self.assertFalse(error, txt); self.assertEqual(images, []); self.assertEqual(txt['text'], 'hello notes')
+        self.assertEqual(len(seen), 1)  # the PDF is never downloaded
 
 if __name__ == '__main__':
     unittest.main()
