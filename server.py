@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from engine import EngineError, MarmotEngine
 from permissions import AgentAccess, PUBLIC, route_shape
 from agent_keys import AgentKeys, LABELS as LEVEL_LABELS
-from wizard_agents import GatewayGrant, WizardAgents
+from wizard_agents import GatewayGrant, GatewayKey, WizardAgents
 import agent_tools
 
 MAX_BODY=65536
@@ -38,6 +38,8 @@ class MessengerServer(ThreadingHTTPServer):
         # The Wizard's own agents, reached through the Agent Service gateway with its app grant key (wizard_agents.py).
         self.wizard_agents = WizardAgents(getattr(engine, 'data', None))
         self.gateway_grant = GatewayGrant(os.environ.get('WIZARD_GRANTS_FILE') or None)
+        # Agent Services that predate app grants: the per-app key, only where the operator provisioned it.
+        self.gateway_key = GatewayKey(os.environ.get('MESSENGER_GATEWAY_KEY_FILE') or None)
         super().__init__(address,Handler)
 
 class Handler(BaseHTTPRequestHandler):
@@ -71,7 +73,8 @@ class Handler(BaseHTTPRequestHandler):
         """None without credentials; ('machine', None) for the app's machine key (global level);
         ('agent', row) for a per-agent key or a Wizard agent named by the gateway (its own level).
         Unknown bearers are refused."""
-        if self.service.gateway_grant.matches(self.headers.get('X-Wizard-Grant')):
+        authorization = self.headers.get('Authorization')
+        if self.service.gateway_grant.matches(self.headers.get('X-Wizard-Grant')) or (getattr(self.service, 'gateway_key', None) is not None and self.service.gateway_key.matches(authorization)):
             # The Wizard gateway (its app grant key, wizard_agents.py) may name the agent it speaks for, on /mcp
             # only; each agent has the owner's level for it. Elsewhere a request carrying it is refused, even
             # beside an owner cookie, so the gateway's credential can never ride along an owner action.
@@ -81,7 +84,6 @@ class Handler(BaseHTTPRequestHandler):
             if row is None:
                 return ('agent', {'id': 'wizard-gateway', 'name': 'Wizard gateway', 'level': 'no_access', 'kind': 'gateway'})
             return ('agent', {'id': 'wizard-' + row['id'], 'name': row['label'], 'level': row['level'], 'kind': 'wizard'})
-        authorization = self.headers.get('Authorization')
         if not authorization:
             # A bare call names nobody: the app port is also reachable on the tailnet (Serve), so the Wizard gateway
             # proves itself with its app grant key instead (wizard_agents.py).
@@ -145,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get('jsonrpc') != '2.0':
             return 400,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32600,'message':'Invalid request'}}
         if method == 'initialize':
-            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.16.0'}}
+            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.16.1'}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
         elif method == 'tools/list': result={'tools':MCP_TOOLS+(agent_tools.TOOLS if agent_tools.offered(self) else [])}
@@ -170,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         if method=='GET' and path=='/healthz':
-            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.16.0'}
+            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.16.1'}
         self._authorize()
         engine=self.service.engine
         if path=='/mcp' and method=='POST': return self._mcp(self._body())

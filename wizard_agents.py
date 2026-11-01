@@ -118,6 +118,42 @@ class GatewayGrant:
         return any(hmac.compare_digest(digest, h.encode()) for h in hashes)
 
 
+class GatewayKey:
+    """Legacy per-app gateway key (Agent Services that predate app grants send `Authorization: Bearer <key>`).
+
+    Off unless the box operator provisioned MESSENGER_GATEWAY_KEY_FILE (the same key as the Agent Service's
+    <wizard-os>/app-mcp-keys/messenger). Stock installs never set it, so for them app grants stay the only gateway
+    proof; a box whose Agent Service still uses per-app keys keeps its agents' Messenger tools after updating.
+    """
+    def __init__(self, path=None):
+        self.path = Path(path) if path else None
+        self.stamp = None
+        self.key = ''
+        self.lock = threading.Lock()
+
+    def current(self):
+        if not self.path:
+            return ''
+        try:
+            st = self.path.stat()
+        except OSError:
+            return ''
+        stamp = (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino)
+        with self.lock:
+            if stamp != self.stamp:
+                try:
+                    key = self.path.read_text().strip() if stat.S_ISREG(st.st_mode) and st.st_size <= 512 else ''
+                except OSError:
+                    key = ''
+                self.key = key if KEY_RE.fullmatch(key) else ''
+                self.stamp = stamp
+            return self.key
+
+    def matches(self, authorization):
+        key = self.current()
+        return bool(key) and isinstance(authorization, str) and hmac.compare_digest(authorization.encode(), ('Bearer ' + key).encode())
+
+
 class WizardAgents:
     def __init__(self, root=None, filename='wizard-agents.json'):
         self.path = Path(root) / filename if root else None
