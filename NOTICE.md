@@ -17,4 +17,4 @@ Slack uses the CC0 glyph from [Simple Icons 10.4.0](https://github.com/simple-ic
 ## Added connectors (Oct 2026)
 
 - X and Google Messages glyphs: Simple Icons 16.35.0, CC0-1.0. Marks remain trademarks of their owners.
-- Bridges: mautrix/meta (Facebook Messenger), mautrix/twitter, mautrix/linkedin, mautrix/gmessages (AGPL-3.0, upstream images pinned by digest); beeper/chatgpt-dots 265398a (AGPL-3.0, built locally; licence in plumbing/dots-upstream-LICENSE).
+- Bridges: mautrix/meta (Facebook Messenger), mautrix/twitter, mautrix/linkedin, mautrix/gmessages (AGPL-3.0, upstream images pinned by digest); beeper/chatgpt-dots 265398a (AGPL-3.0, built from the pinned upstream commit by .github/workflows/bridges.yml; licence in plumbing/dots-upstream-LICENSE).

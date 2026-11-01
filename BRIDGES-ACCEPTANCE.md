@@ -48,7 +48,7 @@ NEW: none in web/core.
 | `connector_sender.py` | Reuse fixed-target, redirect-denying local-owner sender and bootstrap; remove error mappings for excluded providers. |
 | `static/connectors.js` | Preserve generation fences, QR-first scan/auto-wait/refresh/cancel, sanitized errors and input clearing. Use unified buttons, Settings sheet, shared QR renderer, existing spinner and phone-country control; preserve Telegram resume and owner contact-code rendering. |
 | `plumbing/connectors-provenance.json` | Retain only the WhatsApp/Signal entries and their upstream manifests/hashes. |
-| `runtipi/connectors.compose.yml` | Only connector init + WhatsApp/Signal; no optional profile required; marker-watching dormant workers; also integrated into the normal compose file. |
+| `runtipi/docker-compose.yml` | Every connector bridge (WhatsApp, Signal, Slack, LINE, Instagram, Facebook, X, LinkedIn, Google Messages, ChatGPT Dots) with public digest-pinned images; marker-watching dormant workers; `connectors.compose.yml` retired. |
 | `tests/test_connectors.py` | Narrow fixtures and expected counts; add owner-enable and Telegram pending-step privacy tests. |
 | `tests/test_connector_sender.py` | Supported-network transport fixtures. |
 | `tests/test_connector_login_runtime.py` | Supported-network fixtures and error vocabulary. |

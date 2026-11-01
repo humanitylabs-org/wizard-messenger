@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:636441dc7651ceecfe53c4896bbcb8644e96ea6cb7deb8eb38c01639edb7cf55}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -14,8 +14,10 @@ services:
     volumes:
       - ${APP_DATA_DIR}/data:/data
     restart: "no"
+    labels:
+      runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:636441dc7651ceecfe53c4896bbcb8644e96ea6cb7deb8eb38c01639edb7cf55}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -77,7 +79,7 @@ services:
     restart: unless-stopped
   telegram:
     # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
-    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:832b81e593da270a3e4666840f04290ac282dde6c1daaef478924b5ee6c1c935}
+    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:4d5aa04648fa8ec6fb04c5e0221816504716905ee512202febdc3bc62a18747e}
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -101,7 +103,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:636441dc7651ceecfe53c4896bbcb8644e96ea6cb7deb8eb38c01639edb7cf55}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -124,7 +126,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9cf82834488c520039eea59ce228b4276c489042@sha256:c445e2d1c685077f8e9e0930927581360e5f7bbcb69ee0dc0b3fab95de55e50b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:636441dc7651ceecfe53c4896bbcb8644e96ea6cb7deb8eb38c01639edb7cf55}
     user: 0:0
     entrypoint:
     - python3
@@ -147,6 +149,8 @@ services:
       unified-init:
         condition: service_completed_successfully
     restart: 'no'
+    labels:
+      runtipi.managed: 'false'
   whatsapp:
     image: dock.mau.dev/mautrix/whatsapp@sha256:c807054cb015d0f5c90d20d85aac216d062b4a6f4ae834b931fd5e7f03e27391
     user: 1000:1000
@@ -214,6 +218,294 @@ services:
       test:
       - CMD-SHELL
       - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29328/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  slack:
+    image: dock.mau.dev/mautrix/slack@sha256:0de822d47926b7077322a4fa9f349cd024af13107ab4bc63a0962dc53ef72a63
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-slack -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/slack:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29335/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  line:
+    image: ${MESSENGER_LINE_IMAGE:-ghcr.io/humanitylabs-org/wizard-line-bridge:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:9de256104f86c37f27391d511c4d6a999c02289398f07512e03b07eafe699428}
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/matrix-line -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/line:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29322/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  instagram:
+    image: dock.mau.dev/mautrix/meta@sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-meta -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/instagram:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29330/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  facebook:
+    image: dock.mau.dev/mautrix/meta@sha256:22bfa54084b6855188f5146b325ee007a298443a9617caead06cc5fc0ba0d687
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-meta -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/facebook:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29319/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  twitter:
+    image: dock.mau.dev/mautrix/twitter@sha256:7f70378b4bd00530f790c9282ff844cefd7900be955c998012b30ebbebc158cd
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-twitter -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/twitter:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29327/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  linkedin:
+    image: dock.mau.dev/mautrix/linkedin@sha256:db88d8c2c4a0397d00777f856771a7d3174ee4ec0436a1fd5f56330cb91cb6b0
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-linkedin -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/linkedin:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29341/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  gmessages:
+    image: dock.mau.dev/mautrix/gmessages@sha256:afeca2d14a01fac919c8fb94b04bf812db78e29425ceafe042508d7aea9e50a8
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-gmessages -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/gmessages:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29336/_matrix/mau/live
+        >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  dots:
+    image: ghcr.io/humanitylabs-org/wizard-dots-bridge:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:ef02327c496a707e7aea242cc012673708a70b56664948f6c8352c75850cc326
+    user: 1000:1000
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/chatgpt-dots -c /data/config.yaml
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    mem_limit: 512m
+    pids_limit: 128
+    volumes:
+    - ${APP_DATA_DIR}/data/dots:/data
+    depends_on:
+      connector-init:
+        condition: service_completed_successfully
+      matrix:
+        condition: service_healthy
+    networks:
+    - matrix-lane
+    - connector-egress
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - test ! -f /data/configured || curl --fail --silent http://127.0.0.1:29349/_matrix/mau/live
         >/dev/null
       interval: 15s
       timeout: 5s
