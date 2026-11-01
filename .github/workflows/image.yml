@@ -49,7 +49,7 @@ jobs:
           test "$(docker run --rm --entrypoint wn "$MESSENGER" --version)" = "wn 0.12.0"
           docker run -d --name smoke --read-only --cap-drop ALL --security-opt no-new-privileges:true \
             --tmpfs /tmp:uid=1000,gid=1000 --tmpfs /run/messenger:mode=0700,uid=1000,gid=1000 \
-            -v smoke-data:/data -e MESSENGER_API_TOKEN=smoke-only -e UNIFIED_ENABLED=0 -e CONNECTORS_ENABLED=0 \
+            -v smoke-data:/data -e MESSENGER_API_TOKEN=$(openssl rand -hex 32) -e UNIFIED_ENABLED=0 -e CONNECTORS_ENABLED=0 \
             -e MESSENGER_COOKIE_SECURE=0 -e MESSENGER_PUBLIC_PATH=/ -p 127.0.0.1:18765:8765 "$MESSENGER"
           for i in $(seq 60); do curl -fsS http://127.0.0.1:18765/healthz && exit 0; sleep 2; done
           docker logs smoke; exit 1
