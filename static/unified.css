@@ -905,3 +905,40 @@ input.u-switch:checked::after { transform: translateX(18px); }
 /* Full screen in Wizard: the shell's "Exit full screen" pill sits over the top-right corner, where the Inbox tools and the
    chat's ✕ live, so the headers drop below it. */
 html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presentation="immersive"] .u-pane-thread > .u-newmsg-close { margin-top: 40px; }
+
+/* ---- Inbox filters in two rows (Miguel, 2 Nov 2026: "no scrolling sideways"). Row 1 is one segmented control
+   (All, Unread, Medium, Low; equal widths), row 2 one icon per network plus Filters on the right. Networks that do
+   not fit fold into "+N" (unified.js fitNets), so neither row ever scrolls. Skin tokens only. ---- */
+#u-filters.u-filter-rows { display: flex; flex-direction: column; align-items: stretch; gap: .375rem; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.u-seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .125rem; padding: .1875rem; border-radius: .75rem; background: var(--raised); }
+.u-seg .u-seg-btn { display: inline-flex; align-items: center; justify-content: center; gap: .3125rem; min-width: 0; min-height: 2rem; padding: 0 .375rem; border: 0; border-radius: .5625rem; background: transparent; color: var(--ink-2); font-size: .8125rem; font-weight: 500; box-shadow: none; transition: background-color 120ms, color 120ms; }
+.u-seg .u-seg-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-seg .u-seg-count { color: var(--ink-3); font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.u-seg .u-seg-count[hidden] { display: none; }
+@media (hover: hover) { .u-seg .u-seg-btn:not(:disabled):hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); } }
+.u-seg .u-seg-btn[aria-checked=true], .u-seg .u-seg-btn[aria-checked=true]:not(:disabled):hover { background: var(--chip-on); color: var(--chip-on-ink); }
+.u-seg .u-seg-btn[aria-checked=true] .u-seg-count { color: inherit; opacity: .8; }
+.u-netrow { display: flex; align-items: center; gap: .375rem; min-width: 0; }
+.u-nets { display: flex; align-items: center; gap: .375rem; min-width: 0; overflow: hidden; }
+.u-netrow .u-chip[hidden] { display: none; }
+.u-netrow .u-chip.net { flex: 0 0 auto; width: 2.25rem; min-width: 2.25rem; height: 2.25rem; min-height: 2.25rem; padding: 0; justify-content: center; gap: 0; }
+.u-netrow .u-more-nets { color: var(--ink-2); font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.u-netrow .u-filter-btn { flex: 0 0 auto; gap: .375rem; margin-left: auto; height: 2.25rem; min-height: 2.25rem; padding: 0 .875rem; font-size: .8125rem; }
+.u-filter-dot { display: none; width: .375rem; height: .375rem; border-radius: 50%; background: var(--accent); }
+.u-filter-btn.on { color: var(--ink); }
+.u-filter-btn.on .u-filter-dot { display: inline-block; }
+.u-menu-head { padding: .625rem 1.125rem .25rem; color: var(--ink-3); font-size: .75rem; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.u-menu-head:first-child { padding-top: .25rem; }
+.u-filter-menu .u-actions { max-height: min(70vh, 32rem); overflow-y: auto; }
+.u-menu.u-filter-menu.at { width: max-content; min-width: 13.75rem; max-width: calc(100% - 1.5rem); }
+.u-filter-menu .u-actions { min-width: 13.75rem; }
+.u-filter-menu .u-act { min-height: 2.5rem; font-size: .875rem; }
+.u-act.checked { font-weight: 600; }
+.u-act.checked svg { color: var(--accent); }
+@container messenger (max-width: 599px) {
+  #unified-inbox[data-view=list] > #u-filters.u-filter-rows { gap: .375rem; padding-top: .5rem; }
+  #unified-inbox[data-view=list] > .u-fab { bottom: calc(10.5rem + env(safe-area-inset-bottom)); }
+  html[data-bar-tools] #unified-inbox[data-view=list] > .u-fab { bottom: calc(7rem + env(safe-area-inset-bottom)); }
+  html:not([data-in-chat]) .u-toast { bottom: calc(10.75rem + env(safe-area-inset-bottom)); }
+  html[data-bar-tools]:not([data-in-chat]) .u-toast { bottom: calc(7.75rem + env(safe-area-inset-bottom)); }
+}

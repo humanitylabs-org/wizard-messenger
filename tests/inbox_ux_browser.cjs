@@ -67,23 +67,30 @@ let providers = [
     assert.equal(order[1].trim(), 'Family', 'groups interleave by recency');
     assert.equal(await page.locator('#inbox-tabs [data-tab="groups"]').count(), 0, 'no separate Groups tab');
     assert.equal(await page.locator('#unified-inbox .u-acct-open').count(), 0, 'account status lives in Settings, not the Inbox');
-    const chips = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => e.getAttribute('aria-label'))); // platform chips are icon-only; the name is the accessible label
-    for (const c of ['All', 'Unread', 'Direct', 'Groups', 'WhatsApp', 'LINE', 'Slack', 'Telegram', 'Instagram', 'Family']) assert.ok(chips.includes(c), 'chip ' + c + ' in ' + chips);
+    // Two filter rows: All/Unread/Medium/Low, then icon-only networks (name = accessible label) and Filters (Type, Labels).
+    const chips = [...await page.locator('#u-filters .u-seg-text').allTextContents(), ...await page.locator('#u-filters .u-nets .u-chip').evaluateAll(els => els.map(e => e.getAttribute('aria-label')))];
+    for (const c of ['All', 'Unread', 'Medium', 'Low', 'WhatsApp', 'LINE', 'Slack', 'Telegram', 'Instagram']) assert.ok(chips.includes(c), 'chip ' + c + ' in ' + chips);
+    await page.locator('#u-filters .u-filter-btn').click();
+    const menuItems = await page.locator('.u-filter-menu [role=menuitemradio]').allTextContents();
+    for (const c of ['All chats', 'Direct', 'Groups', 'Family']) assert.ok(menuItems.map(t => t.trim()).includes(c), 'Filters menu has ' + c + ' in ' + menuItems);
+    await page.keyboard.press('Escape'); await page.locator('.u-filter-menu').waitFor({state: 'detached'});
     assert.ok(await page.locator('.u-person .u-net').count() >= rows, 'every row wears its network badge');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
     assert.equal(overflow, false, 'no horizontal overflow');
-    const chipBoxes = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right, e.scrollWidth <= e.clientWidth + 1]; }));
+    const chipBoxes = await page.locator('#u-filters .u-netrow .u-chip:not([hidden])').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right, e.scrollWidth <= e.clientWidth + 1]; }));
     for (let i = 1; i < chipBoxes.length; i++) assert.ok(chipBoxes[i][0] >= chipBoxes[i - 1][1] - 0.5, 'chips do not overlap');
     assert.ok(chipBoxes.every(b => b[2]), 'chip labels are not clipped');
     await page.screenshot({path: path.join(out, `inbox-${label}.png`)});
     await page.getByRole('button', {name: 'WhatsApp', exact: true}).click();
     assert.equal(await page.locator('.u-person').count(), 2, 'WhatsApp filter: Ana + Family');
-    await page.getByRole('button', {name: 'Unread', exact: true}).click();
+    await page.getByRole('button', {name: 'WhatsApp', exact: true}).click(); // a second tap clears the network
+    await page.locator('#u-filters [data-seg=unread]').click();
     assert.deepEqual((await page.locator('.u-person strong').allTextContents()).map(s => s.trim()), ['Ana Souza', 'Family', 'Priya Raman']);
     await page.screenshot({path: path.join(out, `inbox-unread-${label}.png`)});
-    await page.getByRole('button', {name: 'Groups', exact: true}).click();
+    await page.locator('#u-filters [data-seg=all]').click();
+    await page.locator('#u-filters .u-filter-btn').click(); await page.locator('.u-filter-menu').getByRole('menuitemradio', {name: 'Groups', exact: true}).click();
     assert.equal(await page.locator('.u-person').count(), 2, 'Groups filter');
-    await page.getByRole('button', {name: 'All', exact: true}).click();
+    await page.locator('#u-filters .u-filter-btn').click(); await page.locator('.u-filter-menu').getByRole('menuitemradio', {name: 'All chats', exact: true}).click();
     // Accounts sheet: one tap from the Inbox, QR first.
     await page.locator('.u-settings-btn').click();
     await page.locator('.c-card').first().waitFor();

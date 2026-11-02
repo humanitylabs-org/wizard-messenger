@@ -42,12 +42,24 @@ class FeedFixture(unittest.TestCase):
         return ident
 
     def badge(self):
-        """The app badge (static/unified.js syncBadge): unread chats, never muted or Low priority."""
+        """The app badge (static/unified.js syncBadge): unread chats, never muted, Medium or Low priority."""
         rows = self.store.people('person') + self.store.people('group')
-        return len({p['id'] for p in rows if p.get('unread', 0) > 0 and not p['muted'] and not p['low_priority']})
+        return len({p['id'] for p in rows if p.get('unread', 0) > 0 and not p['muted'] and not p['low_priority'] and not p['medium_priority']})
 
 
 class FeedTests(FeedFixture):
+    def test_medium_priority_is_not_in_the_feed_or_badge(self):
+        amy, news = self.chat('!amy', 'Amy'), self.chat('!news', 'News', 'group')
+        t = now_ms()
+        self.store.add_message('$a1', amy, 'Amy', False, 'hi', t - 1000)
+        self.store.add_message('$n1', news, 'News', False, 'headline', t)
+        self.store.update(news['person_id'], {'medium_priority': True})
+        feed = inbox_feed.items(self.store)
+        self.assertEqual([i['title'] for i in feed['items']], ['Amy'])
+        self.assertEqual(len(feed['items']), self.badge())
+        self.store.update(news['person_id'], {'medium_priority': False})
+        self.assertEqual(len(inbox_feed.items(self.store)['items']), 2)
+
     def test_one_item_per_unread_chat_matching_the_badge(self):
         amy, bob, team, quiet, low, done = (self.chat('!amy', 'Amy'), self.chat('!bob', 'Bob'), self.chat('!team', 'Team', 'group'),
                                             self.chat('!quiet', 'Quiet'), self.chat('!low', 'Shop'), self.chat('!done', 'Done'))

@@ -5,7 +5,7 @@
     if (state.overlay) return {...state, overlay: null, handled: true};
     if (state.person) return {...state, person: null, handled: true};
     if (state.search != null) return {...state, search: null, handled: true};
-    if (state.low) return {...state, low: false, handled: true}; // Low priority folder → Inbox
+    if (state.low || state.seg === 'medium') return {...state, low: false, seg: 'all', handled: true}; // Low/Medium folder → All
     return {...state, handled: false}; // Shared WizardApp owns the root guard.
   }
   async function fetchOlder(t, id, call) {
@@ -63,7 +63,7 @@
   if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
-  const s = {tab: 'people', person: null, overlay: null, search: null, low: (() => { try { return sessionStorage.getItem('messenger-inbox-low') === '1'; } catch { return false; } })(), ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
+  const s = {tab: 'people', person: null, overlay: null, search: null, low: false, seg: (() => { try { const v = sessionStorage.getItem('messenger-inbox-seg') || (sessionStorage.getItem('messenger-inbox-low') === '1' ? 'low' : 'all'); return ['all', 'unread', 'medium', 'low'].includes(v) ? v : 'all'; } catch { return 'all'; } })(), ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
   let api, timer, lastFocus, updateHold, connectorController, native;
   let nativeRows = [], nativeFocus = null;
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
@@ -84,7 +84,7 @@
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
     play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
-    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'],
+    download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'], none: [],
     bell: ['M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z', 'M10 20a2 2 0 0 0 4 0'],
     belloff: ['M6 9a6 6 0 0 1 9.4-4.9', 'M18 9c0 6 2.5 7.5 2.5 7.5H8', 'M10 20a2 2 0 0 0 4 0', 'M3 3l18 18'],
     lowpri: ['M3 4h18v4H3z', 'M5 8v11h14V8', 'M10 12h4'], unread: ['M21 12a9 9 0 1 1-6-8.5', 'M19 7a2 2 0 1 0 0-.01'], inbox: ['M3 13h5l2 3h4l2-3h5', 'M5.5 5h13L21 13v6H3v-6z'],
@@ -203,6 +203,7 @@
   function closeOverlay() {
     connectorController?.close().catch(() => {}); connectorController = null;
     const answered = s.answer; s.answer = null; answered?.(false);
+    const closed = s.menuClosed; s.menuClosed = null; closed?.();
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold(); syncBar();
   }
   function back() {
@@ -216,7 +217,7 @@
     if (s.overlay) closeOverlay();
     else if (s.person) { s.person = null; view.id = null; s.epoch++; inChat(false); if (split.on && hasListPane()) { closePane(); markSelected(); } else { renderList(); keepListTop(); } }
     else if (s.search != null) { s.search = null; s.epoch++; renderList(); }
-    else { setLowView(false); s.epoch++; renderList(); }
+    else { setSeg('all'); s.epoch++; renderList(); }
     return true;
   }
   function overlay(title) {
@@ -489,9 +490,9 @@
     } catch { return false; }
   }
   // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
-  const unreadById = {}, kindById = {}, mutedById = {}, lowById = {}; let nativeUnread = 0;
+  const unreadById = {}, kindById = {}, mutedById = {}, lowById = {}, mediumById = {}; let nativeUnread = 0;
   let badgeShown = -1;
-  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; lowById[p.id] = !!p.low_priority; } }
+  function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; lowById[p.id] = !!p.low_priority; mediumById[p.id] = !!p.medium_priority; } }
   // Each bottom tab carries its own unread count (Chats, Groups, Messenger), like Signal's tab badges.
   function paintTabBadges(counts) {
     for (const [tab, n] of Object.entries(counts)) {
@@ -505,10 +506,10 @@
   function syncBadge() {
     noteUnread(store.lists.people); noteUnread(store.lists.groups);
     const twins = wizardTwins();
-    const counts = {people: nativeRows.length ? twins.visible.reduce((n, p) => n + (p.muted || p.low_priority || !(p.unread > 0) ? 0 : 1), 0) : nativeUnread, groups: 0};
+    const counts = {people: nativeRows.length ? twins.visible.reduce((n, p) => n + (p.muted || p.low_priority || p.medium_priority || !(p.unread > 0) ? 0 : 1), 0) : nativeUnread, groups: 0};
     // The app badge counts unread chats (the same number as the Unread chip), not messages: one busy group
-    // must not push it to 99+. Muted and Low priority chats never count.
-    for (const [id, n] of Object.entries(unreadById)) { const t = twins.twinOf.get(id); if (n > 0 && !mutedById[id] && !lowById[id] && !twins.hideMirror.has(id) && !(t && (t.muted || t.low_priority))) counts.people += 1; }
+    // must not push it to 99+. Muted, Medium and Low priority chats never count.
+    for (const [id, n] of Object.entries(unreadById)) { const t = twins.twinOf.get(id); if (n > 0 && !mutedById[id] && !lowById[id] && !mediumById[id] && !twins.hideMirror.has(id) && !(t && (t.muted || t.low_priority || t.medium_priority))) counts.people += 1; }
     paintTabBadges(counts);
     const n = counts.people + counts.groups;
     if (n === badgeShown) return; badgeShown = n;
@@ -569,7 +570,7 @@
     store.seq = Math.max(store.seq, r.seq);
     for (const id of r.removed || []) {
       for (const k of ['people', 'groups']) if (store.lists[k]) store.lists[k] = store.lists[k].filter(p => p.id !== id);
-      delete unreadById[id]; delete mutedById[id]; delete lowById[id]; delete kindById[id];
+      delete unreadById[id]; delete mutedById[id]; delete lowById[id]; delete mediumById[id]; delete kindById[id];
     }
     if (r.removed?.length) syncBadge();
     if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
@@ -672,47 +673,118 @@
     open.append(strip, node('span', 'u-acct-text', text));
     box.append(open);
   }
-  const FILTER_KEY = 'messenger-inbox-filter';
-  const filterOf = () => { try { return sessionStorage.getItem(FILTER_KEY) || 'all'; } catch { return 'all'; } };
-  function filterChips() {
-    const chips = node('div', 'u-chips'); chips.id = 'u-filters'; chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Filter chats');
-    return chips;
+  // Inbox filters (Miguel, 2 Nov 2026: "no scrolling sideways"). Two rows that always fit the window:
+  //  1. One segmented control: All · Unread · Medium · Low (exactly one on). Low is the Low priority folder; Medium
+  //     lists the chats that stay in All but never ping.
+  //  2. One icon-only button per network (narrows the row-1 view), then Filters (Type, Labels) on the right. Networks
+  //     that do not fit fold into a "+N" button opening the same menu, never a scroll.
+  const SEG_KEY = 'messenger-inbox-seg', NET_KEY = 'messenger-inbox-net', TYPE_KEY = 'messenger-inbox-type', LABEL_KEY = 'messenger-inbox-label';
+  const SEGMENTS = [['all', 'All'], ['unread', 'Unread'], ['medium', 'Medium'], ['low', 'Low']];
+  const TYPES = [['all', 'All chats'], ['direct', 'Direct'], ['groups', 'Groups'], ['merged', 'Merged']];
+  const kept = key => { try { return sessionStorage.getItem(key) || ''; } catch { return ''; } };
+  const keep = (key, value) => { try { if (value) sessionStorage.setItem(key, value); else sessionStorage.removeItem(key); } catch { /* memory only */ } };
+  const filterState = {net: kept(NET_KEY), type: kept(TYPE_KEY) || 'all', label: kept(LABEL_KEY), nets: [], labels: [], merged: false};
+  function setSeg(seg) { s.seg = SEGMENTS.some(x => x[0] === seg) ? seg : 'all'; setLowView(s.seg === 'low'); keep(SEG_KEY, s.seg === 'all' ? '' : s.seg); }
+  function setNarrow(key, value) {
+    if (key === 'net') { filterState.net = value; keep(NET_KEY, value); }
+    if (key === 'type') { filterState.type = value || 'all'; keep(TYPE_KEY, value === 'all' ? '' : value); }
+    if (key === 'label') { filterState.label = value; keep(LABEL_KEY, value); }
+    drawList();
   }
-  // One row of chips: All, Unread, one chip per platform (with its icon), then quieter Direct/Groups and labels.
-  function paintFilters(all, shown = all, lowCount = 0) {
-    const chips = $('u-filters'); if (!chips) return;
+  function filterChips() {
+    const box = node('div', 'u-chips u-filter-rows'); box.id = 'u-filters'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Filter chats');
+    const seg = node('div', 'u-seg'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', 'Show');
+    for (const [value, text] of SEGMENTS) {
+      const b = button('', () => { setSeg(value); drawList(); }, 'u-seg-btn'); b.dataset.seg = value; b.setAttribute('role', 'radio');
+      b.append(node('span', 'u-seg-text', text), node('span', 'u-seg-count')); seg.append(b);
+    }
+    const row = node('div', 'u-netrow'), nets = node('div', 'u-nets');
+    const more = button('', e => filterMenu(e.currentTarget, true), 'u-chip net u-more-nets'); more.hidden = true; more.setAttribute('aria-haspopup', 'menu');
+    const filters = button('', e => filterMenu(e.currentTarget, false), 'u-chip u-filter-btn'); filters.setAttribute('aria-haspopup', 'menu'); filters.setAttribute('aria-expanded', 'false');
+    filters.append(node('span', 'u-filter-text', 'Filters'), node('span', 'u-filter-dot'));
+    row.append(nets, more, filters); box.append(seg, row);
+    try { new ResizeObserver(() => fitNets(box)).observe(row); } catch { /* old browsers: fitNets runs on every paint */ }
+    return box;
+  }
+  const isMedium = p => !!p.medium_priority && !p.low_priority;
+  // Row 2 narrows whatever row 1 shows: one network, a chat type and a label.
+  function narrowed(p) {
+    const f = filterState;
+    if (f.net && !matchesFilter(p, 'net:' + f.net)) return false;
+    if (f.type !== 'all' && !matchesFilter(p, f.type)) return false;
+    if (f.label && !matchesFilter(p, 'label:' + f.label)) return false;
+    return true;
+  }
+  function inSegment(p, seg) {
+    if (seg === 'unread') return p.unread > 0 && !isMedium(p); // Medium never counts as unread
+    if (seg === 'medium') return isMedium(p);
+    return true;
+  }
+  // all = every listed chat (Low included), returns the chats row 1 + row 2 select.
+  function paintFilters(all) {
+    const box = $('u-filters'); if (!box) return all;
     const connected = (accountsSeen || []).filter(p => p.state === 'connected' || p.state === 'degraded').map(p => p.network);
-    const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private' && n !== 'messenger').sort((a, b) => netLabel(a).localeCompare(netLabel(b)));
-    const labels = [...new Set(all.flatMap(p => p.labels || []))].sort();
-    const options = [['all', 'All'], ['unread', 'Unread'], ...nets.map(n => ['net:' + n, netLabel(n)]), ['net:private', 'Wizard'],
-      ['direct', 'Direct', 'sub'], ['groups', 'Groups', 'sub'], ...(all.some(p => networksOf(p).length > 1) ? [['merged', 'Merged', 'sub']] : []), ...labels.map(l => ['label:' + l, l, 'sub label'])];
-    if (lowCount || s.low) options.push(['low', 'Low priority', 'sub low']);
-    const sig = options.map(o => o.join('=')).join('|');
-    let current = filterOf(); if (!options.some(o => o[0] === current)) current = 'all';
-    if (chips.dataset.sig !== sig) {
-      chips.dataset.sig = sig; chips.replaceChildren(); let divided = false;
-      for (const [value, text, kind] of options) {
-        if (kind && !divided) { divided = true; const d = node('span', 'u-chip-divider'); d.setAttribute('aria-hidden', 'true'); chips.append(d); }
-        const chip = button('', () => { if (value === 'low') setLowView(!s.low); else try { sessionStorage.setItem(FILTER_KEY, value); } catch { /* memory only */ } drawList(); }, 'u-chip' + (kind ? ' ' + kind : ''));
-        chip.dataset.filter = value; chip.setAttribute('aria-label', text);
-        // Platforms are icon-only (the name lives in the label and tooltip): the row stays compact.
-        if (value.startsWith('net:')) { chip.classList.add('net'); chip.append(netBadge(value.slice(4), 'u-chip-icon')); }
-        else chip.append(node('span', 'u-chip-text', text));
-        chip.append(node('span', 'u-chip-count'));
-        chips.append(chip);
+    const nets = [...new Set([...all.flatMap(networksOf), ...connected])].filter(n => n !== 'private' && n !== 'messenger').sort((a, b) => netLabel(a).localeCompare(netLabel(b))).concat('private');
+    const labels = [...new Set(all.flatMap(p => p.labels || []))].sort(), merged = all.some(p => networksOf(p).length > 1);
+    const f = Object.assign(filterState, {nets, labels, merged});
+    if (f.net && !nets.includes(f.net)) setNarrowQuiet('net', '');
+    if (!TYPES.some(t => t[0] === f.type) || (f.type === 'merged' && !merged)) setNarrowQuiet('type', 'all');
+    if (f.label && !labels.includes(f.label)) setNarrowQuiet('label', '');
+    // Row 1: exactly one segment. Counts are quiet text: unread chats that would ping (never muted, Medium or Low).
+    const inbox = all.filter(p => !isLow(p) && narrowed(p));
+    const counts = {unread: inbox.filter(p => p.unread > 0 && !p.muted && !isMedium(p)).length, medium: inbox.filter(p => isMedium(p) && p.unread > 0 && !p.muted).length};
+    for (const b of box.querySelectorAll('.u-seg-btn')) {
+      const v = b.dataset.seg, n = counts[v] || 0, c = b.querySelector('.u-seg-count');
+      b.setAttribute('aria-checked', String(v === s.seg)); b.tabIndex = v === s.seg ? 0 : -1;
+      c.textContent = n ? (n > 99 ? '99+' : String(n)) : ''; c.hidden = !n;
+      const name = SEGMENTS.find(x => x[0] === v)[1]; b.setAttribute('aria-label', n ? name + ', ' + n + ' unread' : name); b.title = b.getAttribute('aria-label');
+    }
+    // Row 2: one icon per network.
+    const row = box.querySelector('.u-nets'), sig = nets.join('|');
+    if (row.dataset.sig !== sig) {
+      row.dataset.sig = sig; row.replaceChildren();
+      for (const n of nets) {
+        const label = n === 'private' ? 'Wizard' : netLabel(n);
+        const chip = button('', () => setNarrow('net', filterState.net === n ? '' : n), 'u-chip net');
+        chip.dataset.filter = 'net:' + n; chip.setAttribute('aria-label', label); chip.title = label;
+        chip.append(netBadge(n, 'u-chip-icon')); row.append(chip);
       }
     }
-    // Unread chats per chip (muted and Low priority chats do not count), cheap enough to recompute on every paint.
-    for (const c of chips.querySelectorAll('.u-chip')) {
-      const f = c.dataset.filter;
-      if (f === 'low') { c.setAttribute('aria-pressed', String(s.low)); c.querySelector('.u-chip-count').hidden = true; continue; }
-      const n = f === 'all' ? 0 : shown.filter(p => p.unread > 0 && !p.muted && matchesFilter(p, f)).length;
-      const count = c.querySelector('.u-chip-count'), show = f !== 'all' && !c.classList.contains('sub') && n > 0;
-      count.textContent = show ? (n > 99 ? '99+' : String(n)) : ''; count.hidden = !show;
-      c.title = show ? c.getAttribute('aria-label') + ' · ' + n + ' unread' : c.getAttribute('aria-label');
-      c.setAttribute('aria-pressed', String(f === current));
-    }
-    return current;
+    for (const c of row.querySelectorAll('.u-chip')) c.setAttribute('aria-pressed', String(c.dataset.filter === 'net:' + f.net));
+    const btn = box.querySelector('.u-filter-btn'), on = f.type !== 'all' || !!f.label;
+    btn.classList.toggle('on', on); btn.setAttribute('aria-label', on ? 'Filters, ' + [f.type !== 'all' ? TYPES.find(t => t[0] === f.type)[1] : '', f.label].filter(Boolean).join(', ') + ' on' : 'Filters');
+    btn.title = btn.getAttribute('aria-label');
+    fitNets(box);
+    const seg = s.seg || 'all';
+    return (seg === 'low' ? all.filter(isLow) : all.filter(p => !isLow(p))).filter(p => narrowed(p) && inSegment(p, seg));
+  }
+  function setNarrowQuiet(key, value) { filterState[key] = value; keep({net: NET_KEY, type: TYPE_KEY, label: LABEL_KEY}[key], value === 'all' ? '' : value); }
+  // Fold networks that do not fit into "+N". The chosen network always stays visible.
+  function fitNets(box = $('u-filters')) {
+    const row = box?.querySelector('.u-netrow'); if (!row || !row.clientWidth) return;
+    const chips = [...row.querySelectorAll('.u-nets .u-chip')], more = row.querySelector('.u-more-nets'), filters = row.querySelector('.u-filter-btn');
+    if (!chips.length) { more.hidden = true; return; }
+    for (const c of chips) c.hidden = false;
+    const gap = parseFloat(getComputedStyle(row).columnGap) || 0, w = chips[0].offsetWidth + gap;
+    const room = row.clientWidth - filters.offsetWidth - gap, fit = Math.max(1, Math.floor((room + gap) / w));
+    if (chips.length <= fit) { more.hidden = true; return; }
+    const show = new Set(chips.slice(0, fit - 1)), chosen = chips.find(c => c.getAttribute('aria-pressed') === 'true');
+    if (chosen && !show.has(chosen)) { show.delete(chips[fit - 2]); show.add(chosen); }
+    for (const c of chips) c.hidden = !show.has(c);
+    const n = chips.length - show.size; more.hidden = false; more.textContent = '+' + n;
+    more.setAttribute('aria-label', n + ' more networks'); more.title = chips.filter(c => !show.has(c)).map(c => c.getAttribute('aria-label')).join(', ');
+  }
+  // The Filters popover (and "+N"): Type, Labels and, when networks folded away, every network.
+  function filterMenu(anchor, netsFirst) {
+    const f = filterState, folded = !!$('u-filters')?.querySelector('.u-more-nets:not([hidden])');
+    const pick = (key, value) => () => setNarrow(key, value);
+    const radio = (label, checked, run) => ({label, icon: checked ? 'check' : 'none', checked, run});
+    const netItems = folded ? [{head: 'Networks'}, radio('All networks', !f.net, pick('net', '')),
+      ...f.nets.map(n => radio(n === 'private' ? 'Wizard' : netLabel(n), f.net === n, pick('net', n)))] : [];
+    const typeItems = [{head: 'Type'}, ...TYPES.filter(t => t[0] !== 'merged' || f.merged).map(([v, t]) => radio(t, f.type === v, pick('type', v)))];
+    const labelItems = f.labels.length ? [{head: 'Labels'}, radio('Any label', !f.label, pick('label', '')), ...f.labels.map(l => radio(l, f.label === l, pick('label', l)))] : [];
+    anchor.setAttribute('aria-expanded', 'true');
+    actionMenu(anchor, netsFirst ? 'Networks' : 'Filters', netsFirst ? [...netItems, ...typeItems, ...labelItems] : [...typeItems, ...labelItems, ...netItems], {cls: 'u-filter-menu', flip: true, side: 'right', onClose: () => anchor.setAttribute('aria-expanded', 'false')});
   }
   function matchesFilter(p, f) {
     if (f === 'all') return true;
@@ -784,20 +856,16 @@
     const list = (split.on ? $('u-pane-list') : $('unified-inbox'))?.querySelector('.u-list'); if (!list || (s.person && !split.on)) return;
     const twins = wizardTwins();
     const everyone = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
-      .map(p => { const t = twins.twinOf.get(p.id); return t ? {...p, muted: !!(p.muted || t.muted), low_priority: !!(p.low_priority || t.low_priority), twin: t} : p; })
+      .map(p => { const t = twins.twinOf.get(p.id); if (!t) return p; const low = !!(p.low_priority || t.low_priority); return {...p, muted: !!(p.muted || t.muted), low_priority: low, medium_priority: !low && !!(p.medium_priority || t.medium_priority), twin: t}; })
       .concat(twins.visible)
       .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
-    // Low priority (Beeper's name; WhatsApp's Archive): out of the Inbox, chips, unread counts and notifications,
-    // and a new message never brings a chat back. They live in one folder reached from the top of the Inbox.
-    // A quiet "Low priority" toggle at the end of the chips swaps the list to those chats, and every other chip
-    // (a platform, Direct, Groups, Unread) still narrows it: Instagram + Low priority = Instagram's quiet chats.
-    const low = everyone.filter(isLow);
-    if (s.low && !low.length) setLowView(false);
-    const people = s.low ? low : everyone.filter(p => !isLow(p));
-    const filter = paintFilters(everyone, people, low.length) || 'all';
+    // Low priority (Beeper's name; WhatsApp's Archive): out of All/Unread, unread counts and notifications, and a new
+    // message never brings a chat back. Medium priority stays in All but never pings (no push, badge or Unread).
+    // Row 1 picks the folder (All, Unread, Medium, Low); row 2 (network, Filters) narrows it.
+    const people = paintFilters(everyone);
     const q = (s.search || '').trim().toLowerCase(), frag = document.createDocumentFragment(), compact = !previewsOn();
     $('messenger')?.classList.toggle('u-compact', compact);
-    for (const p of people.filter(p => matchesFilter(p, filter) && (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
+    for (const p of people.filter(p => (!q || p.display_name.toLowerCase().includes(q) || (p.last?.text || '').toLowerCase().includes(q)))) {
       const groups = listKey(p) === 'groups';
       const card = button('', () => { if (card.dataset.held) { delete card.dataset.held; return; } p.native ? openNative(p.group_id, card) : openPerson(p.id, p); }, 'u-person' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
       holdToMenu(card, () => chatMenu(p, card));
@@ -816,7 +884,7 @@
         if (typing) top.append(node('span', 'u-state typing', 'typing…'));
         else if (dr) top.append(node('span', 'u-state draft', 'Draft'));
         if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
-        if (p.unread) top.append(node('span', 'u-badge' + (p.muted || isLow(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
+        if (p.unread) top.append(node('span', 'u-badge' + (p.muted || isLow(p) || isMedium(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
         info.append(top); card.append(info); frag.append(card);
         continue;
       }
@@ -836,7 +904,7 @@
         if (who) line.append(node('span', 'u-snippet-who', who + ': '));
         line.append(snippet(p.last) || ''); bottom.append(line);
       }
-      if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted || isLow(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
+      if (p.unread) bottom.append(node('span', 'u-badge' + (p.muted || isLow(p) || isMedium(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
       else if (p.last?.outgoing) bottom.append(node('span', 'u-ticks' + (p.peer_read_ts >= p.last.timestamp ? ' read' : ''), p.peer_read_ts >= p.last.timestamp ? '✓✓' : '✓'));
       info.append(top, bottom);
       const extra = networksOf(p).length > 1 ? networksOf(p).map(netLabel) : []; // labels live in the filter chips
@@ -845,8 +913,11 @@
     }
     if (!frag.children.length) {
       const empty = node('div', 'u-empty');
-      if (s.low) empty.append(node('p', '', 'No low priority chats here'));
-      else if (q || filter !== 'all') empty.append(node('p', '', q ? 'No matches' : 'Nothing here with this filter'));
+      const narrow = !!(filterState.net || filterState.type !== 'all' || filterState.label);
+      if (s.seg === 'low' && !narrow) empty.append(node('p', '', 'No low priority chats here'));
+      else if (s.seg === 'medium' && !narrow) empty.append(node('p', '', 'No medium priority chats here'));
+      else if (s.seg === 'unread' && !narrow && !q) empty.append(node('p', '', 'No unread chats'));
+      else if (q || narrow || s.seg !== 'all') empty.append(node('p', '', q ? 'No matches' : 'Nothing here with this filter'));
       else {
         empty.append(node('p', '', 'No chats yet. Connect WhatsApp, Telegram, Slack, LINE or Instagram and their chats land here.'));
         empty.append(button('Connect an account', () => accounts('accounts'), 'primary'));
@@ -876,7 +947,8 @@
   }
   const mirrorOf = group => group ? wizardTwins().mirror.get(group) : null;
   const LOW_KEY = 'messenger-inbox-low';
-  function setLowView(on) { s.low = !!on; try { if (on) sessionStorage.setItem(LOW_KEY, '1'); else sessionStorage.removeItem(LOW_KEY); } catch { /* memory only */ } }
+  function setLowView(on) { s.low = !!on; if (!on && s.seg === 'low') s.seg = 'all'; try { if (on) sessionStorage.setItem(LOW_KEY, '1'); else sessionStorage.removeItem(LOW_KEY); } catch { /* memory only */ } }
+  s.low = s.seg === 'low';
   // Long-press (or right-click) a chat row: Mute / Unmute, Low priority / Inbox. A held press never also opens the chat.
   // A phone turns the finger lifting off a long-press into a click, which lands on the menu's backdrop and closes
   // it at once. Swallow exactly that click.
@@ -914,20 +986,22 @@
   document.addEventListener('contextmenu', e => { lastPointer = {x: e.clientX, y: e.clientY, t: performance.now(), mouse: !e.sourceCapabilities?.firesTouchEvents && (e.pointerType ? e.pointerType === 'mouse' : e.button === 2 || e.buttons === 2 || !('ontouchstart' in window))}; }, true);
   // Coordinates relative to Messenger's own box (inside Wizard it is a window, not the page corner).
   // A mouse right-click opens the menu at the pointer; on wide screens it sits under the bubble; phones keep the full-width sheet.
-  function placeMenu(panel, card, right) {
+  function placeMenu(panel, card, right, flip = false) {
     const host = $('messenger').getBoundingClientRect(), r = card.getBoundingClientRect(), H = host.height, W = host.width;
-    const at = lastPointer && performance.now() - lastPointer.t < 800 && lastPointer.mouse ? lastPointer : null;
+    const at = !flip && lastPointer && performance.now() - lastPointer.t < 800 && lastPointer.mouse ? lastPointer : null; // flip menus belong to their button
     if (at || W > 600) { panel.classList.remove('right', 'left'); panel.classList.add('at'); panel.style.right = 'auto'; }
     const ph = panel.offsetHeight || 300, pw = Math.min(panel.offsetWidth || 300, W - 24);
     const clampY = y => Math.max(12, Math.min(y, H - ph - 12)), clampX = x => Math.max(12, Math.min(x, W - pw - 12));
     if (at) { panel.style.left = clampX(at.x - host.left) + 'px'; const y = at.y - host.top; panel.style.top = (y + ph > H - 12 ? clampY(y - ph) : clampY(y)) + 'px'; }
     else if (W > 600) { panel.style.left = clampX((right ? r.right - pw : r.left) - host.left) + 'px'; panel.style.top = (r.bottom + 4 - host.top + ph > H - 12 ? clampY(r.top - host.top - ph - 4) : clampY(r.bottom + 4 - host.top)) + 'px'; }
-    else panel.style.top = clampY(r.bottom + 4 - host.top) + 'px';
+    // flip: a control near the bottom (the phone's filter rows) opens its menu above itself, not over it.
+    else panel.style.top = (flip && r.bottom + 4 - host.top + ph > H - 12 ? clampY(r.top - host.top - ph - 4) : clampY(r.bottom + 4 - host.top)) + 'px';
   }
   function actionMenu(card, title, actions, opts = {}) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
-    const panel = node('div', 'u-menu ' + (opts.side === 'right' ? 'right' : 'left')); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
+    const panel = node('div', 'u-menu ' + (opts.side === 'right' ? 'right' : 'left') + (opts.cls ? ' ' + opts.cls : '')); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
+    s.menuClosed = opts.onClose || null;
     const pick = k => { recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); closeOverlay(); opts.quick.pick(k); };
     if (opts.quick) {
       const strip = node('div', 'u-quick');
@@ -936,19 +1010,29 @@
       panel.append(strip);
     }
     const list = node('div', 'u-actions');
-    for (const a of actions) { const it = button('', () => { closeOverlay(); a.run(); }, 'u-act' + (a.danger ? ' danger' : '')); it.setAttribute('role', 'menuitem'); it.append(icon(a.icon), node('span', '', a.label)); list.append(it); }
+    for (const a of actions) {
+      // {head} is a small sentence-case section title; {checked} makes a radio item (Filters, Priority).
+      if (a.head) { const h = node('div', 'u-menu-head', a.head); h.setAttribute('role', 'presentation'); list.append(h); continue; }
+      const it = button('', () => { closeOverlay(); a.run(); }, 'u-act' + (a.danger ? ' danger' : '') + (a.checked ? ' checked' : ''));
+      it.setAttribute('role', 'checked' in a ? 'menuitemradio' : 'menuitem'); if ('checked' in a) it.setAttribute('aria-checked', String(!!a.checked));
+      it.append(icon(a.icon), node('span', '', a.label)); list.append(it);
+    }
     panel.append(list); layer.append(panel);
     outsideCloses(layer, panel);
     $('messenger').append(layer);
-    placeMenu(panel, card, opts.side === 'right');
-    panel.querySelector('button')?.focus(); hold();
+    placeMenu(panel, card, opts.side === 'right', opts.flip);
+    (panel.querySelector('button.checked') || panel.querySelector('button'))?.focus(); hold();
   }
   const muteAction = (muted, run) => ({label: muted ? 'Unmute' : 'Mute', icon: muted ? 'bell' : 'belloff', run});
-  const lowAction = (low, run) => ({label: low ? 'Move to Inbox' : 'Move to Low priority', icon: low ? 'inbox' : 'lowpri', run});
+  // Priority (Miguel, 2 Nov 2026): Normal, Medium (listed, never pings) or Low (out of the Inbox). One choice.
+  const priorityOf = p => isLow(p) ? 'low' : isMedium(p) ? 'medium' : 'normal';
+  const PRIORITIES = [['normal', 'Normal'], ['medium', 'Medium'], ['low', 'Low']];
+  const priorityAction = (p, card, side) => ({label: 'Priority: ' + PRIORITIES.find(x => x[0] === priorityOf(p))[1], icon: 'lowpri',
+    run: () => actionMenu(card, 'Priority', PRIORITIES.map(([v, t]) => ({label: t, icon: priorityOf(p) === v ? 'check' : 'none', checked: priorityOf(p) === v, run: () => setPriority(p, v)})), side ? {side} : {})});
   function chatMenu(p, card) {
     actionMenu(card, p.display_name, [
       muteAction(p.muted, () => p.native ? p.setMuted() : setMuted(p, !p.muted)),
-      lowAction(isLow(p), () => setLow(p, !isLow(p))),
+      priorityAction(p, card),
       ...(p.native || listKey(p) === 'groups' ? [] : [{label: 'Merge with…', icon: 'merge', run: () => mergePicker(p)}]),
       ...(contacts.ok && !p.native && listKey(p) !== 'groups' && !p.contact && p.accounts?.length ? [{label: 'Add to Contacts', icon: 'compose', run: () => action(async () => { const r = await saveToContacts(p); if (r) { toast('Added to Contacts'); drawList(); } })}] : []),
       ...(p.native || !p.last ? [] : [p.unread ? {label: 'Mark as read', icon: 'check', run: () => setUnread(p, false)} : {label: 'Mark as unread', icon: 'unread', run: () => setUnread(p, true)}]),
@@ -962,13 +1046,16 @@
     catch (e) { flip(before); error(e); }
   }
   // The row leaves the list in place (no extra screen); hold it again in the other folder to move it back.
-  async function setLow(p, low) {
-    if (p.twin && !!p.twin.low_priority !== low) { p.twin.setLowPriority(low); p.twin.low_priority = low; }
-    if (p.native) { p.setLowPriority(low); p.low_priority = low; syncBadge(); drawList(); toast(low ? 'Moved to Low priority' : 'Moved to Inbox'); return; }
-    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.low_priority = v; p.low_priority = v; drawList(); syncBadge(); };
-    flip(low);
-    try { await call('people/' + encodeURIComponent(p.id), {low_priority: low}); toast(low ? 'Moved to Low priority' : 'Moved to Inbox'); persist(); }
-    catch (e) { flip(!low); toast(e.message || 'Could not move this chat', 3000); }
+  async function setPriority(p, level) {
+    const low = level === 'low', medium = level === 'medium', before = priorityOf(p);
+    if (before === level) return;
+    const said = low ? 'Moved to Low priority' : medium ? 'Medium priority: listed, never notifies' : before === 'low' ? 'Moved to Inbox' : 'Normal priority';
+    if (p.twin) { if (!!p.twin.low_priority !== low) p.twin.setLowPriority(low); if (!!p.twin.medium_priority !== medium) p.twin.setMediumPriority?.(medium); Object.assign(p.twin, {low_priority: low, medium_priority: medium}); }
+    if (p.native) { p.setLowPriority(low); p.setMediumPriority?.(medium); Object.assign(p, {low_priority: low, medium_priority: medium}); syncBadge(); drawList(); toast(said); return; }
+    const flip = v => { const set = {low_priority: v === 'low', medium_priority: v === 'medium'}; for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) Object.assign(x, set); Object.assign(p, set); drawList(); syncBadge(); };
+    flip(level);
+    try { await call('people/' + encodeURIComponent(p.id), {low_priority: low, medium_priority: medium}); toast(said); persist(); }
+    catch (e) { flip(before); toast(e.message || 'Could not change priority', 3000); }
   }
   async function setMuted(p, muted) {
     if (p.twin && !!p.twin.muted !== muted) { p.twin.setMuted(); p.twin.muted = muted; }
@@ -1165,7 +1252,7 @@
       {label: 'Mark as unread', icon: 'unread', run: async () => { await setUnread(cur, true); back(); }},
       {label: 'Merge with…', icon: 'merge', run: () => mergePicker(cur)},
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
-      lowAction(isLow(cur), () => setLow(cur, !isLow(cur))),
+      priorityAction(cur, anchor, 'right'),
     ], {side: 'right'}); };
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
@@ -3002,7 +3089,7 @@
     if (!linkedChat || !s.ready) return false;
     const id = linkedChat; linkedChat = null;
     if (s.native) returnNative();
-    if (s.low) setLowView(false);
+    if (s.low || s.seg === 'medium') setSeg('all');
     switchTab('people'); openPerson(id); return true;
   }
   takeChatLink();
@@ -3074,7 +3161,7 @@
   }
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative,
-    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if ((!s.native && !s.person) || split.on) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
+    setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || p.medium_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if ((!s.native && !s.person) || split.on) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
     receiveShare, shareTargetRows,
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
@@ -3096,7 +3183,7 @@
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
-    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low || detailOpen()), back,
+    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low || s.seg === 'medium' || detailOpen()), back,
     signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; split.threadGen++; split.listGen++; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

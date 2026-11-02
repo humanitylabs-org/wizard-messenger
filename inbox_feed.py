@@ -11,7 +11,7 @@ GET  /api/inbox/wait?v=<version>
 POST /api/inbox/act  -> {"ok": true, ...}             'read' or 'reply' (owner's explicit action).
 
 The feed mirrors the app badge (static/unified.js syncBadge): chats with unread
-incoming messages, never muted or Low priority ones. Reading the chat anywhere
+incoming messages, never muted, Medium or Low priority ones. Reading the chat anywhere
 (opening it, Mark as read, this feed's 'read') moves last_read_ts past the
 newest incoming message, so the item drops out by itself.
 """
@@ -46,7 +46,7 @@ SELECT * FROM (
   FROM identity i
   JOIN person p ON p.id = i.person_id
   JOIN message m ON m.identity_id = i.id AND m.timestamp > i.last_read_ts
-  WHERE m.outgoing = 0 AND m.deleted = 0 AND p.muted = 0 AND p.low_priority = 0
+  WHERE m.outgoing = 0 AND m.deleted = 0 AND p.muted = 0 AND p.low_priority = 0 AND p.medium_priority = 0
     AND i.kind IN ('person', 'group')
 ) WHERE rn = 1 ORDER BY timestamp DESC LIMIT ?
 '''
