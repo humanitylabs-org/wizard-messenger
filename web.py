@@ -166,6 +166,11 @@ class ViewServer(MessengerServer):
             self.push.start()
         if self.unified:
             self.unified.start()
+        # Instant phone notifications: the inbox feed goes to Notifications (uses: [notifications]) when it changes.
+        self.notifications_feed = None
+        import notifications_feed
+        if self.unified and hasattr(self.unified, 'cond') and hasattr(self.unified, 'store') and notifications_feed.enabled():
+            self.notifications_feed = notifications_feed.FeedPusher(self.unified).start()
 
     def server_close(self):
         if getattr(self, 'push', None):

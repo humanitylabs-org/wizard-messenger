@@ -2,7 +2,7 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.2.0-unified.16.3
+version: 0.2.0-unified.16.4
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
@@ -32,7 +32,7 @@ view:
     dist: static
 health: /healthz
 provides: [messaging]
-uses: [browser]
+uses: [browser, notifications]
 needs: []
 ---
 

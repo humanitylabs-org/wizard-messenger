@@ -36,7 +36,7 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
 COPY owner_unix.py /app/owner_unix.py
-COPY engine.py server.py web.py trusted_owner.py passkey.py messenger_addresses.py unified.py unified_setup.py telegram_application.py translation.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py inbox_feed.py remote_authority.py API-contract.json /app/
+COPY engine.py server.py web.py trusted_owner.py passkey.py messenger_addresses.py unified.py unified_setup.py telegram_application.py translation.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py inbox_feed.py notifications_feed.py remote_authority.py API-contract.json /app/
 RUN apt-get update && apt-get install -y --no-install-recommends python3-cryptography && rm -rf /var/lib/apt/lists/*
 COPY connector_setup.py connectors.py connector_inbox.py connector_web.py connector_sender.py browser_signin.py /app/
 COPY readiness/search.py readiness/__init__.py /app/readiness/
@@ -59,5 +59,5 @@ USER 1000:1000
 WORKDIR /app
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"
-LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.2.0-unified.16.3" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee" org.wizardos.messenger.mdk-patches="rustls-0.23.46,relay-plane-drop" org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
+LABEL org.opencontainers.image.title="Wizard Messenger" org.opencontainers.image.version="0.2.0-unified.16.4" org.opencontainers.image.licenses="MIT" org.wizardos.messenger.mdk-revision="122bd90ffac60bb6311346e228d0f609a18521ee" org.wizardos.messenger.mdk-patches="rustls-0.23.46,relay-plane-drop" org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-messenger"
 ENTRYPOINT ["/app/entrypoint.sh"]
