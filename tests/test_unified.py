@@ -83,6 +83,36 @@ class PeopleTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.update(a['person_id'], {'low_priority': 1})
 
+    def test_medium_priority_stays_listed_never_notifies_and_excludes_low(self):
+        a = self.store.identity('telegram', '!news', 'News', 'group')
+        b = self.store.identity('telegram', '!amy', 'Amy')
+        self.store.push_enabled = True
+        before = self.store.seq
+        self.store.update(a['person_id'], {'medium_priority': True})
+        self.assertGreater(self.store.seq, before)
+        self.store.add_message('$n1', a, 'news', False, 'headline', int(time.time() * 1000), push_live=True)
+        self.store.add_message('$a1', b, 'amy', False, 'hi', int(time.time() * 1000), push_live=True)
+        p = self.store.people('group')[0]
+        # Still in the list with its unread count, but no push intent was queued for it.
+        self.assertEqual((p['medium_priority'], p['low_priority'], p['unread']), (1, 0, 1))
+        with self.store.db() as db:
+            queued = sorted(r[0] for r in db.execute('SELECT message FROM push_intent'))
+        self.assertEqual(queued, ['matrix:$a1'])
+        # One priority at a time: Low clears Medium, Medium clears Low.
+        self.store.update(a['person_id'], {'low_priority': True})
+        p = self.store.people('group')[0]
+        self.assertEqual((p['medium_priority'], p['low_priority']), (0, 1))
+        self.store.update(a['person_id'], {'medium_priority': True})
+        p = self.store.people('group')[0]
+        self.assertEqual((p['medium_priority'], p['low_priority']), (1, 0))
+        self.store.update(a['person_id'], {'medium_priority': False, 'low_priority': False})
+        p = self.store.people('group')[0]
+        self.assertEqual((p['medium_priority'], p['low_priority']), (0, 0))
+        with self.assertRaises(Exception):
+            self.store.update(a['person_id'], {'medium_priority': 'yes'})
+        with self.assertRaises(Exception):
+            self.store.update(a['person_id'], {'medium_priority': True, 'low_priority': True})
+
     def test_link_previews_kept_without_mxc_leaving(self):
         from unified import link_previews
         got = link_previews({'com.beeper.linkpreviews': [{'matched_url': 'https://ex.com/a', 'og:title': 'T', 'og:image': 'mxc://s/abc'}, {'matched_url': 'javascript:x', 'og:title': 'bad'}]})

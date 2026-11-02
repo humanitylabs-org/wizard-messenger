@@ -91,7 +91,9 @@ await ctx.addInitScript(() => { const noop = () => {}; window.WizardApp = {ready
     assert.equal(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-net').count(), 1);
     assert.match(await page.locator('.u-person', {hasText: 'Replied to your story'}).textContent(), /Ana Souza/);
     assert.equal(await page.locator('.u-person', {hasText: 'instagram.com'}).count(), 0, 'no raw links in previews');
-    assert.equal(await page.locator('.u-chip', {hasText: 'Merged'}).count(), 1, 'Merged filter appears when a chat is merged');
+    await page.locator('#u-filters .u-filter-btn').click();
+    assert.equal(await page.locator('.u-filter-menu').getByRole('menuitemradio', {name: 'Merged', exact: true}).count(), 1, 'Merged filter appears when a chat is merged');
+    await page.keyboard.press('Escape'); await page.locator('.u-filter-menu').waitFor({state: 'detached'});
     await page.locator('.u-person', {hasText: 'Ana from Contacts'}).waitFor();
     await page.locator('.u-person', {hasText: 'Bo Chen'}).click({button: 'right'});
     await page.getByRole('menuitem', {name: 'Add to Contacts'}).click();

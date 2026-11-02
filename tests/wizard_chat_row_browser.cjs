@@ -72,10 +72,10 @@ async function scenario(browser, width, mirrored) {
   } else assert.equal(await row.getAttribute('data-native-group'), dm.group_id);
   await page.getByRole('button', {name: 'Wizard', exact: true}).click();
   assert.equal(await page.locator('.u-person').count(), 2, 'Wizard chip lists Wizard chats (mirrored or native)');
-  await page.getByRole('button', {name: 'Unread', exact: true}).click();
+  await page.locator('#u-filters [data-seg=unread]').click();
   assert.equal(await page.locator('.u-person', {hasText: 'Wizard Alice'}).count(), 1);
   await page.screenshot({path: path.join(out, `inbox-${mirrored ? 'mirrored' : 'native'}-${width}.png`)});
-  await page.getByRole('button', {name: 'All', exact: true}).click();
+  await page.locator('#u-filters [data-seg=all]').click(); await page.getByRole('button', {name: 'Wizard', exact: true}).click();
   await row.click();
   if (mirrored) {
     await page.locator('.u-attach').waitFor({state: 'visible'});

@@ -117,19 +117,25 @@ const providers = [
     assert.equal(await page.locator('.u-list', {hasText: OWNER}).count(), 0, 'owner name never shown in the Inbox');
     assert.match(await page.locator('.u-person', {hasText: 'Family'}).locator('.u-snippet').textContent(), /^Ana: /, 'group preview names the other sender');
 
-    // Chips: All, Unread, one per platform (with icon), Private, then Direct/Groups/labels as quieter toggles.
-    const chips = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => [e.dataset.filter, e.getAttribute('aria-label'), e.classList.contains('sub'), !!e.querySelector('svg.brand-icon path'), e.querySelector('.u-chip-count')?.textContent || '']));
+    // Filters: All/Unread/Medium/Low segments, then one icon per platform (Wizard last) and Filters (Direct/Groups/labels).
+    assert.deepEqual(await page.locator('#u-filters .u-seg-text').allTextContents(), ['All', 'Unread', 'Medium', 'Low']);
+    const chips = await page.locator('#u-filters .u-nets .u-chip').evaluateAll(els => els.map(e => [e.dataset.filter, e.getAttribute('aria-label'), !!e.querySelector('svg.brand-icon path')]));
     const order = chips.map(c => c[1]);
-    assert.deepEqual(order.slice(0, 2), ['All', 'Unread']);
     for (const n of ['WhatsApp', 'Telegram', 'LINE', 'Slack', 'Instagram', 'Signal', 'Wizard']) {
-      const c = chips.find(x => x[1] === n); assert.ok(c, 'chip ' + n + ' in ' + order); assert.equal(c[3], true, n + ' chip shows its icon'); assert.equal(c[2], false);
+      const c = chips.find(x => x[1] === n); assert.ok(c, 'chip ' + n + ' in ' + order); assert.equal(c[2], true, n + ' chip shows its icon');
     }
-    for (const n of ['Direct', 'Groups', 'Family']) assert.equal(chips.find(x => x[1] === n)?.[2], true, n + ' is a secondary chip');
-    assert.ok(order.indexOf('Wizard') < order.indexOf('Direct'), 'platform chips before Direct/Groups');
-    assert.equal(chips.find(c => c[1] === 'Unread')[4], '4', 'Unread chip counts unread chats');
-    assert.equal(chips.find(c => c[1] === 'Telegram')[4], '1');
-    assert.equal(chips.find(c => c[1] === 'WhatsApp')[4], '1');
-    const boxes = await page.locator('#u-filters .u-chip').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right, r.height, e.scrollWidth <= e.clientWidth + 1]; }));
+    assert.equal(order.at(-1), 'Wizard', 'Wizard after the bridged platforms');
+    await page.locator('#u-filters .u-filter-btn').click();
+    const menuItems = (await page.locator('.u-filter-menu [role=menuitemradio]').allTextContents()).map(t => t.trim());
+    for (const n of ['Direct', 'Groups', 'Family']) assert.ok(menuItems.includes(n), n + ' lives in the Filters menu');
+    await page.keyboard.press('Escape'); await page.locator('.u-filter-menu').waitFor({state: 'detached'});
+    const unreadCount = () => page.locator('#u-filters [data-seg=unread] .u-seg-count').textContent();
+    assert.equal(await unreadCount(), '4', 'Unread segment counts unread chats');
+    const pickNet = async name => { const b = page.locator(`#u-filters .u-nets .u-chip[aria-label="${name}"]`); if (await b.isVisible()) return b.click(); await page.locator('#u-filters .u-more-nets').click(); await page.locator('.u-filter-menu').getByRole('menuitemradio', {name, exact: true}).click(); };
+    await pickNet('Telegram'); assert.equal(await unreadCount(), '1', 'Telegram narrows the count');
+    await pickNet('WhatsApp'); assert.equal(await unreadCount(), '1');
+    await pickNet('WhatsApp');
+    const boxes = await page.locator('#u-filters .u-netrow .u-chip:not([hidden])').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right, r.height, e.scrollWidth <= e.clientWidth + 1]; }));
     for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i][0] >= boxes[i - 1][1], 'chips do not overlap');
     assert.ok(boxes.every(b => b[3] && b[2] >= 32), 'chips are not clipped and stay tappable');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'no page overflow');
@@ -145,15 +151,16 @@ const providers = [
 
     // Platform chips filter rows to that platform only.
     for (const [chip, net, count] of [['Telegram', 'telegram', 1], ['WhatsApp', 'whatsapp', 2], ['Wizard', 'private', 1], ['Slack', 'slack', 1]]) {
-      await page.getByRole('button', {name: chip, exact: true}).click();
+      await pickNet(chip);
       const nets = await page.locator('.u-person').evaluateAll(els => els.map(e => e.dataset.network));
       assert.equal(nets.length, count, chip + ' rows'); assert.ok(nets.every(n => n === net), chip + ' shows only ' + net);
       assert.equal(await page.locator(`[data-filter="net:${net}"]`).getAttribute('aria-pressed'), 'true');
     }
-    await page.getByRole('button', {name: 'WhatsApp', exact: true}).click(); await shot('filter-whatsapp');
-    await page.getByRole('button', {name: 'Groups', exact: true}).click();
+    await pickNet('WhatsApp'); await shot('filter-whatsapp');
+    await page.locator('#u-filters .u-filter-btn').click(); await page.locator('.u-filter-menu').getByRole('menuitemradio', {name: 'Groups', exact: true}).click();
     assert.deepEqual(await page.locator('.u-person strong').allTextContents(), ['Family']);
-    await page.getByRole('button', {name: 'All', exact: true}).click();
+    await pickNet('WhatsApp');
+    await page.locator('#u-filters .u-filter-btn').click(); await page.locator('.u-filter-menu').getByRole('menuitemradio', {name: 'All chats', exact: true}).click();
 
     // Direct thread: sent right + accent, received left + neutral, no owner name, header has the contact + platform.
     await james.click();

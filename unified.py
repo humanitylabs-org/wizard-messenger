@@ -167,6 +167,9 @@ MIGRATIONS = [
     ('person', 'name_locked', 'INTEGER NOT NULL DEFAULT 0'),
     # 1 = the owner moved this chat to Low priority: it leaves the Inbox, unread counts and notifications.
     ('person', 'low_priority', 'INTEGER NOT NULL DEFAULT 0'),
+    # 1 = Medium priority: stays in the Inbox but never pings (no push, badge, Unread count or Wizard inbox feed).
+    # Medium and Low are exclusive; setting one clears the other.
+    ('person', 'medium_priority', 'INTEGER NOT NULL DEFAULT 0'),
 ]
 
 # Matches the bridges' backfill.unread_hours_threshold: older history is read.
@@ -559,7 +562,7 @@ class PeopleStore:
     def update(self, person_id, payload):
         self.person(person_id)
         with self.db() as db:
-            for key in ('display_name', 'language', 'preferred_identity', 'muted', 'low_priority'):
+            for key in ('display_name', 'language', 'preferred_identity', 'muted', 'low_priority', 'medium_priority'):
                 if key not in payload:
                     continue
                 value = payload[key]
@@ -567,10 +570,16 @@ class PeopleStore:
                     if value and not db.execute('SELECT 1 FROM identity WHERE id=? AND person_id=?', (value, person_id)).fetchone():
                         fail('invalid_identity', 'Choose an identity belonging to this person')
                     value = value or None
-                elif key in ('muted', 'low_priority'):
+                elif key in ('muted', 'low_priority', 'medium_priority'):
                     if not isinstance(value, bool):
                         fail('invalid_input', key + ' is true or false')
                     value = int(value)
+                    if key == 'low_priority' and value and payload.get('medium_priority') is True:
+                        fail('invalid_input', 'A chat is either Medium or Low priority')
+                    # One priority at a time: Medium clears Low and Low clears Medium.
+                    if value and key in ('low_priority', 'medium_priority'):
+                        other = 'medium_priority' if key == 'low_priority' else 'low_priority'
+                        db.execute('UPDATE person SET ' + other + '=0 WHERE id=?', (person_id,))
                 elif key == 'language':
                     if value not in ('', 'en', 'th', 'ja', 'zh', 'es', 'fr', 'de'):
                         fail('invalid_language', 'Choose a supported language')
@@ -678,8 +687,8 @@ class PeopleStore:
                              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                              (event_id, identity['id'], sender, int(outgoing), original, translated, timestamp, seq, msgtype, media_json, reply_to, client_id, album, source_event))
             inserted = cur.rowcount == 1
-            # Muted and Low priority chats never notify (the person may have been merged since: join on the identity).
-            quiet = db.execute('SELECT 1 FROM identity i JOIN person p ON p.id=i.person_id WHERE i.id=? AND (p.muted=1 OR p.low_priority=1)',
+            # Muted, Medium and Low priority chats never notify (the person may have been merged since: join on the identity).
+            quiet = db.execute('SELECT 1 FROM identity i JOIN person p ON p.id=i.person_id WHERE i.id=? AND (p.muted=1 OR p.low_priority=1 OR p.medium_priority=1)',
                                (identity['id'],)).fetchone()
             if inserted and not outgoing and push_live and self.push_enabled and not quiet:
                 db.execute('INSERT OR IGNORE INTO push_intent(message,created) VALUES(?,?)',

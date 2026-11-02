@@ -1,4 +1,4 @@
-// Inbox tweaks (Miguel, 30 Oct 2026): readable selected chips on hosted skins (transparent canvas), icon-only platform
+// Inbox tweaks (Miguel, 30 Oct 2026; two filter rows since 2 Nov 2026): readable selected segments on hosted skins (transparent canvas), icon-only platform
 // chips, no bottom tab bar, and a Low priority folder that keeps chats out of the Inbox, unread counts and the badge.
 // node tests/inbox_tweaks_browser.cjs [outdir]   (needs playwright via PLAYWRIGHT_MODULE). Synthetic APIs only.
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -87,77 +87,79 @@ const SKINS = {
     // No bottom tab bar: one Inbox needs none.
     assert.equal(await page.locator('#inbox-tabs').isVisible(), false, 'bottom tab bar is gone');
 
-    // Platform chips: icon only, name kept for screen readers and the tooltip.
-    const nets = await page.locator('#u-filters .u-chip.net').evaluateAll(els => els.map(e => [e.getAttribute('aria-label'), e.title, e.querySelector('.u-chip-text')?.textContent || '', !!e.querySelector('svg.brand-icon path'), e.getBoundingClientRect().width]));
-    assert.ok(nets.length >= 4, 'one chip per platform');
-    for (const [name, title, text, glyph, w] of nets) { assert.equal(text, '', name + ' chip prints no word'); assert.ok(glyph, name + ' glyph'); assert.ok(title.startsWith(name), name + ' tooltip'); assert.ok(w <= 72, name + ' chip is compact: ' + w); }
+    // Platform buttons: icon only, name kept for screen readers and the tooltip.
+    const nets = await page.locator('#u-filters .u-nets .u-chip.net').evaluateAll(els => els.map(e => [e.getAttribute('aria-label'), e.title, e.querySelector('.u-chip-text')?.textContent || '', !!e.querySelector('svg.brand-icon path'), e.getBoundingClientRect().width]));
+    assert.ok(nets.length >= 4, 'one button per platform');
+    for (const [name, title, text, glyph, w] of nets) { assert.equal(text, '', name + ' button prints no word'); assert.ok(glyph, name + ' glyph'); assert.ok(title.startsWith(name), name + ' tooltip'); assert.ok(w <= 72, name + ' button is compact: ' + w); }
 
-    // Low priority: out of the Inbox, out of Unread and every count; a folder row on top of All.
+    // Low priority: out of All, Unread and every count; one of the four segments, next to All and Unread.
     assert.ok(!(await rows()).includes('Deals Channel'), 'low priority chat is not in the Inbox');
     assert.equal(await page.locator('.u-low-row').count(), 0, 'no folder row on top of the Inbox');
-    const lowChip = page.locator('#u-filters .u-chip[data-filter=low]');
-    assert.equal(await lowChip.count(), 1, 'a quiet Low priority toggle at the end of the chips');
-    assert.equal(await page.locator('#u-filters .u-chip').last().getAttribute('data-filter'), 'low');
-    assert.equal(await page.locator('[data-filter=unread] .u-chip-count').textContent(), '4', 'Unread chip ignores Low priority (james, marco, fam, private)');
-    assert.equal(await page.locator('[data-filter="net:telegram"] .u-chip-count').textContent(), '1', 'Telegram count ignores Low priority');
+    const lowChip = page.locator('#u-filters .u-seg-btn[data-seg=low]');
+    assert.deepEqual(await page.locator('#u-filters .u-seg-btn').evaluateAll(els => els.map(e => e.dataset.seg)), ['all', 'unread', 'medium', 'low'], 'All, Unread, Medium, Low side by side');
+    assert.equal(await page.locator('[data-seg=unread] .u-seg-count').textContent(), '4', 'Unread count ignores Low priority (james, marco, fam, private)');
+    await page.locator('#u-filters [data-filter="net:telegram"]').click();
+    assert.equal(await page.locator('[data-seg=unread] .u-seg-count').textContent(), '1', 'Telegram narrows the count and still ignores Low priority');
+    await page.locator('#u-filters [data-filter="net:telegram"]').click();
     await page.waitForTimeout(300);
     assert.equal(badges.at(-1), 4, 'app badge = unread chats (james, marco, fam, private), Low priority ignored');
-    await page.locator('[data-filter=unread]').click(); await page.waitForTimeout(300); // chip colour transition; mouse stays hovering
+    await page.locator('[data-seg=unread]').click(); await page.waitForTimeout(300); // segment colour transition; mouse stays hovering
     assert.ok(!(await rows()).includes('Deals Channel'), 'Unread never shows Low priority');
 
-    // Selected chip stays readable on a transparent hosted canvas (the white-on-white report).
+    // Selected segment stays readable on a transparent hosted canvas (the white-on-white report).
     const pressed = await page.evaluate(() => {
       const c = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
       const rgb = css => { c.clearRect(0, 0, 1, 1); c.fillStyle = '#000'; c.fillStyle = css; c.fillRect(0, 0, 1, 1); return [...c.getImageData(0, 0, 1, 1).data]; };
-      const el = document.querySelector('[data-filter=unread]'), cs = getComputedStyle(el), text = el.querySelector('.u-chip-text');
-      return {bg: rgb(cs.backgroundColor), fg: rgb(getComputedStyle(text).color), pressed: el.getAttribute('aria-pressed'), raw: [cs.backgroundColor, cs.color, getComputedStyle(text).color, getComputedStyle(document.documentElement).getPropertyValue('--chip-on-ink'), getComputedStyle(document.documentElement).getPropertyValue('--on-accent')]};
+      const el = document.querySelector('[data-seg=unread]'), cs = getComputedStyle(el), text = el.querySelector('.u-seg-text');
+      return {bg: rgb(cs.backgroundColor), fg: rgb(getComputedStyle(text).color), pressed: el.getAttribute('aria-checked'), raw: [cs.backgroundColor, cs.color, getComputedStyle(text).color, getComputedStyle(document.documentElement).getPropertyValue('--chip-on-ink'), getComputedStyle(document.documentElement).getPropertyValue('--on-accent')]};
     });
     const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };
     const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + .05) / (y + .05); };
-    assert.equal(pressed.pressed, 'true'); assert.equal(pressed.fg[3], 255, 'selected chip text is opaque, not the transparent canvas');
-    assert.ok(contrast(pressed.bg, pressed.fg) >= 4.5, 'selected chip contrast ' + contrast(pressed.bg, pressed.fg).toFixed(2) + JSON.stringify(pressed));
+    assert.equal(pressed.pressed, 'true'); assert.equal(pressed.fg[3], 255, 'selected segment text is opaque, not the transparent canvas');
+    assert.ok(contrast(pressed.bg, pressed.fg) >= 4.5, 'selected segment contrast ' + contrast(pressed.bg, pressed.fg).toFixed(2) + JSON.stringify(pressed));
     await shot('unread-selected');
-    await page.locator('[data-filter=all]').click();
+    await page.locator('[data-seg=all]').click();
 
     // Move a chat to Low priority from its menu (right-click on desktop): it leaves the Inbox in place.
-    await page.locator('.u-person', {hasText: 'Kenji Tanaka'}).click({button: 'right'});
-    await page.getByRole('menuitem', {name: 'Move to Low priority'}).click();
-    assert.deepEqual(posted.at(-1), ['kenji', {low_priority: true}], 'saved on the server');
+    const setPriority = async (who, level) => {
+      await page.locator('.u-person', {hasText: who}).click({button: 'right'});
+      await page.getByRole('menuitem', {name: /^Priority: /}).click();
+      await page.getByRole('menuitemradio', {name: level, exact: true}).click();
+    };
+    await setPriority('Kenji Tanaka', 'Low');
+    assert.deepEqual(posted.at(-1), ['kenji', {low_priority: true, medium_priority: false}], 'saved on the server');
     assert.ok(!(await rows()).includes('Kenji Tanaka'), 'row left the Inbox');
     // A private Wizard chat moves too (kept on this device like its mute).
-    await page.locator('.u-person', {hasText: 'Private Alice'}).click({button: 'right'});
-    await page.getByRole('menuitem', {name: 'Move to Low priority'}).click();
+    await setPriority('Private Alice', 'Low');
     assert.ok(!(await rows()).includes('Private Alice'));
     await page.waitForTimeout(300);
     assert.equal(badges.at(-1), 3, 'badge drops the private chat');
     await shot('inbox');
 
-    // The toggle: only quiet chats, gray badges, and the other chips still narrow it.
+    // The Low segment: only quiet chats, gray badges, and the network buttons still narrow it.
     await lowChip.click();
-    assert.equal(await lowChip.getAttribute('aria-pressed'), 'true');
+    assert.equal(await lowChip.getAttribute('aria-checked'), 'true');
     assert.deepEqual((await rows()).sort(), ['Deals Channel', 'Kenji Tanaka', 'Private Alice'].sort());
     assert.equal(await page.locator('.u-person', {hasText: 'Deals Channel'}).locator('.u-badge.muted').count(), 1, 'quiet badge');
-    await page.locator('[data-filter="net:telegram"]').click();
+    await page.locator('#u-filters [data-filter="net:telegram"]').click();
     assert.deepEqual(await rows(), ['Deals Channel'], 'Telegram + Low priority = Telegram quiet chats only');
-    await page.locator('[data-filter="net:line"]').click();
+    await page.locator('#u-filters [data-filter="net:line"]').click();
     assert.deepEqual(await rows(), ['Kenji Tanaka'], 'LINE + Low priority');
-    await page.locator('[data-filter=all]').click(); await page.mouse.move(5, 600); await page.waitForTimeout(400);
-    await page.locator('#u-filters').evaluate(e => { e.scrollLeft = e.scrollWidth; }); await page.waitForTimeout(100);
+    await page.locator('#u-filters [data-filter="net:line"]').click(); await page.mouse.move(5, 600); await page.waitForTimeout(400);
     await shot('low-folder');
     // Opening a chat from the folder and coming back lands in the folder again.
     await page.locator('.u-person', {hasText: 'Deals Channel'}).click();
     if (viewport.width >= 900) { await page.locator('#u-pane-thread .u-who-text strong', {hasText: 'Deals Channel'}).waitFor(); await page.keyboard.press('Escape'); await page.locator('#unified-inbox[data-detail=none]').waitFor(); } // desktop split: Back (Escape) closes the chat, the list fills the window
     else { await page.getByRole('button', {name: 'Back', exact: true}).waitFor(); await page.getByRole('button', {name: 'Back', exact: true}).click(); }
-    assert.equal(await lowChip.getAttribute('aria-pressed'), 'true', 'back from a chat keeps the Low priority view');
+    assert.equal(await lowChip.getAttribute('aria-checked'), 'true', 'back from a chat keeps the Low priority view');
     // Move back to the Inbox from inside the folder.
-    await page.locator('.u-person', {hasText: 'Kenji Tanaka'}).click({button: 'right'});
-    await page.getByRole('menuitem', {name: 'Move to Inbox'}).click();
-    assert.deepEqual(posted.at(-1), ['kenji', {low_priority: false}]);
+    await setPriority('Kenji Tanaka', 'Normal');
+    assert.deepEqual(posted.at(-1), ['kenji', {low_priority: false, medium_priority: false}]);
     assert.ok(!(await rows()).includes('Kenji Tanaka'), 'left the folder in place');
-    await lowChip.click();
+    await page.locator('[data-seg=all]').click();
     assert.ok((await rows()).includes('Kenji Tanaka'), 'back in the Inbox');
     // Chip glyphs sit on the chip itself: no white disc.
-    const discs = await page.locator('#u-filters .u-chip.net .net-badge:not(.text)').evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor));
+    const discs = await page.locator('#u-filters .u-nets .u-chip.net .net-badge:not(.text)').evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor));
     assert.ok(discs.every(c => c === 'rgba(0, 0, 0, 0)'), 'no white disc behind chip icons: ' + discs);
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(`${label}/${scheme}`);
