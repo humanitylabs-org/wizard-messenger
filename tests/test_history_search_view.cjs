@@ -47,7 +47,7 @@ test('message search calls authenticated API, pages text results and ignores sta
     throw Error('Unexpected '+path);
   };
   const timers=[];
-  const ctx={addEventListener(){},document,AbortController,Audio:class{},navigator:{},URLSearchParams,console,setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout(){},requestAnimationFrame:fn=>fn(),localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}}};ctx.window=ctx;
+  const ctx={crypto:require('node:crypto').webcrypto,addEventListener(){},document,AbortController,Audio:class{},navigator:{},URLSearchParams,console,setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout(){},requestAnimationFrame:fn=>fn(),localStorage:{getItem(){return null;}},sessionStorage:{getItem(){return null;}}};ctx.window=ctx;
   vm.runInNewContext(fs.readFileSync('static/unified.js','utf8'),ctx);
   ctx.MessengerUnified.mount({api});ctx.MessengerUnified.authenticated();
   const flush=async()=>{for(let n=0;n<5;n++)await new Promise(r=>setImmediate(r));};await flush();
