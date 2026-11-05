@@ -103,8 +103,7 @@ services:
     - /bin/sh
     - -c
     command:
-    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-slack -c /data/config.yaml;
-      else printf "%s\n" "slack disabled"; exec sleep infinity; fi
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-slack -c /data/config.yaml
     read_only: true
     cap_drop:
     - ALL
@@ -178,8 +177,7 @@ services:
     - /bin/sh
     - -c
     command:
-    - if [ -f /data/configured ]; then exec /usr/bin/mautrix-meta -c /data/config.yaml;
-      else printf "%s\n" "instagram disabled"; exec sleep infinity; fi
+    - until [ -f /data/configured ]; do sleep 2; done; exec /usr/bin/mautrix-meta -c /data/config.yaml
     read_only: true
     cap_drop:
     - ALL

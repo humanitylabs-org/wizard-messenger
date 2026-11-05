@@ -101,6 +101,33 @@ supports private Synapse. `bbctl` is Beeper-server-only and is **not used** here
    file; the historical `connectors-view-integration.patch` is not current against
    f5e4f6b and must not overwrite permission/UI lane work.
 
+## Worker admission: Slack and Instagram
+
+The manifest's installed runtime is `runtipi/docker-compose.yml`. It must contain
+Slack and Instagram workers, not merely their configuration/templates or the
+optional `connectors.compose.yml` overlay. Owner enable writes a marker; it cannot
+create a missing Docker service. Both workers therefore ship dormant, watch
+`/data/configured`, and exec the pinned binary when the owner has enabled them.
+They publish no host ports. A dormant container's passing healthcheck is **not**
+proof of an answering provisioning endpoint.
+
+For the November timeout repair, live Matrix, Telegram, Signal, WhatsApp and
+Messenger health responded promptly, but Slack/Instagram had enabled markers and
+registered appservices with **no worker containers or DNS entries**. This was a
+connector admission failure, not a shared gateway outage or rejected owner login.
+`tools/probe_connector_runtime.py` captures only noncontent runtime identity,
+marker/registration booleans, auth-free response codes/timings and absent worker
+metadata. It does not read messages, tokens, login records or account logs.
+
+Regression checks: `tests/test_connector_worker_admission.py` keeps installed and
+optional worker contracts aligned; `tools/prove_slack_instagram_workers.py` runs
+only on forum under the durable queue. It uses real pinned binaries with fresh
+synthetic data on an internal network: dormant → marker enable → ready for owner
+input without container replacement, missing-token rejection, honest unavailable
+state when stopped, and cleanup. It never calls a login start/step endpoint or
+contacts Slack/Instagram. Existing transport error/timeout tests remain unchanged.
+A successful synthetic proof is not successful personal sign-in.
+
 ## Runtime state contract
 
 - `not_configured`: dormant, no provisioning I/O.
