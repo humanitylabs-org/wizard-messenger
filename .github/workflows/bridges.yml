@@ -1,12 +1,19 @@
 name: Publish bridge images
-# Builds the two connector bridges that have no public upstream image (LINE: beeper/line, MIT; ChatGPT Dots:
-# beeper/chatgpt-dots, AGPL-3.0) from pinned upstream commits, natively on amd64 and arm64 GitHub-hosted runners,
-# smoke-tests each binary, and publishes multi-arch tags to GHCR so the Store recipe can pin them by digest.
-# Tags are immutable: sha-<this repo's commit> always, plus the upstream commit the first time it is built.
+# Builds the connector bridges that have no public upstream image (LINE: beeper/line, MIT; ChatGPT Dots:
+# beeper/chatgpt-dots, AGPL-3.0; Signal native albums: mautrix/signal v0.2610.0 + plumbing/signal-bridge/albums.patch,
+# AGPL-3.0) from pinned upstream commits, natively on amd64 and arm64 GitHub-hosted runners, smoke-tests each binary,
+# and publishes multi-arch tags to GHCR so the Store recipe can pin them by digest.
+# Tags are immutable: sha-<this repo's commit> always, plus the upstream commit (Signal: 0.2610.0-native-albums1)
+# the first time it is built. Pull requests touching these files build and smoke-test only; nothing is pushed.
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/bridges.yml, plumbing/line.Dockerfile, plumbing/line-own-read-sync.patch, plumbing/connectors-provenance.json]
+    paths: [.github/workflows/bridges.yml, plumbing/line.Dockerfile, plumbing/line-own-read-sync.patch, plumbing/connectors-provenance.json,
+            'plumbing/signal-bridge/**']
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/bridges.yml, plumbing/line.Dockerfile, plumbing/line-own-read-sync.patch, plumbing/connectors-provenance.json,
+            'plumbing/signal-bridge/**']
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -18,6 +25,9 @@ env:
   # Upstream source pins (full commit ids). LINE: plumbing/connectors-provenance.json "line".
   LINE_COMMIT: 72c7a51a44f344966b916bd2f42a734381061186
   DOTS_COMMIT: 265398af80d5f75c6ee0d9ff835fcffcd8afabc0
+  # Signal: plumbing/connectors-provenance.json "signal" (upstream_commit + patch); the Dockerfile fetches it itself.
+  SIGNAL_COMMIT: d129f0ecc6bd29cfb5e54b18e025bd0c8a20a4bf
+  SIGNAL_TAG: 0.2610.0-native-albums1
   SOURCE_LABEL: org.opencontainers.image.source=https://github.com/humanitylabs-org/wizard-messenger
 jobs:
   build:
@@ -29,12 +39,13 @@ jobs:
           - {arch: amd64, runner: ubuntu-24.04}
           - {arch: arm64, runner: ubuntu-24.04-arm}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -50,6 +61,15 @@ jobs:
           test "$(sha256sum plumbing/line-own-read-sync.patch | cut -d' ' -f1)" = "$(python3 -c "import json;print(json.load(open('plumbing/connectors-provenance.json'))['line']['patches'][0]['sha256'])")"
           git -C "$RUNNER_TEMP/line" apply --check "$GITHUB_WORKSPACE/plumbing/line-own-read-sync.patch"
           git -C "$RUNNER_TEMP/line" apply "$GITHUB_WORKSPACE/plumbing/line-own-read-sync.patch"
+      - name: Check Signal patch provenance
+        run: |
+          set -eu
+          sig() { python3 -c "import json,sys;print(json.load(open('plumbing/connectors-provenance.json'))['signal'][sys.argv[1]])" "$1"; }
+          test "$(sig upstream_commit)" = "$SIGNAL_COMMIT"
+          test "$(sig patch)" = plumbing/signal-bridge/albums.patch
+          test "$(sig recipe)" = plumbing/signal-bridge/Dockerfile
+          echo "$(sig patch_sha256)  plumbing/signal-bridge/albums.patch" | sha256sum -c -
+          grep -q "origin $SIGNAL_COMMIT" plumbing/signal-bridge/Dockerfile
       - name: Build LINE bridge
         run: |
           set -eu
@@ -70,10 +90,26 @@ jobs:
           test "$(docker image inspect "$img" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
           docker run --rm --network none --entrypoint /usr/bin/chatgpt-dots "$img" --version
           echo "DOTS=$img" >> "$GITHUB_ENV"
+      - name: Build Signal bridge (native albums)
+        run: |
+          set -eu
+          umask 022
+          img=ghcr.io/humanitylabs-org/wizard-signal-bridge:sha-$GITHUB_SHA-${{ matrix.arch }}
+          DOCKER_BUILDKIT=1 docker build -f plumbing/signal-bridge/Dockerfile --label "$SOURCE_LABEL" \
+            --label org.opencontainers.image.revision=$GITHUB_SHA -t "$img" .
+          test "$(docker image inspect "$img" --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+          test "$(docker image inspect "$img" --format '{{index .Config.Labels "org.wizard.signal.patch"}}')" = native-albums1
+          docker run --rm --network none --entrypoint /usr/bin/mautrix-signal "$img" --version
+          docker run --rm --network none --entrypoint /bin/sh "$img" -c \
+            'cd /usr/bin && sha256sum -c /usr/share/wizard-signal-albums/binary.sha256 && ls /usr/share/wizard-signal-albums' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "SIGNAL=$img" >> "$GITHUB_ENV"
       - name: Push per-architecture images
-        run: docker push "$LINE" && docker push "$DOTS"
+        if: github.event_name != 'pull_request'
+        run: docker push "$LINE" && docker push "$DOTS" && docker push "$SIGNAL"
   publish:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - uses: docker/login-action@v3
@@ -85,7 +121,8 @@ jobs:
       - name: Multi-arch tags (never overwrite an upstream tag)
         run: |
           set -eu
-          for pair in "wizard-line-bridge ${LINE_COMMIT:0:7}" "wizard-dots-bridge ${DOTS_COMMIT:0:7}"; do
+          for pair in "wizard-line-bridge ${LINE_COMMIT:0:7}" "wizard-dots-bridge ${DOTS_COMMIT:0:7}" \
+                      "wizard-signal-bridge $SIGNAL_TAG"; do
             set -- $pair
             repo=ghcr.io/humanitylabs-org/$1
             tags="-t $repo:sha-$GITHUB_SHA"
