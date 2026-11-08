@@ -1978,14 +1978,61 @@ class UnifiedInbox:
                 for event_id, kinds in (event.get('content') or {}).items():
                     for kind in ('m.read', 'm.read.private'):
                         for user in (kinds.get(kind) or {}):
-                            with self.store.db() as db:
-                                row = db.execute('SELECT timestamp FROM message WHERE id=?', (event_id,)).fetchone()
-                            if not row:
+                            mine = self.is_me(user)
+                            stamp = self.receipt_stamp(identity, event_id, fetch=mine)
+                            if stamp is None:
                                 continue
-                            if self.is_me(user):
-                                self.store.touch_identity(identity['id'], last_read_ts=row[0])
+                            if mine:
+                                # The owner read this chat in the network's own app (the bridge relays it as a
+                                # receipt from the owner or their ghost) or in another Messenger: same effect.
+                                self.note_owner_read(identity, stamp)
                             elif user != '@' + identity['network'] + 'bot:messenger.internal':
-                                self.store.touch_identity(identity['id'], peer_read_ts=row[0])
+                                self.store.touch_identity(identity['id'], peer_read_ts=stamp)
+
+    def receipt_stamp(self, identity, event_id, fetch=False):
+        """Timestamp of the message a read receipt points at, in this chat only. An event we hold no row for
+        (an edit, an album tile, a notice) is asked of the homeserver when `fetch`, and the receipt then counts up
+        to the newest line at or before it."""
+        with self.store.db() as db:
+            row = db.execute('SELECT MAX(timestamp) FROM message WHERE identity_id=? AND (id=? OR source_event=?)',
+                             (identity['id'], event_id, event_id)).fetchone()
+            if row and row[0] is not None:
+                return row[0]
+            if not fetch:
+                return None
+        try:
+            at = self.mx(self.room(identity['address']) + '/event/' + quote(event_id, safe='')).get('origin_server_ts')
+        except EngineError:
+            return None
+        if not isinstance(at, int):
+            return None
+        with self.store.db() as db:
+            row = db.execute('SELECT MAX(timestamp) FROM message WHERE identity_id=? AND timestamp<=?', (identity['id'], at)).fetchone()
+        return row[0] if row else None
+
+    def note_owner_read(self, identity, stamp):
+        """Move the chat's read mark to `stamp` (never backwards; later lines stay unread) and count it per
+        network. The counts hold numbers only, so the owner's own app can show whether a network's native reads
+        arrive (status.read_sync) without anyone opening a chat."""
+        with self.store.db() as db:
+            current = db.execute('SELECT last_read_ts FROM identity WHERE id=?', (identity['id'],)).fetchone()
+        moved = bool(current) and stamp > current[0]
+        if moved:
+            self.store.touch_identity(identity['id'], last_read_ts=stamp)
+        stats = self.read_sync_stats()
+        entry = stats.setdefault(identity['network'], {'seen': 0, 'cleared': 0, 'last': 0})
+        entry['seen'] += 1
+        entry['cleared'] += int(moved)
+        entry['last'] = int(time.time())
+        self.store.put('read_sync', json.dumps(stats))
+        return moved
+
+    def read_sync_stats(self):
+        try:
+            stats = json.loads(self.store.get('read_sync') or '{}')
+        except ValueError:
+            stats = {}
+        return stats if isinstance(stats, dict) else {}
 
     def is_me(self, user):
         return user == self.owner or user in self.mine
@@ -2951,7 +2998,8 @@ class UnifiedInbox:
             for name, ms in self.timings:
                 stats.setdefault(name, []).append(ms)
             return {'telegram': self.telegram_status(), 'matrix_error': self.store.get('sync_error'), 'marmot': self.engine.status().get('state'),
-                    'timings': {k: {'n': len(v), 'p50': sorted(v)[len(v) // 2]} for k, v in stats.items()}}
+                    'timings': {k: {'n': len(v), 'p50': sorted(v)[len(v) // 2]} for k, v in stats.items()},
+                    'read_sync': self.read_sync_stats()}
         if suffix == ['sync'] and method == 'POST':
             # The background long-poll keeps the store current; this answers at once.
             return {'state': 'syncing' if self.sync_lock.locked() else 'ready', 'error': self.store.get('sync_error') or None}

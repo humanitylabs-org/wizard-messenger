@@ -1,0 +1,152 @@
+diff --git a/pkg/connector/consts.go b/pkg/connector/consts.go
+index 1dee41e..0662133 100644
+--- a/pkg/connector/consts.go
++++ b/pkg/connector/consts.go
+@@ -6,6 +6,7 @@ type OperationType int
+ const (
+ 	OpSendMessage            OperationType = 25
+ 	OpReceiveMessage         OperationType = 26
++	OpSendChatChecked        OperationType = 40
+ 	OpSendChatRemoved        OperationType = 41
+ 	OpContactUpdate          OperationType = 49
+ 	OpReadReceipt            OperationType = 55
+diff --git a/pkg/connector/own_read.go b/pkg/connector/own_read.go
+new file mode 100644
+index 0000000..aa3e63e
+--- /dev/null
++++ b/pkg/connector/own_read.go
+@@ -0,0 +1,53 @@
++package connector
++
++import (
++	"time"
++
++	"maunium.net/go/mautrix/bridgev2"
++	"maunium.net/go/mautrix/bridgev2/networkid"
++	"maunium.net/go/mautrix/bridgev2/simplevent"
++
++	"github.com/beeper/line/pkg/line"
++)
++
++// makeOwnReadReceiptEvent turns LINE's SEND_CHAT_CHECKED operation (type 40: the
++// logged-in user read a chat on one of their clients) into a Matrix read receipt
++// from the owner. param1 is the chat MID (the portal ID) and param2 the ID of the
++// last message that was read. NOTIFIED_READ_MESSAGE (type 55) only covers other
++// people reading, so without this the owner's reads in the LINE app never reach
++// Matrix and their unread counts stay stuck.
++//
++// The receipt targets the message ID, never a timestamp, so messages that arrived
++// after the one that was read stay unread.
++func (lc *LineClient) makeOwnReadReceiptEvent(op line.Operation) (*simplevent.Receipt, bool) {
++	if op.Param1 == "" || op.Param2 == "" {
++		return nil, false
++	}
++	ownMID := lc.Mid
++	if ownMID == "" && lc.UserLogin != nil && lc.UserLogin.UserLogin != nil {
++		ownMID = string(lc.UserLogin.ID)
++	}
++	if ownMID == "" {
++		return nil, false
++	}
++	var ts time.Time
++	if ms, err := op.CreatedTime.Int64(); err == nil && ms > 0 {
++		ts = time.UnixMilli(ms)
++	}
++	var receiver networkid.UserLoginID
++	if lc.UserLogin != nil && lc.UserLogin.UserLogin != nil {
++		receiver = lc.UserLogin.ID
++	}
++	return &simplevent.Receipt{
++		EventMeta: simplevent.EventMeta{
++			Type: bridgev2.RemoteEventReadReceipt,
++			PortalKey: networkid.PortalKey{
++				ID:       makePortalID(op.Param1),
++				Receiver: receiver,
++			},
++			Timestamp: ts,
++			Sender:    bridgev2.EventSender{Sender: makeUserID(ownMID), IsFromMe: true},
++		},
++		LastTarget: networkid.MessageID(op.Param2),
++	}, true
++}
+diff --git a/pkg/connector/own_read_test.go b/pkg/connector/own_read_test.go
+new file mode 100644
+index 0000000..73560f1
+--- /dev/null
++++ b/pkg/connector/own_read_test.go
+@@ -0,0 +1,57 @@
++package connector
++
++import (
++	"testing"
++
++	"maunium.net/go/mautrix/bridgev2"
++	"maunium.net/go/mautrix/bridgev2/networkid"
++
++	"github.com/beeper/line/pkg/line"
++)
++
++func TestSendChatCheckedBecomesOwnReadReceipt(t *testing.T) {
++	if OpSendChatChecked != 40 || OpReadReceipt != 55 {
++		t.Fatalf("operation numbers changed: %d %d", OpSendChatChecked, OpReadReceipt)
++	}
++	lc := &LineClient{Mid: "U-me"}
++	evt, ok := lc.makeOwnReadReceiptEvent(line.Operation{
++		Type: 40, Param1: "C-group", Param2: "msg-42", CreatedTime: "1784890442000",
++	})
++	if !ok {
++		t.Fatal("expected a receipt")
++	}
++	if evt.EventMeta.Type != bridgev2.RemoteEventReadReceipt {
++		t.Fatalf("type = %v", evt.EventMeta.Type)
++	}
++	if evt.EventMeta.PortalKey.ID != networkid.PortalID("C-group") {
++		t.Fatalf("portal = %v", evt.EventMeta.PortalKey)
++	}
++	if !evt.EventMeta.Sender.IsFromMe || evt.EventMeta.Sender.Sender != "U-me" {
++		t.Fatalf("sender = %#v, want the owner", evt.EventMeta.Sender)
++	}
++	if evt.GetLastReceiptTarget() != "msg-42" {
++		t.Fatalf("target = %q", evt.GetLastReceiptTarget())
++	}
++	if !evt.GetReadUpTo().IsZero() {
++		t.Fatal("a timestamp fallback would mark later messages read")
++	}
++	if evt.EventMeta.Timestamp.UnixMilli() != 1784890442000 {
++		t.Fatalf("timestamp = %v", evt.EventMeta.Timestamp)
++	}
++}
++
++func TestSendChatCheckedIgnoresIncompleteOperations(t *testing.T) {
++	lc := &LineClient{Mid: "U-me"}
++	for _, op := range []line.Operation{
++		{Type: 40, Param1: "C-group"},
++		{Type: 40, Param2: "msg-1"},
++		{Type: 40},
++	} {
++		if _, ok := lc.makeOwnReadReceiptEvent(op); ok {
++			t.Fatalf("incomplete operation %#v produced a receipt", op)
++		}
++	}
++	if _, ok := (&LineClient{}).makeOwnReadReceiptEvent(line.Operation{Type: 40, Param1: "C", Param2: "m"}); ok {
++		t.Fatal("no known owner must not produce a receipt")
++	}
++}
+diff --git a/pkg/connector/sync.go b/pkg/connector/sync.go
+index c74ad6c..04c6151 100644
+--- a/pkg/connector/sync.go
++++ b/pkg/connector/sync.go
+@@ -2013,6 +2013,13 @@ func (lc *LineClient) handleOperation(ctx context.Context, op line.Operation) {
+ 			ReadUpTo: time.UnixMilli(ts),
+ 		})
+ 
++	case OpSendChatChecked:
++		// The owner read a chat in another LINE client (phone, desktop). Tell Matrix the
++		// owner's side of the chat is read up to that message.
++		if evt, ok := lc.makeOwnReadReceiptEvent(op); ok {
++			lc.UserLogin.Bridge.QueueRemoteEvent(lc.UserLogin, evt)
++		}
++
+ 	case OpUnsendLocal, OpUnsendRemote:
+ 		chatMid := op.Param1
+ 		msgID := op.Param2

@@ -167,6 +167,13 @@
     "dockerfile_sha256": "11addc6aa7280d28c23a203fea311d238c9a1b7c927485c4b2cc2f0fb2359afc",
     "image_binary_sha256": "ad75ab145fa3defbbcc0e0dedd8a9703afcc290aa1fcef415b3a2f325a421bd7",
     "source_license_sha256": "01287a3e9bb97779353d145d79edc9c9862f469a1a651b8c526fafc1a6cbc8c4",
-    "build_context_note": "Pinned GitHub source; only Dockerfile modified. Optimized compile cancelled after GC thrashing; bounded ltsm -N -l build succeeded."
+    "build_context_note": "Pinned GitHub source; only Dockerfile modified. Optimized compile cancelled after GC thrashing; bounded ltsm -N -l build succeeded.",
+    "patches": [
+      {
+        "file": "plumbing/line-own-read-sync.patch",
+        "sha256": "f0d82c965d6e5829cee2202506a74a8fd2d5d09c07c9deb6c566ad5bcb37d2df",
+        "purpose": "SEND_CHAT_CHECKED (type 40): reads the owner does in the LINE app become a Matrix read receipt from the owner (upstream only bridged other people's reads, type 55)"
+      }
+    ]
   }
 }

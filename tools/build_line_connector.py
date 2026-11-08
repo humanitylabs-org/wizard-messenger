@@ -35,6 +35,10 @@ def main():
                 member.name = '/'.join(member.name.split('/')[1:])
                 if member.name:
                     archive.extract(member, context, filter='data')
+    patch = ROOT / 'plumbing/line-own-read-sync.patch'
+    if hashlib.sha256(patch.read_bytes()).hexdigest() != pin['patches'][0]['sha256']:
+        raise ValueError('LINE patch does not match plumbing/connectors-provenance.json')
+    subprocess.run(['git', 'apply', str(patch)], cwd=context, check=True)
     subprocess.run(['docker', 'build', '-f', str(ROOT / 'plumbing/line.Dockerfile'), '-t', pin['image'], str(context)], check=True)
     subprocess.run(['docker', 'image', 'inspect', pin['image'], '--format', '{{.Id}}'], check=True)
 
