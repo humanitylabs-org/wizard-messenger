@@ -1,0 +1,54 @@
+/* Link sheet (core/links.js): in-app browser for links tapped inside Wizard. Dark, one top bar. */
+.linksheet { position: absolute; inset: 0; z-index: 66; pointer-events: none; }
+.linksheet[hidden] { display: none; }
+.linksheet .ls-scrim { position: absolute; inset: 0; background: rgba(5, 3, 12, .55); opacity: 0; transition: opacity .25s ease; }
+.linksheet.open { pointer-events: auto; }
+.linksheet.open .ls-scrim { opacity: 1; }
+.ls-panel {
+  position: absolute; display: flex; flex-direction: column; overflow: hidden;
+  background: #0f1014; color: #ece8ff; border: 1px solid rgba(205, 190, 255, .14);
+  box-shadow: 0 -18px 60px rgba(0, 0, 0, .55); transition: transform .25s cubic-bezier(.2, .8, .2, 1);
+}
+.linksheet.dragging .ls-panel { transition: none; }
+/* phone: slides up to ~92% height; a sliver of the desk stays visible above */
+.linksheet.sheet .ls-panel { left: 0; right: 0; bottom: 0; height: 92%; border-radius: 22px 22px 0 0; transform: translateY(105%); }
+.linksheet.sheet.open .ls-panel { transform: translateY(0); }
+/* desktop: right-half pane */
+.linksheet.pane .ls-scrim { background: rgba(5, 3, 12, .25); }
+.linksheet.pane .ls-panel { top: 0; right: 0; bottom: 0; width: min(50%, 960px); min-width: 420px; border-radius: 14px 0 0 14px; transform: translateX(105%); }
+.linksheet.pane.open .ls-panel { transform: translateX(0); }
+
+.ls-bar { position: relative; flex: 0 0 auto; display: flex; align-items: center; gap: 4px; padding: 14px 8px 8px; touch-action: none; user-select: none; -webkit-user-select: none; border-bottom: 1px solid rgba(205, 190, 255, .08); }
+.linksheet.pane .ls-bar { padding-top: 8px; touch-action: auto; }
+.ls-grip { position: absolute; top: 5px; left: 50%; width: 38px; height: 4px; margin-left: -19px; border-radius: 99px; background: rgba(205, 190, 255, .3); }
+.linksheet.pane .ls-grip { display: none; }
+.ls-bar button { flex: 0 0 auto; min-width: 40px; height: 40px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent; color: #ece8ff; font: inherit; font-size: 15px; cursor: pointer; }
+.ls-bar button:active { background: rgba(143, 99, 255, .2); }
+.ls-bar .ls-back { font-size: 26px; line-height: 1; padding: 0 8px 4px; }
+.ls-bar .ls-back[hidden] { display: none; }
+.ls-bar .ls-keep { background: rgba(143, 99, 255, .22); font-weight: 650; font-size: 14px; height: 34px; border-radius: 99px; padding: 0 14px; }
+.ls-title { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 0 6px; }
+.ls-title b { font-size: 15px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ls-title small { font-size: 11.5px; color: rgba(236, 232, 255, .5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ls-body { position: relative; flex: 1 1 auto; min-height: 0; }
+.ls-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #0f1014; color-scheme: dark; }
+.ls-load { position: absolute; top: 0; left: 0; height: 2px; width: 0; z-index: 1; background: linear-gradient(90deg, #8f63ff, #ff5ccf); opacity: 0; }
+.linksheet.loading .ls-load { opacity: 1; animation: ls-load 1.6s ease-out forwards; }
+@keyframes ls-load { from { width: 0; } to { width: 85%; } }
+@media (prefers-reduced-motion: reduce) { .ls-panel, .ls-scrim { transition: none; } }
+
+.linksheet.pane { position: fixed; z-index: 90; }
+
+/* Phone: the sheet stops above the dock, so the orb, desk dots and desk swipes stay usable (z under the dock). */
+.device .linksheet.sheet { inset: 0 0 calc(var(--dock-h, 0px) + var(--safe-b, 0px) - 12px) 0; z-index: 47; }
+.device .linksheet.sheet .ls-panel { height: calc(100% - var(--safe-t, 0px) - 34px); border-radius: 22px; left: 6px; right: 6px; bottom: 4px; }
+/* Phone default (James, 10 Oct): full height, from just under the status bar down to the dock, so the orb and
+   desk dots stay usable. ⤡ shrinks it to three-quarters (the thread you came from shows above; tap it to close);
+   ⤢ grows it back. */
+.device .linksheet.sheet .ls-panel { height: calc(100% - var(--safe-t, 0px) - 6px); }
+.device .linksheet.sheet.peek .ls-panel { height: 76%; }
+.device .linksheet.sheet .ls-panel { transition: transform .26s cubic-bezier(.2, .8, .2, 1), height .22s ease; }
+.ls-full { display: none; }
+.linksheet.sheet .ls-full { display: inline-grid; }
+/* Phone: lighter dim so the thread above the panel stays readable. */
+.device .linksheet.sheet .ls-scrim { background: rgba(5, 3, 12, .28); }

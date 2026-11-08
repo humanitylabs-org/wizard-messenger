@@ -1,0 +1,48 @@
+/* An app's settings sheet (core/app-route.js): "Which agents can use it?" and "Sends its work to", plus the
+ * window-bar button that opens it. */
+.wroute-slot { display: contents; }
+.wb.wroute, .wbar button.wroute { width: auto; min-width: 30px; padding: 0 5px 0 4px; display: inline-flex; align-items: center; gap: 2px; position: relative; }
+.wroute .wr-arrow { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+.wroute .wr-sig { width: 18px; height: 18px; border-radius: 6px; font-size: 10px; }
+.wroute.held::after { content: ""; position: absolute; top: 2px; right: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--red, #ff6b86); box-shadow: 0 0 6px var(--red, #ff6b86); }
+.wroute.wr-only { min-width: 28px; padding: 0 5px; }
+.wroute .wr-gear { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.ar-agent .cb { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--line, rgba(205, 190, 255, .3)); display: grid; place-items: center; }
+.ar-tick.on .cb { border-color: var(--ag); background: var(--ag); }
+.ar-tick.on .cb::after { content: ""; width: 9px; height: 5px; margin-top: -2px; border: solid #0b0718; border-width: 0 0 2.4px 2.4px; transform: rotate(-45deg); }
+.wr-none { display: grid; place-items: center; background: rgba(255, 107, 134, .2); color: #fff; font-weight: 800; }
+
+.aroute { position: fixed; inset: 0; z-index: 9000; display: flex; align-items: flex-end; justify-content: center; background: rgba(3, 2, 8, .55); opacity: 0; transition: opacity 140ms ease; }
+.aroute.open { opacity: 1; }
+.ar-card { width: 100%; max-width: 480px; max-height: 84vh; overflow: auto; padding: 16px 14px calc(env(safe-area-inset-bottom, 0px) + 14px); border-radius: 22px 22px 0 0;
+  background: linear-gradient(var(--wz-overlay, #120c26), var(--wz-overlay, #120c26)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); color: var(--ink, #f3efff); border: 1px solid var(--line, rgba(205, 190, 255, .14)); border-bottom: 0; box-shadow: 0 -20px 50px -20px rgba(0, 0, 0, .8); }
+@media (min-width: 720px) { .aroute { align-items: center; } .ar-card { border-radius: 20px; border-bottom: 1px solid var(--line, rgba(205, 190, 255, .14)); } }
+.ar-head { display: flex; flex-direction: column; gap: 3px; margin: 0 2px 6px; }
+.ar-head b { font-size: 18px; font-weight: 800; }
+.ar-head small { font-size: 13px; color: var(--ink-2, #c9c0e8); }
+.ar-sec { margin: 16px 2px 8px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3, #8d84ad); }
+.ar-list { display: flex; flex-direction: column; gap: 6px; }
+.ar-agent { width: 100%; display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 15px; text-align: left; color: inherit;
+  background: rgba(18, 12, 38, .58); border: 1px solid var(--line, rgba(205, 190, 255, .14)); position: relative; overflow: hidden; }
+.ar-agent::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--ag); }
+.ar-agent.on { border-color: color-mix(in oklab, var(--ag) 60%, transparent); background: color-mix(in oklab, var(--ag) 14%, rgba(18, 12, 38, .7)); }
+.ar-agent:disabled { opacity: .6; }
+.ar-sig { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 11px; font-size: 15px; }
+.ar-agent .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ar-agent .tx b { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.ar-agent .tx small { font-size: 12.5px; color: var(--ink-2, #c9c0e8); }
+.ar-agent .tx small.st-stopped, .ar-agent .tx small.st-error { color: var(--amber, #ffbe55); }
+.ar-lock { display: inline-flex; color: color-mix(in oklab, var(--ag) 65%, #fff); }
+.ar-lock .ag-lock { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ar-agent .rd { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line, rgba(205, 190, 255, .3)); display: grid; place-items: center; }
+.ar-agent.on .rd { border-color: var(--ag); }
+.ar-agent.on .rd::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ag); }
+.ar-note { margin: 10px 2px 0; font-size: 13px; line-height: 1.45; color: var(--ink-2, #c9c0e8); }
+.ar-note.bad { color: var(--red, #ff6b86); padding: 10px 12px; border-radius: 12px; background: rgba(255, 107, 134, .08); border: 1px solid rgba(255, 107, 134, .3); }
+.ar-note.ok { color: var(--green, #4ff0b0); }
+.ar-note.warn { color: var(--amber, #ffcf6b); padding: 10px 12px; border-radius: 12px; background: rgba(255, 207, 107, .08); border: 1px solid rgba(255, 207, 107, .3); }
+[data-access-new-private] { margin-top: 10px; }
+.ar-foot { margin: 12px 2px 0; font-size: 12px; color: var(--ink-3, #8d84ad); }
+.ar-acts { display: flex; gap: 8px; margin-top: 14px; }
+.ar-btn { flex: 1; min-height: 44px; border-radius: 14px; font-weight: 700; font-size: 15px; background: var(--violet-2, #b99bff); color: #0b0718; }
+.ar-btn.ghost { background: rgba(143, 99, 255, .16); color: var(--ink, #f3efff); border: 1px solid var(--line, rgba(205, 190, 255, .14)); }

@@ -1,0 +1,223 @@
+/* Wizard OS skins (core/skins.js). A skin re-dresses the real shell: same DOM, same sizes, same gestures.
+ * It changes only design tokens (inline on <html>, blended while browsing), the clock typeface, the living
+ * background (#skinA/#skinB canvases) and the orb's colour (a CSS filter, so orb.js stays byte-identical
+ * with the Android copy). Nebula = the original look: no overrides at all. Five skins (Paper retired 12 Oct).
+ * Motion: core/scenery.js gates the canvases; nothing in this file animates. */
+@font-face { font-family: 'Sk Fraunces'; src: url(skins/Fraunces-300-normal.woff2) format('woff2'); font-weight: 300; font-display: swap; }
+@font-face { font-family: 'Sk Fraunces'; src: url(skins/Fraunces-600-normal.woff2) format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Sk Jost'; src: url(skins/Jost-200-normal.woff2) format('woff2'); font-weight: 200; font-display: swap; }
+@font-face { font-family: 'Sk Jost'; src: url(skins/Jost-400-normal.woff2) format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Sk Cormorant'; src: url(skins/Cormorant-300-italic.woff2) format('woff2'); font-weight: 300; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Sk Cormorant'; src: url(skins/Cormorant-500-italic.woff2) format('woff2'); font-weight: 500; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Sk Mono'; src: url(skins/JetBrainsMono-200-normal.woff2) format('woff2'); font-weight: 200; font-display: swap; }
+@font-face { font-family: 'Sk Mono'; src: url(skins/JetBrainsMono-500-normal.woff2) format('woff2'); font-weight: 500; font-display: swap; }
+
+:root {
+  --sk-time-a: #ffffff; --sk-time-b: #b8a6ff;
+  --sk-dock: rgba(8, 5, 18, .94); --sk-dock-line: rgba(205, 190, 255, .10);
+  --sk-ddot: rgba(205, 190, 255, .45);
+  --sk-orb: none;
+  --sk-tour: rgba(8, 5, 18, .78); --sk-dim: rgba(3, 1, 10, .74);
+  --sk-skin-a: 1;
+  --sk-win: rgba(12, 8, 26, .82);
+}
+/* Desktop uses the same scenery/token engine, behind its existing window manager. */
+html[data-shell="desktop"] body { isolation: isolate; }
+html[data-shell="desktop"] .skin-bg { position: fixed; }
+html[data-shell="desktop"]:not([data-skin="nebula"]) body { background: var(--bg); }
+:where(html[data-shell="desktop"]:not([data-skin="nebula"])) :is(.bar, .keys-card, .pal-card, .inbox) { background: linear-gradient(var(--glass-2), var(--glass-2)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); color: var(--ink); }
+.skin-bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0; }
+
+/* token-driven pieces of the real shell that were hard-coded to the space look */
+.home-time { background: linear-gradient(180deg, var(--sk-time-a) 30%, var(--sk-time-b) 100%); -webkit-background-clip: text; background-clip: text; }
+.dock { background: linear-gradient(var(--sk-dock), var(--sk-dock)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border-top-color: var(--sk-dock-line); }
+.ddot { border-color: var(--sk-ddot); }
+.ddot.filled { background: var(--sk-ddot); }
+.orb, .orb-halo, .orb-ring, .orb-fallback { filter: var(--sk-orb); }
+.orb-halo { filter: blur(9px) var(--sk-orb); }
+.tr-copy { background: linear-gradient(var(--sk-tour), var(--sk-tour)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); }
+.tr-spot { box-shadow: 0 0 0 200vmax var(--sk-dim); }
+.tour.tr-live .tr-spot, .tour.tr-open .tr-spot { box-shadow: 0 0 0 200vmax rgba(0, 0, 0, 0); }
+
+/* typefaces: the clock carries the skin's voice; sizes and positions stay the shell's */
+html[data-skin="grove"] .home-time { font-family: 'Sk Fraunces', Georgia, serif; font-weight: 300; letter-spacing: -.03em; }
+html[data-skin="tide"] .home-time { font-family: 'Sk Jost', ui-sans-serif, sans-serif; font-weight: 200; letter-spacing: -.03em; }
+html[data-skin="ember"] .home-time { font-family: 'Sk Cormorant', Georgia, serif; font-style: italic; font-weight: 300; letter-spacing: -.02em; }
+html[data-skin="signal"] .home-time { font-family: 'Sk Mono', ui-monospace, monospace; font-weight: 200; letter-spacing: -.07em; }
+html[data-skin="signal"] .now-card .k, html[data-skin="signal"] .home-date { font-family: 'Sk Mono', ui-monospace, monospace; font-weight: 500; }
+
+/* card shape per skin (same padding and size) */
+html[data-skin="grove"] .now-card { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), inset 0 -10px 20px rgba(0, 0, 0, .16); }
+html[data-skin="ember"] .now-card { box-shadow: 0 0 30px -10px rgba(255, 138, 61, .35); }
+html[data-skin="signal"] .now-card { border-radius: 2px; }
+html[data-skin="signal"] .now-card::before, html[data-skin="signal"] .now-card::after { content: ""; position: absolute; width: 8px; height: 8px; border: 1.5px solid var(--green); pointer-events: none; }
+html[data-skin="signal"] .now-card { position: relative; }
+html[data-skin="signal"] .now-card::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; }
+html[data-skin="signal"] .now-card::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+html[data-skin="signal"] .now-card .pip { border-radius: 1px; }
+/* Keep green for state and action, while list copy leans closer to white so hierarchy reads before hue.
+   Saved drafts keep their amber semantic preview instead of inheriting thread-copy paint. */
+html[data-skin="signal"] .ch-row:not(.draft) .tp b { color: color-mix(in srgb, var(--ink-2) 82%, white); }
+html[data-skin="signal"] .ch-row:not(.draft) .pv { color: color-mix(in srgb, var(--ink-3) 72%, white); }
+html[data-skin="signal"] .ch-row.unread .tp b { color: color-mix(in srgb, var(--ink) 86%, white); }
+html[data-skin="signal"] .ch-row.unread .pv { color: color-mix(in srgb, var(--ink-2) 76%, white); }
+
+/* the space-only layers fade out under other skins (opacity set by skins.js while browsing) */
+.stars, .nebula { opacity: var(--sk-space, 1); }
+
+.tr-skip { background: linear-gradient(var(--sk-tour), var(--sk-tour)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); color: var(--ink); }
+
+/* Solid is the inherited default, not a skin policy: :where() keeps fallback specificity
+   low so explicit package skin and My skin rules win normally. Never rewrite their CSS.
+   Panels the space look paints with literal violet-blacks: every other skin paints them from its own tokens.
+   Same boxes, same blur; only the fill and text colour change. */
+/* Windows (Chats and every hosted app) sit on the skin's window material: near-black tinted with the skin's hue,
+   like Nebula's. Sheets and cards keep the richer --glass-2. (James, 12 Oct: app backgrounds closer to black.) */
+html:not([data-skin="nebula"]) .win { background: var(--sk-win); color: var(--ink); }
+/* Settings › Look › Window opacity: once the owner picks a value, every window (framed or borderless, every skin) uses
+   the shared glass token, so one number sets them all. Untouched = each skin exactly as shipped. */
+html[data-win-glass] .win { background: var(--sk-win); }
+/* Wizard desktop keeps its own opaque palette materials on canvas AND images.
+   Strip only alpha; mixing over --wz-panel would change the palette's surface tint. */
+html[data-shell="desktop"][data-wizard-backgrounds] :is(.dsettings, .sheet, .wmenu, .pk-card, .ov-card, .dv-sheet, .ch-sheet-b, .pal-card, .keys-card, .inbox, .bar, .now-card, .home-card, .home .rs-widget, .home-unsent, .home-tools button) {
+  background: color(from var(--glass-2) srgb r g b / 1);
+  color: var(--ink);
+}
+html[data-shell="desktop"][data-wizard-backgrounds] .win {
+  background: color(from var(--sk-win) srgb r g b / 1);
+  color: var(--ink);
+}
+/* Other image skins retain their existing Appearance v1 surface policy. */
+html[data-shell="desktop"][data-image-background]:not([data-wizard-backgrounds]) :is(.win, .dsettings, .sheet, .wmenu, .pk-card, .ov-card, .dv-sheet, .ch-sheet-b, .pal-card, .keys-card, .inbox, .bar, .now-card, .home-card, .home .rs-widget, .home-unsent, .home-tools button) {
+  background: var(--wz-panel, var(--wz-base, var(--bg)));
+  color: var(--wz-text, var(--ink));
+}
+:where(html:not([data-skin="nebula"])) :is(.sheet, .wmenu, .pk-card, .ov-card, .dv-sheet, .ch-sheet-b, .ch-fcard, .wx-fcard, .ls-panel) { background: linear-gradient(var(--glass-2), var(--glass-2)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); color: var(--ink); }
+:where(html:not([data-skin="nebula"])) .ov-card.ov-home { background: linear-gradient(var(--glass-2), var(--glass-2)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); }
+:where(html:not([data-skin="nebula"])) :is(.desk-label, .timer, .arc, .transcript, .toast, .scrub .sc-label, .dv-update, .ch-pill, .wx-banner) { background: linear-gradient(var(--sk-tour), var(--sk-tour)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); color: var(--ink); }
+html:not([data-skin="nebula"]) .device { background: var(--bg); }
+/* A take's controls follow the skin too. The phone dock's Cancel / Pause / Screenshot / Attach discs (styles.css
+   `.device:not(.orb-corner) .voice .arc`, a fixed navy) and the desktop's recording pill and its tray (desktop.css,
+   a fixed navy under --ink) out-ranked the rule above, so on a light skin they read black on navy. Here they are the
+   skin's own panel, ink and lines (Nebula keeps the original navy). */
+:where(html:not([data-skin="nebula"]) .device .voice) .arc { background: linear-gradient(var(--sk-tour), var(--sk-tour)), var(--wz-panel, var(--wz-base, var(--bg))); border-color: var(--line-2); color: var(--ink); }
+:where(html:not([data-skin="nebula"]) .device .voice) .arc-left { color: var(--red, var(--ink)); }
+:where(html:not([data-skin="nebula"]) .device .voice) .arc:active { background: color-mix(in srgb, var(--ink) 14%, var(--wz-panel, var(--wz-base, var(--bg)))); }
+:where(html:not([data-skin="nebula"]) .device .voice) .arc-right.has { background: color-mix(in srgb, var(--violet) 16%, var(--wz-panel, var(--wz-base, var(--bg)))); border-color: color-mix(in srgb, var(--violet) 55%, transparent); }
+:where(html:not([data-skin="nebula"]) .device[data-voice="paused"] .voice) .arc-mid { background: color-mix(in srgb, var(--amber) 18%, var(--wz-panel, var(--wz-base, var(--bg)))); border-color: color-mix(in srgb, var(--amber) 55%, transparent); color: var(--amber); }
+:where(html:not([data-skin="nebula"]) .device .voice) .arc-count { background: var(--violet-2); color: var(--bg); }
+:where(html:not([data-skin="nebula"])) :is(#voicePill, #voicePill .voice-tray) { background: linear-gradient(var(--sk-tour), var(--sk-tour)), var(--wz-panel, var(--wz-base, var(--bg))); color: var(--ink); }
+:where(html:not([data-skin="nebula"])) #voicePill .lvl { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+:where(html:not([data-skin="nebula"])) #voiceCancel { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink-2); }
+:where(html:not([data-skin="nebula"])) #voiceCancel:hover { background: color-mix(in srgb, var(--pink) 25%, transparent); color: var(--ink); }
+:where(html:not([data-skin="nebula"])) #voicePill .voice-extras button { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+:where(html:not([data-skin="nebula"])) #voicePill .voice-extras button:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 14%, transparent); }
+
+/* ---------- Settings → Look → Skin (picker: five swatches, tap applies at once) ---------- */
+.sk-row { display: block; padding: 12px 10px 10px; }
+.sk-row .sk-head { display: flex; align-items: center; gap: 12px; padding: 0 2px 10px; }
+.sk-sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.sk-opt { position: relative; min-height: 70px; min-width: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 2px; border-radius: 14px; border: 1px solid transparent; background: none; color: var(--ink-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.sk-opt[aria-pressed="true"] { border-color: var(--line-2); background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
+.sk-dot { position: relative; width: 34px; height: 34px; border-radius: 50%; background: var(--sk-bg); border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 0 0 7px var(--sk-bg), inset 0 0 0 20px var(--sk-ac); }
+.sk-opt[aria-pressed="true"] .sk-dot::after { content: "✓"; position: absolute; right: -5px; bottom: -4px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--violet-2); color: var(--bg); font-size: 10px; font-weight: 900; line-height: 1; }
+/* Skin cards (one per skin, its palettes as a dot strip), then the Colours row for the worn skin. */
+.sk-fam { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; margin: 0 0 10px; }
+.sk-famopt { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line);
+  background: none; color: var(--ink-2); font: inherit; text-align: left; cursor: pointer; }
+.sk-famopt[aria-pressed="true"] { border-color: transparent; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 60%, transparent); }
+.sk-famopt[aria-pressed="true"] .sk-ftx b::after { content: " ✓"; font-weight: 700; }
+.sk-fdots { display: flex; flex: none; }
+.sk-fdots i { width: 18px; height: 18px; border-radius: 50%; margin-left: -6px; background: var(--sk-bg); border: 1px solid rgba(255, 255, 255, .18);
+  box-shadow: inset 0 0 0 3px var(--sk-bg), inset 0 0 0 9px var(--sk-ac); }
+.sk-fdots i:first-child { margin-left: 0; }
+.sk-ftx { display: flex; flex-direction: column; min-width: 0; }
+.sk-ftx b { font-size: 14px; font-weight: 650; }
+.sk-ftx small { font-size: 12px; color: var(--ink-2); }
+.sk-sub { padding: 0 2px 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+/* My skin row (Settings › Look): Edit opens skin.css in Files, Reset empties it. Optional script approval is device-local. Skin tokens only. */
+.my-skin-row { margin: 8px 0 0; }
+/* My skin worn: the owner's own skin leads Look, ringed in ink so it reads on dark and light palettes alike. */
+.my-skin-row[data-myskin-row] { margin: 0 0 8px; }
+.my-skin-row.worn { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 55%, transparent); border-radius: 16px; }
+.my-skin-row .st-tx { min-width: 0; overflow-wrap: anywhere; }
+.my-skin-row .ms-acts button:disabled { opacity: .5; cursor: wait; }
+.my-skin-row .ms-acts { display: flex; gap: 6px; flex: none; }
+.my-skin-row .ms-acts button { min-height: 44px; padding: 6px 14px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); font-size: 13px; font-weight: 650; }
+.my-skin-row .ms-acts button.ghost { background: transparent; border: 1px solid var(--line-2); color: var(--ink-2); }
+
+/* Skin picker (Settings › Look): small preview cards in one flat grid, one per look.
+ * Each card is a miniature of its look drawn from that look's own tokens (--p-*): background, two reply lines, a sent
+ * bubble, the dock and its orb. The name below is set in the look's own face (inline, from WosSkin.list face).
+ * Selected = a ring with a gap plus a small check. */
+.st-root .skp-all { margin: 2px 0 4px; }
+.st-root .skp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px clamp(10px, 3.6vw, 16px); margin: 10px 0 0; padding: 4px; }
+html[data-shell="desktop"] .st-root .skp { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+.st-root .skp-card { position: relative; container-type: inline-size; display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-width: 0; padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.st-root .skp-mini { position: relative; display: block; aspect-ratio: 4 / 5; border-radius: 14px; overflow: hidden; background: var(--p-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent); transition: box-shadow .18s ease, transform .18s ease; }
+.st-root .skp-card:active .skp-mini { transform: scale(.97); }
+.st-root .skp-mini i { position: absolute; display: block; }
+.st-root .skp-a { left: 12%; top: 16%; width: 56%; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--p-ink) 70%, transparent); }
+.st-root .skp-a2 { top: 24%; width: 38%; background: color-mix(in srgb, var(--p-ink) 42%, transparent); }
+.st-root .skp-u { right: 11%; top: 38%; width: 46%; height: 15px; border-radius: 9px 9px 3px 9px; background: color-mix(in srgb, var(--p-ac) 42%, var(--p-bg)); }
+.st-root .skp-dock { left: 0; right: 0; bottom: 0; height: 21%; background: var(--p-dock, var(--p-bg)); border-top: 1px solid var(--p-dl, transparent); }
+.st-root .skp-orb { left: 50%; top: 50%; width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--p-ac2, var(--p-ac)) 70%, #fff), var(--p-ac) 55%, var(--p-pk, var(--p-ac))); box-shadow: 0 0 10px color-mix(in srgb, var(--p-ac) 50%, transparent); }
+.st-root .skp-nm { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; padding: 0; font-size: min(14px, 15.2cqi); line-height: 18px; min-height: 18px; letter-spacing: -.005em; text-align: center; text-wrap: balance; overflow-wrap: anywhere; overflow: hidden; color: var(--ink-2); transition: color .18s ease; }
+/* optical match: each face at the size where it reads like the others */
+.st-root .skp-card[data-skinpick="tide"] .skp-nm { font-size: min(14.5px, 16cqi); }
+.st-root .skp-card[data-skinpick="ember"] .skp-nm { font-size: min(17px, 19cqi); }
+.st-root .skp-card[data-skinpick="signal"] .skp-nm { font-size: min(13px, 14.5cqi); letter-spacing: -.02em; }
+.st-root .skp-wait .skp-nm { visibility: hidden; }
+.st-root .skp-card[aria-pressed="true"] .skp-mini { box-shadow: 0 0 0 2.5px var(--bg), 0 0 0 4px var(--ink); }
+.st-root .skp-card[aria-pressed="true"] .skp-nm { color: var(--ink); }
+.st-root .skp-card[aria-pressed="true"]::after { content: "✓"; position: absolute; top: 7px; right: 7px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--ink); color: var(--bg); font-size: 11px; font-weight: 900; line-height: 1; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+.st-root .skp-card:focus-visible { outline: none; }
+.st-root .skp-card:focus-visible .skp-mini { box-shadow: 0 0 0 2.5px var(--bg), 0 0 0 4px color-mix(in srgb, var(--ink) 55%, transparent); }
+/* Living-background colours per look (the canvas scenes, reduced to a few CSS layers). */
+.st-root .skp-mini[data-skp="nebula"] { background: radial-gradient(70% 50% at 25% 30%, rgba(143,99,255,.55), transparent 70%), radial-gradient(60% 45% at 80% 60%, rgba(255,92,207,.32), transparent 70%), radial-gradient(50% 40% at 60% 15%, rgba(63,224,255,.22), transparent 70%), #05030c; }
+.st-root .skp-mini[data-skp="grove"] { background: radial-gradient(60% 45% at 72% 20%, rgba(255,226,140,.24), transparent 70%), radial-gradient(70% 40% at 20% 75%, rgba(79,138,82,.28), transparent 70%), linear-gradient(160deg, #13281d, #08130c 55%, #040906); }
+.st-root .skp-mini[data-skp="tide"] { background: radial-gradient(70% 35% at 50% 0%, rgba(255,214,150,.22), transparent 75%), linear-gradient(180deg, #0d5466, #073746 45%, #021219); }
+.st-root .skp-mini[data-skp="ember"] { background: radial-gradient(90% 60% at 50% 105%, rgba(255,110,30,.55), rgba(180,50,10,.18) 45%, transparent 75%), #0d0705; }
+.st-root .skp-mini[data-skp="signal"] { background: radial-gradient(circle, rgba(57,255,140,.16) .7px, transparent 1.1px) 0 0 / 7px 7px, #000; }
+.st-root .skp-mini[data-skp="novairecito"] { background: radial-gradient(75% 50% at 30% 20%, rgba(148,108,255,.30), transparent 70%), #05030a; }
+.st-root .skp-mini[data-skp="sepia"] { background: radial-gradient(80% 60% at 30% 20%, rgba(255,250,232,.6), transparent 70%), #f3ead2; }
+.st-root .skp-mini[data-skp="obsidian"] { background: radial-gradient(80% 55% at 30% 25%, rgba(255,255,255,.12), transparent 70%), #000; }
+.st-root .skp-mini[data-skp="obsidian-light"] { background: #fff; }
+.st-root .skp-mini[data-skp="obsidian-light"] .skp-u { background: #ececec; }
+.st-root .skp-mini[data-skp="obsidian"] .skp-u { background: #2f2f2f; box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+.st-root .skp-mini[data-skp="landscapes"] { background: linear-gradient(180deg, rgba(11,10,16,.42), transparent 34%, transparent 66%, rgba(11,10,16,.5)), url(../skins/landscapes/preview-dark.webp) center / cover, #18253e; }
+.st-root .skp-mini[data-skp="landscapes-light"] { background: linear-gradient(180deg, rgba(11,10,16,.42), transparent 34%, transparent 66%, rgba(11,10,16,.5)), url(../skins/landscapes/preview.webp) center / cover, #4d8da3; }
+.st-root .skp-mini[data-skp^="landscapes"] .skp-a { background: rgba(255,255,255,.92); }
+.st-root .skp-mini[data-skp^="landscapes"] .skp-a2 { background: rgba(255,255,255,.62); }
+.st-root .skp-mini[data-skp^="landscapes"] .skp-u { background: rgba(255,255,255,.8); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); box-shadow: 0 1px 6px rgba(0,0,0,.18); }
+.st-root .skp-mini[data-skp="landscapes-light"] .skp-u { background: rgba(250,250,252,.88); }
+.st-root .skp-mini[data-skp^="landscapes"] .skp-dock { border-radius: 0 0 14px 14px; background: rgba(11,10,16,.5); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.st-root .skp-mini[data-skp^="obsidian"] .skp-orb { background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--p-ink) 35%, var(--p-bg)), var(--p-ink) 80%); box-shadow: none; }
+.st-root .skp-mini[data-skp^="landscapes"] .skp-orb { background: radial-gradient(circle at 35% 30%, #fff, #d8e9ee 55%, #6fb3c4); box-shadow: 0 0 8px rgba(255,255,255,.45); }
+/* Settings › Look › Layout (core: the row exists for every skin; layouts themselves live in web/layouts/). */
+.layout-row { flex-wrap: wrap; }
+.layout-row .layout-acts { display: flex; gap: 6px; flex: none; }
+.layout-row .layout-acts button { min-height: 44px; padding: 6px 14px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); font-size: 13px; font-weight: 650; }
+.layout-row .layout-acts button[aria-pressed="true"] { background: var(--wz-accent, var(--violet-2, #8f63ff)); color: var(--wz-on-accent, #fff); }
+
+/* ---------- Wizard skins (phone): the orb wears the current desk's app icon, in white ----------
+ * James, 23 Oct 2026: the highlighted desk icon appears as its white version inside the orb, so the orb reads as
+ * the app in view. app.js keeps #orbApp in step with the desk (paintOrbApp); Miguel's skins and the two-orb layout
+ * style it their own way. The icon steps aside while the orb is recording. */
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner) .dock .orb-app:not(:empty) {
+  display: grid; place-items: center; position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: .96; transition: opacity 160ms; }
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner) .dock .orb-app .dsg { display: grid; place-items: center; width: 46%; height: 46%; opacity: 1; background: none; border: 0; box-shadow: none; }
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner) .dock .orb-app :is(.dn, .dbg) { display: none; }
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner) .dock .orb-app .sgi {
+  width: 100%; height: 100%; background: #fff; filter: drop-shadow(0 0 3px rgba(20, 10, 40, .55)) drop-shadow(0 1px 1.5px rgba(0, 0, 0, .45)); }
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner) .dock .orb-app .sgi:is(.sg-hat, .sg-hat-private) { -webkit-mask-size: auto 82%; mask-size: auto 82%; }
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner) .dock .orb-app :is(img, svg) { max-width: 100%; max-height: 100%; filter: brightness(0) invert(1) drop-shadow(0 0 3px rgba(20, 10, 40, .55)); }
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner):is([data-voice="listen"], [data-voice="paused"], [data-voice="command"]) .dock .orb-app,
+html:is([data-skin="nebula"], [data-skin="grove"], [data-skin="tide"], [data-skin="ember"], [data-skin="signal"]):not([data-shell="desktop"]):not([data-layout="two-orb"]) .device:not(.orb-corner)[data-sheet="launcher"] .dock .orb-app { opacity: 0; }

@@ -1,0 +1,21 @@
+/* WizAttachChip (core/attach-chip.js): the one "about to send" attachment chip, in Chats' tray and in apps
+ * (WizardApp.attachChip). Colours come from the page's own tokens (Chats: --line/--ink-*; apps: the same names or
+ * the Wizard skin's --wz-*), so the chip wears whatever skin is on. Class names are a contract skins may style. */
+.ch-att { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; max-width: 220px; padding: 5px 6px 5px 5px; border-radius: 14px; background: rgba(205, 190, 255, .07); border: 1px solid var(--line, var(--wz-border, rgba(255, 255, 255, .12))); box-sizing: border-box; }
+.ch-att.up { position: relative; overflow: hidden; opacity: .7; }
+.ch-att img, .ch-att .ic { flex: 0 0 auto; width: 38px; height: 38px; border-radius: 10px; object-fit: cover; display: grid; place-items: center; background: rgba(0, 0, 0, .25); }
+.ch-att .ic svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-2, var(--wz-text, currentColor)); stroke-width: 1.8; stroke-linecap: round; }
+.ch-att .nm { min-width: 0; display: flex; flex-direction: column; font-size: 12.5px; color: var(--ink-2, var(--wz-text, inherit)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-att .nm small { font-size: 11px; color: var(--ink-3, var(--wz-text-muted, #999)); }
+.ch-att.up .nm small { font-variant-numeric: tabular-nums; }
+.ch-att .ch-attrm { flex: 0 0 auto; width: 24px; height: 24px; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .35); color: var(--ink-2, var(--wz-text, #ddd)); font-size: 16px; line-height: 1; cursor: pointer; }
+.ch-att.ch-attimg { position: relative; display: block; max-width: none; width: 92px; height: 92px; padding: 0; overflow: hidden; border-radius: 14px; }
+.ch-att.ch-attimg img { width: 100%; height: 100%; border-radius: 0; object-fit: cover; display: block; }
+.ch-att.ch-attimg .ch-attrm { position: absolute; top: 5px; right: 5px; background: rgba(0, 0, 0, .6); color: #fff; }
+.ch-attspin { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 2.5px solid rgba(255, 255, 255, .3); border-top-color: #fff; animation: ch-attspin .8s linear infinite; }
+@keyframes ch-attspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ch-attspin { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; } }
+.ch-att .ch-attbar { position: absolute; left: 0; bottom: 0; height: 3px; width: var(--up, 0%); background: var(--accent, var(--wz-accent, #b9a6ff)); border-radius: 0 2px 2px 0; transition: width .2s linear; }
+.ch-att.up.wait .ch-attbar { background: var(--ink-3, #888); animation: ch-attwait 1.2s ease-in-out infinite; }
+@keyframes ch-attwait { 50% { opacity: .35; } }
+.ch-att.ch-attimg .ch-attpct { position: absolute; left: 0; right: 0; top: 50%; margin-top: 14px; text-align: center; font: 600 11px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .7); }

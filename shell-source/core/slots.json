@@ -1,0 +1,44 @@
+{
+  "apiVersion": 1,
+  "slots": {
+    "thread-switch-row-end": {
+      "since": 1
+    },
+    "thread-header-actions": {
+      "since": 1
+    },
+    "list-top": {
+      "since": 1
+    },
+    "composer-end": {
+      "since": 1
+    },
+    "home-top": {
+      "since": 1
+    },
+    "dock-end": {
+      "since": 1
+    },
+    "device-edge": {
+      "since": 1
+    },
+    "ready-top": {
+      "since": 1
+    },
+    "ready-end": {
+      "since": 1
+    },
+    "archive-top": {
+      "since": 1
+    },
+    "home-main": {
+      "since": 1
+    },
+    "bar-start": {
+      "since": 1
+    },
+    "bar-center": {
+      "since": 1
+    }
+  }
+}

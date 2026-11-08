@@ -1,0 +1,21 @@
+/* In-document Appearance v1 aliases: live CSS references, never a copied palette. */
+.chats-view, .ch-incog-toggle, .ch-incognito {
+  --wz-canvas: transparent; --wz-base: var(--bg, #05030c);
+  --wz-chrome: var(--sk-win); --wz-overlay: var(--glass-2);
+  --wz-text: var(--ink, #f3efff); --wz-text-secondary: var(--ink-2); --wz-text-muted: var(--ink-3);
+  --wz-border: var(--line-2); --wz-accent: var(--violet-2);
+  --wz-surface: color-mix(in srgb, var(--ink) 6%, transparent);
+  --wz-surface-raised: color-mix(in srgb, var(--ink) 10%, transparent);
+  --wz-accent-soft: color-mix(in srgb, var(--violet-2) 16%, transparent);
+  --wz-on-accent: var(--bg); --wz-reader-surface: transparent;
+  background: var(--wz-canvas); color: var(--wz-text);
+}
+.chats-fixture { overflow: auto; padding: 16px; background: var(--wz-canvas); color: var(--wz-text); }
+.chats-fixture h2 { margin: 0 0 8px; font-size: 18px; }
+.chats-fixture p { color: var(--wz-text-secondary); }
+.chats-fixture h3 { margin: 22px 0 8px; font-size: 13px; color: var(--wz-text-secondary); }
+.chats-fixture button { display: block; text-align: start; width: 100%; min-height: 44px; padding: 10px; margin: 4px 0; border: 1px solid var(--wz-border); border-radius: 8px; background: var(--wz-surface); color: var(--wz-text); font: inherit; cursor: pointer; }
+.chats-fixture button.unread { font-weight: 700; border-inline-start: 3px solid var(--wz-accent); }
+.chats-fixture button:focus-visible { outline: 2px solid var(--wz-accent); outline-offset: 2px; }
+.chats-fixture { font-family: monospace; }
+.chats-fixture button { border-radius: 2px; }

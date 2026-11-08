@@ -1,0 +1,88 @@
+/* Skin-owned spacing: open app heading, floating X, no window perimeter. */
+html[data-skin-frame] .win { border-width: var(--sf-border, 1px); border-radius: var(--sf-radius, 18px); }
+html[data-shell="desktop"][data-skin-frame] .win { border-radius: var(--sf-radius, var(--radius)); }
+html[data-skin-frame] .tiles:not(.has-full) { left: var(--sf-gutter, 10px); right: var(--sf-gutter, 10px); gap: var(--sf-gap, var(--gap)); }
+/* The app canvas fills the display; spacing belongs INSIDE that canvas. */
+html[data-skin-frame="borderless"] .tiles {
+  top: 0; bottom: calc(var(--dock-h) + var(--safe-b));
+}
+html[data-skin-frame="borderless"] .win {
+  background: var(--sk-win); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  padding: 4px 0 0; box-sizing: border-box;
+}
+/* The heading continues the app's own canvas: the opaque colour the shell measured along the app's top edge
+ * (--frame-top: a full-width header, gradient or hero image), else its page background (--frame-bg), else the frame fill.
+ * Themed apps are transparent below their art, so there --frame-top paints only the heading band (--sf-head) and the
+ * rest of the window keeps the skin material. */
+html[data-skin-frame="borderless"] .win:has(> .wbody iframe):not(.wz-themed) { background: var(--frame-top, var(--frame-bg, #0f1014)); }
+html[data-shell="desktop"][data-skin-frame="borderless"] .win:has(> .wbody iframe):not(.wz-themed) { background: var(--frame-top, var(--frame-bg, #05030c)); }
+/* That heading is the app's colour, not the skin's, so its title and buttons take an ink that reads on it: light on
+ * the dark default (a light skin's dark ink vanished there, e.g. Landscapes Light), dark on a heading the shell
+ * measured as light (.edge-light). Settings keeps the skin material and ink. */
+html[data-skin-frame="borderless"] .win:has(> .wbody iframe):not(.wz-themed):not(:has(> .wbody .st-embed iframe)) > .wbar {
+  --ink: white; --ink-2: color-mix(in srgb, white 78%, transparent); --ink-3: color-mix(in srgb, white 58%, transparent);
+}
+html[data-skin-frame="borderless"] .win.edge-light:has(> .wbody iframe):not(.wz-themed):not(:has(> .wbody .st-embed iframe)) > .wbar {
+  --ink: black; --ink-2: color-mix(in srgb, black 76%, transparent); --ink-3: color-mix(in srgb, black 56%, transparent);
+}
+/* Settings is not an app window: a page it embeds (.st-embed, Settings › Connections) leaves it the skin material. */
+html[data-skin-frame="borderless"] .win:has(> .wbody .st-embed iframe):not(.wz-themed),
+html[data-shell="desktop"][data-skin-frame="borderless"] .win:has(> .wbody .st-embed iframe):not(.wz-themed) { background: var(--sk-win); }
+html[data-skin-frame="borderless"] .win.wz-themed:has(> .wbody iframe) {
+  background: linear-gradient(var(--frame-top, transparent), var(--frame-top, transparent)) top / 100% var(--sf-head, 48px) no-repeat,
+    var(--frame-bg, var(--sk-win));
+}
+html[data-shell="phone"][data-skin-frame="borderless"] .win {
+  padding-top: calc(4px + var(--sb) + var(--safe-t));
+  --sf-head: calc(48px + var(--sb) + var(--safe-t));
+}
+html[data-skin-frame="borderless"] .tiles.has-full .win.full { border-radius: var(--sf-radius, 0px); }
+/* App content is full-bleed: apps own their content gutters, so hero art and backgrounds reach the screen edges.
+ * --sf-padding insets only the shell heading. */
+html[data-skin-frame="borderless"] .win > .wbody { background: transparent; border-radius: 0; overflow: hidden; }
+/* An app heading, not a bordered toolbar. Search and app content begin below it. */
+html[data-skin-frame="borderless"] .win > .wbar {
+  position: relative; height: 44px; min-height: 44px; flex: 0 0 44px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 calc(48px + var(--sf-padding, 16px)) 0 var(--sf-padding, 16px);
+  border: 0; background: transparent; overflow: visible; box-sizing: border-box;
+}
+html[data-skin-frame="borderless"] .wbar > :is(.wic, .ic),
+html[data-skin-frame="borderless"] .wbar > button,
+html[data-skin-frame="borderless"] .wbar > .wroute-slot { display: none; }
+html[data-skin-frame="borderless"] .wbar > :is(.wt, .t) {
+  flex: 1; min-width: 0; font-size: 17px; line-height: 1.25; font-weight: 600;
+  letter-spacing: -.02em; color: var(--ink); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+html[data-skin-frame="borderless"] .wbar > [data-wact="close"] {
+  position: absolute; top: 0; right: calc(var(--sf-padding, 16px) - 6px); display: grid;
+  min-width: 44px; width: 44px; height: 44px; border-radius: 50%; color: var(--ink-2);
+  background: transparent;   /* stands on the heading, which already carries the app's canvas colour */
+}
+html[data-skin-frame="borderless"] .wbar > [data-wact="close"]:focus-visible { outline: 2px solid var(--violet-2); outline-offset: -3px; }
+html[data-skin-frame="borderless"] .wbar > [data-wact="close"]:hover { color: var(--ink); background: var(--glass-2); }
+/* Contextual detach/binding controls keep their established direct actions. */
+html[data-skin-frame="borderless"] .wbar > .wpin { display: flex; max-width: 35%; overflow: hidden; }
+/* App title-bar tools stay visible on the borderless heading (they are the app's own controls). */
+html[data-skin-frame="borderless"] .wbar > .wtools { display: flex; }
+html[data-skin-frame="borderless"] .wbar.has-tools > :is(.wt, .t) { flex: 1 1 auto; }
+html[data-skin-frame="borderless"] .shield { top: 48px; }
+html[data-skin-frame="borderless"] .tiles[data-n="3"] .win:not(:first-child) .wt,
+html[data-skin-frame="borderless"] .tiles[data-n="4"] .wt { font-size: 15px; }
+/* Explicit immersive fullscreen retains its existing exit/Back behavior. */
+html[data-skin-frame] .device.immersive .win.full,
+html[data-skin-frame] .wsp .win.full { border: 0; border-radius: 0; padding: 0; }
+html[data-skin-frame] .device.immersive .win.full > .wbar,
+html[data-skin-frame] .wsp .win.full > .wbar { display: none; }
+html[data-skin-frame="borderless"] .device.wx-on .tiles { top: var(--wx-banner-height, 44px); }
+/* Shared Settings is the sole comparison/import surface; no preview furniture. */
+.sf-section { padding: 10px 12px; }
+.sf-section p { font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+.sf-choices { display: flex; gap: 6px; }
+.sf-choices button, .sf-import, .sf-reset { min-height: 44px; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--ink-2); font: inherit; cursor: pointer; }
+.sf-choices button[aria-pressed="true"] { background: var(--glass-2); border-color: var(--violet-2); color: var(--ink); }
+.sf-import { display: inline-flex; align-items: center; margin-top: 8px; }
+.sf-reset { margin: 8px 0 0 6px; }
+.sf-error { color: var(--red); }
+html.sf-preview #wiz-staging-tag { display: none !important; }
