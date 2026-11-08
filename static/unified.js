@@ -111,7 +111,7 @@
     return {left:Math.max(left, Math.min(anchor.left, right - width)),
       top:Math.max(top, Math.min(above >= top ? above : below, bottom - height)), width, height};
   }
-  // Inbox order: pinned first, then newest last message. With "Drafts at top" on (Settings, off by default; #133),
+  // Inbox order: pinned first, then newest last message. With "Drafts at top" on (Settings, off by default; issue 133),
   // chats with a waiting draft (yours or your Wizard's) lead the list, newest draft first, like WhatsApp/Telegram.
   // draftOf(row) returns that chat's draft ({updated}) or null. Never changes the input array.
   function chatOrder(rows, {draftsFirst = false, draftOf = () => null} = {}) {
@@ -3980,7 +3980,7 @@
     }
     paint(); return row;
   }
-  // Drafts at top (#133, off by default, this device): chats with a waiting draft lead the Inbox. Same Off/On
+  // Drafts at top (issue 133, off by default, this device): chats with a waiting draft lead the Inbox. Same Off/On
   // radio pattern and per-device storage as Inbox view; drawList() reads it through chatOrder().
   const DRAFTS_FIRST_KEY = 'messenger.draftsFirst';
   function draftsFirst() { try { return localStorage.getItem(DRAFTS_FIRST_KEY) === '1'; } catch { return false; } }
