@@ -1,0 +1,304 @@
+/* Schedules uses the existing Settings cards and confirmation sheet in both shells. */
+.sc-group > .st-actions { margin: 0 0 16px; }
+.sc-row { padding: 14px 4px; border-bottom: 1px solid var(--wz-border); }
+.sc-head { display: flex; gap: 12px; align-items: center; }
+.sc-head button { flex: none; border: 1px solid var(--wz-border); border-radius: 16px; padding: 8px 14px; color: var(--wz-text-secondary); background: var(--wz-surface-raised); }
+.sc-head button[aria-checked="true"] { color: var(--wz-text); background: var(--wz-accent-soft); border-color: var(--wz-accent); }
+.sc-row b, .sc-import b { overflow-wrap: anywhere; }
+.sc-chat { color: var(--wz-text-secondary); font-size:var(--wz-text-sm); margin-top: 4px; }
+.sc-chat button { color: var(--wz-accent); background: transparent; padding: 0; text-align: left; text-decoration: underline; overflow-wrap: anywhere; max-width: 100%; }
+.sc-last { color: var(--wz-text-muted); margin: 6px 0; font-size:var(--wz-text-sm); }
+.sc-scrim { align-items: end; }
+.sc-sheet { width: min(520px, 100%); max-height: 100%; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
+.sc-sheet > .st-actions { position: sticky; bottom: -20px; margin: 12px -20px -20px; padding: 12px 20px 20px; background: linear-gradient(var(--wz-overlay), var(--wz-overlay)), var(--wz-base); }
+.sc-sheet label { display: grid; gap: 6px; font-size:var(--wz-text-md); color: var(--wz-text-secondary); margin: 12px 0; }
+.sc-sheet input, .sc-sheet textarea, .sc-sheet select { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--wz-border); border-radius: 10px; padding: 12px; background: var(--wz-surface); color: var(--wz-text); font: inherit; min-height: 48px; }
+.sc-sheet option { background: var(--wz-base); color: var(--wz-text); }
+.sc-sheet :is(input, textarea, select):focus-visible { outline: 2px solid var(--wz-accent); outline-offset: 1px; }
+.sc-sheet fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.sc-import { list-style: none; padding: 0; }
+.sc-import li { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--wz-border); }
+.sc-import small { color: var(--wz-text-secondary); }
+.sc-error { color: var(--wz-text); border-left: 2px solid var(--wz-accent); padding-left: 10px; overflow-wrap: anywhere; }
+@media (min-width: 700px) { .sc-scrim { align-items: center; } }
+
+/* Shared approved phone Settings controls, responsive container authored by Claude Opus.
+ * Feature selectors belong here, never in a shell-only stylesheet. */
+.st-title { margin: 6px 4px 14px; font-size:var(--wz-text-title); font-weight: 700; letter-spacing: -.01em; }
+.st-group { margin: 0 0 28px; }
+.st-group h4 { display: flex; gap: 8px; align-items: baseline; margin: 0 4px 4px; font-size:var(--wz-text-sm); font-weight: 650; letter-spacing: .02em; text-transform: none; color: var(--wz-text-muted); }
+.st-group h4 span { color: var(--wz-warning); }
+/* Every row is a plain line on the page, split by a hairline. No boxes, no icon tiles. */
+.st-row { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 12px 4px; margin: 0; border: 0; border-bottom: 1px solid var(--wz-border); border-radius: 0; background: transparent; text-align: left; color: var(--wz-text); }
+/* kit/controls.css loads later; this out-ranks .wz-row so Settings rows stay flat hairline lines. */
+.st-row.wz-row { min-height: 60px; padding: 12px 4px; border-bottom: 1px solid var(--wz-border); border-radius: 0; }
+.st-row[disabled] { opacity: .5; }
+.st-row.static { cursor: default; }
+a.st-row { color: inherit; text-decoration: none; }
+.st-pc { padding: 12px 4px 6px; border-bottom: 1px solid var(--wz-border); }
+.st-choice { flex: 0 0 auto; max-width: 112px; min-height: 44px; padding: 8px; border: 1px solid var(--wz-border); border-radius: var(--wz-radius, 12px); background: var(--wz-surface); color: var(--wz-text); font: inherit; }
+.st-choice:focus-visible { outline: 2px solid var(--wz-accent); outline-offset: 2px; }
+.st-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.st-tx b { font-size:var(--wz-font-size); font-weight: 550; line-height: 1.3; }
+.st-tx small { font-size:var(--wz-text-sm); line-height: 1.4; color: var(--wz-text-muted); margin-top: 2px; }
+.st-go { color: var(--wz-text-muted); font-size:var(--wz-text-heading); }
+.sw { flex: 0 0 44px; height: 26px; border-radius: 99px; background: var(--wz-surface-raised); position: relative; transition: background 200ms; }
+.sw i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--wz-text); transition: transform 220ms var(--ease); }
+.sw.on { background: var(--wz-accent); }
+.sw.on i { transform: translateX(18px); }
+.st-empty { padding: 14px 4px; color: var(--wz-text-secondary); font-size:var(--wz-font-size); }
+.st-note { margin: 8px 4px 0; font-size:var(--wz-text-sm); color: var(--wz-text-muted); }
+/* Out-ranks .wz-button.secondary from kit/controls.css: Retry all stays an outlined pill. */
+.st-wide, .st-wide.wz-button.secondary { width: 100%; margin-top: 12px; padding: 12px; border-radius: 99px; border: 1px solid var(--wz-border); background: transparent; color: var(--wz-text); font-size:var(--wz-font-size); font-weight: 650; }
+.ub-row { padding: 14px 4px; border-bottom: 1px solid var(--wz-border); }
+.ub-t { display: flex; gap: 8px; align-items: flex-start; font-size:var(--wz-text-lg); line-height: 1.4; }
+.ub-t svg { flex: 0 0 16px; width: 16px; height: 16px; margin-top: 2px; fill: none; stroke: var(--wz-accent); stroke-width: 1.8; }
+.ub-t span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ub-m { margin-top: 5px; font-size:var(--wz-text-md); color: var(--wz-text-muted); }
+.ub-m .fail { color: var(--wz-warning); font-weight: 700; }
+.ub-a { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.ub-a button { min-height: 44px; min-width: 48px; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--wz-border); background: transparent; color: var(--wz-text); font-size:var(--wz-text-md); font-weight: 600; }
+.ub-a button.ghost { background: transparent; border: 1px solid var(--wz-border); color: var(--wz-text-secondary); }
+
+.cx-row { padding: 14px 4px; border-bottom: 1px solid var(--wz-border); }
+.cx-t { font-size:var(--wz-text-md); color: var(--wz-text-secondary); }
+.cx-t b { color: var(--wz-text); font-weight: 650; font-variant-numeric: tabular-nums; }
+.cx-text { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--wz-surface); font-size:var(--wz-text-md); line-height: 1.45; color: var(--wz-text); white-space: pre-wrap; max-height: 40vh; overflow: auto; user-select: text; -webkit-user-select: text; }
+.cx-err { margin-top: 6px; font-size:var(--wz-text-sm); color: var(--wz-warning); }
+.cx-row .ub-a button[disabled] { opacity: .6; }
+
+
+.st-root { container: settings / inline-size; color: var(--wz-text); min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 0 calc(24px + env(safe-area-inset-bottom)); }
+.st-inner { max-inline-size: 560px; margin-inline: auto; padding-inline: 16px; }
+.st-root button { cursor: pointer; }
+.st-root button:disabled { cursor: default; }
+.st-root button:focus-visible { outline: 2px solid var(--wz-accent); outline-offset: -2px; }
+.st-root .st-tx small, .st-root .ub-m { overflow-wrap: anywhere; }
+@media (hover: hover) and (pointer: fine) { .st-root .st-row:not(:disabled):not(.static):hover, .st-root .st-category:not([aria-current="page"]):hover { background: color-mix(in srgb, var(--wz-text) 5%, transparent); } }
+.dsettings { position: fixed; inset: var(--bar-h, 34px) 0 0 auto; width: min(960px, 100vw); z-index: 40; display: flex; flex-direction: column; background: linear-gradient(var(--wz-overlay), var(--wz-overlay)), var(--wz-base); border-left: 1px solid var(--wz-border); box-shadow: -12px 0 32px color-mix(in srgb, var(--wz-base) 40%, transparent); }
+.dsettings[hidden] { display: none; }
+.dsettings .st-root { flex: 1; }
+.dsettings > .st-close { position: relative; z-index: 3; align-self: end; flex: none; width: 48px; height: 48px; color: var(--wz-text-secondary); }
+@media (max-width: 899px) { .dsettings { inset: 0; width: 100%; } }
+
+/* Skin aliases are generated once in kit/shell-tokens.css. Do not remap a
+ * --wz-* role to itself here: that invalidates every descendant value. */
+.st-root, .dsettings { color: var(--wz-text); }
+.st-root { background: transparent; }
+.st-root[data-settings-root] button:not(.st-close), .st-root summary { min-height: 48px; min-width: 48px; }
+.st-root [hidden] { display: none !important; }
+.st-root .st-inner { max-inline-size: none; }
+.st-category { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 4px; border: 0; border-bottom: 1px solid var(--wz-border); border-radius: 0; text-align: left; color: var(--wz-text); background: transparent; }
+.st-category .st-tx b { font-size:var(--wz-font-size); font-weight: 550; }
+/* A quiet value on the right (the skin name, a count) instead of a second line. */
+.st-val { flex: none; max-width: 45%; font-size:var(--wz-font-size); color: var(--wz-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.st-val:empty { display: none; }
+.st-category[aria-current="page"] .st-tx b { font-weight: 700; }
+.st-desktop .st-category[aria-current="page"] { color: var(--wz-accent); }
+.st-index .st-title { margin-bottom: 8px; }
+.st-page-head { display: flex; gap: 6px; align-items: center; margin-bottom: 16px; }
+.st-page-head h3 { margin: 0; font-size:var(--wz-text-title); font-weight: 700; }
+.st-page-head button { font-size:var(--wz-text-title); background: transparent; color: var(--wz-text); }
+.st-phone.st-in-page .st-index { display: none; }
+.st-phone:not(.st-in-page) .st-page { display: none; }
+.st-attention { margin-bottom: 4px; }
+.st-attention button { display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 56px; padding: 10px 4px; border-bottom: 1px solid var(--wz-border); background: transparent; color: var(--wz-warning); font-size:var(--wz-text-lg); font-weight: 600; text-align: left; }
+.st-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.st-actions button { padding: 10px 16px; border: 1px solid var(--wz-border); border-radius: 12px; background: var(--wz-surface-raised); color: var(--wz-text); }
+.st-actions .ghost { background: transparent; }
+.st-store-hint { font-size:var(--wz-text-sm); color: var(--wz-text-secondary); }
+.st-store-hint button { padding: 0 8px; text-decoration: underline; background: transparent; color: var(--wz-accent); }
+.st-info summary, .st-advanced summary { display: flex; align-items: center; cursor: pointer; color: var(--wz-text-secondary); }
+.st-info summary { width: 48px; justify-content: center; border-radius: 50%; background: var(--wz-surface); }
+.st-confirm-scrim { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--wz-base) 75%, transparent); }
+.st-confirm { width: min(420px, 100%); padding: 20px; border-radius: 20px; border: 1px solid var(--wz-border); background: linear-gradient(var(--wz-overlay), var(--wz-overlay)), var(--wz-base); }
+.st-confirm h3 { font-size:var(--wz-text-heading); margin: 0 0 12px; }
+.st-confirm p { color: var(--wz-text-secondary); font-size:var(--wz-text-md); }
+.dsettings .st-root { overflow: hidden; padding-bottom: 16px; }
+.st-desktop { display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; gap: 24px; }
+.st-desktop .st-index { overflow-y: auto; padding-right: 16px; border-right: 1px solid var(--wz-border); }
+.st-desktop .st-page { overflow-y: auto; min-height: 0; min-width: 0; padding-right: 8px; }
+.st-desktop .st-page-head button { display: none; }
+.st-desktop .st-page-head { min-height: 48px; }
+/* A desktop window/app panel can be narrow on a wide screen. Use the existing
+ * Settings container, not the viewport, and the same category → page → Back
+ * stack as the phone. Each visible pane owns its scroll inside the clipped host. */
+@container settings (max-width: 700px) {
+  .st-desktop { display: block; }
+  .st-desktop .st-index { height: 100%; padding-right: 0; border-right: 0; }
+  .st-desktop .st-page { height: 100%; padding-right: 0; }
+  .st-desktop.st-in-page .st-index { display: none; }
+  .st-desktop:not(.st-in-page) .st-page { display: none; }
+  .st-desktop .st-page-head button { display: block; }
+}
+
+.st-title:focus, .st-page-head h3:focus { outline: none; }
+
+
+/* Tweaks, separate from skin: one flat list, a switch per tweak, each with a small "by <author>" line. */
+.tw-group { margin-top: 20px; }
+.tw-row .tw-by { font-weight: 600; }
+.skp-own { margin-top: 20px; }
+/* About & updates: flat on the page. One update card when there is something to do, then two segmented choices.
+ * Nothing boxed inside a box; type large enough to read at arm's length; every target ≥ 48px. */
+.st-hint { margin: 0 4px 16px; font-size:var(--wz-text-md); line-height: 1.45; color: var(--wz-text-secondary); }
+.st-hint { margin-top: 10px; }
+/* The update card: one look for Update, Updating…, Couldn’t update and Reload; only its words change. */
+.osu-card { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 16px 14px 16px 18px; border-radius: 20px; background: var(--wz-accent-soft); color: var(--wz-text); }
+.osu-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.osu-tx b { font-size:var(--wz-text-heading); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; text-wrap: balance; }
+.osu-tx > span { font-size:var(--wz-font-size); line-height: 1.35; color: var(--wz-text-secondary); text-wrap: balance; }
+.st-root[data-settings-root] button.osu-go { flex: none; min-height: 48px; min-width: 88px; padding: 10px 18px; border: 0; border-radius: 99px; background: var(--wz-accent); color: var(--wz-base); font-size:var(--wz-text-lg); font-weight: 700; touch-action: manipulation; }
+.st-root[data-settings-root] button.osu-go:disabled { opacity: .5; }
+.st-root .osu-card button:focus:not(:focus-visible) { outline: none; }
+.st-root .osu-card button:focus-visible { outline: 2px solid color-mix(in srgb, var(--wz-accent) 70%, transparent); outline-offset: 2px; }
+.st-card-wrap { display: block; }
+/* No box on tap; a soft rounded ring only for keyboard focus. */
+/* Fixed hues so the three lanes read apart on every skin, light or dark; text stays the skin's own ink. */
+.st-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; border-radius: 18px; background: var(--wz-surface); }
+.st-seg button { min-height: 48px; padding: 8px 12px; border: 0; border-radius: 14px; background: transparent; color: var(--wz-text-secondary); font-size:var(--wz-text-lg); font-weight: 600; touch-action: manipulation; }
+.st-seg button[aria-checked="true"] { background: var(--wz-accent); color: var(--wz-base); font-weight: 700; }
+.st-seg button:disabled { opacity: .6; }
+/* Settings › Notifications: one line per app, its name on the left and Badge | Chats on the right. */
+.st-nr { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--wz-border); }
+.st-nr .st-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.st-nr .st-tx b { font-size: var(--wz-text-lg); font-weight: 600; color: var(--wz-text); overflow-wrap: anywhere; }
+.st-nr .st-tx small { font-size: var(--wz-text-sm); color: var(--wz-text-secondary); }
+/* The Badge | Chats picker (WosBell.picker): the same control in Settings › Notifications and in every notification
+ * opened in Chats, so it is styled once here (settings.css loads in both shells), not per place. */
+.st-nr-seg.wos-route { flex: none; width: 184px; }
+/* Four choices (Chats · Badge · Morning report · Off): columns sized to their words so every label stays whole;
+ * outranks the desktop cap on segmented controls (.st-desktop .st-seg) and the equal columns of .st-seg. */
+.st-seg.st-nr-seg.wos-route { width: auto; max-width: none; grid-auto-columns: auto; }
+.st-nr-seg.wos-route button span { white-space: nowrap; }
+.st-nr-seg.wos-route button:disabled { opacity: .35; }
+.st-nr-seg.wos-route button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 6px 10px; font-size: var(--wz-font-size); }
+.st-nr-seg.wos-route .wos-route-ic { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.st-nr-seg.wos-route [data-notify-to="badge"] .wos-route-ic { fill: currentColor; stroke: none; }
+/* The Morning Report's coffee cup is a filled glyph (512 grid), not a line icon. */
+.st-nr-seg.wos-route svg.wos-route-ic.wos-route-mr { fill: currentColor; stroke: none; width: 16px; height: 16px; }
+/* Narrow: words only, so the four choices stay whole on one row. Narrow means the page or the chat column, not only
+ * the screen: Settings in a desktop window or a notification in a slim Chats column is narrow too. */
+[data-settings-feature="notification-routing"], .ch-notif-route { container-type: inline-size; }
+@container (max-width: 520px) { .st-nr { flex-wrap: wrap; } .st-nr-seg.wos-route { width: 100%; justify-content: stretch; } .st-nr-seg.wos-route button { padding: 6px 8px; } .st-nr-seg.wos-route .wos-route-ic { display: none; } }
+/* Narrower than the four words (a slim desktop Settings window): two by two. */
+@container (max-width: 320px) { .st-seg.st-nr-seg.wos-route { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .st-nr { flex-wrap: wrap; } .st-nr-seg.wos-route { width: 100%; justify-content: stretch; } .st-nr-seg.wos-route button { padding: 6px 8px; } .st-nr-seg.wos-route .wos-route-ic { display: none; } }
+/* Settings › Notifications › System › Recent: notices about Wizard itself, newest first; unseen ones carry a dot. */
+.st-sys-list { list-style: none; margin: 0; padding: 0; }
+.st-sys-list li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--wz-border); }
+.st-sys-list li .st-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.st-sys-list li b { font-weight: 600; color: var(--wz-text); overflow-wrap: anywhere; }
+.st-sys-list li small { color: var(--wz-text-secondary); font-size: var(--wz-text-sm); overflow-wrap: anywhere; }
+.st-sys-list li time { flex: none; color: var(--wz-text-secondary); font-size: var(--wz-text-sm); }
+.st-sys-list li.new b::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--wz-accent); vertical-align: middle; }
+/* In Chats: one line above the notification, the question on the left and the picker on the right. */
+.ch-notif-route { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin: 0 0 12px; padding: 0 2px; }
+.ch-notif-route > span { flex: 1 1 140px; min-width: 0; font-size: var(--wz-text-sm); color: var(--wz-text-secondary); overflow-wrap: anywhere; text-wrap: balance; }
+/* Look: the skin picker sits flat on the page under a plain heading. */
+.st-root .sk-row { padding: 0; margin: 0 0 8px; }
+.st-root .sk-row .sk-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 0; margin: 0 4px 6px; }
+.st-root .sk-row .sk-head small { font-size:var(--wz-text-md); font-weight: 500; color: var(--wz-text-secondary); }
+/* The sheet already ends above the dock and browser/native safe inset.
+ * Only edge spacing belongs inside its actual scroll owner. */
+.settings-body.st-root { padding-bottom: var(--wz-space-5); }
+.st-desktop .st-seg { max-width: 360px; }
+/* A shrinkable grid track keeps this padded scroller inside the clipped panel. */
+.st-desktop .st-page { padding-bottom: var(--wz-space-5); }
+
+/* Minimal: feature modules keep their own markup, but nothing reads as a box on the page. */
+.st-root .us-row { padding: 12px 4px; margin: 0; border: 0; border-bottom: 1px solid var(--wz-border); border-radius: 0; background: transparent; }
+.st-root .us-t b { font-size:var(--wz-text-lg); }
+.st-root .st-usage .st-empty { padding: 14px 4px; font-size:var(--wz-font-size); }
+.st-root .my-skin-row { margin: 0; }
+.st-root .sk-row { border-bottom: 1px solid var(--wz-border); padding-bottom: 16px; }
+.st-root .st-chats-options .st-row { gap: 14px; }
+.st-root .st-info summary { background: transparent; }
+
+/* About & updates without a card: one quiet line naming what is installed; the choices sit under plain labels. */
+.osu-sec { margin-top: 26px; }
+.osu-lbl { display: block; margin: 0 4px 8px; font-size:var(--wz-text-sm); font-weight: 650; letter-spacing: .02em; color: var(--wz-text-muted); }
+
+/* My skin: the last tile of the grid, same size, dashed; ringed in ink while worn. Its controls open under the grid. */
+.st-root .skp-my .skp-mini-my { background: transparent; box-shadow: none; border: 0; outline: 1.5px dashed color-mix(in srgb, var(--wz-text) 40%, transparent); outline-offset: -1.5px; }
+.st-root .skp-my[aria-expanded="true"] .skp-mini-my, .st-root .skp-my.worn .skp-mini-my { outline-color: var(--wz-text); }
+.st-root .skp-my.worn .skp-mini-my { outline-style: solid; }
+.st-root .skp-my .skp-plus { left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; background: linear-gradient(currentColor, currentColor) center / 100% 2px no-repeat, linear-gradient(currentColor, currentColor) center / 2px 100% no-repeat; color: color-mix(in srgb, var(--wz-text) 55%, transparent); }
+.st-root .skp-my:focus-visible .skp-mini-my { outline: 2px solid color-mix(in srgb, var(--wz-text) 70%, transparent); }
+.st-root .ms-panel { border-bottom: 1px solid var(--wz-border); }
+.st-root .ms-panel .my-skin-row { margin: 0; border-bottom: 0; flex-wrap: wrap; }
+.st-root .ms-panel .my-skin-row.worn { box-shadow: none; }
+.st-root .ms-panel .my-skin-row + .my-skin-row { border-top: 1px solid var(--wz-border); }
+.st-root .ms-invite { margin: 8px 4px 16px; }
+
+/* Named recipes and New skin extend the shared settings sheet, cards and switch rows. */
+.st-root .skp-families .skp-nm { overflow-wrap: anywhere; }
+.st-root[data-settings-nested="true"] .st-page-head button { display: grid; }
+.st-root .skin-create { width: 100%; max-width: none; max-height: none; overflow: visible; }
+.st-root .skin-create > .st-actions { bottom: 0; margin: 12px 0 0; padding: 12px 0; z-index: 1; }
+.st-root .st-skin-toast { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--wz-border); border-radius: 12px; background: linear-gradient(var(--wz-overlay), var(--wz-overlay)), var(--wz-base); color: var(--wz-text); z-index: 2; }
+.st-root .st-skin-toast button { min-height: 44px; padding: 8px 12px; background: var(--wz-surface); color: var(--wz-text); border: 1px solid var(--wz-border); border-radius: 8px; }
+/* Family first, then its colours: four compact family tiles, never the full palette catalogue. */
+.st-root .skp.skp-families { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 24px; }
+.st-root .skp-families .skp-mini { aspect-ratio: 1; border-radius: 12px; }
+.st-root .skp-families .skp-nm { font-size:var(--wz-text-sm); }
+.st-root .skp-colours { margin-bottom: 20px; }
+/* Settings › Resources: the Home resource bars (core/resources.js, WosResources.bars), left-aligned on the page, in
+ * the skin's own ink. Label | bar | value per row; AI first, then Compute split by machine. Amber under a quarter
+ * left, red under a tenth. Skins that already draw bars on Home (e.g. Obsidian) keep their own look here too. */
+.st-root .st-res .rs-barsw.rs-widget.wz-home-widget { display: flex; flex-direction: column; gap: 22px; width: 100%; max-width: 480px; margin: 4px 0 0; padding: 0 4px; background: none; border: 0; box-shadow: none; overflow: visible; border-radius: 0; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.st-res .rs-bg { --dc: var(--wz-text); display: flex; flex-direction: column; gap: 9px; }
+.st-res .rs-bg-hw { padding-top: 14px; border-top: 1px solid var(--wz-border); }
+.st-res .rs-gh { display: flex; align-items: baseline; gap: 6px; margin: 0 0 4px; font-size:var(--wz-text-sm); }
+.st-res .rs-gh b { font-weight: 650; color: var(--wz-text); }
+.st-res .rs-gh span { font-size:var(--wz-text-sm); color: var(--wz-text-secondary); }
+.st-root[data-settings-root] .st-res button.rs-br { display: grid; grid-template-columns: 64px minmax(60px, 1fr) 104px; align-items: center; column-gap: 10px; width: 100%; min-width: 0; min-height: 36px; padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; }
+.st-res .rs-br:active { opacity: .7; }
+.st-res .rs-bl { font-size:var(--wz-text-md); font-weight: 500; color: var(--wz-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-res .rs-bv { font-size:var(--wz-text-sm); font-weight: 600; text-align: right; color: var(--wz-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.st-res .rs-bt { display: flex; gap: 2px; height: 8px; }
+.st-res .rs-bg-hw .rs-bt { height: 10px; }
+.st-res .rs-bs { position: relative; min-width: 8px; height: 100%; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--dc) 16%, transparent); }
+.st-res .rs-bf { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--dc); transition: width 1.1s cubic-bezier(.33, 1, .68, 1); }
+.st-res .rs-d1 { --dc: var(--wz-accent); }
+.st-res .rs-d2 { --dc: color-mix(in srgb, var(--wz-accent) 55%, var(--wz-text)); }
+.st-res .rs-d3 { --dc: var(--wz-text-secondary); }
+.st-res .rs-bs.rs-empty .rs-bf { background: color-mix(in srgb, var(--wz-danger) 55%, var(--wz-text)); }
+.st-res .rs-bs.rs-crit .rs-bf { background: var(--wz-danger); }
+.st-res .rs-bv.rs-empty { color: color-mix(in srgb, var(--wz-danger) 55%, var(--wz-text)); }
+.st-res .rs-bv.rs-crit { color: var(--wz-danger); }
+.st-res .rs-br-off .rs-bv { color: var(--wz-text-secondary); text-decoration: underline; text-underline-offset: 2px; }
+.st-res .rs-br-off .rs-bs { background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--wz-text) 18%, transparent) 0 4px, transparent 4px 7px); }
+.st-res .rs-lg { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 5px; font-size:var(--wz-text-sm); color: var(--wz-text-secondary); }
+.st-res .rs-lg span { display: inline-flex; align-items: center; gap: 5px; }
+.st-res .rs-lg i { width: 8px; height: 8px; border-radius: 2px; background: var(--dc); }
+
+/* System / Preferences: two quiet group labels in the Settings list. */
+.st-navgroup { margin: 18px 4px 2px; font-size: calc(var(--wz-text-sm) * .88); font-weight: 750; letter-spacing: .08em; text-transform: none; color: var(--wz-text-2, var(--wz-text)); opacity: .7; }
+.st-index nav > .st-navgroup:first-child { margin-top: 4px; }
+.st-tweak { display: block; }
+
+/* Desktop Home: Settings as a centred panel over Home (no desk window). */
+.dsettings-scrim { position: fixed; inset: 0; z-index: 39; background: color-mix(in srgb, var(--wz-base) 38%, transparent); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: st-fade 180ms ease both; }
+.dsettings-scrim[hidden] { display: none; }
+.dsettings.is-modal { inset: 50% auto auto 50%; transform: translate(-50%, -50%); width: min(980px, calc(100vw - 64px)); height: min(720px, calc(100vh - 96px)); border: 1px solid var(--wz-border); border-radius: 22px; overflow: hidden; box-shadow: 0 30px 80px -24px color-mix(in srgb, var(--wz-base) 60%, transparent); animation: st-pop 200ms cubic-bezier(.2, .8, .2, 1) both; }
+/* Moving an already-open root between hosts must not replay an opacity-zero entrance. */
+.dsettings.is-modal.is-rehosted { animation: none; }
+@keyframes st-fade { from { opacity: 0; } }
+@keyframes st-pop { from { opacity: 0; transform: translate(-50%, -48%) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .dsettings.is-modal, .dsettings-scrim { animation: none; } }
+/* Settings › Look › Window opacity */
+.wg-section .wg-row { min-height: 44px; border-bottom: 0; }
+.wg-section [data-wg-val] { flex: none; font-variant-numeric: tabular-nums; font-weight: 650; color: var(--wz-text, var(--wz-text)); }
+.wg-section .wg-range { display: block; width: 100%; min-height: 44px; margin: 0; accent-color: var(--wz-accent, var(--violet-2, var(--wz-accent))); cursor: pointer; }
+.wg-section .wg-reset { min-height: 44px; padding: 6px 14px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--wz-text-secondary); font: inherit; font-size:var(--wz-text-sm); cursor: pointer; }
+/* Background + Mode (twinned skins): the Background cards reuse the skin cards (core/skins.css); Mode is a .st-seg. */
+.st-root .skp-colours .st-seg { margin: var(--wz-space-2) 0 var(--wz-space-4); max-width: 20rem; }
+
+/* Settings › Connections: the App Manager's view, framed edge to edge under the page title. */
+/* The desktop shell positions every window's iframe over its whole body (.wbody iframe); this one fills its own box. */
+.st-embed { position: relative; block-size: max(420px, calc(100dvh - 232px - env(safe-area-inset-bottom))); }
+.st-root .st-embed iframe { position: absolute; inset: 0; display: block; inline-size: 100%; block-size: 100%; border: 0; background: transparent; }
+.st-desktop .st-page:has(.st-embed) { display: flex; flex-direction: column; padding-bottom: 0; }
+.st-desktop .st-page:has(.st-embed) > section { flex: 1; min-height: 0; }
+.st-desktop .st-embed { block-size: 100%; min-block-size: 360px; }

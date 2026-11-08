@@ -1,0 +1,69 @@
+/* Thread tracker (tweak wizard/thread-tracker). Appearance v1 tokens only, each with a dark standalone fallback.
+ * Meaning: spinner = running (the agent's move) · amber = needs you · green = finished, not seen yet ·
+ * hollow = acknowledged · red = stuck or broken only. */
+.tt-strip, .tt-dots { --tt-you: var(--wz-warning); --tt-done: var(--wz-success); --tt-bad: var(--wz-danger); --tt-run: var(--wz-accent); }
+.tt-dot { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+.tt-dot.you { background: var(--tt-you); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tt-you) 16%, transparent); }
+.tt-dot.done { background: var(--tt-done); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tt-done) 14%, transparent); }
+.tt-dot.bad { background: var(--tt-bad); }
+.tt-dot.ack { background: transparent; border: 1.5px solid var(--wz-text-muted, color-mix(in srgb, currentColor 50%, transparent)); }
+.tt-dot.run { width: 12px; height: 12px; background: transparent; border: 2px solid color-mix(in srgb, var(--tt-run) 28%, transparent); border-top-color: var(--tt-run); animation: tt-spin 1s linear infinite; }
+@keyframes tt-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tt-dot.run { animation: none; border-color: var(--tt-run); border-top-color: transparent; } }
+
+/* The strip: one line under the title; opens into a list over the chat (the chat underneath does not move). */
+.tt-strip { position: relative; flex: 0 0 auto; z-index: 40; margin: 6px 12px 4px; font-family: var(--wz-font-ui, inherit); }
+html.wos-doc-scroll .wos-doc-thread .tt-strip { position: sticky; top: calc(var(--wos-doc-top, 0px) + var(--wos-doc-head, 54px)); }
+.tt-h { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 12px; border-radius: 14px; cursor: pointer;
+  color: var(--wz-text-secondary); font-size: 0.7812rem; border: 1px solid var(--wz-border);
+  background-color: var(--wz-base); background-image: linear-gradient(var(--wz-surface), var(--wz-surface)); }
+.tt-h:focus-visible, .tt-row:focus-visible, .tt-btn:focus-visible, .tt-more:focus-visible { outline: 2px solid var(--wz-accent); outline-offset: 2px; }
+.tt-tot { color: var(--wz-text); font-weight: 600; margin-right: 2px; }
+.tt-tally { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.tt-caret { margin-left: auto; display: grid; place-items: center; color: var(--wz-text-muted); transition: transform .18s ease; }
+.tt-caret svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tt-strip.open .tt-caret { transform: rotate(180deg); }
+.tt-strip.open .tt-h { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.tt-panel { position: absolute; left: 0; right: 0; top: calc(100% - 1px); max-height: min(60vh, 440px); overflow-y: auto; overscroll-behavior: contain; border-radius: 0 0 14px 14px; border: 1px solid var(--wz-border);
+  background-color: var(--wz-base); background-image: linear-gradient(var(--wz-surface), var(--wz-surface)); box-shadow: 0 14px 34px color-mix(in srgb, black 45%, transparent); }
+.tt-panel[hidden] { display: none; }
+.tt-gh { padding: 9px 12px 3px; font-size: 0.6875rem; letter-spacing: .04em; text-transform: uppercase; color: var(--wz-text-muted); }
+.tt-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; min-height: 44px; cursor: pointer; border-top: 1px solid var(--wz-border); color: var(--wz-text); }
+.tt-gh + .tt-row { border-top: 0; }
+.tt-row.you { background: color-mix(in srgb, var(--tt-you) 13%, transparent); }
+.tt-ti { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tt-t { font-size: 0.8438rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-s { font-size: 0.7188rem; color: var(--wz-text-muted); }
+.tt-row.ack .tt-t { color: var(--wz-text-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
+.tt-btn { all: unset; box-sizing: border-box; flex: none; min-height: 32px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 999px; cursor: pointer; font-size: 0.75rem; white-space: nowrap;
+  border: 1px solid var(--wz-border); color: var(--wz-text); background: var(--wz-surface-raised); }
+.tt-btn.go { background: var(--tt-you); color: color-mix(in srgb, black 85%, var(--tt-you)); border-color: transparent; font-weight: 600; }
+.tt-btn.ok { border-color: color-mix(in srgb, var(--tt-done) 45%, transparent); }
+.tt-more { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 10px 12px; cursor: pointer; font-size: 0.75rem; color: var(--wz-text-muted); border-top: 1px solid var(--wz-border); }
+.tt-none { padding: 14px 12px; font-size: 0.7812rem; color: var(--wz-text-muted); }
+
+/* Dots on a Chats row: counts at a glance, no words. */
+.tt-dots { display: inline-flex; align-items: center; gap: 7px; margin-left: 0; flex: none; }
+/* Row titles flex/truncate; the parent's 8px gap keeps dots + time together at the right. */
+html[data-shell="desktop"][data-layout="ai-apps"] .tt-dots + .aad-time { margin-left: 0; padding-left: 0; }
+.tt-d { display: inline-flex; align-items: center; gap: 3px; font-size: 0.6875rem; color: var(--wz-text-muted); font-variant-numeric: tabular-nums; }
+.tt-d b { font-weight: 600; }
+.tt-dots .tt-dot { width: 8px; height: 8px; box-shadow: none; }
+.tt-dots .tt-dot.run { width: 10px; height: 10px; border-width: 1.5px; }
+
+/* Where a tap lands: the covering reply, briefly outlined. The chat is not rearranged. */
+html[data-tweaks~="wizard/thread-tracker"] .msg { scroll-margin-top: calc(var(--wos-doc-top, 0px) + var(--wos-doc-head, 54px) + 64px); scroll-margin-bottom: 120px; }
+.msg.tt-flash .bub { animation: tt-flash 1.8s ease-out 1; }
+@keyframes tt-flash { 0%, 55% { outline: 2px solid var(--wz-warning); outline-offset: 2px; } 100% { outline: 2px solid transparent; outline-offset: 2px; } }
+@media (prefers-reduced-motion: reduce) { .msg.tt-flash .bub { animation: none; outline: 2px solid var(--wz-warning); outline-offset: 2px; } }
+
+/* Reply on a message: the action sits with the other message actions; the quote header on a sent bubble opens the original. */
+.mmeta button[data-mquote] { display: inline-flex; align-items: center; gap: 4px; }
+.ch-rq.ch-rq-q { cursor: pointer; border-left-color: var(--wz-accent); }
+.ch-rq.ch-rq-q b { color: var(--wz-accent); }
+.ch-reply.ch-reply-q { border-left-color: var(--wz-accent); }
+.ch-reply.ch-reply-q b { color: var(--wz-accent); }
+
+/* The "↓ Latest" button floats above the composer; a quoted-message chip makes the composer taller, so lift it clear of the chip's × */
+.ch-thread:has(.ch-reply.ch-reply-q) .ch-latest { bottom: 142px; }
+html.wos-doc-scroll .wos-doc-thread:has(.ch-reply.ch-reply-q) .ch-latest { bottom: calc(var(--wos-doc-compose, 84px) + var(--wos-doc-switch, 0px) + max(var(--safe-b, 0px), var(--wos-doc-bottom, 0px)) + 12px); }

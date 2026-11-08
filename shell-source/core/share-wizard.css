@@ -1,0 +1,56 @@
+/* Shared, opaque, skin-dressed Send to <agent> sheet. No shell-specific implementation. */
+.wz-share { --dv-base: var(--wz-panel, var(--wz-base)); --dv-panel: var(--wz-panel, color-mix(in srgb, var(--dv-ink) 4%, var(--dv-base))); --dv-raised: var(--wz-panel-raised, color-mix(in srgb, var(--dv-ink) 8%, var(--dv-base))); --dv-ink: var(--wz-text); --dv-muted: var(--wz-text-secondary); --dv-line: var(--wz-border); --dv-accent: var(--wz-accent); position:absolute; inset:0; z-index:80; color:var(--dv-ink); font:inherit; }
+html[data-shell] .wz-share { --wz-base:var(--bg); --wz-text:var(--ink); --wz-text-secondary:var(--ink-2); --wz-border:var(--line-2); --wz-accent:var(--violet-2); --wz-on-accent:var(--bg); }
+body > .wz-share { position:fixed; }
+.wz-share *, .wz-share *::before, .wz-share *::after { box-sizing:border-box; }
+.wz-share button, .wz-share textarea { font:inherit; }
+.wz-share button { cursor:pointer; }
+.wz-share button:disabled { opacity:.45; cursor:default; }
+.wz-share .dv-scrim { position:absolute; inset:0; background:color-mix(in srgb, black 52%, transparent); }
+/* Opaque Appearance panel tokens; black is only the token-free backstop, never glass. */
+.wz-share.dv-wrap .dv-sheet { position:absolute; bottom:0; left:0; right:0; margin-inline:auto; transform:none; width:min(100%, 540px); max-height:calc(100% - var(--safe-t, 18px) - 12px); overflow:auto; padding:10px 20px calc(20px + var(--safe-b, 0px)); border-radius:28px 28px 0 0; background:linear-gradient(var(--dv-base),var(--dv-base)) black; box-shadow:0 -12px 60px color-mix(in srgb, black 27%, transparent); outline:0; }
+.wz-share .dv-grab { width:42px; height:4px; margin:0 auto 16px; border-radius:4px; background:var(--dv-line); }
+.wz-share .dv-head { display:flex; gap:12px; align-items:center; margin:0 0 18px; }
+.wz-share .dv-head > div { flex:1; min-width:0; }
+.wz-share .dv-head b { display:block; font-size:var(--wz-text-title); line-height:1.2; letter-spacing:-.02em; overflow-wrap:anywhere; }
+.wz-share .dv-head small { display:block; margin-top:4px; font-size:var(--wz-font-size); color:var(--dv-muted); }
+.wz-share .dv-head small:empty { display:none; }
+.wz-share .dv-cancel { width:44px; height:44px; flex:none; border:0; border-radius:50%; background:linear-gradient(var(--dv-raised),var(--dv-raised)), linear-gradient(var(--dv-base),var(--dv-base)) black; color:var(--dv-muted); display:grid; place-items:center; }
+.wz-share svg { width:23px; height:23px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.wz-share .dv-compose { border:1px solid var(--dv-line); border-radius:20px; padding:12px; background:linear-gradient(var(--dv-panel),var(--dv-panel)), linear-gradient(var(--dv-base),var(--dv-base)) black; }
+.wz-share .dv-text { display:block; width:100%; min-height:64px; max-height:22vh; resize:vertical; padding:4px 5px 12px; border:0; outline:0; background:transparent; color:var(--dv-ink); font-size:var(--wz-text-heading); line-height:1.4; }
+.wz-share .dv-text::placeholder { color:var(--dv-muted); opacity:.75; }
+.wz-share h4 { margin:0 5px 10px; text-transform:uppercase; font-size:var(--wz-text-sm); font-weight:500; letter-spacing:.08em; color:var(--dv-muted); }
+.wz-share .dv-items { display:flex; flex-flow:row wrap; gap:8px; }
+.wz-share .dv-items:empty { display:none; }
+.wz-share .ch-att { display:flex; align-items:center; gap:12px; width:100%; max-width:none; flex:1 1 100%; min-height:64px; padding:10px; border-radius:13px; background:linear-gradient(var(--dv-raised),var(--dv-raised)), linear-gradient(var(--dv-base),var(--dv-base)) black; color:var(--dv-ink); }
+.wz-share .ch-att .nm { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--wz-font-size); }
+.wz-share .ch-att small { display:block; color:var(--dv-muted); font-size:var(--wz-text-sm); margin-top:3px; }
+.wz-share .ch-att .ic { width:42px; height:42px; flex:none; border-radius:9px; }
+.wz-share .ch-att.ch-attimg { width:76px; height:76px; min-height:0; flex:0 0 76px; padding:0; }
+.wz-share .ch-attrm { display:grid; place-items:center; flex:none; margin-left:auto; width:32px; height:32px; border:0; border-radius:50%; background:var(--dv-panel); color:var(--dv-muted); }
+.wz-share .dv-quote { margin:0; padding:12px 14px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:22vh; overflow:auto; border:0; border-left:3px solid var(--dv-accent); border-radius:7px 12px 12px 7px; background:linear-gradient(var(--dv-raised),var(--dv-raised)), linear-gradient(var(--dv-base),var(--dv-base)) black; color:var(--dv-muted); font-size:var(--wz-text-lg); line-height:1.45; }
+.wz-share .dv-items:not(:empty) + .dv-quote { margin-top:8px; }
+.wz-share .dv-dest { margin:18px 0; border-radius:18px; overflow:hidden; background:linear-gradient(var(--dv-panel),var(--dv-panel)), linear-gradient(var(--dv-base),var(--dv-base)) black; }
+.wz-share .dv-row { display:flex; align-items:center; gap:14px; width:100%; min-height:56px; padding:12px 16px; border:0; background:var(--dv-panel); text-align:left; color:var(--dv-ink); font-size:var(--wz-text-lg); }
+.wz-share .dv-row + .dv-row { border-top:1px solid var(--dv-line); }
+.wz-share .dv-row > span:first-child { width:46px; flex:none; color:var(--dv-muted); }
+.wz-share .dv-row strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wz-share .dv-row > span:last-child { color:var(--dv-muted); }
+.wz-share .dv-send { display:flex; justify-content:center; align-items:center; gap:12px; width:100%; min-height:56px; border:0; border-radius:40px; background:linear-gradient(var(--dv-accent),var(--dv-accent)), linear-gradient(var(--dv-base),var(--dv-base)) black; color:var(--wz-on-accent); font-size:var(--wz-text-heading); font-weight:750; }
+.wz-share .dv-status { min-height:0; font-size:var(--wz-text-sm); color:var(--dv-muted); margin-top:8px; }
+.wz-share .dv-status:empty { display:none; }
+.wz-share .dv-picker-wrap { position:absolute; inset:0; z-index:2; }
+.wz-share .dv-picker-scrim { position:absolute; inset:0; }
+.wz-share .dv-picker { position:absolute; bottom:130px; left:20px; right:20px; max-height:calc(100% - 155px); overflow:auto; border-radius:20px; padding:15px 0 8px; background:linear-gradient(var(--dv-raised),var(--dv-raised)), linear-gradient(var(--dv-base),var(--dv-base)) black; box-shadow:0 14px 40px color-mix(in srgb, black 33%, transparent); }
+.wz-share .dv-picker h4, .wz-share .dv-picker > small { display:block; padding:0 18px; margin:0 0 8px; color:var(--dv-muted); }
+.wz-share .dv-picker > small { border-top:1px solid var(--dv-line); padding-top:12px; }
+.wz-share .dv-picker button { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:14px 18px; min-height:48px; border:0; text-align:left; background:var(--dv-raised); color:var(--dv-ink); font-size:var(--wz-text-lg); }
+.wz-share .dv-picker button[aria-selected=true] { color:var(--dv-accent); font-weight:700; }
+.wz-share button:focus-visible, .wz-share textarea:focus-visible { outline:2px solid var(--dv-accent); outline-offset:-2px; }
+/* Keep the existing focused-field/orb dictation affordance on the phone, above the shared sheet. */
+.device.dv-share-open .wz-share .dv-sheet { bottom:calc(var(--safe-b, 0px) + var(--dock-h, 0px) + 4px); max-height:calc(100% - var(--safe-b, 0px) - var(--dock-h, 0px) - 40px); }
+@media (min-width:700px) { body > .wz-share .dv-sheet { bottom:24px; border-radius:28px; } }
+/* Back-again hint: in-sheet, opaque (never glass), Appearance tokens only. */
+.wz-share .dv-backhint { position:sticky; bottom:4px; margin-top:8px; padding:11px 16px; border:1px solid var(--dv-line); border-radius:14px; text-align:center; pointer-events:none; font-size:var(--wz-text-sm); color:var(--dv-ink); background:linear-gradient(var(--dv-raised),var(--dv-raised)), linear-gradient(var(--dv-base),var(--dv-base)) black; }
+.wz-share .dv-backhint:empty { display:none; }

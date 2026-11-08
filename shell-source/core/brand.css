@@ -1,0 +1,6 @@
+/* Preserve the designer silhouette; never stretch, redraw or recolour it.
+ * Size rule: the hat matches the ink height of the glyphs beside it (.8em of its slot font; 13px in the desktop bar; 62% of a sigil box = sigil-set median).
+ * Icon rows (dock, overview) draw it as a sigil mask instead, so it shares the sigils' size, colour and glow. */
+.wizard-brand-mark { display: inline-block; width: auto; height: .8em; vertical-align: -.12em; flex-shrink: 0; }
+.logo .wizard-brand-mark { height: 13px; }
+/* Agent hats are maintained with the shared sigils in core/sigils.css. */

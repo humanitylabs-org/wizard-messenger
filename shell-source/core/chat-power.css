@@ -1,0 +1,169 @@
+/* Wizard UX core: styles for core/chat-power.js — model chip + picker, failed-thread panel, Errors actions,
+ * composer mic, work receipts, ↓ Latest, Files, AI usage. Shared by every shell. */
+
+/* #11 model chip: far right of the thread header (thread and new chat alike) */
+.ch-model { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; max-width: 38vw; height: 30px; padding: 0 11px; border-radius: 15px; font: inherit; font-size: 13px; font-weight: 650; color: var(--violet-2); background: rgba(143, 99, 255, .14); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-model i { font-style: normal; font-size: 9px; opacity: .7; }
+.ch-model:active { background: rgba(143, 99, 255, .24); }
+/* the picker sheet */
+.ch-msheet .ch-sheet-b, .ch-files .ch-sheet-b { max-height: 78%; display: flex; flex-direction: column; }
+.msheet-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.ch-sheet-b .mrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.mrow .mn { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mrow .mn b { font-size: 15px; font-weight: 650; }
+.mrow .mn small { font-size: 12px; font-weight: 500; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mrow.on { background: rgba(143, 99, 255, .14); }
+.mrow .mck { font-style: normal; color: var(--violet-2); font-weight: 800; }
+.ch-sheet-b .mrow.more { justify-content: center; font-size: 13.5px; color: var(--violet-2); }
+
+/* #11/#12 failed thread: Needs retry · Retry / Choose another model / Dismiss */
+.ch-fail { margin: 6px 0 2px; padding: 12px; border-radius: 14px; background: rgba(255, 120, 90, .08); border: 1px solid rgba(255, 140, 110, .3); }
+.ch-fail .lb { display: block; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #ff9c82; }
+.ch-fail p { margin: 6px 0 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+.ch-fail-b, .ch-err-b { display: flex; flex-wrap: wrap; gap: 8px; }
+.ch-fail-b button, .ch-err-b button { height: 34px; padding: 0 14px; border-radius: 17px; font-size: 13.5px; font-weight: 700; color: #fff; background: linear-gradient(140deg, #7a4dff, #c04dff); }
+.ch-fail-b button.ghost, .ch-err-b button.ghost, .ch-fail-b [data-chretrymodel] { background: rgba(205, 190, 255, .08); color: var(--ink); border: 1px solid var(--line-2); }
+.ch-err-b button.warn { color: #ffb4a0; border-color: rgba(255, 140, 110, .5); }
+.ch-fail-b button[disabled], .ch-err-b button[disabled] { opacity: .5; }
+
+/* #12 Errors section rows */
+.ch-err { padding: 0 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.ch-err .ch-err-b { padding: 0 12px; }
+.ch-err.att, .ch-err.ch-err-vn { padding: 10px 12px; }
+.ch-err.att .ch-err-b, .ch-err.ch-err-vn .ch-err-b { padding: 0; }
+.ch-err-t { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.ch-err-t b { display: flex; align-items: center; gap: 6px; font-size: 14.5px; font-weight: 650; color: var(--ink); }
+.ch-err-t b svg { width: 15px; height: 15px; fill: none; stroke: var(--ink-2); stroke-width: 2; }
+.ch-err-t small { font-size: 12.5px; color: #ff9c82; }
+
+/* #13 composer mic: one round button on the right. Mic only while the full draft is empty; typed words or staged
+ * attachments show Send (.has-text). The mic itself turns into Send while its voice take records (.on). Without a mic
+ * (no voice on this device) Send always shows. */
+.ch-compose:not(.has-text) .ch-mic ~ .ch-send, .ch-compose .ch-mic.on ~ .ch-send { display: none; }
+.ch-compose.has-text .ch-mic:not(.on) { display: none; }
+/* (mic look) */
+.ch-compose button.ch-mic { background: rgba(205, 190, 255, .08); border: 1px solid var(--line-2); }
+.ch-compose button.ch-mic svg { width: 19px; height: 19px; fill: none; stroke: var(--ink-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ch-compose button.ch-mic .snd { display: none; }
+.ch-compose button.ch-mic.on { background: linear-gradient(140deg, #7a4dff, #c04dff); border-color: transparent; box-shadow: 0 0 0 4px rgba(255, 77, 109, .28); animation: ch-micpulse 1.2s ease-in-out infinite; }
+.ch-compose button.ch-mic.on .mc { display: none; }
+.ch-compose button.ch-mic.on .snd { display: block; width: 18px; height: 18px; stroke: #fff; stroke-width: 2.4; }
+@keyframes ch-micpulse { 50% { box-shadow: 0 0 0 7px rgba(255, 77, 109, .14); } }
+
+/* #17 work receipt */
+.steps.wk summary { display: flex; align-items: center; gap: 6px; }
+.steps.wk .wk-l { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.steps.wk.asks summary { color: var(--amber); }
+.wk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.wk-q { margin: 8px 0 6px 16px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 196, 90, .08); border: 1px solid rgba(255, 196, 90, .25); }
+.wk-q b { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--amber); }
+.wk-q.answered { background: rgba(205, 190, 255, .05); border-color: var(--line); }
+.wk-q.answered b, .wk-q.unanswered b { color: var(--ink-3); }
+.wk-q p { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; }
+.wk-q .wk-qa { color: var(--ink-3); }
+.wk-q small { display: block; margin-top: 4px; color: var(--ink-3); }
+.wk-plan { list-style: none; margin: 8px 0 6px 16px; padding: 0; }
+.wk-plan li { display: flex; gap: 8px; padding: 2px 0; font-size: 13px; color: var(--ink-2); }
+.wk-plan li.completed { color: var(--ink-3); }
+.wk-plan li.completed span:last-child { text-decoration: line-through; text-decoration-color: rgba(205, 190, 255, .3); }
+.wk-plan li.in_progress { color: var(--ink); font-weight: 600; }
+.wk-plan li.cancelled { color: var(--ink-3); opacity: .7; }
+.wk-m { flex: 0 0 16px; text-align: center; font-variant-numeric: tabular-nums; color: var(--violet-2); }
+.wk-steps { list-style: none; margin: 6px 0 6px 16px; padding: 0 0 0 10px; border-left: 1px solid var(--line-2); }
+.wk-steps li { display: flex; gap: 10px; padding: 2px 0; font-size: 12.5px; }
+.wk-steps li span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.wk-steps li time { flex: 0 0 auto; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.wk-steps li.run span { color: var(--ink); }
+.wk-steps .wk-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 11px; font-weight: 400; }
+.wk-steps .wk-more { color: var(--ink-3); font-style: italic; }
+
+/* #18 ↓ Latest */
+.ch-latest { position: absolute; right: 14px; bottom: 78px; z-index: 6; height: 32px; padding: 0 12px; border-radius: 16px; font-size: 13px; font-weight: 700; color: var(--ink); background: rgba(30, 20, 62, .94); border: 1px solid var(--line-2); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+.ch-latest[hidden] { display: none; }
+
+/* #23 Files */
+.fi-top { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; flex: 0 0 auto; }
+.fi-top .ch-sheet-t { flex: 1; padding: 0 6px; }
+.fi-top b { font-size: 16px; font-weight: 750; padding-left: 4px; }
+.fi-top small { flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink-3); }
+.ch-sheet-b .fi-x { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 50%; }
+.fi-q { margin: 0 4px 8px; flex: 0 0 auto; }
+.fi-kinds { display: flex; flex: 0 0 auto; gap: 6px; padding: 0 4px 8px; overflow-x: auto; scrollbar-width: none; }
+.ch-sheet-b .fi-kinds button { width: auto; flex: 0 0 auto; padding: 6px 12px; border-radius: 14px; font-size: 13px; font-weight: 650; color: var(--ink-2); background: rgba(205, 190, 255, .06); border: 1px solid var(--line); }
+.ch-sheet-b .fi-kinds button.on { color: #fff; background: rgba(143, 99, 255, .4); border-color: transparent; }
+.fi-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1; }
+.fi-row { display: flex; align-items: center; gap: 6px; border-radius: 12px; }
+.fi-row.on { background: rgba(143, 99, 255, .12); }
+.ch-sheet-b .fi-open { flex: 1; min-width: 0; padding: 8px; gap: 10px; }
+.fi-open img, .fi-ic { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 9px; object-fit: cover; display: grid; place-items: center; background: rgba(205, 190, 255, .08); font-size: 17px; }
+.fi-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fi-tx b { font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fi-tx small { font-size: 12px; font-weight: 500; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-sheet-b .fi-att { width: auto; flex: 0 0 auto; padding: 7px 12px; margin-right: 4px; border-radius: 14px; font-size: 13px; color: var(--violet-2); background: rgba(143, 99, 255, .12); }
+.fi-row.on .fi-att { color: #fff; background: rgba(143, 99, 255, .5); }
+
+/* #24 AI usage (Settings) */
+.st-usage h4 .st-mini { margin-left: auto; width: 26px; height: 22px; border-radius: 8px; font-size: 13px; color: var(--ink-2); background: rgba(205, 190, 255, .06); letter-spacing: 0; }
+.us-row { padding: 10px 12px; margin-bottom: 6px; border-radius: 14px; background: var(--glass, rgba(205, 190, 255, .05)); border: 1px solid var(--line); }
+.us-t { display: flex; align-items: baseline; gap: 8px; }
+.us-t b { flex: 1; min-width: 0; font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.us-p { font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--ink); }
+.us-bar { height: 6px; margin: 7px 0 5px; border-radius: 3px; background: rgba(205, 190, 255, .1); overflow: hidden; }
+.us-bar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #7a4dff, #c04dff); }
+.us-row.warning .us-bar i { background: var(--amber); } .us-row.warning .us-p { color: var(--amber); }
+.us-row.alert .us-bar i { background: #ff6b5a; } .us-row.alert .us-p { color: #ff8a7a; }
+.us-row.stale { opacity: .7; }
+.us-r { font-size: 12px; color: var(--ink-3); }
+.st-usage .st-note { margin: 4px 4px 0; font-size: 12px; color: var(--ink-3); }
+.st-usage .st-empty { padding: 10px 12px; font-size: 13px; color: var(--ink-3); }
+
+/* desktop: the AI usage card */
+.usage-ov .usage-body { padding: 10px 16px 4px; }
+.usage-ov .keys-card { width: min(520px, calc(100vw - 32px)); }
+
+/* Unified Chats: the picker's Private group and a Private chip (lock, private agent green). */
+.ch-model.private { color: hsl(160 72% 62%); background: color-mix(in oklab, hsl(160 72% 62%) 15%, transparent); }
+.ch-model .ag-lock { width: 12px; height: 12px; flex: 0 0 auto; }
+.msheet-grp.priv { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, .08); }
+.msheet-gh { display: flex; align-items: center; gap: 6px; padding: 4px 12px 6px; font-size: 12px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; color: hsl(160 72% 62%); }
+.msheet-gh .ag-lock, .mrow.priv .ag-lock { width: 12px; height: 12px; }
+.mrow.priv .mn b { display: inline-flex; align-items: center; gap: 6px; }
+.mrow.priv .mn b .ag-lock { color: hsl(160 72% 62%); }
+.msheet-gn { margin: 4px 12px 0; font-size: 12px; opacity: .7; line-height: 1.35; }
+
+/* Model label in the message box (James 18 Oct 2026): just the model name, small and white. An empty composer can
+ * share its bottom-right corner; any draft moves the label to the separate strip below so the tap target never covers
+ * editable text. Tapping the label opens the compact menu above. */
+.ch-field { flex: 1; min-width: 0; position: relative; display: flex; }
+.ch-field > textarea { flex: 1; width: 100%; }
+.ch-compose .ch-field > .ch-mlabel { position: absolute; right: 4px; bottom: 1px; width: auto; height: 40px; max-width: 42%; padding: 0 10px; border-radius: 16px;
+  display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; font-size: 13.5px; font-weight: 650; letter-spacing: .01em; color: var(--ink); opacity: .9; }
+.ch-compose .ch-field > .ch-mlabel:active { opacity: 1; background: rgba(205, 190, 255, .08); }
+.ch-compose .ch-field > .ch-mlabel.private { color: hsl(160 72% 62%); }
+.ch-compose .ch-field > .ch-mlabel.agent { color: color-mix(in oklab, var(--agc, var(--violet-2)) 70%, var(--ink)); }
+.ch-compose .ch-field > .ch-mlabel .ag-lock { width: 12px; height: 12px; }
+.ch-compose .ch-field > .ch-mlabel svg { fill: none; stroke: currentColor; }
+
+/* Compact model menu: a small card over the right side, just above the label, read bottom-up from the thumb. */
+.ch-sheet.ch-mpop { background: rgba(3, 1, 10, .28); align-items: stretch; justify-content: flex-end; }
+.ch-sheet.ch-mpop .ch-sheet-b { position: absolute; right: var(--mpop-r, 10px); bottom: var(--mpop-b, 72px); width: min(236px, calc(100% - 24px)); max-height: min(var(--mpop-h, 64%), 440px); box-sizing: border-box;
+  display: flex; flex-direction: column; padding: 6px; border-radius: 16px; border: 1px solid var(--line-2); background: linear-gradient(var(--glass-2, rgba(17,11,36,.99)), var(--glass-2, rgba(17,11,36,.99))), var(--wz-panel, var(--bg, #160e2e)); box-shadow: 0 14px 40px rgba(0, 0, 0, .55); animation: mpop-in 140ms ease-out both; transform-origin: bottom right; }
+/* Native document-scroll chrome sits at z=50; keep the bounded picker above it, not underneath it. */
+html.wos-doc-scroll .wos-doc-thread .ch-sheet.ch-mpop { position: fixed; inset: 0; z-index: 52; }
+@keyframes mpop-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+/* Only while choosing a model, reserve a usable row area even with a tall draft and keyboard. */
+.ch-model-picking .ch-compose textarea { max-height: var(--mpop-input-max, 140px); }
+.ch-mpop .msheet-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.ch-mpop .mpop-sec + .mpop-sec, .ch-mpop .mrow.more + .mpop-sec { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, .08); }
+.ch-mpop .msheet-gh { padding: 7px 10px 3px; font-size: 11px; color: var(--ink-3); }
+.ch-mpop .mpop-sec.priv .msheet-gh { color: hsl(160 72% 62%); }
+.ch-mpop .ch-sheet-b .mrow { padding: 10px 12px; border-radius: 11px; font-size: 14.5px; }
+.ch-mpop .ch-sheet-b .mrow.more { justify-content: flex-start; font-size: 13px; color: var(--violet-2); padding: 8px 12px; }
+.ch-mpop .mrow .mn b { font-weight: 620; }
+
+/* Label strip (chats.js fitLabel): the box itself carries the border so the name sits on its own row under the text,
+ * outside the textarea's scrolling area. Text can never run under it. */
+.ch-compose .ch-field.lab-row { flex-direction: column; padding-bottom: 24px; border-radius: 20px; border: 1px solid var(--line-2); background: rgba(205, 190, 255, .06); }
+.ch-compose .ch-field.lab-row:focus-within { border-color: rgba(185, 155, 255, .6); }
+.ch-compose .ch-field.lab-row > textarea { flex: none; border: 0; background: transparent; border-radius: 20px 20px 0 0; padding-bottom: 2px; }
+.ch-compose .ch-field.lab-row > .ch-mlabel { bottom: 1px; height: 26px; }

@@ -1,0 +1,83 @@
+/* Core phone dock radial. Tokens follow the worn skin; no tweak activation required. */
+html[data-shell="phone"] .wor { position: fixed; inset: 0; z-index: 400; pointer-events: none; --lvl: 0; font-family: var(--wz-font, system-ui, sans-serif); }
+html[data-shell="phone"] .wor-veil { position: absolute; inset: 0; opacity: 0; transition: opacity 160ms;
+  background: radial-gradient(95% 52% at var(--ox, 50%) var(--oy, 100%), color-mix(in oklab, var(--wz-base, var(--bg)) 82%, transparent) 30%, transparent 78%); }
+html[data-shell="phone"] .wor.on .wor-veil { opacity: 1; }
+html[data-shell="phone"] .wor-svg { position: absolute; left: 0; top: 0; overflow: visible; }
+html[data-shell="phone"] .wor-w { opacity: 0; transform: scale(.7); transition: transform 230ms var(--spring, cubic-bezier(.3, 1.3, .5, 1)) var(--d, 0ms), opacity 150ms var(--d, 0ms); }
+html[data-shell="phone"] .wor.on .wor-w { opacity: 1; transform: none; }
+html[data-shell="phone"] .wor.off .wor-w { opacity: 0; transform: scale(.85); transition-delay: 0ms; }
+html[data-shell="phone"] .wor-p { fill: color-mix(in oklab, var(--wz-surface, var(--bg)) 93%, transparent); stroke: color-mix(in oklab, var(--wz-border, var(--line)) 100%, transparent); stroke-width: 1; transition: fill 110ms, stroke 110ms; }
+html[data-shell="phone"] .wor-w.cur .wor-p { stroke: color-mix(in oklab, var(--wz-accent, var(--ac)) 75%, transparent); }
+html[data-shell="phone"] .wor-w.custom .wor-p { fill: color-mix(in oklab, var(--wz-surface, var(--bg)) 78%, transparent); }
+html[data-shell="phone"] .wor.on .wor-w.sel { transform: scale(1.025); }
+html[data-shell="phone"] .wor-w.sel .wor-p { fill: color-mix(in oklab, var(--wz-accent, var(--ac)) 38%, var(--wz-surface, var(--bg))); stroke: var(--wz-accent, var(--ac)); stroke-width: 1.5; }
+html[data-shell="phone"] .wor-w.dis .wor-p { fill: color-mix(in oklab, var(--wz-surface, var(--bg)) 45%, transparent); stroke-dasharray: 3 4; }
+html[data-shell="phone"] .wor.on .wor-w.dis.sel { transform: none; }
+html[data-shell="phone"] .wor-w.dis.sel .wor-p { fill: color-mix(in oklab, var(--wz-surface, var(--bg)) 45%, transparent); stroke: var(--wz-border, var(--line)); stroke-width: 1; }
+html[data-shell="phone"] .wor-arm { fill: none; stroke: var(--wz-accent, var(--ac)); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; opacity: 0; transform-box: fill-box; transform-origin: center; transform: rotate(-90deg); pointer-events: none; }
+html[data-shell="phone"] .wor-arm.on { opacity: 1; }
+html[data-shell="phone"] .wor-w.voice.rec { transform: scale(calc(1.07 + var(--lvl, 0) * .07)); transition: none; }
+html[data-shell="phone"] .wor.on .wor-w.voice.rec { transform: scale(calc(1.07 + var(--lvl, 0) * .07)); }
+html[data-shell="phone"] .wor-w.voice.rec .wor-p { fill: color-mix(in oklab, var(--wz-accent, var(--ac)) calc(40% + var(--lvl, 0) * 50%), var(--wz-surface, var(--bg))); stroke: var(--wz-accent, var(--ac)); transition: none; }
+html[data-shell="phone"] .wor-w.voice.rec .wor-arm { stroke-dashoffset: 0 !important; opacity: .55; }
+html[data-shell="phone"] .wor-ic { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; display: grid; place-items: center; opacity: 0; transform: scale(.5); color: var(--wz-text, var(--ink));
+  transition: transform 230ms var(--spring, cubic-bezier(.3, 1.3, .5, 1)) var(--d, 0ms), opacity 150ms var(--d, 0ms); }
+html[data-shell="phone"] .wor.on .wor-ic { opacity: 1; transform: none; }
+html[data-shell="phone"] .wor.off .wor-ic { opacity: 0; transition-delay: 0ms; }
+html[data-shell="phone"] .wor.on .wor-ic.sel { transform: translate(var(--mx, 0), var(--my, 0)) scale(1.12); transition-delay: 0ms; }
+html[data-shell="phone"] .wor-ic.dis { opacity: .4 !important; }
+html[data-shell="phone"] .wor-ic .dsg { width: 22px; height: 22px; opacity: .95; }
+html[data-shell="phone"] .wor-ic .dsg .sgi { filter: none; }
+html[data-shell="phone"] .wor-ic .dsg .dn, html[data-shell="phone"] .wor-ic .dsg .dbg { display: none; }
+html[data-shell="phone"] .wor-ic .wor-gear { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; opacity: .85; }
+html[data-shell="phone"] .wor-ic.voice.rec { transform: scale(calc(1.2 + var(--lvl, 0) * .12)); }
+html[data-shell="phone"] .wor-dot { position: absolute; left: 50%; bottom: -3px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--wz-accent, var(--ac)); box-shadow: 0 0 0 1.5px color-mix(in oklab, var(--wz-panel, var(--bg)) 85%, transparent); }
+html[data-shell="phone"] .wor-ic.cur .wor-dot { width: 7px; height: 7px; margin-left: -3.5px; }
+html[data-shell="phone"] .wor-label { position: absolute; transform: translateX(-50%); padding: 6px 12px; border-radius: 14px; white-space: nowrap; max-width: calc(100vw - 20px); overflow: hidden; text-overflow: ellipsis;
+  background: linear-gradient(var(--wz-panel, var(--bg)), var(--wz-panel, var(--bg))), var(--wz-base, var(--bg)); border: 1px solid var(--wz-border, var(--line)); color: var(--wz-text, var(--ink)); font: 650 0.78125rem/1.25 var(--wz-font, system-ui, sans-serif);
+  opacity: 0; transition: opacity 160ms; box-shadow: 0 6px 20px color-mix(in srgb, var(--wz-scrim, var(--bg)) 30%, transparent); }
+html[data-shell="phone"] .wor.on .wor-label { opacity: 1; }
+html[data-shell="phone"] .wor-label.hint { color: var(--wz-text-secondary, var(--ink-2)); font-weight: 550; }
+html[data-shell="phone"] body.wor-open #device { -webkit-user-select: none; user-select: none; }
+html[data-shell="phone"] .wor-scrim { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; background: color-mix(in oklab, var(--wz-scrim, var(--bg)) 55%, transparent); opacity: 0; transition: opacity 160ms; }
+html[data-shell="phone"] .wor-scrim.on { opacity: 1; }
+html[data-shell="phone"] .wor-sheet { width: min(520px, 100%); max-height: min(88dvh, 100%); box-sizing: border-box; display: flex; flex-direction: column; border-radius: 20px 20px 0 0; border: 1px solid var(--wz-border, var(--line)); border-bottom: 0;
+  background: linear-gradient(var(--wz-overlay, var(--wz-panel, var(--bg))), var(--wz-overlay, var(--wz-panel, var(--bg)))), var(--wz-base, var(--bg)); color: var(--wz-text, var(--ink)); font-family: var(--wz-font, system-ui, sans-serif);
+  transform: translateY(24px); transition: transform 220ms var(--ease, ease); }
+html[data-shell="phone"] .wor-scrim.on .wor-sheet { transform: none; }
+html[data-shell="phone"] .wor-sheet > header { display: flex; align-items: center; justify-content: space-between; padding: 14px 8px 6px 20px; }
+html[data-shell="phone"] .wor-sheet h3 { margin: 0; font-size: var(--wz-text-title, 1.125rem); font-weight: 700; letter-spacing: -.01em; }
+html[data-shell="phone"] .wor-x { width: 44px; height: 44px; border: 0; background: transparent; color: var(--wz-text-secondary, inherit); font-size: 1.625rem; line-height: 1; border-radius: 12px; }
+html[data-shell="phone"] .wor-sb { overflow-y: auto; overscroll-behavior: contain; padding: 0 20px calc(18px + var(--safe-b, 0px)); }
+html[data-shell="phone"] .wor-g { margin: 6px 0 18px; }
+html[data-shell="phone"] .wor-g h4 { margin: 8px 0 2px; font-size: var(--wz-text-sm, 0.78125rem); font-weight: 650; letter-spacing: .02em; color: var(--wz-text-muted, var(--ink-3)); }
+html[data-shell="phone"] .wor-note { margin: 0 0 6px; font-size: var(--wz-text-sm, 0.78125rem); color: var(--wz-text-muted, var(--ink-3)); line-height: 1.4; }
+html[data-shell="phone"] .wor-empty { padding: 12px 0; font-size: var(--wz-text-md, 0.875rem); color: var(--wz-text-secondary, inherit); }
+html[data-shell="phone"] .wor-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0; border-bottom: 1px solid var(--wz-border, var(--line)); }
+html[data-shell="phone"] .wor-rico { flex: 0 0 30px; display: grid; place-items: center; }
+html[data-shell="phone"] .wor-rico .dsg { width: 26px; height: 26px; opacity: 1; }
+html[data-shell="phone"] .wor-rico .dsg .dn, html[data-shell="phone"] .wor-rico .dsg .dbg { display: none; }
+html[data-shell="phone"] .wor-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--wz-font-size, 0.9375rem); font-weight: 550; }
+html[data-shell="phone"] .wor-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+html[data-shell="phone"] .wor-tx b { font-size: var(--wz-font-size, 0.9375rem); font-weight: 550; line-height: 1.3; }
+html[data-shell="phone"] .wor-tx small { font-size: var(--wz-text-sm, 0.78125rem); line-height: 1.4; color: var(--wz-text-muted, var(--ink-3)); margin-top: 2px; }
+html[data-shell="phone"] .wor-mv { display: flex; gap: 2px; flex: none; }
+html[data-shell="phone"] .wor-mv button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--wz-text-secondary, inherit); font-size: 1rem; font-weight: 700; line-height: 1; }
+html[data-shell="phone"] .wor-mv button:active { background: var(--wz-accent-soft, var(--ac-soft)); color: var(--wz-text, inherit); }
+html[data-shell="phone"] .wor-mv button:disabled { opacity: .22; }
+html[data-shell="phone"] .wor-2up { display: inline-flex; }
+html[data-shell="phone"] .wor-2up i { font-style: normal; }
+html[data-shell="phone"] .wor-2up i + i { margin-left: -4px; }
+html[data-shell="phone"] .wor-sw { flex: 0 0 44px; height: 26px; padding: 0; border: 0; border-radius: 99px; background: var(--wz-surface-raised, var(--line)); position: relative; transition: background 200ms; }
+html[data-shell="phone"] .wor-sw i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--wz-text, var(--ink)); transition: transform 220ms var(--ease, ease); }
+html[data-shell="phone"] .wor-sw.on { background: var(--wz-accent, var(--ac)); }
+html[data-shell="phone"] .wor-sw.on i { transform: translateX(18px); background: var(--wz-on-accent, var(--wz-text, var(--ink))); }
+html[data-shell="phone"] .wor-seg { display: flex; gap: 6px; margin-top: 4px; }
+html[data-shell="phone"] .wor-seg button { flex: 1; min-height: 44px; padding: 8px 6px; border: 1px solid var(--wz-border, var(--line)); border-radius: var(--wz-radius, 12px); background: var(--wz-surface, transparent); color: var(--wz-text-secondary, inherit); font: 600 var(--wz-text-md, 0.875rem)/1.2 var(--wz-font, system-ui, sans-serif); }
+html[data-shell="phone"] .wor-seg button[aria-checked="true"] { color: var(--wz-text, inherit); background: var(--wz-accent-soft, var(--ac-soft)); border-color: var(--wz-accent, var(--ac)); }
+html[data-shell="phone"] .wor-sheet :is(button):focus-visible { outline: 2px solid var(--wz-accent, var(--ac)); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {html[data-shell="phone"] .wor-veil, html[data-shell="phone"] .wor-w, html[data-shell="phone"] .wor-ic, html[data-shell="phone"] .wor-label, html[data-shell="phone"] .wor-scrim, html[data-shell="phone"] .wor-sheet, html[data-shell="phone"] .wor-sw, html[data-shell="phone"] .wor-sw i, html[data-shell="phone"] .wor-p { transition: none !important; }
+html[data-shell="phone"] .wor-w, html[data-shell="phone"] .wor-ic { transform: none; }
+html[data-shell="phone"] .wor.on .wor-w.sel, html[data-shell="phone"] .wor.on .wor-ic.sel { transform: none; }
+}

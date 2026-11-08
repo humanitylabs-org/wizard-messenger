@@ -1,0 +1,32 @@
+/* No workspace paint or exit affordance in a pinned single-app session. */
+html[data-app-session] { --single-cut:max(var(--safe-t, env(safe-area-inset-top, 0px)), var(--cut-t, 0px)); }
+html[data-app-session] #device > :not(#singleApp):not(#toast) { display: none !important; }
+html[data-app-session] #device { width:100%; height:100dvh; max-width:none; border:0; border-radius:0; margin:0; transform:none; }
+html[data-app-session] #singleApp { position:absolute; inset:0; display:block; padding:0; margin:0; border:0; border-radius:0; }
+html[data-app-session] #singleApp iframe { position:absolute; inset:var(--single-cut, 0px) 0 0; width:100%; height:calc(100% - var(--single-cut, 0px)); border:0; background:var(--bg,#05030c); }
+/* The shared Chats overlay replaces the child visually, not the pinned task or its reader state. */
+html[data-app-session] #singleApp .hosted-thread { inset:var(--single-cut, 0px) 0 0 !important; }
+html[data-app-session] .linksheet .ls-keep { display:none; }
+/* Inset overlay CONTENT once; its backing and the app canvas stay edge-to-edge.
+ * Padding the sheet does not move its absolutely positioned panel. */
+html[data-app-session] .linksheet:is(.sheet,.pane) { position:fixed; inset:0; padding-top:0; }
+html[data-app-session] .linksheet.pane .ls-panel { top:var(--single-cut); }
+html[data-app-session] .linksheet.sheet:not(.peek) .ls-panel { height:calc(100% - var(--single-cut) - 6px); }
+html[data-app-session] #singleApp .app-upd { top:calc(var(--single-cut) + 8px); }
+html[data-app-session] #toast { top:calc(var(--single-cut) + 12px); margin-top:0; }
+.single-unavailable { padding:calc(32px + var(--single-cut, 0px)) 24px; color:var(--ink); }
+.home-pin-backdrop { position:fixed; inset:0; z-index:1500; background:rgba(0,0,0,.3); display:flex; align-items:flex-end; justify-content:center; padding:16px 12px calc(16px + env(safe-area-inset-bottom)); }
+.home-pin-sheet { width:min(100%,380px); padding:12px; border:1px solid var(--line-2,rgba(205,190,255,.24)); border-radius:18px; background: linear-gradient(var(--glass-2,#1c133a), var(--glass-2,#1c133a)), var(--wz-panel, var(--wz-base, var(--bg, #05030c)));  color:var(--ink,#f3efff); box-shadow:0 12px 36px #0007; }
+.home-pin-sheet header { display:flex; align-items:center; gap:10px; padding:4px 8px 12px; font-size:14px; }
+.home-pin-sheet header .sgt { width:32px; height:32px; border-radius:9px; }
+.home-pin-sheet button { width:100%; min-height:48px; border:0; border-radius:10px; text-align:left; padding:12px; background:rgba(255,255,255,.06); color:inherit; font:inherit; font-size:15px; }
+.home-pin-sheet button:disabled { opacity:.65; }
+.home-pin-sheet p { margin:12px 8px; line-height:1.5; font-size:14px; }
+.home-pin-sheet input, .home-pin-sheet textarea { box-sizing:border-box; width:100%; min-height:44px; margin-top:10px; padding:8px; color:inherit; background:transparent; border:1px solid var(--line-2,#77688e); border-radius:8px; font-size:16px; user-select:text; -webkit-user-select:text; -webkit-touch-callout:default; touch-action:auto; }
+.home-pin-guide { max-height:calc(100dvh - 48px); overflow-y:auto; }
+.home-pin-guide ol { margin:0; padding-left:24px; }
+.home-pin-guide li { padding:4px 0; }
+.home-pin-guide p { margin:8px 0; }
+.home-pin-guide textarea { display:block; resize:none; overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.4; }
+.home-pin-guide button { text-align:center; font-weight:600; background:var(--line-2,rgba(205,190,255,.24)); }
+.home-pin-guide [role=status]:empty { display:none; }

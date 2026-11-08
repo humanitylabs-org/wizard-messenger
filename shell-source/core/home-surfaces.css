@@ -1,0 +1,29 @@
+/* Shared Home surfaces: shell widgets and their popups inherit the selected skin.
+ * Semantic --wz roles align with the app-styling contract; existing shells resolve
+ * them through glass/ink/line tokens. Layout and content remain component-owned. */
+:root {
+  --wz-home-widget-surface: var(--wz-surface, var(--glass));
+  --wz-home-widget-border: var(--wz-border, var(--line));
+  --wz-home-widget-radius: 20px;
+  --wz-home-popup-surface: var(--wz-surface-raised, var(--glass-2));
+  --wz-home-popup-border: var(--wz-border, var(--line-2));
+  --wz-home-popup-radius: 30px;
+  --wz-home-popup-shadow: 0 30px 80px rgba(0, 0, 0, .6);
+}
+.wz-home-widget {
+  color: var(--wz-text, var(--ink));
+  background: var(--wz-home-widget-surface);
+  border: 1px solid var(--wz-home-widget-border);
+  border-radius: var(--wz-home-widget-radius);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  backdrop-filter: blur(18px) saturate(1.3);
+}
+.wz-home-popup {
+  color: var(--wz-text, var(--ink));
+  background: linear-gradient(var(--wz-home-popup-surface), var(--wz-home-popup-surface)), var(--wz-panel, var(--wz-base, var(--bg, #05030c)));
+  border: 1px solid var(--wz-home-popup-border);
+
+
+
+}
+.wz-home-popup {border-radius:var(--wz-home-popup-radius);box-shadow:var(--wz-home-popup-shadow)}

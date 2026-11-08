@@ -1,0 +1,17 @@
+/* Owner-version controls inherit Appearance v1; never override an owner's palette. */
+.win .wbar .own-view-marker {
+  width: auto; flex: 0 0 auto; min-height: 44px; padding: 0 8px;
+  border: 0; border-radius: 4px; background: var(--wz-overlay, var(--bg));
+  color: var(--wz-text-secondary, var(--ink-2)); font: inherit; font-size: 11px;
+  cursor: pointer; white-space: nowrap;
+}
+.own-view-marker:focus-visible { outline: 2px solid var(--wz-accent, var(--violet-2)); }
+html[data-skin-frame="borderless"] .win .wbar > .own-view-marker { display: flex; align-items: center; }
+.win :is(.wbody, .frame-wrap):has(> .own-view-note) { display: flex; flex-direction: column; }
+.win :is(.wbody, .frame-wrap):has(> .own-view-note) > iframe { position: relative; inset: auto; flex: 1; min-height: 0; height: 0; }
+.own-view-note {
+  position: relative; flex: 0 0 auto; z-index: 6; margin: 0; padding: 10px 12px;
+  background: linear-gradient(var(--wz-overlay, var(--glass)), var(--wz-overlay, var(--glass))), var(--wz-base, var(--bg));
+  color: var(--wz-text, var(--ink)); font-size: 12px; line-height: 1.4; pointer-events: none;
+}
+

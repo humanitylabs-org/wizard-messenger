@@ -1,0 +1,129 @@
+/* Wizard OS first-run tour + Help sheet (core/tour.js). Dark, quiet, one line of copy above the orb. */
+.tour { position: absolute; inset: 0; z-index: 90; pointer-events: none; opacity: 0; transition: opacity 280ms var(--ease); }
+.tour.on { opacity: 1; }
+.tour[hidden] { display: none; }
+/* The spotlight: a hole over what this beat is about, everything else dimmed (box-shadow trick). */
+.tr-spot { position: absolute; border-radius: 999px; box-shadow: 0 0 0 200vmax rgba(3, 1, 10, .74); pointer-events: none;
+  transition: left 520ms var(--ease), top 520ms var(--ease), width 520ms var(--ease), height 520ms var(--ease), border-radius 520ms var(--ease), box-shadow 400ms; }
+.tour[data-step="3"] .tr-spot { box-shadow: 0 0 0 200vmax rgba(3, 1, 10, .86); }
+.tr-spot::after { content: ""; position: absolute; inset: -6px; border-radius: inherit; border: 1.5px solid rgba(185, 155, 255, .55); animation: trRing 1.8s ease-out infinite; }
+.tour[data-step="3"] .tr-spot::after { display: none; }
+@keyframes trRing { from { opacity: .9; transform: scale(.92); } to { opacity: 0; transform: scale(1.35); } }
+.tr-skip { position: absolute; z-index: 2; top: calc(var(--safe-t, 0px) + 14px); right: 14px; pointer-events: auto; border: 1px solid var(--line-2); background: linear-gradient(rgba(12, 8, 26, .7), rgba(12, 8, 26, .7)), var(--wz-panel, var(--wz-base, var(--bg, #05030c)));
+  color: var(--ink-2); border-radius: 99px; padding: 7px 14px; font: inherit; font-size: 13px; letter-spacing: .02em; cursor: pointer; }
+.tr-steps { position: absolute; top: calc(var(--safe-t, 0px) + 26px); left: 18px; display: flex; gap: 6px; }
+.tr-steps i { width: 18px; height: 3px; border-radius: 2px; background: rgba(205, 190, 255, .18); transition: background 300ms; }
+.tr-steps i.on { background: var(--violet-2); }
+.tour[data-step="3"] .tr-steps { opacity: 0; }
+.tr-copy { position: absolute; left: 22px; right: 22px; top: 40%; text-align: center; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 20px;
+  background: linear-gradient(rgba(8, 5, 20, .78), rgba(8, 5, 20, .78)), var(--wz-panel, var(--wz-base, var(--bg, #05030c)));   box-shadow: 0 0 0 1px rgba(205, 190, 255, .08); }
+.tour[data-step="3"] .tr-copy { background: var(--wz-panel, var(--wz-base, var(--bg, #05030c))); box-shadow: none;   }
+.tr-copy small { font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--violet-2); opacity: .85; }
+.tr-copy b { font-size: 21px; line-height: 1.3; font-weight: 600; color: var(--ink); letter-spacing: -.005em; text-wrap: balance; }
+.tr-copy.in { animation: trIn 380ms var(--ease) both; }
+/* Movement only, never opacity: WebKit can hold an entrance at frame 0 for ~2 s while the shell boots, and with
+   opacity in the keyframes the instruction stayed invisible that whole time. A held rise still shows the text. */
+@keyframes trIn { from { transform: translateY(8px); } }
+.tour[data-step="3"] .tr-copy { top: 28%; }
+.tr-stage { position: absolute; inset: 0; }
+/* End card + Help: gesture glyphs */
+.tr-glyphs { position: absolute; left: 0; right: 0; top: 42%; display: flex; justify-content: center; gap: 30px; }
+.tr-g { display: flex; flex-direction: column; align-items: center; gap: 8px; animation: trIn 420ms var(--ease) both; }
+.tr-g:nth-child(2) { animation-delay: 90ms; } .tr-g:nth-child(3) { animation-delay: 180ms; }
+.tr-g b { font-size: 15px; color: var(--ink); } .tr-g small { font-size: 12.5px; color: var(--ink-3); margin-top: -4px; }
+.tr-tapon { position: absolute; left: 0; right: 0; top: 62%; text-align: center; color: var(--ink-3); font-size: 13px; animation: blink 2.4s ease-in-out infinite; }
+.tr-gi { position: relative; width: 52px; height: 52px; flex: 0 0 52px; border-radius: 50%; border: 1.5px solid rgba(185, 155, 255, .35); display: grid; place-items: center; }
+.tr-gi i { width: 14px; height: 14px; border-radius: 50%; background: var(--violet-2); }
+.tr-gi.tap i { animation: gTap 1.6s ease-out infinite; }
+.tr-gi.tap::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; border: 1.5px solid var(--violet-2); animation: gRing 1.6s ease-out infinite; }
+@keyframes gTap { 0%, 100% { transform: scale(1); } 12% { transform: scale(.7); } 24% { transform: scale(1); } }
+@keyframes gRing { 0%, 12% { opacity: 0; transform: scale(.4); } 30% { opacity: .9; } 100% { opacity: 0; transform: scale(1.4); } }
+.tr-gi.hold { border-color: rgba(63, 224, 255, .3); background: conic-gradient(#3fe0ff var(--tr-hold, 0%), transparent 0); animation: gHold 2.2s linear infinite; }
+.tr-gi.hold i { background: #3fe0ff; }
+@property --tr-hold { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@keyframes gHold { 0% { --tr-hold: 0%; } 50% { --tr-hold: 100%; } 100% { --tr-hold: 100%; } }
+.tr-gi.hold::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: #0c0820; }
+.tr-gi.hold i { position: relative; z-index: 1; }
+.tr-gi.down i { animation: gDown 1.6s ease-in-out infinite; }
+@keyframes gDown { 0% { transform: translateY(-10px); opacity: 0; } 25% { opacity: 1; } 75% { transform: translateY(10px); opacity: 1; } 100% { transform: translateY(12px); opacity: 0; } }
+.tr-gi.dots i { width: 6px; height: 6px; box-shadow: -11px 0 0 rgba(185, 155, 255, .45), 11px 0 0 rgba(185, 155, 255, .45); }
+.tr-gi.back i { width: 12px; height: 12px; border-radius: 0; background: none; border-left: 2px solid var(--violet-2); border-bottom: 2px solid var(--violet-2); transform: translateX(3px) rotate(45deg); }
+.tr-gi.skin i { width: 16px; height: 16px; background: linear-gradient(90deg, var(--violet-2) 50%, transparent 50%); box-shadow: inset 0 0 0 1.5px var(--violet-2); }
+.tr-note { font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+.device.touring .orb-wrap.tr-pulse .orb-halo { animation-duration: 1.6s; opacity: 1; }
+.device.touring .desk-label, .device.touring .toast { opacity: 0 !important; }
+
+/* Help sheet: say "help" or Settings → Gestures & help */
+.help-sheet { position: absolute; inset: 0; z-index: 92; display: flex; align-items: flex-end; background: rgba(3, 1, 10, 0); transition: background 240ms; }
+.help-sheet.open { background: rgba(3, 1, 10, .62); }
+.hs-card { width: 100%; max-height: 86%; overflow: auto; padding: 18px 18px calc(var(--safe-b) + 18px); border-radius: 26px 26px 0 0; background: #0f0a22; border-top: 1px solid var(--line-2);
+  transform: translateY(100%); transition: transform 300ms var(--ease); }
+.help-sheet.open .hs-card { transform: none; }
+.hs-h { display: flex; align-items: center; justify-content: space-between; margin: 2px 2px 12px; }
+.hs-h b { font-size: 19px; color: var(--ink); }
+.hs-x { border: 0; background: rgba(205, 190, 255, .08); color: var(--ink-2); width: 34px; height: 34px; border-radius: 50%; font-size: 14px; cursor: pointer; }
+.hs-row { display: flex; gap: 14px; align-items: flex-start; padding: 11px 2px; border-top: 1px solid rgba(205, 190, 255, .07); }
+.hs-row .tr-gi { width: 44px; height: 44px; flex-basis: 44px; }
+.hs-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hs-tx b { font-size: 15.5px; color: var(--ink); } .hs-tx small { font-size: 13.5px; color: var(--ink-2); line-height: 1.4; }
+.hs-say { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.hs-say button { font: inherit; font-size: 12.5px; padding: 6px 11px; border-radius: 99px; border: 1px dashed var(--line-2); background: none; color: var(--ink-2); cursor: pointer; }
+.hs-say button::before { content: "“"; color: var(--violet-2); } .hs-say button::after { content: "”"; color: var(--violet-2); }
+.hs-go { display: block; width: 100%; margin-top: 14px; padding: 13px; border-radius: 16px; border: 0; font: inherit; font-size: 15px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, #6b46ff, #c04dff); cursor: pointer; }
+/* Reply beat (2): the "Open Chats" button under the instruction. */
+.tr-go { border: 0; border-radius: 99px; min-height: 44px; padding: 10px 28px; font: inherit; font-size: 15px; font-weight: 650; color: #fff;
+  background: linear-gradient(140deg, #7a4dff, #c04dff); cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .tour *, .help-sheet * { animation: none !important; transition: none !important; } }
+.tour[data-step="3"] { pointer-events: auto; cursor: pointer; overflow-y: auto; box-sizing: border-box;
+  padding-top: calc(var(--safe-t, 0px) + 64px); padding-bottom: calc(var(--safe-b, 0px) + 16px); }
+.tour[data-step="3"]::after { content: ""; display: block; height: var(--tr-scroll-height, 0px); pointer-events: none; }
+
+/* v2: real voice. While the user is really talking (or the shell shows a result), the dim lifts so the real
+   transcript, arc and desks show; the copy moves to the top out of their way. */
+.tour.tr-live .tr-spot, .tour.tr-open .tr-spot { box-shadow: 0 0 0 200vmax rgba(3, 1, 10, 0); }
+.tour.tr-live .tr-spot::after, .tour.tr-open .tr-spot::after { display: none; }
+.tour.tr-live .tr-copy, .tour.tr-open .tr-copy { top: calc(var(--safe-t, 0px) + 64px); }
+.tr-spot { transition: left 420ms var(--ease), top 420ms var(--ease), width 420ms var(--ease), height 420ms var(--ease), border-radius 420ms var(--ease), box-shadow 320ms; }
+.tr-alt:empty { display: none; }
+.tr-alt { display: flex; justify-content: center; margin-top: 6px; pointer-events: auto; }
+.tr-link { font-size: 14px; color: var(--violet-2); padding: 6px 10px; text-decoration: underline; text-underline-offset: 3px; }
+.tr-type { display: flex; gap: 8px; width: 100%; }
+.tr-type input { flex: 1; min-width: 0; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(205, 190, 255, .06); color: var(--ink); font: inherit; font-size: 16px; outline: 0; }
+.tr-type button { height: 42px; padding: 0 18px; border-radius: 12px; background: linear-gradient(140deg, #7a4dff, #c04dff); color: #fff; font-weight: 600; font-size: 15px; }
+.tr-mic { position: absolute; left: 28px; right: 28px; top: 62%; text-align: center; font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+.tr-nx:empty { display: none; }
+.tr-nx { display: flex; justify-content: center; pointer-events: auto; }
+.tr-next { font-size: 13.5px; color: var(--ink-2); text-decoration-color: rgba(205, 190, 255, .35); }
+
+/* Desktop first-message guide (WosTour.desk): a small card above the New chat composer. No scrim, no tap guard. */
+.dtr { position: fixed; z-index: 35; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 12px; border-radius: 14px; box-sizing: border-box;
+  background: color-mix(in oklab, var(--bg, #0b0816) 92%, var(--ink, #fff) 8%); color: var(--ink, #f4f0ff); border: 1px solid var(--line-2, rgba(205, 190, 255, .2));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .4); animation: trIn 320ms var(--ease, ease) both; }
+.dtr small { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--violet-2, #b99bff); }
+.dtr b { font-size: 15.5px; line-height: 1.35; font-weight: 600; }
+.dtr .dtr-sub { font-size: 12.5px; line-height: 1.5; color: var(--ink-2, #cfc6e6); }
+.dtr .dtr-acts { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 2px; }
+.dtr .dtr-link { border: 0; background: none; color: var(--ink-2, #cfc6e6); font: inherit; font-size: 12.5px; padding: 6px 8px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(205, 190, 255, .35); }
+.dtr .dtr-go { border: 0; border-radius: 99px; padding: 7px 16px; font: inherit; font-size: 13px; font-weight: 650; color: #fff; background: var(--violet, #8f63ff); cursor: pointer; }
+.dtr-ring { position: fixed; z-index: 34; pointer-events: none; border-radius: 18px; border: 2px solid var(--violet-2, #b99bff); box-shadow: 0 0 0 5px rgba(143, 99, 255, .16); animation: trIn 320ms var(--ease, ease) both; }
+@media (prefers-reduced-motion: reduce) { .dtr { animation: none; } }
+/* The header tools sit under the top-right Skip tour pill and take no taps while the tour runs: hide them then. */
+.device.touring .home-tools { visibility: hidden; }
+
+/* Reply beat (2): the shell is theirs. No dim, no spotlight ring, the instruction small at the top; only its own
+   buttons take taps (the card itself lets taps through to Chats underneath). */
+.tour.tr-free .tr-spot { box-shadow: 0 0 0 200vmax rgba(3, 1, 10, 0); }
+.tour.tr-free .tr-spot::after { display: none; }
+.tour.tr-free .tr-copy { top: calc(var(--safe-t, 0px) + 56px); padding: 10px 14px; gap: 4px; }
+.tour.tr-free .tr-copy b { font-size: 16px; }
+.tour.tr-free .tr-alt { margin-top: 2px; }
+.tour.tr-free .tr-go { min-height: 38px; padding: 7px 22px; font-size: 14px; }
+/* Reply, away from Home (Chats open): nothing of the tour covers the list or the thread. */
+.tour.tr-free.tr-away .tr-copy, .tour.tr-free.tr-away .tr-skip, .tour.tr-free.tr-away .tr-steps { display: none; }
+/* Done (3): the end card carries a longer paragraph, so it reads as body text, not a headline. */
+.tour[data-step="3"] .tr-copy b { font-size: 17px; line-height: 1.45; font-weight: 500; }
+/* While a take is running, the orb and its Cancel/Pause controls sit above everything the tour draws, so nothing
+   the tour shows can cover them (the tour itself never takes those taps). */
+.device.touring:is([data-voice="listen"], [data-voice="paused"], [data-voice="command"]) #dock { z-index: 91; }
+.device.touring:is([data-voice="listen"], [data-voice="paused"], [data-voice="command"]) #voice { z-index: 92; } /* arcs over the dock, as without the tour */

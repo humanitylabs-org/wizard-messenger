@@ -1,0 +1,850 @@
+/* Wizard UX core: Chats (list, thread, composer, attachments, voice notes, unsent bubbles). Shared by every shell. */
+.ch-incognito { border: 2px dashed var(--wz-accent, var(--accent)); border-radius: 12px; overflow: hidden; }
+.ch-incog-note { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; background: var(--wz-panel, var(--card)); color: var(--wz-text, var(--ink)); font-size: .75rem; line-height: 1.5; border-bottom: 1px solid var(--wz-border, var(--line)); }
+.ch-incog-note b { font-size: .8125rem; }
+.ch-incog-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 8px; color: var(--wz-text); background: var(--wz-surface); border-radius: 12px; flex: 0 0 auto; }
+.ch-incog-toggle:focus-visible { outline: 2px solid var(--wz-accent); outline-offset: 2px; }
+.ch-incognito .ch-head .pbtn { flex: 0 0 auto; }
+.ch-incognito .ch-head .ti { flex-direction: column; align-items: flex-start; gap: 2px; }
+.ch-incognito .ch-incog-toggle > span:first-child { display: none; }
+.ch-incognito .ch-compose { flex: 0 0 auto; }
+.ch-incognito .ch-msgs { min-height: 0; overflow-y: auto; }
+
+/* Native app only: a real root-scrolling WebView for Android's built-in capture.
+ * No clones, capture callbacks, scroll proxies or alternate chat renderer. */
+html.wos-doc-scroll { height: auto !important; overflow-y: auto !important; overflow-x: clip !important; }
+html.wos-doc-scroll body { height: auto !important; min-height: 100dvh; overflow: visible !important; display: block; }
+html.wos-doc-scroll .wos-doc-path {
+  position: relative !important; inset: auto !important; display: block !important;
+  width: 100% !important; height: auto !important; min-height: 0 !important; max-height: none !important;
+  overflow: visible !important; transform: none !important; translate: none !important;
+  touch-action: pan-y !important;
+  contain: none !important; will-change: auto !important; filter: none !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important; animation: none !important;
+  transition: none !important; scale: none !important; rotate: none !important; container-type: normal !important;
+}
+html.wos-doc-scroll .device > :not(.wos-doc-path) { position: fixed !important; }
+html.wos-doc-scroll .wos-doc-path:is(.desk,.tiles,.win,.wbody) { padding: 0 !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+html.wos-doc-scroll .track > .desk:not(.wos-doc-path),
+html.wos-doc-scroll .tiles > .win:not(.wos-doc-path),
+html.wos-doc-scroll .desk.wos-doc-path > :not(.wos-doc-path),
+html.wos-doc-scroll .win.wos-doc-path > .wbar { display: none !important; }
+/* The fixed header's top edge. Immersive full screen hides the phone status bar, so the header sits under the
+ * camera cutout (--cut-t), not the status-bar inset (--safe-t) — otherwise the thread scrolled into a bare
+ * status-bar-high strip above the title (James, 23 Oct 2026). */
+html.wos-doc-scroll .device { --wos-doc-top: var(--safe-t, 0px); }
+html.wos-doc-scroll .device.immersive { --wos-doc-top: var(--cut-t, 0px); }
+html.wos-doc-scroll .wos-doc-thread .ch-thread {
+  position: relative !important; inset: auto !important; height: auto !important; min-height: 100dvh;
+  padding-top: calc(var(--wos-doc-top, 0px) + var(--wos-doc-head, 54px)) !important;
+  padding-bottom: calc(var(--wos-doc-compose, 84px) + var(--wos-doc-switch, 0px) + max(var(--safe-b, 0px), var(--wos-doc-bottom, 0px)) + 16px) !important;
+}
+html.wos-doc-scroll .wos-doc-thread .ch-msgs {
+  flex: none !important; height: auto !important; overflow: visible !important;
+  mask-image: none !important; -webkit-mask-image: none !important;
+}
+html.wos-doc-scroll .wos-doc-thread .ch-head {
+  position: fixed !important; top: var(--wos-doc-top, 0px) !important; left: 0; right: 0;
+  z-index: 50; background: var(--wz-base, var(--bg));
+}
+/* Paint the inset above the header too: the document scrolls under the whole screen, so the strip under the
+ * status bar / cutout must stay opaque or messages show above the title. */
+html.wos-doc-scroll .wos-doc-thread .ch-head::before {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: var(--wos-doc-top, 0px);
+  background: inherit; pointer-events: none;
+}
+/* The measured keyboard/dock strip already includes safe-bottom: union, never add it twice. */
+html.wos-doc-scroll .wos-doc-thread .ch-compose {
+  position: fixed !important; bottom: max(var(--safe-b, 0px), var(--wos-doc-bottom, 0px)) !important;
+  left: 0; right: 0; z-index: 50; background: var(--wz-base, var(--bg));
+}
+html.wos-doc-scroll .wos-doc-thread .ch-swrow {
+  position: fixed !important; bottom: calc(max(var(--safe-b, 0px), var(--wos-doc-bottom, 0px)) + var(--wos-doc-compose, 84px)) !important;
+  left: 0; right: 0; z-index: 50; background: var(--wz-base, var(--bg));
+}
+html.wos-doc-scroll .wos-doc-thread .ch-latest { position: fixed; bottom: calc(var(--wos-doc-compose, 84px) + var(--wos-doc-switch, 0px) + max(var(--safe-b, 0px), var(--wos-doc-bottom, 0px)) + 12px); z-index: 51; }
+html.wos-doc-scroll :is(#dock,.general-voice,.pill) { position: fixed; }
+
+.ch-custody-notice { display:block; flex-basis:100%; padding:8px 12px; color:var(--muted, #c4b8d2); font-size:12px; line-height:1.4; }
+.ch-compose > .ch-custody-notice { margin-bottom:12px; }
+.voice > .ch-custody-notice { position:absolute; bottom:calc(var(--safe-b, 0px) + var(--dock-h, 64px) + 18px); left:16px; right:16px; background:var(--bg, #160f24); border:1px solid var(--line, #433453); border-radius:12px; }
+.dbar > .ch-custody-notice { position:absolute; bottom:calc(100% + 8px); left:12px; max-width:440px; background:var(--bg, #160f24); border-radius:12px; }
+/* ---------- Chats: native Wizard client ---------- */
+.chats { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.ch-list, .ch-thread { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.ch-top { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 10px 6px; }
+.ch-search { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 12px; background: rgba(205, 190, 255, .06); border: 1px solid var(--line); }
+.ch-search svg { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; }
+.ch-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; }
+.ch-search input::placeholder { color: var(--ink-3); }
+/* Persistent list Focus: one horizontally scrollable row, shared by both shells.
+ * A flex footer reserves its own height, so no last row can sit underneath it. */
+.ch-focus-strip { position: relative; z-index: 5; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0; height: 52px; padding: 4px 10px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; touch-action: pan-x; overscroll-behavior-x: contain; scrollbar-width: none; background: var(--bg); border-top: 1px solid var(--line); }
+.ch-focus-strip::-webkit-scrollbar { display: none; }
+.ch-focus-tab { --ch-tab-colour: var(--ch-agent-colour, var(--wz-accent, var(--violet-2))); position: relative; isolation: isolate; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 44px; max-width: calc(100% - 20px); height: 44px; padding: 0 11px; border: 0; border-radius: 22px; background: transparent; color: var(--wz-ink, var(--ink)); font: inherit; font-size: 13px; white-space: nowrap; }
+/* The pill is 32px tall; the transparent button remains a 44px touch target. */
+.ch-focus-tab::before { content: ''; position: absolute; z-index: -1; inset: 6px 0; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--ch-tab-colour) 28%, transparent); background: color-mix(in srgb, var(--ch-tab-colour) 8%, var(--wz-base, var(--bg))); }
+.ch-focus-tab.on { color: var(--wz-base, var(--bg)); font-weight: 650; }
+.ch-focus-tab.on::before { background: var(--ch-tab-colour); border-color: transparent; }
+/* Agent headspace (James, 24 Oct 2026): no background wash; the agent's colour carries the highlights instead. */
+.ch-focus-tab[style*="--ch-agent-colour"]:not(.on) { color: color-mix(in oklab, var(--ch-tab-colour) 80%, var(--wz-ink, var(--ink))); font-weight: 600; }
+.ch-focus-tab[style*="--ch-agent-colour"]:not(.on)::before { border-color: color-mix(in srgb, var(--ch-tab-colour) 60%, transparent); background: color-mix(in srgb, var(--ch-tab-colour) 18%, var(--wz-base, var(--bg))); }
+.ch-focus-tab.on::before { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ch-tab-colour) 35%, transparent), 0 4px 14px color-mix(in srgb, var(--ch-tab-colour) 45%, transparent); }
+.ch-list[style*="--agc"] .ch-focus-strip { border-top: 2px solid var(--agc); }
+.ch-list[style*="--agc"] .ch-search { border-color: color-mix(in srgb, var(--agc) 55%, transparent); }
+.ch-list[style*="--agc"] .ch-rdy-bar button.on { background: color-mix(in srgb, var(--agc) 30%, transparent); border-color: var(--agc); color: var(--wz-ink, var(--ink)); }
+.ch-list[style*="--agc"] .ch-sec-h b:not(.wait) { background: var(--agc); color: var(--wz-base, var(--bg)); }
+.ch-list[style*="--agc"] .ch-row.unread .tp time { color: var(--agc); }
+.ch-list[style*="--agc"] .ch-fab { background: linear-gradient(145deg, color-mix(in oklab, var(--agc) 85%, #fff), color-mix(in oklab, var(--agc) 80%, #000)); color: #111; box-shadow: 0 10px 26px color-mix(in srgb, var(--agc) 50%, transparent), inset 0 1px 0 rgba(255,255,255,.25); }
+
+.ch-focus-tab[data-chfocusopt^="space:"]::before { border-color: var(--wz-line, var(--line-2)); }
+.ch-focus-tab:focus-visible { outline: 2px solid var(--violet-2); outline-offset: -3px; }
+.ch-focus-tab > span { overflow: hidden; text-overflow: ellipsis; }
+.ch-focus-tab .ag-sig { display: none; }
+.ch-focus-tab .ag-lock { width: 14px; height: 14px; flex: none; }
+.ch-focus-dot { position: absolute; top: 4px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.ch-list:has(.ch-focus-strip) .ch-fab { bottom: 68px; }
+.ch-list:has(.ch-focus-strip) .ch-pill { bottom: 68px; }
+/* Fullscreen phone lists extend behind the corner orb; reserve its existing safe area.
+ * Framed phone windows and desktop panes already end above their shell dock. */
+html[data-shell="phone"] .device.orb-corner .win.full .ch-focus-strip { margin-bottom: calc(var(--safe-b, 0px) + var(--corner-b) + var(--corner-orb) + 8px); }
+html[data-shell="phone"] .device.orb-corner .win.full .ch-list:has(.ch-focus-strip) .ch-fab { bottom: calc(var(--safe-b, 0px) + var(--corner-b) + var(--corner-orb) + 76px); }
+html[data-shell="phone"] .device.orb-corner .win.full .ch-list:has(.ch-focus-strip) .ch-pill { bottom: calc(var(--safe-b, 0px) + var(--corner-b) + var(--corner-orb) + 76px); }
+/* A solo list on pill-dock skins also reaches the viewport bottom. Reuse the
+ * skin's measured dock inset; the footer replaces its legacy fade/spacer. */
+#device:not(.orb-corner) .tiles:not(.has-full) .win.solo.app-chats .ch-focus-strip { margin-bottom: calc(var(--pill-top, 0px) + 8px); }
+#device .win:has(.ch-focus-strip)::after, #device .win .ch-list:has(.ch-focus-strip) .ch-scroll::after { display: none; }
+#device .win .ch-list:has(.ch-focus-strip) .ch-scroll { padding-bottom: 84px; }
+#device:not(.orb-corner) .tiles:not(.has-full) .win.solo.app-chats .ch-list:has(.ch-focus-strip) .ch-fab { bottom: calc(var(--pill-top, 0px) + 76px); }
+.device.zen:not(.orb-corner) .ch-focus-strip { margin-bottom: calc(var(--safe-b, 0px) + 24px); }
+.ch-list .ch-fcard:has([data-chfocusopt]) { background: var(--bg); }
+html[data-shell="phone"] .ch-fsheet:has([data-chfocusopt]) { bottom: calc(var(--dock-h) + var(--safe-b, 0px) + 8px); }
+.ch-fcard [data-chfocusopt] { min-height: 44px; height: auto; max-width: 100%; }
+.ch-fcard [data-chfocusopt] > span { min-width: 0; overflow-wrap: anywhere; }
+.ch-fcard [data-chfocusopt] small { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ch-fcard [data-chfocusopt] .ag-sig { width: 22px; height: 22px; flex: none; }
+.ch-fcard [data-chfocusopt] .ag-lock { width: 16px; height: 16px; flex: none; }
+.ch-new { flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(140deg, #7a4dff, #c04dff); box-shadow: 0 6px 18px rgba(140, 80, 255, .35); }
+.ch-new svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; }
+.ch-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: none; padding: 2px 6px 12px; }
+.ch-scroll::-webkit-scrollbar { display: none; }
+.ch-row { display: flex; gap: 11px; width: 100%; padding: 10px 8px; border-radius: 14px; text-align: left; align-items: flex-start; }
+.ch-row:active { background: rgba(205, 190, 255, .07); }
+.ch-row .emo { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-size: 18px; background: rgba(205, 190, 255, .07); }
+.ch-row .bd { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ch-row .tp { display: flex; gap: 8px; align-items: baseline; }
+.ch-row .tp b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-row .tp time { flex: 0 0 auto; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ch-row .pv { font-size: 13.5px; line-height: 1.35; color: var(--ink-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ch-row.unread .tp b { color: var(--ink); font-weight: 750; }
+.ch-row.unread .pv { color: var(--ink-2); }
+.ch-row.unread .tp time { color: var(--violet-2); font-weight: 700; }
+.st { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.st.unread { background: var(--violet-2); box-shadow: 0 0 8px var(--violet); }
+.st.working { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: pip 1.6s ease-out infinite; }
+.st.working.soon { animation-duration: .9s; } /* just sent: Sending… / Starting… pulse a little quicker */
+.st.working.off { background: var(--amber); box-shadow: 0 0 8px var(--amber); animation: none; } /* Offline · will retry */
+.st.needs { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.ch-empty { margin: 24px 16px; padding: 18px; border-radius: 16px; text-align: center; color: var(--ink-3); font-size: 14px; line-height: 1.5; background: rgba(205, 190, 255, .04); border: 1px solid var(--line); }
+.ch-empty b { color: var(--ink); font-size: 16px; }
+.ch-readerr .pbtn { position: relative; margin-top: 12px; height: 34px; padding: 0 16px; border-radius: 99px; background: rgba(143, 99, 255, .35); color: var(--ink); font-size: 13px; font-weight: 700; }
+.ch-readerr .pbtn::after { content: ''; position: absolute; top: 50%; left: 50%; width: calc(100% + 12px); min-width: 44px; height: 44px; transform: translate(-50%, -50%); }
+.ch-readerr .pbtn + .pbtn { margin-left: 6px; background: transparent; border: 1px solid var(--line-2); color: var(--ink-2); }
+
+.ch-head { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 4px; border-bottom: 1px solid var(--line); }
+.ch-back { flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: var(--ink-2); }
+.ch-back svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ch-back:active { background: rgba(205, 190, 255, .1); }
+.ch-head .ti { flex: 1; min-width: 0; display: flex; align-items: center; min-height: 36px; }
+.ch-head .ti b { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-msgs { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: none; padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; }
+.ch-msgs::-webkit-scrollbar { display: none; }
+/* Opened alert: source text is visible without resolving/sending, in the existing thread scroller. */
+.ch-notif-details { min-width: 0; margin: 16px 2px 4px; color: var(--ink); }
+.ch-notif-details h2 { margin: 0 0 8px; color: var(--ink-2); font-size: 0.8125rem; font-weight: 700; }
+.ch-notif-original { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1.0625rem; line-height: 1.5; }
+.msg { display: flex; }
+.msg.u { justify-content: flex-end; }
+.msg .bub { max-width: 88%; padding: 10px 13px; border-radius: 18px; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.msg.u .bub { border-bottom-right-radius: 6px; background: linear-gradient(140deg, rgba(122, 77, 255, .5), rgba(192, 77, 255, .38)); border: 1px solid rgba(185, 155, 255, .3); }
+.msg.u.pending .bub { opacity: .6; }
+.msg.a .bub { max-width: 100%; padding: 2px 2px; background: none; color: var(--ink); }
+.bub p { margin: 0 0 8px; } .bub p:last-child { margin-bottom: 0; }
+.bub ul, .bub ol { margin: 4px 0 8px; padding-left: 20px; } .bub li { margin: 2px 0; }
+.bub h3, .bub h4 { margin: 10px 0 6px; font-size: 15.5px; }
+.bub a { color: var(--violet-2); }
+.bub code { font-size: 13px; padding: 1px 5px; border-radius: 6px; background: rgba(205, 190, 255, .1); }
+.bub pre { margin: 6px 0; padding: 10px; border-radius: 10px; font-size: 12px; overflow-x: auto; background: rgba(0, 0, 0, .35); white-space: pre-wrap; }
+.trow { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.trow span { flex: 1; min-width: 0; }
+.fchip { display: inline-block; margin: 0 6px 6px 0; padding: 3px 9px; border-radius: 99px; font-size: 12px; background: rgba(0, 0, 0, .25); }
+.steps { font-size: 13px; color: var(--ink-3); }
+.steps summary { list-style: none; cursor: pointer; padding: 4px 2px; display: flex; gap: 6px; align-items: center; }
+.steps summary::-webkit-details-marker { display: none; }
+.steps.live summary { color: var(--cyan); }
+/* Reply summary (--wos-reply-summary: on): the short answer is one tappable block; tapping it shows the full reply in
+ * its place, and Show less folds it back. */
+.msg.a .rsum { display: flex; align-items: flex-start; gap: 8px; width: 100%; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--glass, transparent); color: var(--ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.msg.a .rsum:hover { border-color: var(--line-2); }
+.msg.a .rsum:focus-visible, .msg.a .rless:focus-visible { outline: 2px solid var(--violet-2); outline-offset: 2px; }
+.msg.a .rsum-t { flex: 1; min-width: 0; }
+.msg.a .rsum-chev { flex: none; width: 16px; height: 16px; margin-top: 3px; fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.msg.a .rsum[hidden], .msg.a .rdet[hidden] { display: none; }
+.msg.a .rtools { display: flex; justify-content: flex-end; align-items: center; gap: 2px; margin: 0 0 4px; }
+.msg.a .rless { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border: 0; background: none; color: var(--ink-3); font: inherit; font-size: var(--wz-text-sm); cursor: pointer; }
+.msg.a .rcog { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink-3); cursor: pointer; }
+.msg.a .rcog svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.msg.a .rcog:focus-visible { outline: 2px solid var(--violet-2); outline-offset: 2px; }
+.ch-rlen [role="radio"] { align-items: flex-start; }
+.ch-rlen-dot { width: 20px; text-align: center; color: var(--ink-2); }
+.ch-rlen-tx { display: grid; gap: 2px; }
+.ch-rlen-tx small { font-size: var(--wz-text-sm); font-weight: 500; color: var(--ink-3); }
+.msg.a .rless .rsum-chev { width: 14px; height: 14px; margin: 0; transform: rotate(180deg); }
+.note-line { margin: 4px 0 4px 16px; padding-left: 10px; border-left: 1px solid var(--line-2); font-size: 13px; color: var(--ink-3); }
+.note-line p { margin: 0; }
+.dots { display: inline-flex; gap: 3px; } .dots b { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: typing 1.2s infinite; }
+.dots b:nth-child(2) { animation-delay: .15s; } .dots b:nth-child(3) { animation-delay: .3s; }
+.ch-compose { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid var(--line); }
+.ch-row2 { display: flex; align-items: flex-end; gap: 8px; }
+.ch-compose textarea { flex: 1; min-width: 0; min-height: 42px; max-height: 140px; resize: none; padding: 10px 14px; border-radius: 20px; border: 1px solid var(--line-2); outline: 0; background: rgba(205, 190, 255, .06); color: var(--ink); font: inherit; font-size: 15px; line-height: 1.35; transition: border-color 120ms, background 120ms, box-shadow 120ms; }
+.ch-compose textarea:focus { border-color: rgba(185, 155, 255, .6); }
+.ch-compose.is-file-drag textarea { border-color: var(--violet-2); background: color-mix(in srgb, var(--violet) 15%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet-2) 40%, transparent); }
+.ch-compose button { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(140deg, #7a4dff, #c04dff); }
+.ch-compose button svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ch-compose button[type=submit]:disabled { opacity: .45; }
+.ch-compose .ch-attach { background: rgba(205, 190, 255, .08); border: 1px solid var(--line-2); }
+.ch-compose .ch-attach svg { width: 20px; height: 20px; stroke: var(--ink-2); stroke-width: 1.8; }
+.ch-tray { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 0; }
+.ch-tray::-webkit-scrollbar { display: none; }
+@keyframes ch-attspin { to { transform: rotate(360deg); } }
+/* Upload spinner is status: Reduce Motion slows it, never stops it (out-ranks the styles.css kill switch, see .ch-spin). */
+/* Sections: same groups as Wizard's Work view */
+.ch-sec { margin: 0 0 2px; }
+.ch-sec-h { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 8px 8px; text-align: left; font-size: 11.5px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
+.ch-sec-h small { font-size: 11.5px; font-weight: 800; color: var(--ink-3); letter-spacing: .05em; }
+.ch-sec-h b { padding: 1px 7px; border-radius: 99px; font-size: 10.5px; letter-spacing: .04em; color: #fff; background: var(--violet); }
+/* Count badge text follows the active skin base colour. */
+.ch-sec-h b { color: var(--wz-base, var(--bg)); background: var(--violet); }
+.ch-sec-h i { margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3); transform: rotate(45deg); transition: transform .18s; }
+.ch-sec.open .ch-sec-h i { transform: rotate(-135deg); }
+.ch-sec + .ch-sec { border-top: 1px solid var(--line); }
+.ch-sec[data-sec="errors"] .ch-sec-h { color: #ff8f8f; }
+.ch-none { display: block; padding: 4px 10px 10px; font-size: 13px; color: var(--ink-3); }
+.ch-more { display: block; width: calc(100% - 16px); margin: 4px 8px 10px; padding: 9px; border-radius: 12px; font-size: 13px; font-weight: 700; color: var(--violet-2); background: rgba(205, 190, 255, .05); }
+/* Message attachments: voice notes look like a voice note, photos inline */
+.fchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.fchips:last-child { margin-bottom: 0; }
+.fchip svg { width: 13px; height: 13px; vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+a.fchip { color: inherit; text-decoration: none; }
+.fimg img { display: block; max-width: 220px; max-height: 260px; border-radius: 12px; object-fit: cover; }
+.vnote { display: flex; align-items: center; gap: 10px; min-width: 200px; max-width: 260px; padding: 2px 4px 2px 0; text-align: left; color: inherit; --p: 0; }
+.vnote .vp { flex: 0 0 auto; position: relative; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .92); }
+.vnote .vp svg { width: 16px; height: 16px; fill: #6b3cf0; margin-left: 2px; }
+.vnote.playing .vp svg { display: none; }
+.vnote.playing .vp i { display: block; width: 12px; height: 14px; border-left: 4px solid #6b3cf0; border-right: 4px solid #6b3cf0; }
+.vnote .vw { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.vnote .vt { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 650; }
+.vnote .vt svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.vnote .vbar { position: relative; height: 3px; border-radius: 3px; background: rgba(255, 255, 255, .28); overflow: hidden; }
+.vnote .vbar b { position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); background: #fff; border-radius: 3px; }
+.vnote .vd { flex: 0 0 auto; font-size: 12px; font-variant-numeric: tabular-nums; opacity: .85; min-width: 30px; text-align: right; }
+
+/* ---------- Unsent bubbles in a thread ---------- */
+.msg.u.pending .pmeta { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-top: 5px; font-size: 12px; }
+.msg.u.pending .pst { color: var(--ink-3); }
+.msg.u.pending .pst.fail { color: var(--amber); font-weight: 650; }
+.msg.u.pending .pst.wait { color: var(--ink-2); }
+.msg.u.pending.failed .bub { opacity: .8; border: 1px dashed rgba(255, 190, 85, .55); }
+.msg.u.pending .pbtn { padding: 5px 12px; border-radius: 99px; background: rgba(143, 99, 255, .3); color: var(--ink); font-size: 12px; font-weight: 700; }
+.msg.u.pending .pbtn.ghost { background: transparent; border: 1px solid var(--line-2); color: var(--ink-2); }
+.msg.u.pending { flex-direction: column; align-items: flex-end; }
+/* Messages still sending, in the Chats list: one small floating pill at the foot of the list. It overlays the
+   list (absolute), so the threads never shift; it holds one line and only the buttons a stuck send needs. */
+.ch-pill { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 4; max-width: calc(100% - 28px);
+  display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 5px 0 13px; border-radius: 99px; white-space: nowrap;
+  font-size: 13px; font-weight: 600; color: var(--ink-2); background: linear-gradient(rgba(28, 20, 52, .92), rgba(28, 20, 52, .92)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border: 1px solid rgba(160, 120, 255, .35);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);   animation: ch-pill-in .18s ease-out; }
+.ch-pill:not(:has(.pbtn)) { padding-right: 14px; }
+.ch-pill .pl { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+.ch-pill .pl > span { overflow: hidden; text-overflow: ellipsis; }
+.ch-pill .dots { display: inline-flex; gap: 3px; flex: 0 0 auto; }
+.ch-pill .dots b { width: 4px; height: 4px; border-radius: 50%; background: #b48cff; animation: ch-pill-dot 1s infinite ease-in-out; }
+.ch-pill .dots b:nth-child(2) { animation-delay: .15s; } .ch-pill .dots b:nth-child(3) { animation-delay: .3s; }
+/* Buttons are siblings of the clipped .pl label: only the text clips, never the invisible touch area. */
+.ch-pill .pbtn { position: relative; flex: 0 0 auto; height: 26px; padding: 0 11px; border-radius: 99px; background: rgba(143, 99, 255, .35); color: var(--ink); font-size: 12px; font-weight: 700; }
+.ch-pill .pbtn::after { content: ''; position: absolute; top: 50%; left: 50%; width: calc(100% + 12px); min-width: 44px; height: 44px; transform: translate(-50%, -50%); }
+.ch-pill .pbtn.ghost { background: transparent; border: 1px solid var(--line-2); color: var(--ink-2); }
+/* Dismiss is the pill's answer, so it wears the skin's accent (light purple on Nebula) with the canvas colour as ink. */
+.ch-pill .pbtn.ghost[data-obdismiss] { background: var(--violet-2); border: 0; color: var(--bg); }
+.ch-pill.fail { color: var(--amber); border-color: rgba(255, 190, 85, .45); }
+.ch-pill.wait { color: var(--ink-2); }
+/* Waiting with a Troubleshooter action: a small two-line card. Label on top, both buttons on one row beneath it,
+   left edges lined up with the label text. Height grows with the content so the buttons stay inside the card. */
+.ch-pill.wait:has([data-chtroubleshoot]) { flex-wrap: wrap; align-items: center; row-gap: 14px; column-gap: 8px; height: auto; min-height: 34px;
+  white-space: normal; padding: 9px 10px 10px 13px; border-radius: 18px; background: var(--wz-base, var(--bg)); border-color: var(--wz-border, var(--line-2)); }
+.ch-pill.wait:has([data-chtroubleshoot]) .pl { flex-basis: 100%; margin-bottom: -6px; }
+.ch-pill.wait:has([data-chtroubleshoot]) .pl > span { overflow: visible; line-height: 1.3; }
+/* On a narrow list column the buttons stack; they then stretch to one shared width instead of ragged right edges.
+   The 14px row gap keeps each button's 44px hit area its own. */
+.ch-pill.wait:has([data-chtroubleshoot]) .pbtn { flex: 1 0 auto; height: 30px; padding: 0 13px; line-height: 28px; white-space: nowrap; }
+.ch-sync.off { flex-wrap: wrap; }
+.ch-sync [data-chtroubleshoot] { min-height: 44px; padding: 4px 10px; border-radius: 99px; font: inherit; }
+[data-chtroubleshoot] { color: var(--wz-text, var(--ink)); background: var(--wz-surface, var(--glass)); border: 1px solid var(--wz-border, var(--line-2)); }
+
+.ch-pill.sent { gap: 6px; padding: 0 14px 0 12px; color: #8fe3b5; pointer-events: none; animation: ch-pill-out 1.5s ease-in forwards; }
+.ch-pill.sent svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes ch-pill-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+@keyframes ch-pill-out { 0%, 65% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes ch-pill-dot { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+/* ---------------- Chats: chat-app basics (feature/chat-basics) ---------------- */
+@keyframes ch-fade { from { opacity: 0; } }
+.msg { flex-direction: column; align-items: flex-start; }
+.msg.u { align-items: flex-end; }
+/* Message text is selectable and copyable (the shell itself stays non-selectable). */
+.msg .bub, .msg .bub *, .msg .an-body, .msg .an-body *, .msg .rc-body, .msg .rc-body *, .note-line, .appr pre, .mviewer .mv-doc, .wk-steps li > span, .wk-plan li > span { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.msg .bub button, .msg .bub button * { user-select: none; -webkit-user-select: none; }
+.mmeta { display: flex; align-items: center; gap: 2px; margin-top: 3px; min-height: 0; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.msg.u .mmeta { padding-right: 4px; }
+.mmeta time { padding: 0 4px; }
+.mmeta button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 99px; font-size: 11.5px; font-weight: 650; color: var(--ink-3); }
+.mmeta button:active { background: rgba(205, 190, 255, .1); color: var(--ink); }
+.mmeta button svg, .code-h button svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ch-day { align-self: center; margin: 6px 0 0; font-size: 11.5px; font-weight: 750; letter-spacing: .04em; color: var(--ink-3); }
+.ch-day span { display: inline-block; padding: 3px 10px; border-radius: 99px; background: rgba(205, 190, 255, .07); border: 1px solid var(--line); }
+.ch-earlier { align-self: center; padding: 7px 14px; border-radius: 99px; font-size: 12.5px; font-weight: 700; color: var(--violet-2); background: rgba(143, 99, 255, .12); border: 1px solid var(--line-2); }
+/* Markdown */
+.bub h1, .bub h2, .bub h3, .bub h4, .bub h5, .bub h6 { margin: 12px 0 6px; line-height: 1.3; }
+.bub h1 { font-size: 19px; } .bub h2 { font-size: 17.5px; } .bub h3 { font-size: 16px; } .bub h4, .bub h5, .bub h6 { font-size: 15px; }
+.bub > :first-child { margin-top: 0; }
+.bub em { font-style: italic; } .bub del { opacity: .7; }
+.bub blockquote { margin: 6px 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid rgba(185, 155, 255, .45); color: var(--ink-2); }
+.bub blockquote p { margin-bottom: 4px; }
+.bub .quote-actions { display: flex; align-items: center; gap: 4px; margin-top: 6px; padding-top: 2px; }
+.bub .quote-actions button { min-height: 36px; padding: 6px 10px; border-radius: 8px; color: var(--ink-3); font-size: 12px; font-weight: 600; }
+.bub .quote-actions button:hover, .bub .quote-actions button:focus-visible { color: var(--ink); background: var(--line); }
+.bub .quote-actions button:active { background: rgba(205, 190, 255, .12); }
+.bub ul ul, .bub ol ol, .bub ul ol, .bub ol ul { margin: 2px 0 2px; }
+.bub li.task { list-style: none; margin-left: -18px; display: flex; gap: 8px; align-items: baseline; }
+.bub .tick { flex: 0 0 auto; width: 13px; height: 13px; border-radius: 4px; border: 1.5px solid var(--ink-3); transform: translateY(2px); }
+.bub .tick.on { background: var(--violet); border-color: var(--violet); }
+.bub hr { border: 0; border-top: 1px solid var(--line-2); margin: 12px 0; }
+.bub .tbl { margin: 6px 0 10px; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.bub table { border-collapse: collapse; min-width: 100%; font-size: 13.5px; }
+.bub th, .bub td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.bub th { font-weight: 750; background: rgba(205, 190, 255, .06); white-space: nowrap; }
+.bub tr:last-child td { border-bottom: 0; }
+.bub a.wsl { padding: 0 4px; border-radius: 6px; background: rgba(143, 99, 255, .16); text-decoration: none; }
+.bub .badlink, .bub .md-img { color: var(--ink-3); }
+.bub .code { margin: 6px 0 8px; border-radius: 10px; background: rgba(0, 0, 0, .35); border: 1px solid var(--line); overflow: hidden; }
+.bub .code-h { display: flex; align-items: center; gap: 2px; padding: 3px 4px 3px 10px; font-size: 11px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.bub .code-h span { flex: 1; text-transform: lowercase; letter-spacing: .03em; }
+.bub .code-h button { padding: 4px 9px; border-radius: 8px; font-size: 11.5px; font-weight: 700; color: var(--ink-2); }
+.bub .code-h button:active { background: rgba(205, 190, 255, .12); }
+.bub .code pre { margin: 0; border-radius: 0; background: none; white-space: pre-wrap; word-break: break-word; }
+.bub .code pre code { padding: 0; background: none; font-size: 12.5px; }
+/* Photos and files in bubbles */
+.mgrid { display: grid; gap: 4px; margin: 0 0 6px; max-width: 280px; }
+.mgrid:last-child { margin-bottom: 0; }
+.mgrid.n2, .mgrid.n4 { grid-template-columns: 1fr 1fr; }
+.mgrid.n3 { grid-template-columns: 1fr 1fr; } .mgrid.n3 .mimg:first-child { grid-column: span 2; }
+.mimg { display: block; padding: 0; border-radius: 12px; overflow: hidden; background: rgba(0, 0, 0, .25); }
+.mimg img { display: block; width: 100%; max-height: 300px; min-height: 60px; object-fit: cover; }
+.mgrid.n1 .mimg img { width: auto; max-width: 100%; max-height: 320px; object-fit: contain; }
+.mgrid.n2 .mimg img, .mgrid.n3 .mimg img, .mgrid.n4 .mimg img { aspect-ratio: 1; height: 100%; }
+.mcards { display: flex; flex-direction: column; gap: 6px; margin: 0 0 6px; }
+.mcards:last-child { margin-bottom: 0; }
+.mcard { display: flex; align-items: center; gap: 10px; max-width: 280px; padding: 8px 12px 8px 8px; border-radius: 14px; text-align: left; color: inherit; background: rgba(0, 0, 0, .22); border: 1px solid var(--line); }
+.mcard .mic { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: rgba(205, 190, 255, .1); font-size: 16px; }
+.mcard .mic svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-2); stroke-width: 1.8; stroke-linecap: round; }
+.mcard .mn { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mcard .mn b { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcard .mn small { font-size: 11.5px; color: var(--ink-3); }
+/* File/video card + one-tap Download (chats.js mediaBtn): the ⤓ sits inside the card's right edge. */
+.mfile { position: relative; max-width: 320px; }
+.mfile > .mcard { width: 100%; max-width: none; padding-right: 54px; }
+.mfile > .mdl { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; color: var(--ink); background: var(--line); border: 1px solid var(--line-2); }
+.mfile > .mdl svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mfile > .mdl:hover, .mfile > .mdl:focus-visible { background: var(--line-2); }
+.mfile > .mdl:active { transform: translateY(-50%) scale(.94); }
+.mcard.aud { max-width: 300px; }
+.mcard audio { width: 220px; height: 34px; margin-top: 2px; }
+/* Thread header actions: one row, icons + short words, no extra height. */
+/* Defer · Done: bottom-right under the final response */
+.ch-tacts { display: flex; justify-content: flex-end; gap: 8px; margin: 2px 0 6px; }
+.ch-tacts button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 17px; font-size: 13.5px; font-weight: 700; color: var(--ink-2); background: rgba(205, 190, 255, .07); border: 1px solid var(--line); }
+.ch-tacts button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ch-tacts button:active { background: rgba(205, 190, 255, .14); color: var(--ink); }
+.ch-tacts button[data-chact="done"] { color: var(--green); border-color: rgba(80, 220, 150, .35); background: rgba(80, 220, 150, .08); }
+.ch-row { transition: transform 160ms var(--ease); touch-action: pan-y; -webkit-touch-callout: none; }
+/* Long-press / swipe actions sheet */
+.ch-sheet { position: absolute; inset: 0; z-index: 8; display: flex; align-items: flex-end; background: rgba(3, 1, 10, .5); animation: ch-fade 160ms both; }
+.ch-sheet-b { width: 100%; padding: 8px 8px calc(10px + var(--safe-b, 0px)); border-radius: 18px 18px 0 0; background: linear-gradient(rgba(20, 13, 44, .98), rgba(20, 13, 44, .98)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border-top: 1px solid var(--line-2); }
+.ch-sheet-t { padding: 8px 10px 10px; font-size: 13px; font-weight: 750; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-sheet-b button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; border-radius: 12px; font-size: 15px; font-weight: 650; color: var(--ink); text-align: left; }
+.ch-sheet-b button:active { background: rgba(205, 190, 255, .1); }
+.ch-sheet-b button svg { width: 20px; height: 20px; fill: none; stroke: var(--ink-2); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ch-sheet-n { margin: 4px 12px 8px; font-size: 13px; color: var(--ink-3); }
+/* Approval card */
+.appr { align-self: stretch; padding: 12px; border-radius: 16px; background: rgba(255, 190, 85, .08); border: 1px solid rgba(255, 190, 85, .35); display: flex; flex-direction: column; gap: 8px; }
+.appr > b { font-size: 14px; color: var(--amber); }
+.appr pre { margin: 0; padding: 8px 10px; border-radius: 10px; background: rgba(0, 0, 0, .35); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+.appr input[data-clarify-answer] { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(0, 0, 0, .35); color: var(--ink); font: inherit; }
+.appr-b { display: flex; gap: 8px; flex-wrap: wrap; }
+.appr-b button { flex: 1 1 0; min-width: 120px; padding: 10px 12px; border-radius: 12px; font-size: 14px; font-weight: 750; color: #1a1030; background: var(--amber); }
+.appr-b button.no { color: var(--ink); background: rgba(205, 190, 255, .1); border: 1px solid var(--line-2); }
+.appr-b.many button { flex: 1 1 calc(50% - 4px); }
+.appr-b button:disabled { opacity: .55; }
+.appr small { font-size: 11.5px; color: var(--ink-3); } .appr small.err { color: var(--red); }
+.appr.done { align-self: center; padding: 6px 12px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); background: rgba(205, 190, 255, .06); border-color: var(--line); }
+/* Stop */
+.ch-compose .ch-stop { background: rgba(255, 107, 134, .18); border: 1px solid rgba(255, 107, 134, .5); }
+.ch-compose .ch-stop svg { fill: var(--red); stroke: none; }
+/* Media viewer: full-screen overlay inside the app (Back closes it). */
+.mviewer { position: absolute; inset: 0; z-index: 68; display: flex; flex-direction: column; background: rgba(2, 1, 8, calc(.96 * var(--fade, 1))); opacity: 0; transition: opacity 180ms var(--ease); touch-action: none; }
+/* Stage/file text keeps light ink on the dark photo backdrop; only opaque
+ * chrome adopts Appearance tokens. Standalone chrome falls back to dark UA ink. */
+.mviewer { --ink: color-mix(in srgb, white 94%, violet); --ink-2: color-mix(in srgb, var(--ink) 72%, transparent); --ink-3: color-mix(in srgb, var(--ink) 50%, transparent); --line: color-mix(in srgb, var(--ink) 13%, transparent); --line-2: color-mix(in srgb, var(--ink) 24%, transparent); color: var(--ink); color-scheme: dark; }
+.mviewer .mv-top, .mviewer .mv-bar, .mviewer .mv-menu-b { --ink: var(--wz-text, CanvasText); --ink-2: var(--wz-text-secondary, CanvasText); --ink-3: var(--wz-text-muted, CanvasText); --line: var(--wz-border, currentColor); --line-2: var(--wz-border, currentColor); background: var(--wz-panel, var(--bg)); color: var(--ink); }
+.mviewer.open { opacity: 1; }
+.mviewer[hidden] { display: none; }
+.mv-top { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: calc(var(--sb, 0px) + var(--safe-t, 0px) + 8px) 10px 6px 6px; }
+.mv-x { width: 40px; height: 40px; border-radius: 50%; font-size: 28px; line-height: 1; color: var(--ink); background: rgba(205, 190, 255, .1); }
+.mv-ti { min-width: 0; display: flex; flex-direction: column; }
+.mv-ti b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-ti small { font-size: 11.5px; color: var(--ink-3); }
+/* Fixed tracks: an image's own height must never size the row, or contain can't fit a tall screenshot and its bottom is cut off. */
+.mv-stage { flex: 1; min-height: 0; position: relative; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; overflow: hidden; }
+.mv-stage img { width: 100%; height: 100%; object-fit: contain; transform-origin: center; transition: transform 200ms var(--ease); user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+.mv-stage video { max-width: 100%; max-height: 100%; background: #000; }
+/* Long screenshots fit the width and scroll (chat-kit.js fit/clampPan): top-anchored, scaled from the top edge. */
+.mviewer.long .mv-stage { place-items: start center; }
+.mviewer.long .mv-stage img { height: auto; transform-origin: top center; }
+.mviewer[data-kind="file"] .mv-stage, .mviewer[data-kind="audio"] .mv-stage { touch-action: pan-y; }
+.mv-file { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; text-align: center; max-width: 340px; }
+.mv-file .mv-ic { font-size: 40px; }
+.mv-file b { font-size: 15px; word-break: break-word; } .mv-file small, .mv-file p { font-size: 13px; color: var(--ink-3); margin: 0; }
+.mv-file audio { width: 280px; margin-top: 8px; }
+.mv-file .mv-dl { margin-top: 8px; padding: 11px 20px; border-radius: 99px; font-size: var(--wz-text-md); font-weight: 700; color: var(--ink); background: var(--line); border: 1px solid var(--line-2); }
+/* PDFs render in the browser's own reader (chat-kit.js show): a white page area filling the stage. */
+.mv-stage iframe.mv-pdf { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: white; }
+.mv-tx { max-height: 30vh; overflow: auto; text-align: left; color: var(--ink-2) !important; }
+.mv-doc { position: absolute; inset: 0; overflow: auto; padding: 8px 16px 24px; touch-action: pan-x pan-y; }
+.mv-doc pre { margin: 0; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
+.mv-doc .bub { font-size: 15px; line-height: 1.5; }
+.mv-wait { color: var(--ink-3); text-align: center; margin-top: 30vh; }
+.mv-bar { flex: 0 0 auto; display: flex; justify-content: center; gap: 8px; padding: 8px 10px calc(var(--safe-b, 0px) + 14px); }
+.mv-bar button { min-width: 44px; padding: 10px 16px; border-radius: 99px; font-size: 14px; font-weight: 700; color: var(--ink); background: rgba(205, 190, 255, .1); border: 1px solid var(--line-2); }
+.mv-bar button[data-mv="prev"], .mv-bar button[data-mv="next"] { font-size: 20px; padding: 6px 14px; }
+.mviewer.zoomed .mv-bar, .mviewer.zoomed .mv-top { opacity: .25; }
+.mv-menu { position: absolute; inset: 0; z-index: 2; display: flex; align-items: flex-end; background: rgba(3, 1, 10, .45); animation: ch-fade 140ms both; touch-action: manipulation; }
+.mv-menu[hidden] { display: none !important; }
+.mviewer.menu-open .mv-bar { visibility: hidden; }
+.mv-menu-b { width: 100%; padding: 8px 8px calc(12px + var(--safe-b, 0px)); border-radius: 18px 18px 0 0; background: rgb(20, 13, 44); border-top: 1px solid var(--line-2); }
+.mv-menu-t { display: block; padding: 8px 12px 10px; font-size: 13px; font-weight: 750; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-menu-b button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 13px 12px; border-radius: 12px; font-size: 15px; font-weight: 650; color: var(--ink); text-align: left; }
+.mv-menu-b button:active { background: rgba(205, 190, 255, .1); }
+.mv-menu-b [data-mvm="cancel"] { justify-content: center; color: var(--ink-3); }
+/* The desktop shell has no #device frame: the viewer covers the browser window. */
+body > .mviewer { position: fixed; z-index: 200; }
+
+/* Steers: a message sent while the agent works. Once the agent has read it, it sits inside the turn it
+ * steered with a quiet "Read by …" receipt; until then the pending bubble says Delivered / Added. */
+.msg.u.steer .bub { border-style: dashed; border-color: rgba(185, 155, 255, .45); }
+.msg.u.steer .mmeta .srcpt, .msg.u.pending .pst.ok { display: inline-flex; align-items: center; gap: 4px; color: #8fe3b5; font-weight: 600; }
+.msg.u.steer .mmeta .srcpt svg, .msg.u.pending .pst.ok svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.msg.u.pending.steer.sent .bub { opacity: .85; }
+
+/* Ready status lines (the agent's hidden status tag): needs you / test this stand out; done / FYI go quiet. */
+.st.check { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+.ch-row.att-needs .pv, .ch-row.att-check .pv { color: var(--ink-2); }
+.ch-row.att-needs .tp b, .ch-row.att-check .tp b { color: var(--ink); font-weight: 700; }
+.ch-row.quiet { opacity: .72; }
+/* Deferred: bottom of Ready, a muted status in place of Needs you / Your call */
+.st.deferred { box-sizing: border-box; background: transparent; border: 1.5px solid var(--violet-2); box-shadow: none; } /* a ring: the filled violet dot means unread */
+/* Deferred is a label like Needs you / Your call (James, 10 Oct 2026: "don't fade it … same weight as all the other
+ * threads, just add the label"): full opacity, normal preview, its own colour. */
+.ch-row.quiet .pv { -webkit-line-clamp: 1; }
+.ch-row.quiet.unread { opacity: .9; }
+.ch-sec-h b.wait { background: rgba(255, 190, 85, .16); color: var(--amber); }
+.ch-rdy-bar { display: flex; gap: 6px; padding: 0 8px 6px; }
+.ch-rdy-bar button { padding: 4px 11px; min-height: 28px; border-radius: 99px; font-size: 12px; font-weight: 650; color: var(--ink-3); border: 1px solid var(--line); background: transparent; }
+.ch-rdy-bar button.on { color: var(--ink); border-color: color-mix(in srgb, var(--violet-2) 45%, transparent); background: color-mix(in srgb, var(--violet) 14%, transparent); }
+.ch-subj { display: flex; align-items: baseline; gap: 8px; padding: 12px 10px 4px; font-size: 12.5px; font-weight: 750; color: var(--violet-2); }
+.ch-subj small { font-size: 11.5px; font-weight: 650; color: var(--ink-3); }
+.ch-subj { align-items: center; padding-right: 4px; }
+.ch-subj-mv { margin-left: auto; display: flex; gap: 2px; }
+.ch-subj-mv button { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 9px; font-size: 15px; font-weight: 700; line-height: 1; color: var(--ink-2); background: transparent; border: 0; }
+.ch-subj-mv button:active { background: rgba(143, 99, 255, .18); color: var(--ink); }
+.ch-subj-mv button:disabled { opacity: .22; }
+/* Move to top = two up arrows almost touching (James, 12 Oct 2026: ⤒ wasn't clear). */
+.ch-subj-2up { display: inline-flex; }
+.ch-subj-2up i { font-style: normal; }
+.ch-subj-2up i + i { margin-left: -4px; }
+
+/* A note from another agent thread (coordinator / cross-thread): a quiet labelled row, not a James bubble. */
+.msg.agentnote { margin: 10px 0 2px; align-self: stretch; }
+.msg.agentnote > summary { list-style: none; display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13px; color: rgba(233, 228, 255, .62); padding: 6px 10px; border: 1px dashed rgba(185, 155, 255, .32); border-radius: 12px; }
+.msg.agentnote > summary::-webkit-details-marker { display: none; }
+.msg.agentnote > summary .an-ic { color: #b99bff; }
+.msg.agentnote > summary .an-from { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg.agentnote > summary time { font-size: 12px; opacity: .8; }
+.msg.agentnote .an-body { margin-top: 6px; padding: 8px 12px; font-size: 13.5px; color: rgba(233, 228, 255, .78); border-left: 2px solid rgba(185, 155, 255, .35); }
+.laterrun { display: flex; align-items: center; gap: 7px; margin: 12px 0 2px; font-size: 13px; color: rgba(233, 228, 255, .55); padding: 6px 10px; border: 1px dashed rgba(185, 155, 255, .25); border-radius: 12px; }
+.laterrun .lr-ic { color: #b99bff; }
+.laterrun span:nth-child(2) { flex: 1; }
+.laterrun time { font-size: 12px; opacity: .8; white-space: nowrap; }
+.msg.runcontext { align-self: stretch; min-width: 0; }
+.rc-body { margin: 8px 10px 12px; padding: 2px 0 2px 12px; border-left: 2px solid rgba(185, 155, 255, .35); font-size: 13.5px; line-height: 1.55; color: rgba(233, 228, 255, .78); overflow-wrap: anywhere; }
+.rc-body p { margin: 6px 0; }
+.rc-title { color: rgba(233, 228, 255, .94); font-weight: 600; }
+.rc-from { font-size: 12.5px; }
+.rc-original > summary { cursor: pointer; padding: 9px 0; color: #c5b3f0; }
+.rc-original pre { margin: 4px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; max-height: 360px; overflow-y: auto; }
+.rc-disclosure, .rc-unavailable { color: rgba(233, 228, 255, .58); font-size: 12px; }
+
+/* Ready status icons: the row icon is the thread's status, not a per-thread star.
+   Two separate signals: the icon = what the thread wants; bold/plain = unread/read (like an inbox).
+   Status never changes a row's weight or opacity, so every status reads at full strength. */
+:is(.ch-row, .ch-head) .emo.sti { position: relative; font-size: 0; color: var(--ink-3); background: rgba(205, 190, 255, .06); }
+:is(.ch-row, .ch-head) .emo.sti svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+:is(.ch-row, .ch-head) .emo.sti svg .f { fill: currentColor; stroke: none; }
+:is(.ch-row, .ch-head) .emo.sti svg .k { stroke: #0b0a12; stroke-width: 2.6; }
+:is(.ch-row, .ch-head) .emo.sti svg .kd { fill: #0b0a12; stroke: none; }
+:is(.ch-row, .ch-head) .emo.sti.needs { color: #ffb84d; background: rgba(255, 184, 77, .16); box-shadow: inset 0 0 0 1px rgba(255, 184, 77, .30); }
+:is(.ch-row, .ch-head) .emo.sti.check { color: #5adcff; background: rgba(90, 220, 255, .14); box-shadow: inset 0 0 0 1px rgba(90, 220, 255, .28); }
+:is(.ch-row, .ch-head) .emo.sti.done { color: #3ddc84; background: rgba(61, 220, 132, .14); box-shadow: inset 0 0 0 1px rgba(61, 220, 132, .28); }
+:is(.ch-row, .ch-head) .emo.sti.fyi { color: #ffd84a; background: rgba(255, 216, 74, .13); box-shadow: inset 0 0 0 1px rgba(255, 216, 74, .26); }
+:is(.ch-row, .ch-head) .emo.sti.approval { color: #ffb84d; background: rgba(255, 184, 77, .16); box-shadow: inset 0 0 0 1px rgba(255, 184, 77, .30); }
+:is(.ch-row, .ch-head) .emo.sti.failed { color: #ff6b6b; background: rgba(255, 107, 107, .15); box-shadow: inset 0 0 0 1px rgba(255, 107, 107, .28); }
+:is(.ch-row, .ch-head) .emo.sti.offline { color: #ffb84d; background: rgba(255, 184, 77, .10); }
+:is(.ch-row, .ch-head) .emo.sti.deferred { color: var(--violet-2); background: rgba(143, 99, 255, .14); box-shadow: inset 0 0 0 1px rgba(185, 155, 255, .30); } /* matches the violet Deferred label */
+:is(.ch-row, .ch-head) .emo.sti.working { background: rgba(90, 220, 255, .08); }
+:is(.ch-row, .ch-head) .emo.sti .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(90, 220, 255, .22); border-top-color: var(--cyan); animation: sti-spin .9s linear infinite; }
+@keyframes sti-spin { to { transform: rotate(360deg); } }
+/* The open thread's header wears its row's status icon beside the title, at about the title's text height
+ * (James, 25 Oct 2026: 30 px read "much larger" than the 16 px title; 24 px box, 14 px glyph). */
+.ch-head .emo.ch-head-sti { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; margin-left: -2px; }
+.ch-head .emo.ch-head-sti svg { width: 14px; height: 14px; stroke-width: 2.2; }
+.ch-head .emo.ch-head-sti .spin { width: 12px; height: 12px; border-width: 1.5px; }
+/* A Working spinner is status, not decoration: Reduce Motion slows it, never stops it. !important out-ranks the global
+ * reduced-motion kill switch in styles.css (`*` + !important), which froze it (Robert, 24 Oct 2026). */
+@media (prefers-reduced-motion: reduce) { .ch-head .emo.sti .spin, .ch-row .emo.sti .spin { animation-duration: 3s !important; animation-iteration-count: infinite !important; } }
+.ch-topic-mark { position: relative; flex: 0 0 auto; width: 44px; height: 38px; }
+.ch-topic-emoji { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-size: 21px; line-height: 1; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+:is(.ch-row, .ch-head) .emo.sti.ch-topic-status, .ch-topic-status.draft-status { position: absolute; right: 0; bottom: -1px; width: 17px; height: 17px; min-width: 0; border-radius: 6px; border: 1px solid var(--bg); z-index: 1; }
+:is(.ch-row, .ch-head) .emo.sti.ch-topic-status svg { width: 11px; height: 11px; }
+:is(.ch-row, .ch-head) .emo.sti.ch-topic-status .spin { width: 10px; height: 10px; border-width: 1.5px; }
+:is(.ch-row, .ch-head) .emo.sti.ch-topic-status .dot { width: 4px; height: 4px; }
+.ch-topic-status.draft-status { display: grid; place-items: center; font-size: 11px; color: var(--amber); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-2); }
+.ch-emoji-sheet { max-height: min(76%, 620px); display: flex; flex-direction: column; padding-bottom: calc(10px + var(--safe-b, 0px)); overflow: hidden; }
+.ch-emoji-sheet > .ch-sheet-t { flex: 0 0 auto; padding-bottom: 8px; }
+.ch-emoji-search { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-height: 42px; margin: 0 10px 8px; padding: 0 8px 0 12px; border: 1px solid var(--line-2); border-radius: 12px; background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink-3); }
+.ch-emoji-search:focus-within { border-color: var(--violet-2); box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet) 14%, transparent); }
+.ch-emoji-search input { min-width: 0; flex: 1; padding: 10px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 16px; }
+.ch-emoji-search input::placeholder { color: var(--ink-3); opacity: .9; }
+.ch-emoji-search input::-webkit-search-cancel-button { display: none; }
+.ch-emoji-search button { flex: 0 0 30px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: var(--ink-2); background: color-mix(in srgb, var(--ink) 8%, transparent); font-size: 20px; line-height: 1; }
+.ch-emoji-search button[hidden] { display: none; }
+.ch-emoji-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; }
+.ch-emoji-empty { margin: 18px 12px 24px; padding: 20px 14px; border: 1px dashed var(--line-2); border-radius: 12px; color: var(--ink-3); text-align: center; font-size: 13px; }
+.ch-emoji-category { padding: 0 0 8px; content-visibility: auto; contain-intrinsic-size: auto 480px; }
+.ch-emoji-category h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 7px 11px 5px; color: var(--ink-3); background: var(--bg); font-size: 11px; line-height: 1.2; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.ch-emoji-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 7px; padding: 4px 10px; }
+.ch-sheet-b .ch-emoji-grid button { display: grid; place-items: center; min-width: 0; padding: 8px 4px; border-radius: 11px; font-size: 23px; line-height: 1; background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px solid var(--line); }
+.ch-sheet-b .ch-emoji-grid button:active, .ch-sheet-b .ch-emoji-grid button:focus-visible { background: color-mix(in srgb, var(--violet) 20%, transparent); border-color: var(--violet-2); }
+.ch-sheet-emoji { width: 24px; text-align: center; font-size: 18px; }
+:is(.ch-row, .ch-head) .emo.sti .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); opacity: .55; }
+/* Read state is the only thing that sets weight: unread = bold white title + brighter preview + violet time; read = plain. */
+.ch-row .tp b, .ch-row.att-needs .tp b, .ch-row.att-check .tp b { color: var(--ink-2); font-weight: 500; }
+.ch-row .pv, .ch-row.att-needs .pv, .ch-row.att-check .pv { color: var(--ink-3); }
+.ch-row.unread .tp b, .ch-row.unread.att-needs .tp b, .ch-row.unread.att-check .tp b { color: var(--ink); font-weight: 750; }
+.ch-row.unread .pv, .ch-row.unread.att-needs .pv, .ch-row.unread.att-check .pv { color: var(--ink-2); }
+.ch-row.quiet, .ch-row.quiet.unread { opacity: 1; }
+
+/* Thread titles: "was …" beside a freshly renamed title, the rename sheet, and the in-thread rename note. */
+/* The title keeps its full width; "was …" takes only the space left before the time. */
+.ch-head .ti .ti-b { min-width: 0; max-width: 100%; display: flex; align-items: center; min-height: 36px; padding: 0; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: text; }
+.ch-head .ti .ti-b b { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-rename input { display: block; width: calc(100% - 20px); margin: 0 10px 4px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(205, 190, 255, .06); color: var(--ink); font-size: 16px; font-weight: 650; outline: none; }
+.ch-rename input:focus { border-color: var(--violet-2, #b9a5ff); }
+.ch-rename-b { display: flex; gap: 8px; padding: 6px 10px 2px; }
+.ch-sheet-b .ch-rename-b button { flex: 1; justify-content: center; text-align: center; padding: 11px; border: 1px solid var(--line-2); }
+.ch-sheet-b .ch-rename-b button.go { background: rgba(185, 165, 255, .18); border-color: rgba(185, 165, 255, .4); }
+.ch-renamed { align-self: center; margin: 4px 0; max-width: 92%; font-size: 11.5px; font-weight: 650; color: var(--ink-3); text-align: center; }
+.ch-renamed span { display: inline-block; padding: 3px 10px; border-radius: 99px; border: 1px dashed var(--line-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* Status label before the preview: the icon's word in the icon's colour, same size and weight as the preview
+ * (it blends in; bold still means unread only). */
+.ch-row .pv em.att { font-style: normal; font-weight: inherit; letter-spacing: 0; }
+.ch-row .pv em.att.needs, .ch-row .pv em.att.approval { color: #ffb84d; }
+.ch-row .pv em.att.check { color: #5adcff; }
+.ch-row .pv em.att.done { color: #3ddc84; }
+.ch-row .pv em.att.fyi { color: #ffd84a; }
+.ch-row .pv em.att.deferred { color: var(--violet-2); }
+.ch-row .pv em.att.failed { color: #ff6b6b; }
+/* Filters live in the search field as chips (core/chats.js STATUS / subjects). */
+.ch-search.has-chips { padding-left: 10px; padding-right: 8px; gap: 6px; }
+.ch-search.has-chips > svg:first-child { display: none; }
+.ch-search.has-chips input { min-width: 64px; }
+.ch-chip { flex: 0 1 auto; min-width: 0; max-width: 46%; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 10px; border-radius: 99px; background: rgba(185, 155, 255, .16); border: 1px solid rgba(185, 155, 255, .32); color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-chip button { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-2); font-size: 11px; background: rgba(255, 255, 255, .06); }
+.ch-fdot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--violet-2, #b99bff); }
+.ch-fdot.unread { background: var(--pink, #ff5ccf); }
+.ch-fdot.needs { background: var(--amber, #ffbe55); }
+.ch-fdot.check { background: #5cd6ff; }
+.ch-fdot.working { background: var(--violet-2, #b99bff); animation: blink 1.6s ease-in-out infinite; }
+.ch-fdot.yesterday { background: #ff8a5c; }
+.ch-fdot.deferred { background: var(--ink-3, #7d74a3); }
+.ch-fdot.subject { background: #7dffb5; }
+.ch-fbtn { flex: 0 0 auto; width: 32px; height: 32px; margin-right: -4px; border-radius: 10px; display: grid; place-items: center; }
+.ch-fbtn svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-2); stroke-width: 2.2; stroke-linecap: round; }
+.ch-fbtn.on svg { stroke: var(--violet-2, #b99bff); }
+.ch-fbtn:active { background: rgba(205, 190, 255, .1); }
+.ch-count { padding: 0 16px 4px; font-size: 12px; color: var(--ink-3); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.ch-coach { color: var(--violet-2, #b99bff); }
+.ch-fclear { margin-top: 12px; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line-2); color: var(--ink); font-size: 13px; }
+/* Suggestions under the field while typing */
+.ch-sug { margin: 0 10px 8px; border-radius: 14px; background: rgba(205, 190, 255, .05); border: 1px solid var(--line); overflow: hidden; }
+.ch-sugrow { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 14px; text-align: left; font-size: 14px; color: var(--ink-2); border-top: 1px solid var(--line); }
+.ch-sugrow:first-child { border-top: 0; }
+.ch-sugrow b { color: var(--ink); font-weight: 600; }
+.ch-sugic { width: 22px; flex: 0 0 22px; text-align: center; color: var(--violet-2, #b99bff); font-size: 15px; }
+.ch-sugrow:active { background: rgba(205, 190, 255, .08); }
+/* Filter sheet: rises from the bottom, inside the Chats window */
+.ch-fsheet { position: absolute; inset: 0; z-index: 30; display: flex; align-items: flex-end; background: rgba(3, 1, 10, .5); animation: fade 200ms both; }
+.ch-fcard { width: 100%; max-height: 78%; overflow-y: auto; padding: 14px 14px 18px; border-radius: 20px 20px 0 0; background: #120b26; border-top: 1px solid var(--line-2); box-shadow: 0 -12px 40px rgba(0, 0, 0, .5); animation: chSheetUp 260ms var(--ease, ease) both; }
+@keyframes chSheetUp { from { transform: translateY(30px); opacity: 0; } }
+.ch-fh { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; }
+.ch-fh b { font-size: 16px; }
+.ch-fh button { font-size: 13px; color: var(--violet-2, #b99bff); padding: 6px 8px; }
+.ch-fcard h5 { margin: 10px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.ch-fopts { display: flex; flex-wrap: wrap; gap: 8px; }
+.ch-fopt { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line-2); font-size: 14px; color: var(--ink); background: rgba(205, 190, 255, .04); }
+.ch-fopt.on { background: rgba(185, 155, 255, .2); border-color: rgba(185, 155, 255, .5); }
+.ch-fopt b { color: var(--violet-2, #b99bff); font-size: 12px; }
+
+/* Agent-owned Spaces: same Focus rows, a single local picker above the strip. */
+.ch-focus-caret { flex: none; font-style: normal; font-size: 12px; opacity: .65; }
+.ch-focus-tab > span { max-width: 18ch; }
+.ch-space-nested { padding: 8px 0 0 20px; }
+.ch-focus-group { margin-top: 12px; }
+.ch-space-shade { position: fixed; z-index: 1900; inset: 0; background: color-mix(in srgb, var(--wz-base, #080610) 48%, transparent); }
+.ch-space-picker { position: absolute; left: 8px; right: 8px; max-height: min(55vh, 440px); display: flex; flex-direction: column; border: 1px solid var(--wz-line, var(--line-2)); border-radius: 18px; background: linear-gradient(var(--wz-overlay, #120b26), var(--wz-overlay, #120b26)), var(--wz-base, var(--bg, #080610)); color: var(--wz-ink, var(--ink, #f4edff)); box-shadow: 0 12px 48px #0007; padding: 8px; overflow: hidden; }
+.ch-space-grab { width: 36px; height: 4px; border-radius: 4px; background: var(--wz-line, var(--line-2)); align-self: center; margin: 0 0 4px; flex: none; }
+.ch-space-picker header { display: flex; align-items: center; gap: 8px; min-height: 44px; padding-left: 10px; flex: none; }
+.ch-space-picker header > i { width: 8px; height: 8px; border-radius: 50%; background: var(--ch-agent-colour); }
+.ch-space-picker header b { flex: 1; font-size: 14px; }
+.ch-space-picker header button { width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent; color: inherit; font-size: 24px; }
+.ch-space-rows { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.ch-space-picker .ch-fopt { display: flex; width: 100%; min-height: 48px; height: auto; border: 0; border-radius: 10px; background: transparent; padding: 10px 12px; text-align: left; color: inherit; }
+.ch-space-picker .ch-fopt > span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.ch-space-picker .ch-fopt small { font-size: 12px; color: var(--wz-ink-3, var(--ink-3)); font-variant-numeric: tabular-nums; }
+.ch-space-picker .ch-fopt.on { background: color-mix(in srgb, var(--ch-agent-colour) 14%, transparent); box-shadow: inset 3px 0 var(--ch-agent-colour); }
+.ch-space-picker .ch-fopt b { color: var(--ch-agent-colour); }
+.ch-space-picker .ch-focus-dot { position: static; flex: none; width: 6px; height: 6px; margin: 0 2px; }
+.ch-space-picker button:focus-visible, .ch-space-picker input:focus-visible { outline: 2px solid var(--ch-agent-colour); outline-offset: -2px; }
+.ch-space-new { flex: none; min-height: 48px; text-align: left; padding: 10px 12px; margin-top: 6px; border: 0; border-top: 1px solid var(--wz-line, var(--line)); background: transparent; color: var(--ch-agent-colour); font: inherit; font-size: 14px; font-weight: 600; }
+.ch-space-form { flex: none; padding: 12px 4px 4px; border-top: 1px solid var(--wz-line, var(--line)); margin-top: 6px; }
+.ch-space-form label { display: block; color: var(--wz-ink-3, var(--ink-3)); font-size: 12px; margin: 0 8px 8px; }
+.ch-space-form > div { display: flex; gap: 8px; }
+.ch-space-form input { flex: 1; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--wz-line, var(--line-2)); border-radius: 10px; background: var(--wz-base, var(--bg)); color: inherit; font: inherit; font-size: 16px; }
+.ch-space-form button { min-height: 44px; border: 0; border-radius: 10px; padding: 0 14px; background: var(--ch-agent-colour); color: var(--wz-base, var(--bg)); font: inherit; font-size: 14px; font-weight: 650; }
+.ch-space-form button:disabled { opacity: .45; }
+.ch-space-form p { margin: 8px; font-size: 13px; color: var(--wz-danger, var(--red, #ff6b86)); }
+@media (min-width: 641px) { .ch-space-picker { right: auto; width: 280px; max-height: min(60vh, 420px); border-radius: 16px; } .ch-space-grab { display: none; } }
+
+/* New chat button: bottom-right of the Chats list, clear of the orb (dock sits below the window; corner orb lifts it).
+   Its paint follows the active skin instead of carrying Nebula purple into every palette. */
+.ch-fab { position: absolute; right: 16px; bottom: 16px; z-index: 5; width: 54px; height: 54px; border-radius: 18px; display: grid; place-items: center;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--violet) 85%, var(--ink)), color-mix(in oklab, var(--violet) 80%, var(--bg)));
+  color: var(--wz-base, var(--bg)); box-shadow: 0 10px 26px color-mix(in srgb, var(--violet) 42%, transparent), inset 0 1px 0 color-mix(in srgb, var(--ink) 22%, transparent); }
+.ch-fab svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.ch-fab:active { transform: scale(.94); }
+.ch-list .ch-scroll { padding-bottom: 84px; }
+.ch-list:has(.ch-fab) .ch-pill { left: 16px; transform: none; max-width: calc(100% - 100px); }
+.device.orb-corner .win.full .ch-fab { bottom: calc(var(--safe-b) + var(--corner-b) + var(--corner-orb) + 14px); right: calc(var(--corner-r) - 5px); }
+.device.orb-corner .win.full .ch-list .ch-scroll { padding-bottom: calc(var(--corner-b) + var(--corner-orb) + 96px); }
+.ch-list:has(.ch-fab) .ch-pill { animation-name: ch-pill-in-l; }
+@keyframes ch-pill-in-l { from { opacity: 0; transform: translateY(8px); } }
+/* Helper status stays inside the existing Working row. */
+.wk-helper{display:flex;flex-direction:column;gap:8px;margin:10px 0;padding:12px;border:1px solid var(--line, #35403e);border-radius:12px;}
+.wk-helper b{font-weight:550;}
+.wk-helper small{color:var(--muted,#97aaa5);font-size:12px;line-height:1.45;}
+.wk-helper.stalled{border-color:#a87837;}
+.wk-helper button{align-self:flex-start;min-height:44px;border:1px solid #567966;background:#233d31;color:#e1f9e9;padding:8px 14px;border-radius:10px;font:inherit;}
+.wk-helper button:disabled{opacity:.55;}
+
+/* ---- Agents MVP: which agent is open. A persistent strip at the top of an agent's Chats (list and thread, phone
+ * and desktop): the agent's sigil and colour, its name, its model, and a lock for a private agent. The colour also
+ * edges the window, so a glance tells Private from the main agent even mid-scroll. ---- */
+.ch-agent { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; margin: 8px 10px 0; padding: 7px 10px 7px 7px; border-radius: 14px;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--ag) 20%, transparent), color-mix(in oklab, var(--ag) 6%, transparent) 70%), rgba(10, 8, 20, .5);
+  border: 1px solid color-mix(in oklab, var(--ag) 42%, transparent); }
+.ch-agent.thread { margin: 0; border-radius: 0; border-width: 0 0 1px; padding: 6px 12px 6px 10px; }
+.ch-agent .ag-sig { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 10px; font-size: 14px; }
+.ch-agent.thread .ag-sig { width: 24px; height: 24px; border-radius: 8px; }
+.ch-agent .ag-t { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.15; }
+.ch-agent .ag-t b { font-size: 14px; font-weight: 750; color: color-mix(in oklab, var(--ag) 55%, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-agent .ag-t small { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-agent.thread .ag-t { flex-direction: row; align-items: baseline; gap: 8px; }
+.ch-agent.thread .ag-t b { font-size: 13px; }
+.ch-agent .ag-priv { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px 0 7px; border-radius: 12px; font-size: 11.5px; font-weight: 700; letter-spacing: .02em;
+  color: color-mix(in oklab, var(--ag) 60%, var(--ink)); background: color-mix(in oklab, var(--ag) 18%, transparent); border: 1px solid color-mix(in oklab, var(--ag) 45%, transparent); }
+.ag-lock { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ch-list.agent, .ch-thread.agent { box-shadow: none; }
+.ch-model.agent { color: color-mix(in oklab, var(--agc, var(--violet-2)) 70%, var(--ink)); background: color-mix(in oklab, var(--agc, #8f63ff) 16%, transparent); }
+
+/* Resumable upload progress (core/uploads.js): a thin bar along the chip's foot, a % on photo tiles. */
+/* Opinionated: Archive header selector for the auto-archive age. */
+.ch-arch-sel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 12px 10px; font-size: 12.5px; color: var(--ink-3); }
+.ch-arch-sel select { font: inherit; color: var(--ink); background: var(--glass); border: 1px solid var(--line-2); border-radius: 10px; padding: 4px 8px; }
+/* Opinionated: Compact list hides previews. */
+.ch-list.compact .ch-row .pv { display: none; }
+/* Archive reads as a different place: a light tinted panel. */
+.ch-list.by-status .ch-sec[data-sec="archive"].open { background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; }
+/* Archive on top, then Working, then Ready uninterrupted at the bottom, on desktop and phone alike (By status layout;
+   James, 31 Oct 2026). Skins that arrange the phone list themselves (obsidian, landscapes) outrank these rules. */
+.ch-list.by-status .ch-scroll { display: flex; flex-direction: column; }
+.ch-list.by-status .ch-sec[data-sec="archive"] { order: -2; }
+.ch-list.by-status .ch-sec[data-sec="working"] { order: -1; }
+.ch-list.by-status .ch-sec[data-sec="ready"] { order: 0; }
+
+/* Notifications bell beside search (core/notif-bell.js): opens the Notifications app; a dot when something needs you. */
+.ch-bell { position: relative; flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: rgba(205, 190, 255, .06); border: 1px solid var(--line); }
+.ch-bell svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ch-bell b { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1; color: var(--on-accent, #160b32); background: var(--violet-2, #b99bff); }
+.ch-bell.needs b { background: var(--amber, #ffbe55); }
+.ch-bell[hidden] { display: none; }
+.ch-bell:active { background: rgba(205, 190, 255, .12); }
+
+/* Loading placeholders (list rows + thread bubbles): same geometry as real content, skin tokens only. */
+.ch-skel { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; animation: ch-fade .25s ease-out; }
+.ch-skel-row { display: flex; gap: 11px; padding: 10px 8px; align-items: flex-start; }
+.ch-skel-row .bd { flex: 1; display: flex; flex-direction: column; gap: 8px; padding-top: 3px; }
+.ch-sk { display: block; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--line) 0%, var(--line-2) 50%, var(--line) 100%), var(--line); background-size: 200% 100%; animation: ch-sk 1.6s ease-in-out infinite; }
+.ch-sk.sm { height: 10px; opacity: .7; }
+.ch-sk.av { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 12px; }
+.ch-skel.thread { gap: 14px; padding: 8px 4px; }
+.ch-skel.thread .ch-skel-a { margin-bottom: 14px; }
+.ch-skel.thread .bub { height: 38px; border-radius: 18px; align-self: flex-end; }
+.ch-skel-a { display: flex; flex-direction: column; gap: 9px; }
+.ch-skel-row:nth-child(2) .ch-sk, .ch-skel-a:nth-of-type(2) .ch-sk { animation-delay: .12s; }
+.ch-skel-row:nth-child(3) .ch-sk { animation-delay: .24s; }
+.ch-skel-row:nth-child(4) .ch-sk { animation-delay: .36s; }
+.ch-skel-row:nth-child(5) .ch-sk { animation-delay: .48s; }
+@keyframes ch-sk { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .ch-sk { animation: none; } }
+
+/* Unsent voice takes at the top of the Chats list (replaces the old notifications panel's Unsent group). */
+.ch-unsent { display: flex; align-items: center; gap: 10px; width: 100%; margin: 4px 0 8px; padding: 10px 12px; border-radius: 14px; text-align: left;
+  background: rgba(143, 99, 255, .12); border: 1px solid rgba(185, 155, 255, .35); color: inherit; font: inherit; }
+.ch-unsent.fail { background: rgba(255, 190, 85, .1); border-color: rgba(255, 190, 85, .45); }
+.ch-unsent .pip { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--violet-2, #b99bff); }
+.ch-unsent.fail .pip { background: var(--amber, #ffbe55); }
+.ch-unsent .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ch-unsent .tx b { font-size: 14px; font-weight: 700; }
+.ch-unsent .tx small { font-size: 12.5px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-unsent .go { flex: none; font-size: 13px; font-weight: 700; color: var(--violet-2, #b99bff); }
+
+
+
+/* Unified Chats (18 Oct 2026): a private agent's thread in the owner's main list wears a small lock; its header says
+   Private; a private chat continuing a standard thread shows what goes with its first message. */
+:root { --ch-priv: hsl(160 72% 62%); }
+.ch-row .tp b .ch-plock { display: inline-flex; vertical-align: -1px; margin-right: 5px; color: var(--ch-priv); }
+.ch-row .tp b .ch-plock .ag-lock { width: 12px; height: 12px; stroke-width: 2.2; }
+.ch-head .ti { min-width: 0; }
+.ch-privtag { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; height: 20px; margin-left: 6px; padding: 0 7px 0 6px; border-radius: 10px; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--ch-priv); background: color-mix(in oklab, var(--ch-priv) 16%, transparent); vertical-align: 2px; }
+.ch-background { margin-left: 0; align-self: center; white-space: nowrap; color: var(--wz-text-secondary, var(--ink-2)); background: var(--wz-surface, var(--glass)); font-weight: 400; letter-spacing: normal; }
+.ch-privtag .ag-lock { width: 11px; height: 11px; stroke-width: 2.3; }
+.ch-carry { margin: 14px auto 0; max-width: 520px; display: grid; gap: 6px; padding: 12px 14px; border-radius: 14px; border: 1px solid color-mix(in oklab, var(--ch-priv) 35%, transparent); background: color-mix(in oklab, var(--ch-priv) 8%, transparent); text-align: left; font-size: 13px; line-height: 1.4; }
+.ch-carry b { display: inline-flex; align-items: center; gap: 6px; color: var(--ch-priv); }
+.ch-carry span { opacity: .82; }
+.ch-carry button { justify-self: start; min-height: 32px; padding: 0 12px; border-radius: 16px; font: inherit; font-size: 12.5px; font-weight: 650; color: inherit; background: rgba(255, 255, 255, .08); }
+
+/* Opened on the stored list snapshot: a quiet "Updating…" line with a spinner until the fresh read lands. */
+.ch-sync { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 2px 16px 6px; font-size: 12px; color: var(--ink-3); animation: ch-fade .2s ease; }
+.ch-sync.off { color: var(--ink-2); }
+.ch-spin { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--line-2, rgba(255,255,255,.18)); border-top-color: var(--ink-2, currentColor); animation: ch-attspin .8s linear infinite; flex: none; }
+@media (prefers-reduced-motion: reduce) { .ch-spin { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; } }
+
+/* New chat greeting: Miguel's skins switch it on in their own web/skins/<dir>/skin.css. Default skins keep the boxed .nc-classic. */
+.ch-newchat { display: none; }
+.ch-newchat .nc-mark { width: 64px; height: 64px; margin-bottom: 10px; border-radius: 22px; display: grid; place-items: center; --c: #fff;
+  background: radial-gradient(120% 120% at 30% 20%, color-mix(in oklab, var(--agc, var(--violet-2, #b9a6ff)) 70%, #fff 10%), color-mix(in oklab, var(--agc, #8f63ff) 85%, #000 25%));
+  box-shadow: 0 10px 34px color-mix(in oklab, var(--agc, #8f63ff) 45%, transparent), inset 0 1px 0 rgba(255,255,255,.25); }
+.ch-newchat .nc-mark .sgi { width: 64%; height: 64%; background: #fff !important; opacity: 1; }
+.ch-newchat .nc-hi { color: var(--ink); font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+.ch-newchat .nc-sub { color: var(--ink-2); font-size: 15px; }
+.ch-newchat .nc-keys { margin-top: 14px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; color: var(--ink-3); font-size: 12px; }
+.ch-newchat .nc-key { display: inline-flex; align-items: center; gap: 3px; }
+.ch-newchat .nc-key small { margin-left: 4px; font-size: 12px; }
+.ch-newchat .nc-key kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 6px; font: 600 11px/17px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); background: color-mix(in oklab, var(--ink) 8%, transparent); border: 1px solid var(--line-2, var(--line)); border-bottom-width: 2px; }
+.ch-newchat .nc-tip { font-size: 13px; }
+@keyframes ncIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ch-newchat { animation: none; } }
+
+/* Reply to a notification: a small bubble above the composer (× drops it) and the same quote card above the sent
+ * words. Every colour comes from the skin's own tokens (accent, ink, bg), so each skin draws it in its own look. */
+.ch-reply { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 0 6px 12px; border-radius: 12px; border-left: 3px solid var(--violet-2, var(--line-2)); background: color-mix(in srgb, var(--violet) 12%, transparent); }
+.ch-reply-t, .ch-rq { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ch-reply-t { flex: 1; }
+.ch-reply-t b, .ch-rq b { font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-reply-t span, .ch-rq span { font-size: 12.5px; line-height: 1.35; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.ch-compose button.ch-reply-x { flex: 0 0 auto; width: 44px; height: 44px; margin: -6px 0; border-radius: 50%; background: none; border: 0; color: var(--ink-2); font-size: 22px; line-height: 1; box-shadow: none; }
+.ch-compose button.ch-reply-x:hover { color: var(--ink); }
+.ch-rq { margin: 0 0 8px; padding: 5px 10px; border-radius: 10px; border-left: 3px solid color-mix(in srgb, var(--ink) 55%, transparent); background: color-mix(in srgb, var(--bg) 24%, transparent); }
+/* Pull to refresh (core/chats.js bindPull) and the "Not up to date" bar. Tokens only, so every skin re-dresses it. */
+.ch-ptr { flex: none; height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: var(--ink-3); pointer-events: none; }
+.ch-ptr.out { transition: height .18s ease; }
+.ch-ptr svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s ease; }
+.ch-ptr.go { color: var(--violet-2, var(--ink-2)); }
+.ch-ptr.go svg { transform: rotate(180deg); }
+.ch-sync.stale { color: var(--ink-2); }
+.ch-sync b { font-weight: 600; color: var(--wz-text, var(--ink)); }
+.ch-sync.ok { color: var(--violet-2, var(--ink-2)); }
+@media (prefers-reduced-motion: reduce) { .ch-ptr.out, .ch-ptr svg { transition: none; } }
+
+/* Phone chat reading size. Mobile line-length research puts comfortable reading
+   at roughly 35–50 characters (about 7–9 words) per line. At 15px a ~400px
+   phone fits ~53 Roboto characters, so message text steps up to 17px (~45
+   chars, ~8 words). Thread contents only: the Chats list and chrome keep
+   their sizes, and the desktop shell is unchanged. */
+html[data-shell="phone"] .ch-msgs .msg .bub { font-size: 17px; line-height: 1.5; }
+html[data-shell="phone"] .ch-msgs .bub h1 { font-size: 21px; }
+html[data-shell="phone"] .ch-msgs .bub h2 { font-size: 19.5px; }
+html[data-shell="phone"] .ch-msgs .bub h3 { font-size: 18px; }
+html[data-shell="phone"] .ch-msgs .bub :is(h4, h5, h6) { font-size: 17px; }
+html[data-shell="phone"] .ch-msgs .bub code { font-size: 14.5px; }
+html[data-shell="phone"] .ch-msgs .bub .code pre code, html[data-shell="phone"] .ch-msgs .bub pre { font-size: 13.5px; }
+html[data-shell="phone"] .ch-msgs .bub table { font-size: 15px; }
+
+/* Pinned chats (synced per owner; design: Novaire, wizard-ux PR 250) and Boomerang markers. */
+.ch-row-wrap { position: relative; }
+/* Row pin buttons are off by default (James, 31 Oct 2026): Pin lives in the row's menu (right-click, hold or swipe).
+ * The "Show pin buttons" tweak (web/tweaks/wizard/pin-buttons) brings the button back on every row. */
+.ch-row-wrap > .ch-row { padding-right: 12px; }
+.ch-fail.diagnosed .lb { text-transform: none; letter-spacing: 0; font-size: 17px; }
+.ch-row-wrap.diagnosed .ch-row { padding-right: 90px; }
+.ch-row-signin { position: absolute; z-index: 2; right: 10px; top: 50%; transform: translateY(-50%); padding: 8px 10px; border: 1px solid var(--wz-border, var(--line)); border-radius: 10px; background: var(--wz-surface, var(--surface)); color: var(--wz-text, var(--ink)); font: inherit; font-size: .8125rem; cursor: pointer; }
+.ch-pin-toggle { position: absolute; z-index: 1; right: 7px; top: 50%; width: 32px; height: 32px; margin-top: -16px; display: none; place-items: center; border-radius: 10px; color: var(--ink-3); opacity: .38; transition: opacity .14s ease, color .14s ease, background .14s ease; }
+.ch-pin-toggle::after { content: ''; position: absolute; inset: -6px; }
+.ch-pin-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ch-row-wrap:hover .ch-pin-toggle, .ch-row-wrap:focus-within .ch-pin-toggle, .ch-pin-toggle:focus-visible, .ch-row-wrap.pinned .ch-pin-toggle { opacity: 1; }
+.ch-pin-toggle:hover, .ch-pin-toggle:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--violet) 11%, transparent); outline: none; }
+.ch-pin-toggle:focus-visible { box-shadow: 0 0 0 2px var(--violet-2); }
+.ch-pin-toggle[aria-pressed="true"] { color: var(--violet-2); }
+.ch-pin-toggle[aria-pressed="true"] svg { fill: currentColor; fill-opacity: .18; }
+@media (pointer: coarse) { .ch-pin-toggle { opacity: .72; } .ch-row-wrap.pinned .ch-pin-toggle { opacity: 1; } }
+.ch-sec[data-sec="pinned"] .ch-sec-h { color: var(--violet-2); }
+.ch-boom { position: absolute; right: 44px; bottom: 9px; font-style: normal; font-size: 12px; line-height: 1; opacity: .7; }
+.ch-boom.due { opacity: 1; filter: drop-shadow(0 0 4px var(--violet-2)); }
+.ch-boom-ic { display: inline-block; width: 18px; font-size: 14px; line-height: 18px; text-align: center; }
+.msg.boom-flash > .bub { box-shadow: 0 0 0 2px var(--violet-2); transition: box-shadow .3s ease; }
+
+/* Pins off (Filter › View › Pins): rows reclaim the pin's room (was the miguel/hidden-pin tweak). */
+html[data-pins="off"] .ch-row-wrap > .ch-row.ch-row { padding-right: 12px; }
+html[data-pins="off"] .ch-row-wrap.diagnosed > .ch-row.ch-row { padding-right: 90px; }
+html[data-pins="off"] .ch-row-wrap .ch-row-signin { right: 10px; }

@@ -1,0 +1,8 @@
+/* Appearance v1, shell side (APPEARANCE_HOST_V1; wizard-os spec/APPEARANCE.md). A window is .wz-themed only after its
+ * app's appearance client acknowledged the context, so apps that did not adopt it keep today's opaque frame fill. */
+:root { --wz-window: var(--sk-win, rgba(12, 8, 26, .82)); }   /* the skin's window material (styles.css .win) */
+.win.wz-themed .frame-wrap, .win.wz-themed .appframe, .win.wz-themed .wbody iframe { background: transparent; }
+.win.wz-themed .appframe, .win.wz-themed .wbody iframe { color-scheme: inherit; }   /* matching schemes keep the iframe transparent */
+/* Full screen keeps the window material instead of the app's own opaque colour under the camera strip. */
+.device.immersive .win.full.app-frame.wz-themed:not(.edge-own) { background: var(--wz-window);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2); }

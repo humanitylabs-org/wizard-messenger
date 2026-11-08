@@ -1,0 +1,6 @@
+/* Shared feature containers and live voice/bound-thread controls. */
+.shared-feature{padding:16px;max-width:800px;margin:auto;overflow:auto}
+.sec-title { margin: 14px 4px 8px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); display: flex; justify-content: space-between; }
+.voice-extras{display:flex;flex-wrap:wrap;gap:6px}.voice-extras button{min-height:36px}#voiceFiles{max-width:300px;max-height:140px;overflow:auto;font-size:12px}
+
+.rv-tag { flex: 0 0 auto; margin-left: -2px; padding: 2px 7px; border-radius: 99px; background: rgba(255, 184, 77, .2); color: var(--rv-2,#ffc879); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }

@@ -1,0 +1,24 @@
+/* Wizard OS · text selection menu (core/sel-menu.js) and the selection colour. */
+::selection { background: rgba(143, 99, 255, .42); color: #fff; }
+.selmenu {
+  position: fixed; left: 0; top: 0; z-index: 260; display: flex; align-items: stretch; gap: 2px; padding: 4px;
+  border-radius: 16px; background: linear-gradient(rgba(24, 16, 48, .94), rgba(24, 16, 48, .94)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border: 1px solid rgba(185, 155, 255, .28);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5), 0 0 0 1px rgba(0, 0, 0, .3), 0 0 22px rgba(143, 99, 255, .18);
+
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; /* drag to move */
+  opacity: 0; scale: .94; transition: opacity 120ms ease, scale 140ms var(--ease, ease);
+}
+.selmenu.on { opacity: 1; scale: 1; }
+.selmenu.drag { scale: 1.04; cursor: grabbing; box-shadow: 0 16px 40px rgba(0, 0, 0, .6), 0 0 0 1px rgba(0, 0, 0, .3), 0 0 28px rgba(143, 99, 255, .3); }
+.selmenu .sm-grip { display: flex; align-items: center; justify-content: center; width: 22px; margin-right: -2px; border-radius: 10px; cursor: grab; }
+.selmenu .sm-grip svg { width: 16px; height: 16px; fill: rgba(185, 155, 255, .7); stroke: none; }
+.selmenu.drag .sm-grip svg { fill: var(--violet-2, #b99bff); }
+.selmenu.off { visibility: hidden; }
+.selmenu[hidden] { display: none; }
+.selmenu button {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 52px; min-height: 48px;
+  padding: 6px 8px; border: 0; border-radius: 12px; background: none; color: var(--ink, #efeaff);
+  font: 650 11.5px/1.1 system-ui, sans-serif; letter-spacing: .01em; white-space: nowrap; -webkit-tap-highlight-color: transparent;
+}
+.selmenu button:active { background: rgba(143, 99, 255, .26); }
+.selmenu svg { width: 19px; height: 19px; fill: none; stroke: var(--violet-2, #b99bff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }

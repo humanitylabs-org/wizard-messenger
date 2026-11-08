@@ -1,0 +1,16 @@
+{
+  "synthetic_only": true,
+  "results": [
+    {
+      "label": "red",
+      "exit_code": 1,
+      "result": null
+    },
+    {
+      "label": "green",
+      "exit_code": 1,
+      "result": null
+    }
+  ],
+  "pass_": false
+}

@@ -1,0 +1,174 @@
+/* Desk strip: Home pinned left, Chats next to it, new things open beside the current desk.
+ * Overview (pinch in / long-press the dots): every desk as a card. Review desks: links opened from a thread. */
+
+/* Sections are laid out by CSS order (index in the strip), never moved in the DOM. */
+.track > .desk { order: 0; }
+
+/* ---------- dots: Home is a small house-shaped pip, review desks amber, a tick for "more" ---------- */
+/* Home's dot is `.dhome`, never `.home`: `.home` is the Home desk page (styles.css: flex column, 100% height,
+ * 14px bottom padding), and on a dock button it lifted the house 7px above the other sigils (James, 12 Oct). */
+.ddot.dhome { border-radius: 2px; transform: rotate(45deg) scale(.85); }
+.ddot.dhome.pop { transform: rotate(45deg) scale(1.4); }
+.ddot.review { border-color: rgba(255, 184, 77, .75); }
+.ddot.review.filled { background: rgba(255, 184, 77, .7); }
+.dmore { flex: 0 0 auto; width: 3px; height: 3px; border-radius: 50%; background: rgba(205, 190, 255, .35); }
+
+/* ---------- desk sigils (James, 12 Oct 2026): the bare app glyph instead of a dot ----------
+ * Each side takes half the bar, so the orb stays centred; every desk is a thumb-sized button (36px tall)
+ * with the glyph at 20px in its app colour. Neighbours sit a little dim; pressing lights one up. */
+.dock { padding-left: 10px; padding-right: 10px; gap: 10px; }
+.desk-dots { flex: 1 1 0; width: auto; min-width: 0; gap: 2px; }
+.ddot.sig { flex: 0 1 38px; min-width: 28px; width: auto; height: 38px; border: 0; border-radius: 12px; background: none;
+  display: grid; place-items: center; transform: none; transition: background 160ms, transform 220ms var(--spring); }
+.ddot.sig::before { inset: -6px 0; }
+.ddot.sig.dhome, .ddot.sig.dhome.pop { transform: none; }
+.ddot.sig.filled, .ddot.sig.review.filled { background: none; }
+.ddot.sig:active { background: rgba(205, 190, 255, .10); transform: scale(.9); }
+.ddot.sig:active .dsg { opacity: 1; }
+/* a review desk (link opened from a thread) keeps its amber cue: a short underline */
+.ddot.sig.review::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 12px; height: 2px; margin-left: -6px; border-radius: 2px; background: rgba(255, 184, 77, .85); }
+
+/* ---------- review mode ---------- */
+:root { --rv: #ffb84d; --rv-2: #ffcf85; }
+.win.reviewing { border-color: rgba(255, 184, 77, .55); box-shadow: 0 0 0 1px rgba(255, 184, 77, .35), 0 10px 40px rgba(255, 160, 40, .12); }
+.win.reviewing .wbar { background: linear-gradient(90deg, rgba(255, 184, 77, .16), rgba(255, 184, 77, .04)); border-bottom-color: rgba(255, 184, 77, .3); }
+.win.reviewing .wbar .wt { flex: 0 1 auto; }
+.win.reviewing .wbar .rv-tag + * { margin-left: auto; }
+/* Pin is an action, the tag is a label: outlined, neutral ink, pin icon. */
+.wbar .wpin { display: inline-flex; align-items: center; gap: 4px; width: auto !important; height: 26px; padding: 0 10px 0 7px; border-radius: 9px; background: transparent; border: 1px solid rgba(236, 232, 255, .28); color: var(--ink); font-size: 12px; font-weight: 650; }
+.wbar .wpin svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.wbar .wpin:active { background: rgba(236, 232, 255, .12); }
+.rv-coach { position: absolute; inset: 0; z-index: 90; display: flex; align-items: flex-end; justify-content: center; padding: 0 18px calc(var(--dock-h) + var(--safe-b) + 18px); background: rgba(5, 3, 12, .55); opacity: 0; transition: opacity 220ms var(--ease); }
+.rv-coach.open { opacity: 1; }
+.rv-card { width: 100%; max-width: 380px; padding: 16px 16px 14px; border-radius: 20px; background: linear-gradient(rgba(28, 20, 8, .96), rgba(28, 20, 8, .96)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border: 1px solid rgba(255, 184, 77, .45); box-shadow: 0 18px 50px rgba(0, 0, 0, .5); color: #f3ead9; font-size: 14px; line-height: 1.45; transform: translateY(12px); transition: transform 260ms var(--ease); }
+.rv-coach.open .rv-card { transform: translateY(0); }
+.rv-h { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--rv-2); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.rv-h i { width: 8px; height: 8px; border-radius: 50%; background: var(--rv); box-shadow: 0 0 8px var(--rv); }
+.rv-card p { margin: 0 0 6px; } .rv-card b { color: #fff; }
+.rv-ok { display: block; width: 100%; margin-top: 10px; height: 40px; border: 0; border-radius: 12px; background: rgba(255, 184, 77, .9); color: #2a1a00; font: inherit; font-weight: 800; }
+.device.reviewing .orb-ring { box-shadow: 0 0 0 2px rgba(255, 184, 77, .55), 0 0 22px rgba(255, 170, 60, .35); border-radius: 50%; }
+.device.reviewing .desk-label { display: none; }
+
+/* ---------- overview: sigil-first visual map ---------- */
+.ov { position: absolute; inset: 0; z-index: 72; overflow-y: auto; overscroll-behavior: contain; padding: calc(var(--safe-t, 0px) + 24px) 14px calc(var(--safe-b) + 24px);
+  background: linear-gradient(rgba(7, 5, 15, .94), rgba(7, 5, 15, .94)), var(--wz-panel, var(--wz-base, var(--bg, #05030c)));   opacity: 0; pointer-events: none; transition: opacity 200ms var(--ease);
+  touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.ov.open { opacity: 1; pointer-events: auto; }
+.ov.dragging { touch-action: none; }
+.ov-head { display: flex; align-items: center; gap: 10px; padding: 0 4px 16px; }
+.ov-head b { font-size: 25px; font-weight: 700; color: var(--ink); letter-spacing: -.03em; }
+.ov-head span { color: var(--ink-3); font-size: 13px; flex: 1; }
+.ov-done { height: 40px; border: 1px solid var(--line-2); border-radius: 12px; padding: 0 16px; background: rgba(205, 190, 255, .07); color: var(--ink); font: inherit; font-size: 14px; font-weight: 650; }
+.ov-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ov-card { --ov-c: #C9BEFF; --ov-c2: var(--ov-c); position: relative; display: flex; flex-direction: column; min-width: 0; height: auto; min-height: 184px; padding: 12px; border-radius: 20px; text-align: left; color: var(--ink);
+  background: #110e1c; border: 1px solid #30283e;
+  background: radial-gradient(140% 110% at 15% 0%, color-mix(in oklab, var(--ov-c) 14%, transparent), transparent 65%),
+    radial-gradient(90% 70% at 100% 100%, color-mix(in oklab, var(--ov-c2) 8%, transparent), transparent 75%), #110e1c;
+  border: 1px solid color-mix(in oklab, var(--ov-c) 20%, #211c30); box-shadow: 0 8px 20px rgba(0, 0, 0, .15);
+  transform: scale(.94); transition: transform 300ms var(--spring), box-shadow 200ms, border-color 200ms, opacity 200ms; }
+.ov.open .ov-card { transform: scale(1); }
+.ov-card.here { border-color: var(--violet-2); box-shadow: 0 0 0 1px var(--violet-2), 0 8px 24px rgba(143, 99, 255, .13); }
+.ov-card:focus-visible, .ov-done:focus-visible, .ov-x:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.ov-card.review { border-color: rgba(255, 184, 77, .6); }
+.ov-card.review.here { border-color: var(--violet-2); }
+.ov-card.drag { opacity: .25; }
+.ov-card.ghost { position: absolute; left: 0; top: 0; z-index: 5; pointer-events: none; opacity: .96; box-shadow: 0 26px 60px rgba(0, 0, 0, .6); transition: none; }
+.ov-card.merging { transform: scale(.9); border-color: var(--violet-2); box-shadow: 0 0 0 2px var(--violet-2), 0 0 30px rgba(143, 99, 255, .5); }
+.ov-card.splitting { transform: scale(1.05); border-color: #5cd6ff; box-shadow: 0 0 0 2px #5cd6ff, 0 0 30px rgba(92, 214, 255, .4); }
+.ov-chrome { position: absolute; top: 4px; left: 10px; right: 4px; display: flex; align-items: center; justify-content: space-between; min-height: 36px; }
+.ov-state { display: flex; gap: 4px; align-items: center; }
+.ov-here, .ov-review { font-size: 10px; line-height: 20px; font-weight: 700; padding: 0 7px; border-radius: 7px; }
+.ov-here { color: #e8ddff; background: rgba(143, 99, 255, .24); }
+.ov-review { color: var(--rv-2); background: rgba(255, 184, 77, .12); }
+.ov-x { flex: 0 0 auto; width: 36px; height: 36px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-3); font-size: 17px; display: grid; place-items: center; }
+.ov-x:active { background: rgba(255, 255, 255, .09); color: var(--ink); }
+.ov-body { flex: 1; display: grid; place-items: center; gap: 4px; min-height: 0; padding-top: 18px; pointer-events: none; }
+.ov-n0, .ov-n1 { grid-template: 1fr / 1fr; }
+.ov-n2 { grid-template: 1fr / minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.ov-card:has(.ov-n3), .ov-card:has(.ov-n4) { min-height: 224px; }
+.ov-n3, .ov-n4 { grid-template: 1fr 1fr / minmax(0, 1fr) minmax(0, 1fr); padding-top: 24px; gap: 4px 6px; }
+.ov-n3 .ov-win:last-child { grid-column: 1 / -1; max-width: 50%; }
+.ov-win { min-width: 0; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+.ov-symbol { --c: #C9BEFF; display: block; width: 90px; height: 90px; flex: 0 0 auto; }
+.ov-symbol .sgi { width: 100%; height: 100%; filter: drop-shadow(0 3px 8px color-mix(in oklab, var(--c) 18%, transparent)); }
+.ov-symbol .sgi.sgl { font-size: 45px; }
+.ov-n2 .ov-symbol { width: 62px; height: 62px; }
+.ov-n3 .ov-symbol, .ov-n4 .ov-symbol { width: 44px; height: 44px; }
+.ov-n2 .sgi.sgl { font-size: 28px; }
+.ov-n3 .sgi.sgl, .ov-n4 .sgi.sgl { font-size: 20px; }
+.ov-win em { min-width: 0; max-width: 100%; font-style: normal; font-size: 11px; font-weight: 600; line-height: 1.2; color: var(--ink-2); text-align: center; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.ov-n3 .ov-win em, .ov-n4 .ov-win em { height: 2.4em; } /* reserve both lines so a wrapped name never lifts its sigil */
+.ov-win.rv .ov-symbol { position: relative; }
+.ov-win.rv .ov-symbol::after { content: ''; position: absolute; right: 0; top: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--rv-2); }
+.ov-top { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; padding-top: 6px; min-width: 0; text-align: center; }
+.ov-top b { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-top small { font-size: 11px; color: var(--ink-3); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ov-empty-symbol { font-size: 40px; font-weight: 300; color: var(--ink-3); }
+.ov-add { display: flex; align-items: center; justify-content: center; gap: 12px; text-align: center; background: transparent; border: 1px dashed var(--line-2); box-shadow: none; font: inherit; }
+.ov-add span { font-size: 40px; font-weight: 300; line-height: 1; color: var(--violet-2); }
+.ov-add b { color: var(--ink-2); font-size: 14px; font-weight: 600; }
+.ov-hint { margin: 18px 12px 0; text-align: center; color: var(--ink-3); font-size: 12px; line-height: 1.6; }
+.device.ov-open .dock, .device.ov-open .desk-label { opacity: 0; pointer-events: none; }
+
+/* ---------------- bound views (James, 12 Oct 2026) ----------------
+ * A thread whose latest reply links the thing that was built opens that view on the desk beside it. While the
+ * thread is in front, the thread narrows by 36 px and that desk leans into the gap, its edge fading in: an
+ * extended canvas. No tab: swipe the bottom bar, or tap / swipe the leaning edge (edge peek), to move between them. */
+.desk.bound-peek { transform: translate3d(-36px, 0, 0); z-index: 3; transition: transform 520ms var(--ease), opacity 400ms, filter 400ms; }
+.desk.bound-peek .tiles { -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.6), #000 26px); mask-image: linear-gradient(90deg, rgba(0,0,0,.6), #000 26px); }
+.desk.bound-peek > .tiles .win { box-shadow: -10px 0 28px rgba(255, 170, 60, .16); }
+.device.bound-peeking .desk.bound-host .tiles { right: 36px; } /* the thread narrows; the bound view fills the gap: two panels */
+/* On the bound view itself: the amber review frame plus "Open app" in the bar. */
+.win.bound .wbar .wopen span { white-space: nowrap; }
+/* On the bound view, its thread peeks back in from the left: the same shared canvas in both directions. */
+.desk.bound-chat-peek { transform: translate3d(20px, 0, 0); z-index: 3; transition: transform 520ms var(--ease); }
+.desk.bound-chat-peek .tiles { -webkit-mask-image: linear-gradient(270deg, rgba(0,0,0,.6), #000 10px); mask-image: linear-gradient(270deg, rgba(0,0,0,.6), #000 10px); }
+.desk.bound-chat-peek > .tiles .win { box-shadow: 10px 0 28px rgba(255, 170, 60, .16); }
+.device.bound-view-peeking .desk.bound-view-host .tiles { left: 20px; } /* a hint of the thread, the view keeps nearly full width */
+@media (prefers-reduced-motion: reduce) { .desk.bound-peek, .desk.bound-chat-peek { transition: none; } }
+/* Edge peek (core/edge-peek.js): the leaning edge (36 px on the thread's right; the thread's 20 px on the view's left)
+ * is a handle, clear of the status bar and the dock and under sheets. A small pill marks it; it and the next dock dot
+ * glow three times when it appears. */
+.bound-grab { position: absolute; z-index: 40; top: calc(var(--safe-t, 0px) + 64px); bottom: calc(var(--dock-h, 124px) + var(--safe-b, 0px) + 24px);
+  width: 36px; padding: 0; border: 0; background: transparent; touch-action: pan-y; -webkit-tap-highlight-color: transparent; cursor: pointer; }
+.bound-grab[hidden] { display: none; }
+.bound-grab.right { right: 0; }
+.bound-grab.left { left: 0; width: 22px; }
+.bound-grab::after { content: ""; position: absolute; top: 50%; width: 5px; height: 56px; margin-top: -28px; border-radius: 3px;
+  background: color-mix(in srgb, var(--violet-2, #8f63ff) 70%, #fff); opacity: .55; box-shadow: 0 0 0 1px rgba(0, 0, 0, .18), 0 0 14px color-mix(in srgb, var(--violet-2, #8f63ff) 70%, transparent); } /* the hairline keeps it visible over a white view */
+.bound-grab.right::after { right: 8px; }
+.bound-grab.left::after { left: 6px; }
+.bound-grab:focus-visible::after { opacity: 1; }
+.bound-grab.glow::after { animation: edgePeekGlow 1.6s ease-in-out 3; }
+#device:has(> .bound-grab.right.glow) #dotsR > .ddot:first-child .dsg,
+#device:has(> .bound-grab.left.glow) #dotsL > .ddot:last-child .dsg { animation: edgePeekDot 1.6s ease-in-out 3; }
+@keyframes edgePeekGlow { 50% { opacity: 1; transform: scaleY(1.25); box-shadow: 0 0 22px var(--violet-2, #8f63ff); } }
+@keyframes edgePeekDot { 50% { filter: drop-shadow(0 0 8px var(--violet-2, #8f63ff)) brightness(1.5); transform: scale(1.18); } }
+@media (prefers-reduced-motion: reduce) { .bound-grab.glow::after, #device:has(> .bound-grab.glow) .ddot .dsg { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ov, .ov-card { transition: none; } }
+
+/* ＋ after the last desk: a new desk, starting from the app list */
+.ddot.dplus .dsg { opacity: .55; }
+.ddot.dplus svg { width: 18px; height: 18px; fill: none; stroke: #C9BEFF; stroke-width: 2.2; stroke-linecap: round; }
+.ddot.dplus:active .dsg { opacity: 1; }
+/* A new (empty) desk is a page of app tiles */
+.new-desk { padding: calc(18px + var(--safe-t, 0px)) 18px 20px; }
+.new-desk .nd-head { display: flex; align-items: baseline; gap: 10px; margin: 6px 4px 18px; }
+.new-desk .nd-head b { font-size: 22px; font-weight: 700; }
+.new-desk .nd-head span { font-size: 13.5px; color: var(--ink-3); }
+.new-desk .lgroup { margin-bottom: 22px; }
+/* Search apps (James, 23 Oct 2026): pill at bottom centre, above the dock. The desk scroll leaves room for it. */
+/* Room under the last row for the search pill, the dock and the iPhone home bar, so the list can always scroll the
+ * For agents row clear of the pill, even when the apps only just fill the screen (Miguel, 24 Oct 2026). */
+.new-desk.kinds { padding-bottom: calc(var(--dock-h, 64px) + var(--safe-b, 0px) + env(safe-area-inset-bottom, 0px) + 96px); }
+.nd-search { position: absolute; left: 50%; bottom: calc(var(--dock-h) + var(--safe-b, 0px) + 8px); transform: translateX(-50%); width: min(78%, 340px); height: 46px; z-index: 3; display: flex; align-items: center; gap: 9px; padding: 0 16px; border-radius: 999px; background: linear-gradient(color-mix(in srgb, var(--bg-2, #0f0c17) 82%, transparent), color-mix(in srgb, var(--bg-2, #0f0c17) 82%, transparent)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border: 1px solid var(--line-2); box-shadow: 0 8px 26px rgba(0, 0, 0, .32);   }
+.nd-search svg { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: var(--ink-3); stroke-width: 2.2; stroke-linecap: round; }
+.nd-search input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; outline: none; color: var(--ink); font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text; }
+.nd-search input::placeholder { color: var(--ink-3); }
+.nd-search input::-webkit-search-cancel-button { display: none; }
+.new-desk .lapp[hidden], .new-desk .lgroup[hidden], .new-desk .forag[hidden] { display: none; }
+.new-desk .forag.searching .fa-body { display: block !important; } /* beats a skin's folded rule while searching */
+.new-desk .forag.searching .fa-row { display: none !important; }
+.new-desk .nd-none { margin: 30px 4px; text-align: center; color: var(--ink-3); font-size: 14px; }
+.new-desk .lgroup h4 { margin: 0 4px 12px; font-size: 12px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+

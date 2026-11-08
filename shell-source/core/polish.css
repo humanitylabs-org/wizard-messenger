@@ -1,0 +1,116 @@
+/* Wizard UX core: chat polish (feature/chat-polish). Both shells.
+ * Banners (offline / reconnecting / back online, critical issues), the fatal card, body-search snippets,
+ * the Drafts section, and the voice provider card in Settings. */
+
+/* Local connection help lives inside the ordinary Troubleshooter window. No floating panel. */
+.wz-recovery { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; color: var(--wz-text, var(--ink)); background: linear-gradient(var(--wz-panel, var(--bg)), var(--wz-panel, var(--bg))), var(--wz-base, var(--bg)); font: var(--wz-text-md)/var(--wz-line-height) var(--wz-font-ui); }
+.wz-recovery > details { flex: 0 0 auto; padding: 16px; }
+.wz-recovery summary { cursor: pointer; font-weight: 650; }
+.wz-recovery-help { max-width: 680px; margin: 0 auto; }
+.wz-recovery h2 { font-size: var(--wz-text-heading); margin: 16px 0 8px; }
+.wz-recovery p { color: var(--wz-text-secondary, var(--ink-2)); margin: 12px 0; }
+.wz-recovery .wz-list { margin: 16px 0; }
+.wz-recovery iframe { position: static !important; flex: 1 0 380px; width: 100%; min-height: 380px; border: 0; }
+.wz-recovery iframe[hidden] { display: none !important; }
+
+/* ---------- banners (same glass as the native update banner, .dv-update) ---------- */
+/* They live in the top strip (the phone's status bar, the desktop's top bar) as one-line pills, so they never
+ * cover a window, a search box or a composer. While one shows, it sits over the clock. */
+.wx-banners { position: fixed; left: 8px; right: 8px; top: calc(var(--safe-t, env(safe-area-inset-top, 0px)) + 3px); z-index: 62; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; }
+.device > .wx-banners { position: absolute; top: calc(var(--sb, 0px) + var(--safe-t, 0px) + 6px); }
+/* Phone: while a banner shows, windows, Home and the gear make room for it (nothing is covered). */
+.device.wx-on .tiles { top: calc(var(--sb) + var(--safe-t) + var(--wx-banner-height, 44px)); }
+.device.wx-on .desk .glance { top: calc(var(--wx-banner-height, 44px) - 10px); }
+.device.wx-on .gear { top: calc(var(--sb) + var(--safe-t) + var(--wx-banner-height, 44px)); }
+html[data-shell="desktop"] .wx-banners { top: 3px; left: 25%; right: 25%; z-index: 35; }
+.wx-banners[hidden] { display: none; }
+.wx-banner { pointer-events: auto; max-width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 99px; font-size: 12.5px; white-space: nowrap;
+  background: linear-gradient(rgba(14, 8, 34, .96), rgba(14, 8, 34, .96)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border: 1px solid var(--line-2); box-shadow: 0 6px 20px rgba(0, 0, 0, .45);   animation: wx-in .18s var(--ease, ease); }
+@keyframes wx-in { from { opacity: 0; transform: translateY(-4px); } }
+.wx-banner .wx-m { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
+.wx-banner .wx-i { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 11px; background: rgba(205, 190, 255, .12); color: var(--violet-2); }
+.wx-banner.net.offline { border-color: rgba(255, 190, 85, .5); }
+.wx-banner.net.offline .wx-i { color: var(--amber); background: rgba(255, 190, 85, .14); }
+.wx-banner.net.restored { border-color: rgba(79, 240, 176, .5); }
+.wx-banner.net.restored .wx-i { color: var(--green); background: rgba(79, 240, 176, .14); }
+.wx-spin { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(205, 190, 255, .25); border-top-color: var(--violet-2); animation: wx-spin .8s linear infinite; }
+@keyframes wx-spin { to { transform: rotate(360deg); } }
+/* "Reconnecting" / search spinner is status: Reduce Motion slows it, never stops it (out-ranks the styles.css kill switch). */
+@media (prefers-reduced-motion: reduce) { .wx-spin { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; } }
+.wx-banner.crit { padding: 0 2px 0 0; border-color: rgba(255, 107, 134, .6); }
+.wx-crit { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 6px; text-align: left; font-size: 12.5px; }
+.wx-crit .wx-i { color: #fff; background: var(--red); }
+.wx-crit .wx-m small { display: none; }
+.wx-crit .wx-go { color: var(--violet-2); font-weight: 700; }
+.wx-banner .wx-x { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; color: var(--ink-3); font-size: 16px; line-height: 1; }
+.wx-banner .wx-x:hover { background: rgba(205, 190, 255, .08); }
+
+/* Connection pill: the same one-line glass pill as every other notice, in both shells (James, 22 Oct: the phone's
+ * tall card with 44px buttons pushed the whole screen down ~20%). Short line · Retry · Troubleshoot; tapping the
+ * line unfolds the full diagnosis beneath it. */
+.wx-banner.net:has(.wx-actions) { height: auto; min-height: 0; padding: 0 3px 0 10px; flex-direction: column; align-items: stretch; gap: 0; border-radius: 14px; }
+.wx-banner.net .wx-row { display: flex; align-items: center; gap: 8px; height: 26px; min-width: 0; }
+.wx-banner.net .wx-s { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-weight: 650; color: inherit; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
+.wx-banner.net .wx-m { display: none; }
+.wx-banner.net.open .wx-m { display: block; padding: 2px 8px 8px 22px; white-space: normal; font-weight: 500; font-size: 12.5px; line-height: 1.4; color: var(--wz-text-2, var(--ink-2)); overflow: visible; }
+.wx-actions { display: flex; flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; }
+.wx-actions button { height: 22px; padding: 0 10px; border-radius: 99px; font-size: 12px; font-weight: 600; color: var(--wz-text, var(--ink)); background: var(--wz-surface, var(--glass)); border: 1px solid var(--wz-border, var(--line-2)); cursor: pointer; position: relative; }
+.wx-actions button::after { content: ''; position: absolute; inset: -8px -2px; } /* comfortable touch area, small visual */
+.wx-actions button:hover { background: var(--wz-surface-hover, rgba(205, 190, 255, .14)); }
+
+/* Desktop: the pill sits in the 34px top bar over the clock and never pushes windows down. */
+html[data-shell="desktop"] .wx-banners { left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: min(560px, 46vw); }
+
+/* ---------- fatal card ---------- */
+.wx-fatal { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 24px; background: rgba(3, 2, 8, .78); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.wx-fatal[hidden] { display: none; }
+.wx-fcard { width: min(400px, 100%); padding: 22px 20px 16px; border-radius: 22px; text-align: center; background: linear-gradient(rgba(16, 10, 34, .98), rgba(16, 10, 34, .98)), var(--wz-panel, var(--wz-base, var(--bg, #05030c))); border: 1px solid rgba(255, 107, 134, .45); color: var(--ink, #f3efff); font: 15px/1.45 system-ui, sans-serif; }
+.wx-fcard .wx-fi { width: 42px; height: 42px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; font-size: 20px; color: #fff; background: var(--red, #ff6b86); }
+.wx-fcard b { display: block; font-size: 17px; margin-bottom: 6px; }
+.wx-fcard p { margin: 0 0 8px; color: var(--ink-2, #b9b0d8); word-break: break-word; }
+.wx-fcard .wx-fnote { font-size: 12.5px; color: var(--ink-3, #7d74a3); }
+.wx-fcard .wx-reload { display: block; width: 100%; margin-top: 8px; padding: 11px; border-radius: 99px; background: var(--violet, #8f63ff); color: #fff; font-weight: 750; border: 0; font-size: 15px; cursor: pointer; }
+.wx-fcard .wx-fx { margin-top: 6px; padding: 8px 12px; color: var(--ink-3, #7d74a3); background: none; border: 0; font: inherit; font-size: 13px; cursor: pointer; }
+
+/* ---------- Chats list: search clear, body-search snippets and status line ---------- */
+.ch-search .ch-sclear { flex: 0 0 auto; width: 24px; height: 24px; margin-right: -6px; border-radius: 50%; color: var(--ink-3); font-size: 17px; line-height: 1; }
+.ch-row .pv.snip { color: var(--ink-2); -webkit-line-clamp: 3; }
+.ch-row .pv.snip mark { background: rgba(255, 190, 85, .26); color: var(--ink); border-radius: 3px; padding: 0 1px; }
+.ch-bodysearch { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 8px 4px; padding: 8px 10px; border-radius: 12px; font-size: 12.5px; color: var(--ink-3); background: rgba(205, 190, 255, .04); border: 1px dashed var(--line); }
+.ch-bodysearch .wx-spin { width: 12px; height: 12px; }
+.ch-bodysearch button { padding: 4px 10px; border-radius: 99px; color: var(--violet-2); background: rgba(143, 99, 255, .12); border: 1px solid var(--line-2); font-weight: 700; font-size: 12px; }
+
+/* ---------- Drafts (unsent new chats) ---------- */
+.ch-sec-h.static { cursor: default; }
+.ch-draft { position: relative; display: flex; align-items: flex-start; }
+.ch-draft .ch-row { flex: 1; min-width: 0; padding-right: 40px; }
+.ch-draft .ch-row .emo { background: rgba(255, 190, 85, .12); }
+.ch-draft .ch-row .pv { color: var(--amber); opacity: .85; }
+.ch-draft.cur .ch-row { background: rgba(143, 99, 255, .16); }
+.ch-draft-x { position: absolute; right: 6px; top: 10px; width: 30px; height: 30px; border-radius: 50%; color: var(--ink-3); font-size: 18px; }
+.ch-draft-x:active, .ch-draft-x:hover { background: rgba(205, 190, 255, .08); color: var(--ink); }
+
+/* ---------- Settings: voice transcription card ---------- */
+.vx-card .st-tx b { display: inline-flex; align-items: center; gap: 8px; }
+.vx-badge { font-style: normal; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: 99px; color: var(--green); background: rgba(79, 240, 176, .12); border: 1px solid rgba(79, 240, 176, .35); }
+.vx-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); margin: 0 6px; }
+.vx-dot.ready { background: var(--green); box-shadow: 0 0 10px rgba(79, 240, 176, .6); }
+.vx-dot.down { background: var(--amber); }
+/* Settings controls live in core/settings.css for both layouts. */
+
+/* ---------- offline pop-up (core/status.js) ----------
+ * No look of its own: it is the kit's card, rows, pills and buttons (kit/controls.css), on the panel material every
+ * floating panel uses (--wz-panel, docs/OPAQUE_OVERLAYS.md) and the kit sheet's backdrop. These rules only place it. */
+.wx-off { position: fixed; inset: 0 0 calc(env(safe-area-inset-bottom, 0px) + 160px); z-index: 190; display: grid; place-items: center; padding: var(--wz-space-4, 16px); pointer-events: none; }
+.wx-off[hidden] { display: none; }
+.wz-card.wx-off-card { position: relative; width: min(400px, 100%); max-height: 100%; overflow-y: auto; pointer-events: auto; background: var(--wz-panel); color: var(--wz-text); }
+.wx-off-card > h2 { margin: 0 0 var(--wz-space-2, 8px); padding-right: var(--wz-target, 44px); font-size: var(--wz-text-heading); }
+.wx-off-x { position: absolute; top: var(--wz-space-2, 8px); right: var(--wz-space-2, 8px); font-size: var(--wz-text-heading); }
+.wx-off-sub { margin: 0 0 var(--wz-space-3, 12px); color: var(--wz-text-secondary); font-size: var(--wz-text-sm); line-height: 1.45; }
+.wx-off-card .wz-list + .wx-off-sub { margin-top: var(--wz-space-3, 12px); color: var(--wz-text); }
+.wx-off-card .wz-actions > .wz-button { flex: 1; }
+/* Phone: keep the checks below the status bar and pill, far above the orb. Only the opaque card takes hits; the
+ * rest of the shell, especially the dock, remains visible and tappable. Small landscapes scroll the card. */
+/* The Android WebView reports env(safe-area-inset-top) as 0, so use the shell's own --sb/--safe-t (what the pill uses)
+ * and sit just under the pill, never over the status bar. */
+html:not([data-shell="desktop"]) .wx-off { place-items: start center; padding-top: calc(var(--sb, 0px) + var(--safe-t, env(safe-area-inset-top, 0px)) + 44px); }
