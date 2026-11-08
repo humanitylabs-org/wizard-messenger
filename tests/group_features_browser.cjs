@@ -54,7 +54,7 @@ try { for(const profile of [{name:'desktop',viewport:{width:1280,height:860}},{n
   if(profile.hasTouch){const box=await chip.boundingBox(),cdp=await ctx.newCDPSession(page),points=[{x:box.x+box.width/2,y:box.y+box.height/2}];await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:points});await page.waitForTimeout(520);await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await cdp.detach();}
   else await chip.click({button:'right'});
   await f.locator('.u-reactor-list').waitFor();await page.waitForTimeout(100);assert(await f.locator('.u-reactor-list').isVisible(),'long-press release keeps sheet open');
-  await f.getByRole('tab',{name:'All',exact:true}).click();assert.equal(await f.locator('.u-reactor-row').filter({hasText:'Alice Example'}).count(),1);
+  await f.getByRole('tab',{name:'All',exact:true}).click();assert.equal(await f.locator('.u-reactor-list .u-reactor-row').filter({hasText:'Alice Example'}).count(),1);
   await f.getByRole('tab',{name:'❤️ 1',exact:true}).click();assert.equal(await f.locator('.u-reactor-list .u-reactor-row').count(),1);await f.getByRole('tab',{name:'All',exact:true}).click();
   await page.screenshot({path:path.join(out,`${profile.name}-${skin}-reactor-sheet.png`)});
   await f.locator('.u-overlay').click({position:{x:8,y:8}});await f.locator('.u-overlay').waitFor({state:'detached'});assert(await f.locator('.u-timeline').isVisible());
