@@ -438,7 +438,7 @@
         finally { for (const k of Object.keys(values)) delete values[k]; }
       };
     }
-    // Beeper-style sign-in: the real site runs in a private window of the Wizard Browser, shown live here.
+    // Beeper-style sign-in: the real site runs in a private window of Messenger's own normal Chromium, shown live here.
     // When the page holds the login, Messenger reads it, hands it to the bridge and closes the window.
     // What to do on the page, said up front so nobody waits on a screen that needs one more tap.
     const BROWSER_HINT = {
@@ -481,6 +481,16 @@
       }, 'secondary c-live-key'); zoom.setAttribute('aria-pressed', 'false');
       for (const [text, dy] of [['↑ Page', -360], ['↓ Page', 360]]) button(tools, text, () => send({type: 'scroll', x: .5, y: .5, dy}), 'secondary c-live-key');
       button(tools, 'Cancel sign-in', () => { back(); }, 'c-link c-live-key');
+      // Paste: one tap puts the phone's clipboard into the focused field of the page (a code, an email, a link). Where the
+      // browser won't hand over the clipboard, the box above takes a long-press Paste instead.
+      const paste = element('button', 'secondary c-live-key c-live-paste', 'Paste'); paste.type = 'button';
+      paste.onclick = async () => {
+        let text = '';
+        try { text = await global.navigator.clipboard.readText(); } catch (e) { text = ''; }
+        if (text) { send({type: 'text', text}); return; }
+        typer.placeholder = 'Long-press here and choose Paste'; typer.focus();
+      };
+      keys.append(paste);
       for (const [text, key] of [['⌫', 'Backspace'], ['Tab', 'Tab'], ['Enter ⏎', 'Enter']]) { const k = element('button', 'secondary c-live-key', text); k.type = 'button'; k.onclick = () => send({type: 'key', key}); keys.append(k); }
       const pageBack = element('button', 'secondary c-live-key', '‹ Page back'); pageBack.type = 'button'; pageBack.onclick = () => send({type: 'back'}); keys.append(pageBack);
       typer.addEventListener('beforeinput', e => {
@@ -513,7 +523,7 @@
       const width = Math.max(320, Math.min(430, Math.round(shell.clientWidth || 400))), height = Math.max(520, Math.min(860, Math.round(width * 1.7)));
       const observer = new global.ResizeObserver(() => { if (root.contains(shell)) fit(); else observer.disconnect(); }); resizeCleanup = () => observer.disconnect(); observer.observe(shell); fit();
       let started;
-      try { started = await api('/api/unified/connectors/browser/start', 'POST', {network, flow, width, height, mobile: network === 'slack'}); }
+      try { started = await api('/api/unified/connectors/browser/start', 'POST', {network, flow, width, height}); }
       catch (e) { if (mine === generation) failure(e, network, 'browser', mine); return; }
       if (mine !== generation) { api('/api/unified/connectors/browser/' + started.id + '/cancel', 'POST', {}).catch(() => {}); return; }
       browserSession = started.id;

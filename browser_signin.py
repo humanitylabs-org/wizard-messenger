@@ -1,12 +1,14 @@
-"""Sign in to a network inside the shared Wizard Browser, like Beeper's built-in browser.
+"""Sign in to a network inside a normal (headful) Chromium, like Beeper's built-in browser.
 
-The owner drives a private, throw-away browser context (its own cookies, never the agent's sessions)
-through a live picture of the page in Messenger. When the page holds the login, the values the bridge
-needs are read over the browser's DevTools connection, handed to the bridge's own login step, and the
-context is destroyed. Nothing is written to disk and nothing is logged.
+The browser is Messenger's own `signin-browser` service: the same Wizard browser-engine image the Browser
+app's owner hand-over uses (real Chromium on a virtual display, not headless-shell), reachable only from
+Messenger over a private network and never by agents. The owner drives a private, throw-away browser
+context (its own cookies) through a live picture of the page in Messenger. When the page holds the login,
+the values the bridge needs are read over the browser's DevTools connection, handed to the bridge's own
+login step, and the context is signed out and destroyed. Nothing is written to disk and nothing is logged.
 
 Only the owner's authenticated view reaches this (no agent capability maps to these routes).
-Requires the app manifest's `uses: [browser]` (Docker network to http://browser:9222).
+The DevTools address is MESSENGER_BROWSER_DEVTOOLS (default http://signin-browser:9222).
 """
 import base64
 import json
@@ -22,7 +24,7 @@ from urllib.request import urlopen
 
 from engine import EngineError
 
-BROWSER = os.environ.get('MESSENGER_BROWSER_DEVTOOLS', 'http://browser:9222')
+BROWSER = os.environ.get('MESSENGER_BROWSER_DEVTOOLS', 'http://signin-browser:9222')
 IDLE_SECONDS = 15 * 60
 
 
@@ -174,14 +176,16 @@ class Session:
         s = self.session
         self.cdp.send('Page.enable', session=s)
         self.cdp.send('Network.enable', {}, session=s)
+        # A normal Chromium already presents its own, self-consistent identity: leave it alone. Only a bridge's
+        # explicit user agent, or an engine that still says "HeadlessChrome", is overridden.
         if not user_agent:
             ua = self.cdp.send('Browser.getVersion').get('userAgent', '')
-            user_agent = ua.replace('HeadlessChrome', 'Chrome') if ua else None
+            user_agent = ua.replace('HeadlessChrome', 'Chrome') if 'HeadlessChrome' in ua else None
         if user_agent:
             self.cdp.send('Emulation.setUserAgentOverride', {'userAgent': user_agent}, session=s)
-        self.cdp.send('Emulation.setDeviceMetricsOverride', {'width': width, 'height': height, 'deviceScaleFactor': 1, 'mobile': mobile}, session=s)
-        if mobile:
-            self.cdp.send('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 1}, session=s)
+        # Always a desktop identity (desktop user agent, no touch, not "mobile"): a narrow window is enough for the
+        # sites' responsive layout, and a desktop agent paired with a phone's touch screen is a bot signal.
+        self.cdp.send('Emulation.setDeviceMetricsOverride', {'width': width, 'height': height, 'deviceScaleFactor': 1, 'mobile': False}, session=s)
         self.cdp.send('Page.startScreencast', {'format': 'jpeg', 'quality': 62, 'maxWidth': width, 'maxHeight': height, 'everyNthFrame': 1}, session=s)
         self.cdp.send('Page.navigate', {'url': url or NETWORKS[network]['url']}, session=s)
         self.state = 'signing_in'
@@ -365,6 +369,11 @@ class Session:
 
     def close(self):
         self.state = 'closed' if self.state == 'signing_in' else self.state
+        # Sign out: drop every cookie and site store of this private window, then destroy the window itself.
+        try:
+            self.cdp.send('Storage.clearCookies', {'browserContextId': self.context}, timeout=5)
+        except Exception:
+            pass
         try:
             self.cdp.send('Target.disposeBrowserContext', {'browserContextId': self.context}, timeout=5)
         except Exception:
@@ -501,9 +510,9 @@ class BrowserSignIn:
                         # Desktop layout: the bridges wait for the desktop site's address.
                         sess = Session(network, width, height, False, url=params.get('url'), user_agent=params.get('user_agent'), step=raw)
                     else:
-                        sess = Session(network, width, height, bool(payload.get('mobile')))
+                        sess = Session(network, width, height, False)
                 except (OSError, ValueError, KeyError):
-                    fail('browser_unavailable', 'The Wizard Browser is not reachable. Check that the Browser app is installed and running.', 503)
+                    fail('browser_unavailable', 'The sign-in browser is not reachable. Restart Messenger and try again.', 503)
                 self.sessions[sess.id] = sess
             return {'id': sess.id, 'title': (NETWORKS.get(network) or {'title': GENERIC.get(network, ('', network))[1]})['title']}
         if len(suffix) == 2:

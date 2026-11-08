@@ -39,7 +39,7 @@ owner_proof:
   activity: [/api/drafts]           # the visible view polls drafts; the hidden long poll does not count
   strip: [X-Messenger-Owner-Proof]  # legacy proof header: never accepted from a browser
 provides: [messaging]
-uses: [browser]
+uses: []
 needs: []
 ---
 
