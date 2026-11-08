@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-c61dc3c9a601eef32a008694b45eda0b6677f84e@sha256:2c6ba65c9afd2859b1d4c5c530139742a54cb519628cafbddd152435f8a717a9}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-5a1673573f3ed3b26fed49d13d5ec197edc71801@sha256:9f158f1184230c40c5cfd031059e42ffd9e573ee7cd77d943901e451079d1a5e}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-c61dc3c9a601eef32a008694b45eda0b6677f84e@sha256:2c6ba65c9afd2859b1d4c5c530139742a54cb519628cafbddd152435f8a717a9}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-5a1673573f3ed3b26fed49d13d5ec197edc71801@sha256:9f158f1184230c40c5cfd031059e42ffd9e573ee7cd77d943901e451079d1a5e}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -103,7 +103,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-c61dc3c9a601eef32a008694b45eda0b6677f84e@sha256:2c6ba65c9afd2859b1d4c5c530139742a54cb519628cafbddd152435f8a717a9}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-5a1673573f3ed3b26fed49d13d5ec197edc71801@sha256:9f158f1184230c40c5cfd031059e42ffd9e573ee7cd77d943901e451079d1a5e}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -126,7 +126,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-c61dc3c9a601eef32a008694b45eda0b6677f84e@sha256:2c6ba65c9afd2859b1d4c5c530139742a54cb519628cafbddd152435f8a717a9}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-5a1673573f3ed3b26fed49d13d5ec197edc71801@sha256:9f158f1184230c40c5cfd031059e42ffd9e573ee7cd77d943901e451079d1a5e}
     user: 0:0
     entrypoint:
     - python3
@@ -260,7 +260,7 @@ services:
       retries: 10
     restart: unless-stopped
   line:
-    image: ${MESSENGER_LINE_IMAGE:-ghcr.io/humanitylabs-org/wizard-line-bridge:sha-9217753b7699ec3f259b00cdc56c79c63f61cc5f@sha256:9de256104f86c37f27391d511c4d6a999c02289398f07512e03b07eafe699428}
+    image: ${MESSENGER_LINE_IMAGE:-ghcr.io/humanitylabs-org/wizard-line-bridge:sha-cb0de15734aefb24eb5e2320aa4554b70afdc0da@sha256:3836ac4e7127d24b2e750022375df30266ddeff249ff0824318de154a09e5d31}
     user: 1000:1000
     entrypoint:
     - /bin/sh
