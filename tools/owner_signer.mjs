@@ -130,4 +130,5 @@ function main() {
   const old = process.umask(0o177)
   server.listen(sock, () => { process.umask(old); fs.chmodSync(sock, 0o600); console.log('owner signer listening', sock) })
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()
+// realpath: the unit runs it through a `current` symlink
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) main()
