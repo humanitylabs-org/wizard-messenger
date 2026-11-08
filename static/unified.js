@@ -111,7 +111,16 @@
     return {left:Math.max(left, Math.min(anchor.left, right - width)),
       top:Math.max(top, Math.min(above >= top ? above : below, bottom - height)), width, height};
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox};
+  // Inbox order: pinned first, then newest last message. With "Drafts at top" on (Settings, off by default; issue 133),
+  // chats with a waiting draft (yours or your Wizard's) lead the list, newest draft first, like WhatsApp/Telegram.
+  // draftOf(row) returns that chat's draft ({updated}) or null. Never changes the input array.
+  function chatOrder(rows, {draftsFirst = false, draftOf = () => null} = {}) {
+    const d = draftsFirst ? new Map(rows.map(p => [p, draftOf(p)])) : null;
+    const has = p => d && d.get(p) ? 1 : 0, at = p => (d && d.get(p) && d.get(p).updated) || 0;
+    return [...rows].sort((a, b) => has(b) - has(a) || (has(a) && has(b) ? at(b) - at(a) : 0)
+      || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, low: false, seg: (() => { try { const v = sessionStorage.getItem('messenger-inbox-seg') || (sessionStorage.getItem('messenger-inbox-low') === '1' ? 'low' : 'all'); return ['all', 'unread', 'medium', 'low'].includes(v) ? v : 'all'; } catch { return 'all'; } })(), ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
@@ -1107,10 +1116,10 @@
     }
     const list = (split.on ? $('u-pane-list') : $('unified-inbox'))?.querySelector('.u-list'); if (!list || (s.person && !split.on)) return;
     const twins = wizardTwins();
-    const everyone = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
+    const rows = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
       .map(p => { const t = twins.twinOf.get(p.id); if (!t) return p; const low = !!(p.low_priority || t.low_priority); return {...p, muted: !!(p.muted || t.muted), low_priority: low, medium_priority: !low && !!(p.medium_priority || t.medium_priority), twin: t}; })
-      .concat(twins.visible)
-      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
+      .concat(twins.visible);
+    const everyone = chatOrder(rows, {draftsFirst: draftsFirst(), draftOf: p => p.native ? null : (s.draftIndex?.[p.id] || ((s.drafts[p.id] || '').trim() ? {updated: 0} : null))});
     // Low priority (Beeper's name; WhatsApp's Archive): out of All/Unread, unread counts and notifications, and a new
     // message never brings a chat back. Medium priority stays in All but never pings (no push, badge or Unread).
     // Row 1 picks the folder (All, Unread, Medium, Low); row 2 (network, Filters) narrows it.
@@ -3984,6 +3993,20 @@
     }
     paint(); return row;
   }
+  // Drafts at top (issue 133, off by default, this device): chats with a waiting draft lead the Inbox. Same Off/On
+  // radio pattern and per-device storage as Inbox view; drawList() reads it through chatOrder().
+  const DRAFTS_FIRST_KEY = 'messenger.draftsFirst';
+  function draftsFirst() { try { return localStorage.getItem(DRAFTS_FIRST_KEY) === '1'; } catch { return false; } }
+  function draftsFirstRow() {
+    const row = node('div', 'u-more-row u-more-drafts-first'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Drafts at top');
+    row.append(node('span', 'u-more-label', 'Drafts at top'), group);
+    const paint = () => { for (const b of group.children) { const on = (b.dataset.on === '1') === draftsFirst(); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
+    for (const [on, label, hint] of [['0', 'Off', 'Chats stay in last-message order'], ['1', 'On', 'Chats with a waiting draft lead the list']]) {
+      const b = button(label, () => { try { if (on === '1') localStorage.setItem(DRAFTS_FIRST_KEY, '1'); else localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* this visit only */ } paint(); drawList(); }, 'u-view-btn');
+      b.dataset.on = on; b.title = hint; b.setAttribute('role', 'radio'); group.append(b);
+    }
+    paint(); return row;
+  }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
     const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
@@ -3996,7 +4019,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow());
+    group.append(inboxViewRow(), draftsFirstRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

@@ -206,3 +206,28 @@ values** solely to start the disconnected process; this is not a real API-key or
 account test. It removes only its own containers/network in a finally block.
 No owner contacts, messages or credentials are touched. Its sanitized evidence
 must not be described as successful account login or five-network delivery.
+
+## Native reads (reading a chat in the network's own app)
+
+The owner's read in a network's own app reaches Messenger as a Matrix read receipt from the owner's
+double-puppet user (or the owner's own ghost, learned by `learn_me`); `UnifiedInbox.ephemeral` moves the chat's
+`last_read_ts` to that message (never backwards), which clears the unread count, app badge, inbox feed item and
+"N new messages" divider together. Peer receipts only move `peer_read_ts`. Checked against the pinned upstream
+connectors, read from source (mautrix repos at `v0.2610.0` or, where that archive was unavailable, `main`; LINE `72c7a51`); not exercised against live accounts:
+
+| Network | Native read -> Messenger | Upstream signal |
+| --- | --- | --- |
+| Telegram | works | `updateReadHistoryInbox` / `updateReadChannelInbox` -> `onOwnReadReceipt` |
+| WhatsApp | works | `MarkChatAsRead`, `ReceiptTypeReadSelf` |
+| Signal | works when the phone syncs reads to linked devices | `SyncMessage.Read` -> `ReadSelf` |
+| Slack | works | `channel_marked` / `im_marked` / `group_marked`, sender = own user |
+| Instagram | works | thread read watermark / mark-unread, sender = self |
+| Facebook | works | `LSMarkThreadReadV2`, sender = self |
+| X (Twitter) | works | `ConversationRead` with own sender id |
+| LinkedIn | works on conversation sync (not instant) | `conv.Read` diff at sync, sender = own login |
+| Google Messages | works | conversation `Unread=false` update -> read receipt, sender = me |
+| LINE | fixed in 16.32 | operation 40 `SEND_CHAT_CHECKED` (`param1` chat, `param2` last message read); before: ignored |
+
+Not possible upstream: nothing is marked impossible, but a network only reports what its protocol sends
+(Signal needs "read receipts" on the primary phone; LinkedIn's reads arrive with the next conversation sync).
+`status.read_sync` shows per network how many native reads arrived (`seen`) and moved a chat (`cleared`).

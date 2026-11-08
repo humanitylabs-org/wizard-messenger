@@ -8,3 +8,7 @@ Now: Settings > Inbox view, saved at once on this device (localStorage `messenge
 - Chats (default): picture, name, last message (a group names the sender, your own reads "You:"), time, unread badge. The row code is the same one 15.15.1 used; tests/inbox_view_browser.cjs dumps the rows and `STATIC_ROOT=<15.15.1 static>` produces the 15.15.1 rows to diff.
 - Compact: the 16.x denser row (name, time, badge).
 One renderer in unified.js drawList(); the old `messenger.previews` key is no longer read.
+
+## Drafts at top (#133, off by default)
+
+Miguel (7 Nov 2026): an agent draft in a weeks-old chat sat far down the list. Settings > Drafts at top (Off/On, saved at once on this device in localStorage `messenger.draftsFirst`; absent = Off). On: chats with a waiting draft (yours or your Wizard's, from `api/drafts` or this device's composer) lead the Inbox, newest draft first, then the usual pinned/last-message order. The row keeps its existing "Draft: <first line>" marker. Folders and filters (Low priority, Unread, networks) still apply. Order lives in `chatOrder()` (unified.js; tests/test_drafts_first.cjs, tests/drafts_first_browser.cjs). Not yet: a Drafts filter chip and naming who wrote the draft.
