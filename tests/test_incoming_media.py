@@ -272,6 +272,54 @@ class MentionTests(Base):
         self.assertEqual((row['original'], row['mentions'][0]['text']), ('hi @Ana', '@Ana'))
 
 
+class LinePhotoTests(Base):
+    """LINE's bridge sends a photo as a bare m.image (url and body "image.jpg", no info block, so no mimetype).
+    The picture route used to answer 404 "No preview" for it, so every LINE photo read "Photo unavailable"."""
+    JPEG = b'\xff\xd8\xff\xe0' + b'\x00' * 60
+    LINE = 'mxc://messenger.internal/linephoto1'
+
+    def setUp(self):
+        super().setUp()
+        self.l = self.inbox.store.identity('line', '!l', 'Ann', 'person')
+        self.lmeta = {'network': 'line', 'kind': 'person', 'label': 'Ann', 'names': {}}
+        self.inbox.rooms['!l'] = self.lmeta
+        self.inbox.ingest(self.l, self.lmeta, self.event('$p', {'msgtype': 'm.image', 'body': 'image.jpg', 'url': self.LINE}, sender='@line_u1:messenger.internal'))
+
+    def test_line_photo_row_is_a_picture_with_a_thumbnail(self):
+        row = {m['id']: m for m in self.inbox.store.messages(self.l['person_id'])}['$p']
+        self.assertEqual(row['msgtype'], 'm.image')
+        self.assertTrue(row['media']['thumb'])
+        self.assertNotIn('mxc', row['media'])
+
+    def test_line_photo_thumbnail_and_full_routes_serve(self):
+        with patch.object(self.inbox, 'media_blob', return_value=('blob', 'image/jpeg')) as blob:
+            self.assertEqual(self.inbox.media('$p', 'thumb'), ('blob', 'image/jpeg'))
+            self.inbox.media('$p', None)
+        self.assertEqual(blob.call_args_list[0].args[0], self.LINE)
+        self.assertTrue(blob.call_args_list[0].kwargs['thumb'])
+
+    def test_line_photo_bytes_come_through_the_media_proxy(self):
+        class Reply:
+            headers = {'Content-Type': 'image/jpeg'}
+            def __init__(self): self.data = JPEG
+            def read(self, n): data, self.data = self.data[:n], self.data[n:]; return data
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        JPEG = self.JPEG
+        self.inbox.matrix = 'http://matrix:8008'
+        with patch.object(unified, 'urlopen', return_value=Reply()) as fetch:
+            blob = self.inbox.media('$p', 'thumb')
+        self.assertIn('/_matrix/client/v1/media/thumbnail/messenger.internal/linephoto1', fetch.call_args.args[0].full_url)
+        self.assertEqual((blob.mime, blob.path.read_bytes()), ('image/jpeg', self.JPEG))
+
+    def test_files_and_voice_without_a_mimetype_are_still_not_pictures(self):
+        self.assertFalse(unified.is_picture('m.file', {}))
+        self.assertFalse(unified.is_picture('m.audio', {}))
+        self.assertFalse(unified.is_picture('m.image', {'mime': 'application/pdf'}))
+        self.assertTrue(unified.is_picture('m.image', {}))
+        self.assertTrue(unified.is_picture('m.file', {'mime': 'image/png'}))
+
+
 class UnavailableMediaTests(Base):
     def test_expired_whatsapp_media_is_a_placeholder_everywhere(self):
         self.assertEqual(unavailable_media('Failed to bridge photo, please view it on the WhatsApp app'), ('photo', ''))
