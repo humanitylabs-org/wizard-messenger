@@ -1,4 +1,4 @@
-// Drafts at top (#133, Miguel 7 Nov 2026): Settings > Drafts at top (Off by default) floats chats with a waiting draft
+// Drafts at top (issue 133, Miguel 7 Nov 2026): Settings > Drafts at top (Off by default) floats chats with a waiting draft
 // (yours or your Wizard's) to the top of the Inbox, newest draft first, with the existing "Draft:" line.
 // Synthetic API only; phone + desktop x two skins. node tests/drafts_first_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
