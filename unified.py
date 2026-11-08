@@ -1099,7 +1099,7 @@ class PeopleStore:
                 r['media'] = None
             elif media and (r.get('msgtype') != 'm.text' or media.get('mxc') or media.get('marmot')):
                 r['media'] = {k: v for k, v in media.items() if k in ('mime', 'size', 'w', 'h', 'duration', 'filename', 'waveform', 'voice', 'gif', 'sticker', 'album_index', 'album_count')}
-                r['media']['thumb'] = bool(media.get('thumb')) or (media.get('mime', '').startswith('image/'))
+                r['media']['thumb'] = bool(media.get('thumb')) or is_picture(r.get('msgtype'), media)
             else:
                 r['media'] = None
             if r.get('msgtype') == 'm.text' and not r['deleted']:
@@ -1314,6 +1314,13 @@ def is_status_chat(network, meta=None, label=None):
     if isinstance(meta.get('channel_id'), str) and meta['channel_id']:
         return meta['channel_id'] == STATUS_CHANNEL
     return (label or meta.get('label')) == STATUS_TITLE
+
+
+def is_picture(msgtype, media):
+    """A picture has a thumbnail. The event type decides when the bridge sent no mimetype: the LINE bridge's photos carry
+    only a url and a body (stickers, files, video and audio carry an info block), and a missing type must not mean no photo."""
+    media = media if isinstance(media, dict) else {}
+    return str(media.get('mime') or '').startswith('image/') or (msgtype in ('m.image', 'm.sticker') and not media.get('mime'))
 
 
 def media_label(msgtype, media):
@@ -2835,7 +2842,7 @@ class UnifiedInbox:
             fail('not_found', 'No media on that message', 404)
         thumb = kind == 'thumb'
         mime = media.get('mime') or 'application/octet-stream'
-        if thumb and not (media.get('thumb') or mime.startswith('image/')):
+        if thumb and not (media.get('thumb') or is_picture(message.get('msgtype'), media)):
             fail('not_found', 'No preview for that message', 404)
         mxc = (media.get('thumb') if thumb and media.get('thumb') else media['mxc'])
         if not re.fullmatch(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)', mxc or ''):
