@@ -2,7 +2,7 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.2.0-unified.16.33
+version: 0.2.0-unified.16.34
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
@@ -39,7 +39,7 @@ owner_proof:
   activity: [/api/drafts]           # the visible view polls drafts; the hidden long poll does not count
   strip: [X-Messenger-Owner-Proof]  # legacy proof header: never accepted from a browser
 provides: [messaging]
-uses: [browser]
+uses: []
 needs: []
 ---
 

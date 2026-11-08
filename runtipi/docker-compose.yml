@@ -41,13 +41,14 @@ services:
       TELEGRAM_BRIDGE_URL: http://telegram:29317
       TRANSLATION_URL: http://translation:8766
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-gemma4-31b}
+      MESSENGER_BROWSER_DEVTOOLS: http://signin-browser:9222
     volumes:
       - ${APP_DATA_DIR}/data:/data
     depends_on:
       unified-init: {condition: service_completed_successfully}
       matrix: {condition: service_healthy}
       connector-init: {condition: service_completed_successfully}
-    networks: [matrix-lane, model-lane, relay-egress]
+    networks: [matrix-lane, model-lane, relay-egress, signin-lane]
     # Loopback-only host port for the Wizard gateway, as in 0.1.x.
     ports:
       - 127.0.0.1:${APP_PORT}:8765
@@ -511,8 +512,33 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+  signin-browser:
+    # Messenger's own normal Chromium (real browser on a virtual display, the Browser app's engine image) for
+    # signing in to networks. Only Messenger reaches its DevTools (internal signin-lane); agents never do.
+    # It starts empty, holds nothing between sign-ins, and each sign-in window is signed out and destroyed.
+    image: ghcr.io/humanitylabs-org/browser-engine:sha-cb0e16812e95ff1c064de9f0f0e74cd4db2ff63f@sha256:11ffb8c2c1d53c42ec178dbc1ca6f710863043311dc16f3b375cc67d857010f5
+    user: 1000:1000
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,size=1g
+    shm_size: 1g
+    mem_limit: 2g
+    pids_limit: 512
+    environment:
+      HOME: /tmp
+      BROWSER_SCREEN: 500x900
+    networks:
+    - signin-lane
+    - signin-egress
+    restart: unless-stopped
 networks:
   matrix-lane: {internal: true}
+  signin-lane: {internal: true}
+  signin-egress: {}
   model-lane: {internal: true}
   telegram-egress: {}
   connector-egress: {}
