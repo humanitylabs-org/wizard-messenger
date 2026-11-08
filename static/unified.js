@@ -658,25 +658,30 @@
     const stamp = p => Math.max(p.last?.timestamp || 0, activity.get(p.id) || 0);
     return [...rows].sort((a, b) => stamp(b) - stamp(a) || a.display_name.localeCompare(b.display_name));
   }
-  async function newChat(shareText) {
+  async function newChat(shareText, placeShare) {
     // New chat keeps its A-Z directory; Send to… offers recent chats first.
-    const title = shareText ? 'Send to…' : 'New chat';
+    // placeShare (a shared photo): called with the picked chat; settles true only once the photo is staged there.
+    const sharing = !!(shareText || placeShare), title = sharing ? 'Send to…' : 'New chat';
     const sheet = overlay(title); sheet.classList.add('tall');
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
-    const settled = shareText ? new Promise(resolve => { s.answer = () => resolve(true); }) : null;
-    if (!shareText) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
+    const settled = sharing ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
+    if (!sharing) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
       const d = await call('directory'); if (s.overlay !== title) return settled;
       const directory = [...d.people, ...d.groups.map(g => ({...g, group: true}))];
-      const all = shareText ? recentSharePeople(directory) : directory.sort((a, b) => a.display_name.localeCompare(b.display_name));
+      const all = sharing ? recentSharePeople(directory) : directory.sort((a, b) => a.display_name.localeCompare(b.display_name));
       const draw = () => {
         const q = search.value.trim().toLowerCase(); list.replaceChildren(); let letter = '';
         for (const p of all.filter(p => !q || p.display_name.toLowerCase().includes(q)).slice(0, 200)) {
           const first = ([...p.display_name.trim()][0] || '#').toUpperCase();
-          if (!shareText && !q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
-          const row = button('', () => { if (shareText) placeShared(p.id, shareText); closeOverlay(); openPerson(p.id); }, 'u-directory-row');
+          if (!sharing && !q && first !== letter) { letter = first; list.append(node('p', 'u-letter', /\p{L}/u.test(first) ? first : '#')); }
+          const row = button('', () => {
+            if (placeShare) { const answer = s.answer; s.answer = null; closeOverlay(); Promise.resolve(placeShare(p.id)).then(answer, e => { error(e); answer(false); }); return; }
+            if (shareText) placeShared(p.id, shareText);
+            closeOverlay(); openPerson(p.id);
+          }, 'u-directory-row');
           const text = node('span', 'u-who-text'); text.append(node('strong', '', p.display_name), node('span', '', (p.group ? 'Group · ' : '') + networksOf(p).map(netLabel).join(' · ')));
           row.append(netAvatar(p, 'small', 'directory'), text); list.append(row);
         }
@@ -2872,6 +2877,14 @@
       addFiles(files);
     };
     // Paste and drop of files, dictation-safe text paste (Wispr Flow), the drag highlight and Enter / Shift+Enter /
+    // A photo shared from another Wizard app lands in the same tray. True only when it is really staged (never sends).
+    const stageFiles = async picked => {
+      if (!canAttach || !picked.length || view.edit || s.person !== id || !s.ready || !form.isConnected) return false;
+      if (picked.length > 10 - (view.attach?.length || 0)) { toast('Up to 10 attachments at a time'); return false; }
+      const before = view.attach?.length || 0;
+      await addFiles(picked);
+      return s.person === id && form.isConnected && (view.attach?.length || 0) >= before + picked.length;
+    };
     // Ctrl|Cmd+Enter are Wizard's one composer implementation, the same code as Chats (James, 25 Oct 2026: "one
     // implementation, shared by many apps"). Messenger only decides what an attached file becomes.
     window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takeFiles, onSubmit: () => submit(), notice: msg => toast(msg)});
@@ -3099,7 +3112,7 @@
       const wave = panel.querySelector('.u-wave'), i = node('i'); i.style.height = Math.max(10, level / 10.24) + '%'; wave.append(i);
       while (wave.children.length > 40) wave.firstChild.remove();
     };
-    Object.assign(view, {draft, grow, paintBar, paintRecording, paintRecordingTick});
+    Object.assign(view, {draft, grow, paintBar, paintRecording, paintRecordingTick, stageFiles});
     form.append(bar, via, channel, mediaPicker.panel, row, notice); grow(); paintBar(); paintRecording();
     // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
     const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.saving || prev?.busy;
@@ -4370,17 +4383,27 @@
     const had = (s.drafts[id] || '').trim();
     s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
   }
-  function receiveShare(item) {
-    const text = sharedText(item);
-    if (!s.ready || !text) return false; // stays pending in Wizard; check() runs again once unlocked
+  async function receiveShare(item) {
+    const text = sharedText(item), image = item.kind === 'image' && item.file?.type?.startsWith('image/');
+    if (!s.ready || (!text && !image) || item.kind === 'file') return false; // stays pending in Wizard; check() runs again once unlocked
     if (s.overlay) closeOverlay();
     if (s.tab === 'messenger' || s.search != null) switchTab('people');
+    if (image) {
+      // A shared photo is staged in the chat's photo tray (the same path as the + picker); the owner reviews and sends.
+      const place = async id => {
+        if (s.person !== id || view.id !== id || !store.threads[id]) await openPerson(id);
+        if (!s.ready || s.person !== id || view.id !== id || !await view.stageFiles?.([item.file])) return false;
+        if (text) { placeShared(id, text); view.draft.value = s.drafts[id]; view.grow(); }
+        return true;
+      };
+      return item.target ? place(item.target) : newChat('', place);
+    }
     if (item.target) { placeShared(item.target, text); openPerson(item.target); return true; }
     if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
     return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
   }
   function listenForShares() {
-    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
+    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url', 'image'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,

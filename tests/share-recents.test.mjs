@@ -14,8 +14,8 @@ test('Send to sorts newest chat first, uses cached list activity, then alphabeti
   assert.deepEqual(Array.from(ctx.sort([person('b', 500), person('g')]), p => p.id), ['b','g']);
 });
 test('Send to has no alphabet dividers; normal New chat remains A-Z; published targets carry recency', () => {
-  assert.match(src, /const all = shareText \? recentSharePeople\(directory\) : directory.sort/);
-  assert.match(src, /if \(!shareText && !q && first !== letter\)/);
+  assert.match(src, /const all = sharing \? recentSharePeople\(directory\) : directory.sort/);
+  assert.match(src, /if \(!sharing && !q && first !== letter\)/);
   assert.match(src, /lastActivity: p.last\?\.timestamp \|\| 0/);
 });
 test('published targets include group activity, deterministic ties and a twelve-row cap', () => {
