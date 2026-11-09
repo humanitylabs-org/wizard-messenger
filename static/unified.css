@@ -225,6 +225,11 @@ button { touch-action: manipulation; }
 .u-media { display: block; position: relative; width: min(280px, 64vw); max-height: 360px; padding: 0; margin: -4px -8px 4px; border-radius: 14px; overflow: hidden; background: var(--raised); min-height: 0; }
 .u-message.bare .u-media { margin: 0; }
 .u-media.unsized { aspect-ratio: 4 / 3; }
+/* Full-size photo when Wizard's own viewer did not open it (issue 144): fit to the screen, Close top right. */
+.u-photo-view { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, black 92%, transparent); touch-action: pinch-zoom; }
+.u-photo-view img, .u-photo-view video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.u-photo-view .u-photo-view-close { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 8px; width: 44px; height: 44px; }
+.u-photo-view-error { color: var(--ink); }
 .u-media.sticker { background: transparent; width: 160px; }
 .u-media img, .u-media video { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .15s; }
 .u-media img.in, .u-media video { opacity: 1; }

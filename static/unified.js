@@ -120,7 +120,18 @@
     return [...rows].sort((a, b) => has(b) - has(a) || (has(a) && has(b) ? at(b) - at(a) : 0)
       || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder};
+  // A tapped photo opens in Wizard's media viewer. When Wizard does not open it (an older or busy shell, a frame it
+  // will not serve, or no WizardApp.media), Messenger shows the photo full size itself, so a tap is never dead (issue 144).
+  // Returns 'wizard', 'messenger' or 'none'.
+  function openMedia(media, items, at, fallback) {
+    let shown = false;
+    try { shown = typeof media?.view === 'function' && media.view(items, at) === true; } catch { shown = false; }
+    if (shown) return 'wizard';
+    const item = items[at];
+    if (!item?.url) return 'none';
+    fallback(item); return 'messenger';
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const s = {tab: 'people', person: null, overlay: null, search: null, low: false, seg: (() => { try { const v = sessionStorage.getItem('messenger-inbox-seg') || (sessionStorage.getItem('messenger-inbox-low') === '1' ? 'low' : 'all'); return ['all', 'unread', 'medium', 'low'].includes(v) ? v : 'all'; } catch { return 'all'; } })(), ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
@@ -395,6 +406,7 @@
     s.login = null; s.overlay = null; $('u-overlay')?.remove(); view.lifted?.classList.remove('lifted'); view.lifted = null; lastFocus?.focus(); hold(); syncBar();
   }
   function back() {
+    if (view.photo?.close()) return true;
     if (view.mentionClose?.()) return true;
     if (!s.overlay && view.picker?.isOpen) { view.picker.close(); return true; }
     if (!s.overlay && view.selection?.active) { view.selection.clear(); return true; }
@@ -2139,12 +2151,31 @@
     return box;
   }
   // Tapping a photo or video opens Wizard's own media viewer, the one Chats uses: pinch and double-tap zoom, pan,
-  // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Messenger keeps no viewer.
+  // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Only when Wizard does not open
+  // it does Messenger show the tapped photo full size on its own (issue 144: a tap used to do nothing then).
   function viewer(m, box) {
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
     const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
-    window.WizardApp?.media?.view(list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at);
+    openMedia(window.WizardApp?.media, list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at, photoView);
+  }
+  // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
+  // zooms natively); Close, Esc or Back closes it.
+  function photoView(item) {
+    view.photo?.close();
+    const before = document.activeElement;
+    const layer = node('div', 'u-photo-view'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true'); layer.setAttribute('aria-label', item.name || 'Photo'); layer.tabIndex = -1;
+    let media;
+    if (item.kind === 'video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.setAttribute('playsinline', ''); }
+    else { media = node('img'); media.alt = item.name || 'Photo'; media.draggable = false; media.onerror = () => { media.replaceWith(node('p', 'u-photo-view-error', 'Photo unavailable')); }; }
+    media.src = item.url;
+    const close = () => { if (!layer.isConnected) return false; try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
+    layer.append(media, iconButton('close', 'Close', close, 'u-photo-view-close'));
+    layer.onclick = e => { if (e.target === layer) close(); };
+    layer.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    ($('messenger') || document.documentElement).append(layer);
+    view.photo = {layer, close};
+    layer.focus({preventScroll: true});
   }
   function voice(m) {
     const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
