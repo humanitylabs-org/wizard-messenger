@@ -69,7 +69,7 @@ const MESSAGES = {
       const st = await page.evaluate(() => window.WosChat.viewer.state);
       assert.equal(st.open, true, `${who}: tapping the photo opens the viewer (${label})`);
       assert.equal(st.kind, 'image');
-      assert.match(await page.locator('.mviewer .mv-stage img').getAttribute('src'), new RegExp('api/unified/media/' + encodeURIComponent(id).replace(/[$]/g, '\\$') + '$'), 'the full-size picture, not the thumbnail');
+      assert.ok((await page.locator('.mviewer .mv-stage img').getAttribute('src')).endsWith('api/unified/media/' + encodeURIComponent(id)), 'the full-size picture, not the thumbnail');
       assert.ok(await page.locator('.mviewer .mv-stage img').evaluate(i => i.naturalWidth > 0 || new Promise(r => { i.onload = () => r(i.naturalWidth > 0); setTimeout(() => r(i.naturalWidth > 0), 3000); })), 'the picture shows');
       await page.evaluate(() => window.WosChat.viewer.close()); await page.waitForTimeout(300);
       await app.locator('[aria-label="Back"]').first().click().catch(() => {});
