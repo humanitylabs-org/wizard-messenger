@@ -1820,9 +1820,16 @@
     if (!t.messages.length) kids.push(node('p', 'u-empty', 'No messages yet. Say hi 👋'));
     // Download the newest few voice notes from others now, so Play starts at once.
     t.messages.filter(m => m.media?.voice && !m.outgoing && !m.deleted && !m.local).slice(-6).forEach(m => player.preload(mediaURL(m.id)));
-    const before = scroll.scrollHeight - scroll.scrollTop;
-    const same = kids.length === scroll.children.length && kids.every((k, i) => k === scroll.children[i] || (i === 0 && scroll.children[0].className === 'u-spacer') || (k.className === 'u-day' && scroll.children[i].className === 'u-day' && k.textContent === scroll.children[i].textContent) || (k.className === 'u-older' && scroll.children[i].className === 'u-older'));
-    if (!same) scroll.replaceChildren(...kids);
+    const before = scroll.scrollHeight - scroll.scrollTop, top = scroll.scrollTop;
+    const old = [...scroll.children];
+    const kept = (k, i) => k === old[i] || (i === 0 && old[0]?.className === 'u-spacer') || (k.className === 'u-day' && old[i]?.className === 'u-day' && k.textContent === old[i].textContent) || (k.className === 'u-older' && old[i]?.className === 'u-older');
+    const same = kids.length === old.length && kids.every(kept);
+    // Issue 146: a reaction, edit or read tick rebuilds one bubble. Swap just that bubble in place, so the rest of
+    // the list never leaves the DOM and the reader stays exactly where they were. Only a changed shape (new,
+    // removed or moved messages) replaces the whole list, and then the place is put back below.
+    let replaced = false;
+    if (!same && kids.length === old.length && kids.every((k, i) => kept(k, i) || k.parentNode !== scroll)) kids.forEach((k, i) => { if (!kept(k, i)) old[i].replaceWith(k); });
+    else if (!same) { scroll.replaceChildren(...kids); replaced = true; }
     // First paint after the read position is known: park the divider near the top when the unread run is taller
     // than the window (the sticky day chip sits above it), otherwise show the newest as always.
     let park = false;
@@ -1837,6 +1844,8 @@
     if (park) { view.bottom = nearBottom(); if (view.pill) view.pill.hidden = view.bottom; }
     else if (follow) scroll.scrollTop = scroll.scrollHeight;
     else if (view.anchor) { scroll.scrollTop = scroll.scrollHeight - before; }
+    // Replacing every child can collapse the list for a moment, and some engines then clamp scrollTop to 0.
+    else if (replaced && scroll.scrollTop !== top) scroll.scrollTop = top;
     view.anchor = false;
     view.selection?.paint();
     const mentioned = t.messages.filter(m => m.mentioned && !m.outgoing && !m.deleted);
