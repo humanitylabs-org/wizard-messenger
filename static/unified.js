@@ -4033,19 +4033,55 @@
     }
     paint(); return row;
   }
-  // Drafts at top (issue 133, off by default, this device): chats with a waiting draft lead the Inbox. Same Off/On
-  // radio pattern and per-device storage as Inbox view; drawList() reads it through chatOrder().
+  // Drafts at top (issue 133, off by default): chats with a waiting draft lead the Inbox; drawList() reads it through
+  // chatOrder(). Since issue 150 the state lives on the box for the owner (api/view/switches, wizard.app-switches/1),
+  // so the Tracker's Try it toggle, this Settings row and every device agree. A device that still holds the old
+  // per-device key moves it to the box once, then the key goes away.
   const DRAFTS_FIRST_KEY = 'messenger.draftsFirst';
-  function draftsFirst() { try { return localStorage.getItem(DRAFTS_FIRST_KEY) === '1'; } catch { return false; } }
+  const SWITCH_POLL_MS = 5000;
+  const switchState = {on: {}, migrated: false, paint: null};
+  try { switchState.on['drafts-first'] = localStorage.getItem(DRAFTS_FIRST_KEY) === '1'; } catch { /* no storage */ }
+  function draftsFirst() { return switchState.on['drafts-first'] === true; }
+  async function switchCall(body) {
+    const headers = {Accept: 'application/json'};
+    if (body) Object.assign(headers, {'Content-Type': 'application/json', 'X-Wizard-Switch': '1', 'X-Messenger-CSRF': csrf()});
+    const response = await fetch('api/view/switches', {method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', headers, ...(body ? {body: JSON.stringify(body)} : {})});
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data?.switches)) throw new Error(data?.error || 'switches_unavailable');
+    return data;
+  }
+  function applySwitches(data) {
+    const before = draftsFirst();
+    switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
+    if (before !== draftsFirst()) { switchState.paint?.(); drawList(); }
+  }
+  async function syncSwitches() {
+    try {
+      let data = await switchCall();
+      if (!switchState.migrated) {
+        let legacy = null; try { legacy = localStorage.getItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
+        if (legacy === '1' && !data.switches.some(x => x.id === 'drafts-first' && x.on)) data = await switchCall({id: 'drafts-first', on: true});
+        try { localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
+        switchState.migrated = true;
+      }
+      applySwitches(data);
+    } catch { /* not signed in yet or an older box: keep what we have, try again on the next poll */ }
+  }
+  async function setSwitch(id, on) {
+    const before = switchState.on[id] === true;
+    switchState.on[id] = on; switchState.paint?.(); drawList();
+    try { applySwitches(await switchCall({id, on})); }
+    catch { switchState.on[id] = before; switchState.paint?.(); drawList(); toast('Couldn’t save that. Try again.'); }
+  }
   function draftsFirstRow() {
     const row = node('div', 'u-more-row u-more-drafts-first'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Drafts at top');
     row.append(node('span', 'u-more-label', 'Drafts at top'), group);
     const paint = () => { for (const b of group.children) { const on = (b.dataset.on === '1') === draftsFirst(); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
     for (const [on, label, hint] of [['0', 'Off', 'Chats stay in last-message order'], ['1', 'On', 'Chats with a waiting draft lead the list']]) {
-      const b = button(label, () => { try { if (on === '1') localStorage.setItem(DRAFTS_FIRST_KEY, '1'); else localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* this visit only */ } paint(); drawList(); }, 'u-view-btn');
+      const b = button(label, () => setSwitch('drafts-first', on === '1'), 'u-view-btn');
       b.dataset.on = on; b.title = hint; b.setAttribute('role', 'radio'); group.append(b);
     }
-    paint(); return row;
+    switchState.paint = paint; paint(); return row;
   }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
@@ -4452,7 +4488,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;
