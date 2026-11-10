@@ -2,7 +2,7 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.2.0-unified.16.34
+version: 0.2.0-unified.16.35
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
@@ -38,6 +38,11 @@ owner_proof:
   wrap_key: true                    # independent key for the remembered-unlock envelope, kept outside /data
   activity: [/api/drafts]           # the visible view polls drafts; the hidden long poll does not count
   strip: [X-Messenger-Owner-Proof]  # legacy proof header: never accepted from a browser
+# Feature switches (wizard.app-switches/1, wizard-os docs/APP_SWITCHES.md): the App Manager lists and flips them here,
+# server-side with the owner proof, so the WizardOS Tracker's Try it works the same in every browser.
+switches:
+  contract: wizard.app-switches/1
+  path: /api/view/switches
 provides: [messaging]
 uses: []
 needs: []
