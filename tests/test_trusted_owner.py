@@ -23,9 +23,15 @@ PASSWORD = 'synthetic-only-vault-passphrase'
 class SyntheticEngine:
     relays = []
     def __init__(self, data):
-        self.data = Path(data); self.ready = False; self.calls = []
+        self.data = Path(data); self.ready = False; self.calls = []; self.configured = True
     def status(self):
+        if not self.configured: return {'state': 'setup_required', 'account_configured': False}
         return {'state': 'ready' if self.ready else 'locked', 'account_configured': True}
+    def setup_with_proof(self, body):
+        if body['action'] == 'create' and not self.configured:
+            self.calls.append('create'); self.configured = True; self.ready = True
+            return self.status(), True
+        return self.setup(body), False
     def setup(self, body):
         self.calls.append(body['action'])
         if body['action'] == 'lock': self.ready = False
@@ -210,6 +216,30 @@ class TrustedOwnerHTTP(unittest.TestCase):
         self.assertEqual(self.request('GET', '/api/view/session')[0], 401)
         self.assertEqual(self.server.auth.tickets, {}); self.assertEqual(self.engine.calls, [])
 
+
+    def test_fresh_install_opens_straight_into_keyless_setup(self):
+        # Issue 148: a fresh App Store install has no setup link. The owner edge's proof opens first setup.
+        self.server.auth.credential = None; self.server.auth._save()
+        self.engine.ready = False; self.engine.configured = False
+        s, h, d = self.request('GET', '/api/view/session')
+        self.assertEqual(s, 200); self.assertIn('Set-Cookie', h)
+        self.assertEqual(self.server.auth.tickets, {}); self.assertEqual(self.engine.calls, [])
+        cookie = h['Set-Cookie'].split(';')[0]; csrf = d['result']['csrf_token']
+        owner = {'Cookie': cookie, 'X-Messenger-CSRF': csrf}
+        # A reload while still in setup keeps the same setup-only session (no endless "Opening").
+        self.assertEqual(self.request('GET', '/api/view/session', headers={'Cookie': cookie})[0], 200)
+        self.assertEqual(self.request('GET', '/api/status', headers={'Cookie': cookie})[2]['result']['state'], 'setup_required')
+        # Setup-only: nothing else opens until the address exists and is proven.
+        self.assertEqual(self.request('GET', '/api/dms', headers={'Cookie': cookie})[0], 403)
+        # Without the owner edge's proof there is no session at all.
+        self.assertEqual(self.request('GET', '/api/view/session', proof=False)[0], 403)
+        s, _, d = self.request('POST', '/api/setup', {'action': 'create', 'vault_password': PASSWORD}, headers=owner)
+        self.assertEqual(s, 200, d); self.assertEqual(self.engine.calls, ['create'])
+        self.assertEqual(self.unlock()[0], 200)
+        # From here on it is a normal remembered trusted Wizard; first setup can't be repeated.
+        self.assertEqual(self.request('POST', '/api/setup', {'action': 'create', 'vault_password': PASSWORD}, headers=owner)[0], 403)
+        s, _, d = self.request('GET', '/api/view/session')
+        self.assertEqual(s, 200); self.assertTrue(d['result']['authenticated'])
 
 
 class PlatformOwnerProof(TrustedOwnerHTTP):
