@@ -405,12 +405,17 @@ class ViewHandler(Handler):
         try:
             if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
                 raise EngineError('owner_only','Only the owner can change Messenger switches',403)
+            # With Wizard owner access on, the platform's signed owner proof IS the owner: no Messenger session or
+            # unlock is needed to read or flip a switch (they hold no secrets). That is how the App Manager flips
+            # them server-side for the Tracker's Try it, the same from every browser (wizard.app-switches/1).
+            proven=False
             if self.service.trusted_owner.enabled:
-                self._trusted_owner()
+                self._trusted_owner(); proven=True
             self._origin(required=method!='GET')
-            session=self._session()
-            if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
-            if session.get('setup_only'): raise EngineError('owner_unlock_required','Finish setup or unlock with your passphrase first',403)
+            if not proven:
+                session=self._session()
+                if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
+                if session.get('setup_only'): raise EngineError('owner_unlock_required','Finish setup or unlock with your passphrase first',403)
             if method=='GET': return 200,self.service.switches.listing()
             if method!='POST': raise EngineError('method_not_allowed','Use GET or POST',405)
             if self.headers.get('X-Wizard-Switch')!='1':

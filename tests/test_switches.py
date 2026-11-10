@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import test_trusted_owner
 import test_web
 from switches import CONTRACT, SwitchStore
 
@@ -80,6 +81,41 @@ class SwitchEndpoint(unittest.TestCase):
         status, _, body = self.request('POST', '/api/view/switches', b'{}', {**h, 'Content-Type': 'text/plain'})
         self.assertEqual(status, 400)
         self.assertEqual(self.request('DELETE', '/api/view/switches', None, h)[0], 405)
+
+
+class SwitchesWithWizardOwnerProof(unittest.TestCase):
+    """Wizard owner access on: the App Manager calls the switches server-side with the platform owner proof and no
+    Messenger cookie (the Tracker's Try it, one catalog for core and apps). A proof is required; a bearer never works."""
+    setUp = test_trusted_owner.PlatformOwnerProof.setUp
+    tearDown = test_trusted_owner.TrustedOwnerHTTP.tearDown
+    start = test_trusted_owner.TrustedOwnerHTTP.start
+    stop = test_trusted_owner.TrustedOwnerHTTP.stop
+
+    def request(self, method, target, body=None, *, proof=True, headers=None):
+        from trusted_owner import PLATFORM_HEADER, sign_platform_request
+        h = dict(headers or {})
+        if proof and PLATFORM_HEADER not in h:
+            h[PLATFORM_HEADER] = sign_platform_request(self.proof, 'messenger', method, target)
+        return test_trusted_owner.TrustedOwnerHTTP.request(self, method, target, body, proof=False, headers=h)
+
+    def test_proof_alone_lists_and_flips_without_a_session(self):
+        status, _, body = self.request('GET', '/api/view/switches')
+        self.assertEqual(status, 200); self.assertFalse(body['switches'][0]['on'])
+        status, _, body = self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, headers=WRITE)
+        self.assertEqual(status, 200); self.assertTrue(body['switches'][0]['on'])
+        self.assertTrue(self.server.switches.is_on('drafts-first'))
+
+    def test_no_proof_a_reused_proof_or_a_bearer_is_refused(self):
+        self.assertEqual(self.request('GET', '/api/view/switches', proof=False)[0], 403)
+        from trusted_owner import PLATFORM_HEADER, sign_platform_request
+        once = sign_platform_request(self.proof, 'messenger', 'POST', '/api/view/switches')
+        h = {**WRITE, PLATFORM_HEADER: once}
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, headers=h)[0], 200)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': False}, headers=h)[0], 403)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': False},
+                                      headers={**WRITE, 'Authorization': 'Bearer ' + TOKEN})[0], 403)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': False}, headers={})[0], 403)
+        self.assertTrue(self.server.switches.is_on('drafts-first'))
 
 
 class SwitchStorage(unittest.TestCase):
