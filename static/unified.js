@@ -3022,7 +3022,7 @@
     window.WizardApp?.composer?.bind(form, {field: 'textarea', zone: form, onFiles: takeFiles, onSubmit: () => submit(), notice: msg => toast(msg)});
     form.onsubmit = e => { e.preventDefault(); submit(); };
     async function submit() {
-      mentionUI.close();
+      mentionUI.close(); mediaPicker.close(); // issue 159: sending (Enter or Send) puts the emoji panel away
       if (sending) return;
       sending = true; grow();
       try { await submitOnce(); } finally { sending = false; grow(); }
@@ -3407,10 +3407,19 @@
       if (document.activeElement === o.draft) keep(); state.open = true; panel.hidden = false; o.button.classList.add('on'); o.button.setAttribute('aria-expanded', 'true'); o.form.classList.add('picking');
       if (touch()) o.draft.blur(); // the panel takes the keyboard's place
       show(state.tab);
+      // Issue 159: a tap anywhere outside the panel (the chat, the text box, Send, another control) closes it, like
+      // Telegram. The smiley itself is left to toggle(). A tap inside the panel counts even when that tap's own
+      // control is swapped out while it runs (tabs repaint), so closest() is checked as well as contains().
+      state.outside?.abort(); state.outside = new AbortController();
+      document.addEventListener('pointerdown', e => {
+        const t = e.target;
+        if (panel.contains(t) || o.button.contains(t) || t?.closest?.('.u-picker')) return;
+        close();
+      }, {capture: true, signal: state.outside.signal});
     }
     function close() {
       if (!state.open) return false;
-      state.open = false; state.gen++; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
+      state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
       return true;
     }
     panel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); o.draft.focus(); } });

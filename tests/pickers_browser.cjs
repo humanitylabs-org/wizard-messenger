@@ -57,7 +57,7 @@ async function setup(browser, p, viewport) {
   await page.locator('.u-person').first().waitFor({timeout: 20000});
   return {ctx, page, errors, posts, phone};
 }
-const tap = (t, loc) => t.phone ? loc.tap() : loc.click();
+const tap = (t, loc, o) => t.phone ? loc.tap(o) : loc.click(o);
 async function open(t, name) {
   const {page} = t;
   if (await page.locator('.u-thread-body').count() && t.phone) { await tap(t, page.locator('.u-back').first()); await page.locator('.u-person').first().waitFor(); }
@@ -164,6 +164,31 @@ const shot = async (page, name) => { if (!SHOTS) return; await page.mouse.move(2
     await tap(t, page.locator('.u-picker .u-sticker-grid .u-pick-tile').nth(6));
     got = await waitSends(n0, 1, tag + ' pack sticker');
     assert.equal(got[0].body.info['fi.mau.bridged_sticker'].id, '1006', tag + ' the picked pack sticker');
+    // Issue 159: the panel closes by itself on a tap outside it, a tap in the text box, and on send (tap or Enter).
+    const isOpen = () => page.locator('.u-picker:not([hidden])').count();
+    await openPanel(t); await tap(t, page.locator('.u-picker .u-pick-tab', {hasText: 'Emoji'}));
+    assert.equal(await isOpen(), 1, tag + ' a tap inside the panel keeps it open');
+    await tap(t, page.locator('.u-thread-body'), {position: {x: 8, y: 8}});
+    await page.waitForTimeout(150);
+    assert.equal(await isOpen(), 0, tag + ' a tap in the chat closes the panel');
+    await openPanel(t); await tap(t, box, {position: {x: 14, y: 10}}); await page.waitForTimeout(150);
+    assert.equal(await isOpen(), 0, tag + ' a tap in the text box closes the panel');
+    const typed = v => box.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', {bubbles: true})); }, v);
+    await openPanel(t); await typed('Sent by tapping Send'); n0 = sends().length;
+    await tap(t, page.locator('.u-composer .u-send'));
+    await waitSends(n0, 1, tag + ' text by Send'); await page.waitForTimeout(150);
+    assert.equal(await isOpen(), 0, tag + ' tapping Send closes the panel');
+    await openPanel(t); await typed('Sent by Enter'); n0 = sends().length;
+    await page.locator('.u-composer').evaluate(f => f.requestSubmit()); // the Enter / Ctrl+Enter path (no tap at all)
+    await waitSends(n0, 1, tag + ' text by Enter'); await page.waitForTimeout(150);
+    assert.equal(await isOpen(), 0, tag + ' sending without a tap closes the panel');
+    if (!t.phone) {
+      await openPanel(t); await typed('Sent by the Enter key'); await box.focus(); n0 = sends().length;
+      assert.equal(await isOpen(), 1, tag + ' focus from the keyboard alone leaves the panel open');
+      await page.keyboard.press('Enter');
+      await waitSends(n0, 1, tag + ' text by the Enter key'); await page.waitForTimeout(150);
+      assert.equal(await isOpen(), 0, tag + ' the Enter key sends and closes the panel');
+    }
     if (!t.phone) {
       await openPanel(t); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
       assert.equal(await page.locator('.u-picker:not([hidden])').count(), 0, tag + ' Escape closes the panel');
