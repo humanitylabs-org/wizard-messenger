@@ -1,5 +1,7 @@
 // Drafts at top (issue 133, Miguel 7 Nov 2026): Settings > Drafts at top (Off by default) floats chats with a waiting draft
 // (yours or your Wizard's) to the top of the Inbox, newest draft first, with the existing "Draft:" line.
+// Since issue 150 the state lives on the box (api/view/switches, wizard.app-switches/1): Settings, the Tracker's Try it
+// toggle and other devices agree, and a device's old per-device key moves to the box once.
 // Synthetic API only; phone + desktop x two skins. node tests/drafts_first_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -42,6 +44,8 @@ const SKINS = {
       };
       if (!mark()) new MutationObserver((_, o) => { if (mark()) o.disconnect(); }).observe(document, {childList: true});
     }, [scheme, SKINS[scheme]]);
+    const box = {on: false, posts: []};
+    const listing = () => ({contract: 'wizard.app-switches/1', switches: [{id: 'drafts-first', name: 'Drafts at top', description: '', on: box.on, default: false, issues: ['humanitylabs-org/wizard-messenger#133']}]});
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
     const ownKey = '11'.repeat(32);
@@ -51,6 +55,14 @@ const SKINS = {
       const body = () => JSON.parse(req.postData() || '{}');
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       const bad = (status, message) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'invalid_input', message}})});
+      if (p === 'api/view/switches') {
+        if (req.method() === 'POST') {
+          const h = req.headers(); box.posts.push(body());
+          if (h['x-wizard-switch'] !== '1' || h['content-type'] !== 'application/json') return route.fulfill({status: 403, contentType: 'application/json', body: '{"error":"header"}'});
+          box.on = body().on;
+        }
+        return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(listing())});
+      }
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
       if (p === 'api/status') return ok({state: 'ready', account_configured: true});
       if (p === 'api/identity') return ok({identity: own});
@@ -94,18 +106,37 @@ const SKINS = {
     for (const b of await sw.getByRole('radio').all()) { const r = await b.boundingBox(); assert.ok(r.height >= 43.5 && r.width >= 43.5, '44px targets'); }
     await sw.getByRole('radio', {name: 'On'}).click();
     assert.equal(await sw.getByRole('radio', {name: 'On'}).getAttribute('aria-checked'), 'true', 'tap registers at once');
-    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.draftsFirst')), '1', 'saved at once');
-    await page.waitForTimeout(450); await shot('settings-on');
+    await page.waitForTimeout(300);
+    assert.equal(box.on, true, 'saved on the box'); assert.deepEqual(box.posts.at(-1), {id: 'drafts-first', on: true});
+    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.draftsFirst')), null, 'nothing kept per device');
+    await page.waitForTimeout(150); await shot('settings-on');
     await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);
     names = await order(); assert.equal(names[0], 'Marco Bianchi', 'on: the chat with a draft leads ' + JSON.stringify(names));
     await shot('inbox-on');
     await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor(); await marco().locator('.u-snippet.draft').waitFor();
-    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'remembered after reload');
+    await page.waitForTimeout(600);
+    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'remembered after reload (from the box) ' + JSON.stringify(names));
+    // Flipped elsewhere (the Tracker card, another device): the Inbox repaints within a few seconds.
+    box.on = false;
+    await page.waitForFunction(() => { const n = [...document.querySelectorAll('#unified-inbox .u-person strong')]; return n.length && !(n[0].textContent || '').startsWith('Marco'); }, null, {timeout: 7000});
+    box.on = true;
+    await page.waitForFunction(() => (document.querySelector('#unified-inbox .u-person strong')?.textContent || '').startsWith('Marco'), null, {timeout: 7000});
     await page.locator('[aria-label="Settings"]').first().click();
     await page.locator('.u-sheet .u-more-drafts-first').getByRole('radio', {name: 'Off'}).click();
     await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);
     names = await order(); assert.equal(names[names.length - 1], 'Marco Bianchi', 'off again: back to last-message order');
-    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.draftsFirst')), null);
+    assert.equal(box.on, false, 'off saved on the box');
+    // A device that turned it on before issue 150 moves its setting to the box once, then the key goes away.
+    box.posts.length = 0;
+    await page.evaluate(() => localStorage.setItem('messenger.draftsFirst', '1'));
+    await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor(); await marco().locator('.u-snippet.draft').waitFor();
+    await page.waitForFunction(() => localStorage.getItem('messenger.draftsFirst') === null, null, {timeout: 5000});
+    assert.equal(box.on, true, 'migrated to the box'); assert.equal(box.posts.length, 1, 'moved once');
+    await page.waitForTimeout(300);
+    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'migrated device keeps drafts first');
+    box.on = false; await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor(); await page.waitForTimeout(800);
+    assert.equal(box.posts.length, 1, 'no second move once the key is gone');
+    names = await order(); assert.equal(names[names.length - 1], 'Marco Bianchi', 'box off wins after the move');
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(`${scheme}-${label}: ok`);
     await ctx.close();

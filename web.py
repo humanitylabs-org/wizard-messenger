@@ -119,6 +119,7 @@ class BrowserAuth:
 
 # Machine keys are untrusted agent capabilities, never owner browser authority.
 from drafts import Drafts
+from switches import SwitchStore, UnknownSwitch
 
 def gateway_origins(origins):
     """The box's Wizard origins (MESSENGER_ALLOWED_ORIGINS) in a form safe for a CSP source list and app.js.
@@ -146,6 +147,7 @@ class ViewServer(MessengerServer):
             raise ValueError('Trusted Wizard owner access is incompatible with remote authority')
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
+        self.switches=SwitchStore(Path(data)/'switches.json' if data else None)
         # One transaction for provider proof, engine transition and verifier issuance.
         self.setup_lock=threading.Lock()
         self.public_path=os.environ.get('MESSENGER_PUBLIC_PATH','/')
@@ -395,10 +397,41 @@ class ViewHandler(Handler):
         except EngineError as e:
             self.close_connection=True
             return e.status,{'ok':False,'error':e.message,'code':e.code}
+    def _switches(self,method):
+        """Messenger's feature switches for the box owner (wizard.app-switches/1): the Tracker's Try it toggle and
+        Settings both use this. Owner session only (never a bearer or the gateway grant). A write needs the box's own
+        Origin and the X-Wizard-Switch header, which a cross-site page cannot send without a CORS preflight we never
+        answer; it replaces the Messenger CSRF token, which the Tracker page does not hold. Errors are {"error": ...}."""
+        try:
+            if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
+                raise EngineError('owner_only','Only the owner can change Messenger switches',403)
+            if self.service.trusted_owner.enabled:
+                self._trusted_owner()
+            self._origin(required=method!='GET')
+            session=self._session()
+            if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
+            if session.get('setup_only'): raise EngineError('owner_unlock_required','Finish setup or unlock with your passphrase first',403)
+            if method=='GET': return 200,self.service.switches.listing()
+            if method!='POST': raise EngineError('method_not_allowed','Use GET or POST',405)
+            if self.headers.get('X-Wizard-Switch')!='1':
+                raise EngineError('switch_header_required','Send X-Wizard-Switch: 1',403)
+            if self.headers.get('Content-Type','').split(';')[0].strip()!='application/json':
+                raise EngineError('invalid_input','Send JSON {"id": ..., "on": true|false}',400)
+            try: body=self._body()
+            except EngineError as e: raise EngineError('invalid_input',e.message,400) from None
+            if not isinstance(body,dict) or not isinstance(body.get('id'),str) or not isinstance(body.get('on'),bool) or set(body)-{'id','on'}:
+                raise EngineError('invalid_input','Send JSON {"id": ..., "on": true|false}',400)
+            try: return 200,self.service.switches.set(body['id'],body['on'])
+            except UnknownSwitch: raise EngineError('unknown_switch','No such switch',404) from None
+        except EngineError as e:
+            self.close_connection=True
+            return e.status,{'error':e.message,'code':e.code}
     def _dispatch(self,method):
         self.pending_cookie=None
         self._trusted_owner_verified=False
         path=urlsplit(self.path).path
+        if path in ('/api/switches','/api/view/switches'):
+            return self._switches(method)
         if self.service.remote_required or bool(self.service.remote_authority.endpoint):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)

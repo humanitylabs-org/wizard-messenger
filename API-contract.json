@@ -131,6 +131,22 @@
     },
     {
       "method": "GET",
+      "path": "/api/view/switches",
+      "auth": "owner cookie (also served at /api/switches); bearers refused",
+      "result": "wizard.app-switches/1 listing: {contract, switches: [{id, name, description, on, default, issues}]}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/view/switches",
+      "auth": "owner cookie + same-origin Origin + X-Wizard-Switch: 1 (no CSRF token needed, for the WizardOS Tracker)",
+      "body": {
+        "id": "drafts-first",
+        "on": "true|false"
+      },
+      "result": "the same listing; unknown id 404, bad body 400, not the owner 401/403; errors are {error}"
+    },
+    {
+      "method": "GET",
       "path": "/api/drafts",
       "auth": "owner or read_only/draft_only/full_access bearer",
       "result": "drafts array"
