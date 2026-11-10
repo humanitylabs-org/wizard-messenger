@@ -27,6 +27,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
 from engine import EngineError
+from switches import SwitchStore
 from readiness.search import SearchStore
 import catchup
 import history_cursor
@@ -147,6 +148,18 @@ def plain_name(network, label):
 MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots'))
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
+# Switch photo-warm (issue 162): incoming pictures are fetched on arrival, so the box keeps more of them.
+PHOTO_WARM_MAX = 25 * 1024 * 1024
+PHOTO_WARM_TYPES = ('m.image', 'm.sticker', 'm.video')
+PHOTO_WARM_RETRY = (5, 30, 120)
+
+
+def photo_cache_max():
+    try:
+        mb = int(os.environ.get('MESSENGER_MEDIA_CACHE_MB', '2048'))
+    except ValueError:
+        mb = 2048
+    return max(mb, 300) * 1024 * 1024
 
 
 def webm_to_ogg(data):
@@ -1396,6 +1409,8 @@ class UnifiedInbox:
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
         self.warm_queue = queue.Queue(maxsize=200)
+        self.photo_queue = queue.Queue(maxsize=1000)
+        self.switches = SwitchStore(Path(data) / 'switches.json')
         self.owner = '@owner:messenger.internal'
         # The owner's own Telegram account appears as a ghost (@telegram_<id>) for anything
         # done in the Telegram app before double puppeting existed: that is still "me".
@@ -1470,6 +1485,17 @@ class UnifiedInbox:
                 except Exception:
                     pass
         threading.Thread(target=warm, name='voice-warm', daemon=True).start()
+
+        def photos():
+            # Switch photo-warm (issue 162): pictures from other people are fetched as they arrive, thumbnail first.
+            while not self.stop.is_set():
+                try:
+                    item = self.photo_queue.get(timeout=5)
+                except queue.Empty:
+                    continue
+                self.warm_photo_now(*item)
+        for n in range(2):
+            threading.Thread(target=photos, name='photo-warm-%d' % n, daemon=True).start()
 
     def close(self):
         self.stop.set()
@@ -1760,6 +1786,7 @@ class UnifiedInbox:
         self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
                                event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, album=album, push_live=live, mentions=mentions, mentioned=mentioned)
         self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
+        self.warm_photo(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
 
     WARM_DAYS = 3
     EDIT_TEXT = ('m.text', 'm.notice', 'm.emote')
@@ -1972,6 +1999,52 @@ class UnifiedInbox:
             self.warm_queue.put_nowait(message_id)
         except queue.Full:
             pass
+
+    def warm_photo(self, message_id, msgtype, outgoing, media, stamp):
+        """Queue a picture from someone else for the photo workers (switch photo-warm). The backlog replay after a
+        restart passes through here too, so the last WARM_DAYS of history are fetched once as well."""
+        if msgtype not in PHOTO_WARM_TYPES or outgoing or not isinstance(media, dict) or not media.get('mxc'):
+            return
+        size = media.get('size')
+        if isinstance(size, (int, float)) and size > PHOTO_WARM_MAX:
+            return
+        if stamp < (time.time() - self.WARM_DAYS * 86400) * 1000:
+            return
+        if not self.switches.is_on('photo-warm'):
+            return
+        try:
+            self.photo_queue.put_nowait((message_id, 0))
+        except queue.Full:
+            pass
+
+    def warm_photo_now(self, message_id, attempt=0):
+        """Fetch one queued picture's thumbnail and full file into the media cache. A failure is retried later with
+        backoff on a timer, so it never holds up the next picture or the live message."""
+        started = time.time()
+        try:
+            message = self.store.message(message_id)
+            media = json.loads(message['media']) if message.get('media') else {}
+            if media.get('thumb') or is_picture(message.get('msgtype'), media):
+                self.media(message_id, 'thumb')
+            self.media(message_id, None)
+            self.timing('photo_warm', started)
+        except EngineError as e:
+            if e.status != 404:
+                self.retry_photo(message_id, attempt)
+        except Exception:
+            self.retry_photo(message_id, attempt)
+
+    def retry_photo(self, message_id, attempt):
+        if attempt >= len(PHOTO_WARM_RETRY) or self.stop.is_set():
+            return
+        def again():
+            try:
+                self.photo_queue.put_nowait((message_id, attempt + 1))
+            except queue.Full:
+                pass
+        timer = threading.Timer(PHOTO_WARM_RETRY[attempt], again)
+        timer.daemon = True
+        timer.start()
 
     def ephemeral(self, identity, events):
         for event in events:
@@ -2896,6 +2969,9 @@ class UnifiedInbox:
                 with tmp.open('rb') as f:
                     sniffed = sniff(f.read(64))
                 meta_path.write_text(sniffed or got or mime)
+                if thumb or raw_thumb:
+                    # Marks a thumbnail, so eviction with photo-warm on drops full files before thumbnails.
+                    Path(str(path) + '.thumb').touch()
                 os.replace(tmp, path)
                 self.timing('media', started)
                 self.evict(cache)
@@ -2909,13 +2985,27 @@ class UnifiedInbox:
         return Blob(path, served if served in INLINE_MIME else download_mime(served, mime, name), name, served in INLINE_MIME)
 
     def evict(self, cache):
-        files = [(p.stat().st_atime, p.stat().st_size, p) for p in cache.iterdir() if p.is_file() and not p.name.endswith('.type')]
-        total = sum(f[1] for f in files)
-        for _, size, p in sorted(files):
-            if total <= MEDIA_CACHE_MAX:
+        switches = getattr(self, 'switches', None)  # some tests build a bare inbox
+        warm = bool(switches and switches.is_on('photo-warm'))
+        limit = photo_cache_max() if warm else MEDIA_CACHE_MAX
+        files = []
+        for p in cache.iterdir():
+            if not p.is_file() or p.name.endswith(('.type', '.thumb')):
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            # With photo-warm on, full files go before thumbnails, oldest first within each.
+            tier = 1 if warm and Path(str(p) + '.thumb').exists() else 0
+            files.append((tier, st.st_atime, st.st_size, p))
+        total = sum(f[2] for f in files)
+        for _, _, size, p in sorted(files, key=lambda f: (f[0], f[1])):
+            if total <= limit:
                 break
             p.unlink(missing_ok=True)
             Path(str(p) + '.type').unlink(missing_ok=True)
+            Path(str(p) + '.thumb').unlink(missing_ok=True)
             total -= size
 
     def react(self, message_id, payload):

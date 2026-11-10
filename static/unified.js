@@ -4140,7 +4140,8 @@
   // per-device key moves it to the box once, then the key goes away.
   const DRAFTS_FIRST_KEY = 'messenger.draftsFirst';
   const SWITCH_POLL_MS = 5000;
-  const switchState = {on: {}, migrated: false, paint: null};
+  const switchState = {on: {}, migrated: false, paints: {}};
+  const repaintSwitches = () => { for (const paint of Object.values(switchState.paints)) paint(); };
   try { switchState.on['drafts-first'] = localStorage.getItem(DRAFTS_FIRST_KEY) === '1'; } catch { /* no storage */ }
   function draftsFirst() { return switchState.on['drafts-first'] === true; }
   async function switchCall(body) {
@@ -4152,9 +4153,10 @@
     return data;
   }
   function applySwitches(data) {
-    const before = draftsFirst();
+    const before = draftsFirst(), was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
-    if (before !== draftsFirst()) { switchState.paint?.(); drawList(); }
+    if (was !== JSON.stringify(switchState.on)) repaintSwitches();
+    if (before !== draftsFirst()) drawList();
   }
   async function syncSwitches() {
     try {
@@ -4170,20 +4172,25 @@
   }
   async function setSwitch(id, on) {
     const before = switchState.on[id] === true;
-    switchState.on[id] = on; switchState.paint?.(); drawList();
+    switchState.on[id] = on; repaintSwitches(); drawList();
     try { applySwitches(await switchCall({id, on})); }
-    catch { switchState.on[id] = before; switchState.paint?.(); drawList(); toast('Couldn’t save that. Try again.'); }
+    catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
-  function draftsFirstRow() {
-    const row = node('div', 'u-more-row u-more-drafts-first'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Drafts at top');
-    row.append(node('span', 'u-more-label', 'Drafts at top'), group);
-    const paint = () => { for (const b of group.children) { const on = (b.dataset.on === '1') === draftsFirst(); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
-    for (const [on, label, hint] of [['0', 'Off', 'Chats stay in last-message order'], ['1', 'On', 'Chats with a waiting draft lead the list']]) {
-      const b = button(label, () => setSwitch('drafts-first', on === '1'), 'u-view-btn');
+  // One Off/On row per box switch. Settings is rebuilt on open, so the newest row of each switch keeps the painter.
+  function switchRow(id, name, offHint, onHint) {
+    const row = node('div', 'u-more-row u-more-' + id), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', name);
+    row.append(node('span', 'u-more-label', name), group);
+    const paint = () => { for (const b of group.children) { const on = (b.dataset.on === '1') === (switchState.on[id] === true); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
+    for (const [on, label, hint] of [['0', 'Off', offHint], ['1', 'On', onHint]]) {
+      const b = button(label, () => setSwitch(id, on === '1'), 'u-view-btn');
       b.dataset.on = on; b.title = hint; b.setAttribute('role', 'radio'); group.append(b);
     }
-    switchState.paint = paint; paint(); return row;
+    switchState.paints[id] = paint;
+    paint(); return row;
   }
+  function draftsFirstRow() { return switchRow('drafts-first', 'Drafts at top', 'Chats stay in last-message order', 'Chats with a waiting draft lead the list'); }
+  // Issue 162: the box fetches incoming photos as they arrive.
+  function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
     const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
@@ -4196,7 +4203,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), draftsFirstRow());
+    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

@@ -7,6 +7,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 from engine import EngineError
+import unified
 from unified import PeopleStore, Translator, UnifiedInbox
 from unified_setup import setup
 from translation import translate
@@ -677,6 +678,97 @@ class SignalMvpTests(unittest.TestCase):
         while not self.inbox.warm_queue.empty():
             queued.append(self.inbox.warm_queue.get_nowait())
         self.assertEqual(queued, ['$new'])
+
+    def test_incoming_photos_are_prefetched_only_with_the_switch(self):
+        # Issue 162: off by default nothing new is queued; on, pictures from others in the last 3 days are.
+        now = int(time.time() * 1000)
+        pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg', 'size': 1000}}
+        self.ingest(self.event('$off', pic, ts=now))
+        self.assertTrue(self.inbox.photo_queue.empty())
+        self.inbox.switches.set('photo-warm', True)
+        sticker = {'body': 's', 'url': 'mxc://messenger.internal/s', 'info': {'mimetype': 'image/webp'}}
+        video = {'msgtype': 'm.video', 'body': 'v.mp4', 'url': 'mxc://messenger.internal/v', 'info': {'mimetype': 'video/mp4', 'size': 5 * 1024 * 1024}}
+        huge = {'msgtype': 'm.video', 'body': 'h.mp4', 'url': 'mxc://messenger.internal/h', 'info': {'mimetype': 'video/mp4', 'size': 26 * 1024 * 1024}}
+        doc = {'msgtype': 'm.file', 'body': 'a.pdf', 'url': 'mxc://messenger.internal/f', 'info': {'mimetype': 'application/pdf', 'size': 10}}
+        self.ingest(self.event('$pic', pic, ts=now), self.event('$sticker', sticker, etype='m.sticker', ts=now),
+                    self.event('$video', video, ts=now), self.event('$huge', huge, ts=now), self.event('$doc', doc, ts=now),
+                    self.event('$old', pic, ts=now - 10 * 86400 * 1000))
+        mine = self.event('$mine', pic, ts=now)
+        mine['sender'] = self.inbox.owner
+        self.ingest(mine)
+        queued = []
+        while not self.inbox.photo_queue.empty():
+            queued.append(self.inbox.photo_queue.get_nowait())
+        self.assertEqual(queued, [('$pic', 0), ('$sticker', 0), ('$video', 0)])
+
+    def test_photo_warm_fetches_thumbnail_and_full_then_retries_failures(self):
+        pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}
+        self.ingest(self.event('$pic', pic))
+        calls = []
+        self.inbox.media = lambda mid, kind: calls.append((mid, kind))
+        self.inbox.warm_photo_now('$pic')
+        self.assertEqual(calls, [('$pic', 'thumb'), ('$pic', None)])
+        retried = []
+        self.inbox.retry_photo = lambda mid, attempt: retried.append((mid, attempt))
+        def down(mid, kind):
+            raise unified.EngineError('upstream_unavailable', 'x', 503)
+        self.inbox.media = down
+        self.inbox.warm_photo_now('$pic', 1)
+        self.assertEqual(retried, [('$pic', 1)])
+        def gone(mid, kind):
+            raise unified.EngineError('not_found', 'x', 404)
+        self.inbox.media = gone
+        self.inbox.warm_photo_now('$pic')
+        self.assertEqual(retried, [('$pic', 1)])  # a missing file is not retried
+
+    def test_photo_warm_retry_gives_up_after_the_last_backoff(self):
+        with patch('unified.threading.Timer') as timer:
+            self.inbox.retry_photo('$pic', len(unified.PHOTO_WARM_RETRY))
+            timer.assert_not_called()
+            self.inbox.retry_photo('$pic', 0)
+            self.assertEqual(timer.call_args.args[0], unified.PHOTO_WARM_RETRY[0])
+            timer.call_args.args[1]()
+        self.assertEqual(self.inbox.photo_queue.get_nowait(), ('$pic', 1))
+
+    def test_cache_with_photo_warm_is_bigger_and_drops_full_files_before_thumbnails(self):
+        cache = Path(self.tmp.name) / 'cache'
+        cache.mkdir()
+        def put(name, size, age, thumb=False):
+            path = cache / name
+            path.write_bytes(b'x' * size)
+            (cache / (name + '.type')).write_text('image/jpeg')
+            if thumb:
+                (cache / (name + '.thumb')).touch()
+            os.utime(path, (1000 + age, 1000 + age))
+        with patch.object(unified, 'MEDIA_CACHE_MAX', 250), patch.dict(os.environ, {'MESSENGER_MEDIA_CACHE_MB': '1'}), \
+                patch.object(unified, 'photo_cache_max', lambda: 250):
+            put('thumb-old', 100, 0, thumb=True); put('full-new', 100, 5); put('thumb-new', 100, 6, thumb=True)
+            self.inbox.evict(cache)  # off: oldest first, whatever it is
+            self.assertEqual(sorted(p.name for p in cache.iterdir()), ['full-new', 'full-new.type', 'thumb-new', 'thumb-new.thumb', 'thumb-new.type'])
+            self.inbox.switches.set('photo-warm', True)
+            put('thumb-old', 100, 0, thumb=True)
+            self.inbox.evict(cache)  # on: the full file goes first, thumbnails stay
+            self.assertEqual(sorted(p.name for p in cache.iterdir() if '.' not in p.name), ['thumb-new', 'thumb-old'])
+        with patch.dict(os.environ, {'MESSENGER_MEDIA_CACHE_MB': '2048'}):
+            self.assertEqual(unified.photo_cache_max(), 2048 * 1024 * 1024)
+        with patch.dict(os.environ, {'MESSENGER_MEDIA_CACHE_MB': 'lots'}):
+            self.assertEqual(unified.photo_cache_max(), 2048 * 1024 * 1024)
+
+    def test_media_cache_marks_thumbnails(self):
+        self.ingest(self.event('$jpg', {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/jpg', 'info': {'mimetype': 'image/jpeg'}}))
+        class Resp:
+            headers = {'Content-Type': 'image/jpeg'}
+            def __init__(self): self.data = b'\xff\xd8\xff\xe0jpegdata'
+            def read(self, n=-1):
+                d, self.data = self.data, b''
+                return d
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        with patch('unified.urlopen', side_effect=lambda *a, **k: Resp()):
+            thumb = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['thumb']})
+            full = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['full']})
+        self.assertTrue(Path(str(thumb.path) + '.thumb').exists())
+        self.assertFalse(Path(str(full.path) + '.thumb').exists())
 
     def test_media_proxy_caches_and_serves_safe_types_only(self):
         self.ingest(self.event('$svg', {'msgtype': 'm.file', 'body': 'x.svg', 'url': 'mxc://messenger.internal/svg', 'info': {'mimetype': 'image/svg+xml'}}))

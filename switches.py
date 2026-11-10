@@ -16,6 +16,10 @@ SWITCHES = (
      'description': 'Chats with a waiting draft lead the Inbox, newest draft first.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#133', 'humanitylabs-org/wizard-messenger#150']},
+    {'id': 'photo-warm', 'name': 'Photos ready on arrival',
+     'description': 'The box fetches incoming photos, stickers, GIFs and videos as they arrive, so they open at once.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#162']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
