@@ -870,10 +870,12 @@
   async function renderList() {
     const epoch = ++s.epoch, gen = ++split.listGen;
     $('messenger')?.classList.toggle('u-compact', !previewsOn());
+    const was = split.on && s.search == null ? $('u-pane-list')?.querySelector(':scope > .u-list')?.scrollTop || 0 : 0;
     const root = listBase('Inbox');
     if (split.on && !s.person && !s.native && !detailOpen()) closePane();
     if (s.search == null) root.append(filterChips()); // account status lives in Settings, not on top of the Inbox
     const list = node('div', 'u-list'); list.addEventListener('filter', drawList); root.append(list);
+    if (was) list.dataset.keepTop = String(Math.round(was));
     if (s.search == null) { const fab = iconButton('compose', 'New chat', () => split.on ? newMessagePane() : newChat(), 'u-fab'); fab.dataset.wzKey = 'n'; fab.dataset.wzKeyLabel = 'New chat'; root.append(fab); }
     refreshAccounts();
     if (store.lists.people && store.lists.groups) { drawList(); if (!store.seq && s.ready) freshen(null, epoch); return; }
@@ -1212,7 +1214,13 @@
       }
       frag.append(empty);
     }
+    // Issue 152: replacing every row can drop the scroll position (WebKit clamps scrollTop while the list is empty),
+    // so the list jumped to the top whenever the change feed repainted it. Keep the place the owner scrolled to;
+    // a list built fresh beside an open chat (renderList in the split) takes over the old list's place once.
+    const keep = list.dataset.keepTop ? +list.dataset.keepTop : list.scrollTop;
     list.replaceChildren(frag);
+    if (list.dataset.keepTop && shown.length) delete list.dataset.keepTop;
+    if (keep && list.scrollTop !== keep) list.scrollTop = keep;
   }
 
   const isLow = p => !!p.low_priority;
