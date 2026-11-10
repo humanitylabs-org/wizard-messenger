@@ -131,9 +131,50 @@
     if (!item?.url) return 'none';
     fallback(item); return 'messenger';
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia};
+  // A tapped file attachment downloads once, and shows that it is downloading (issue 157). The box fetches the whole
+  // file from its homeserver before it answers, so a plain link looked dead for seconds and every extra tap started
+  // another download. start(key, work) runs work(report) unless that key is already running (then it returns null);
+  // report({loaded, total, phase}) updates the state that state(key) returns and that watch(fn) callers repaint from.
+  function fileDownloads() {
+    const running = new Map(), watchers = new Set();
+    const tell = key => { for (const fn of watchers) { try { fn(key); } catch { /* one painter never stops another */ } } };
+    function start(key, work) {
+      if (running.has(key)) return null;
+      const job = {loaded: 0, total: 0, phase: 'loading'};
+      running.set(key, job); tell(key);
+      const report = patch => { Object.assign(job, patch); tell(key); };
+      return Promise.resolve().then(() => work(report)).finally(() => { running.delete(key); tell(key); });
+    }
+    return {start, state: key => running.has(key) ? {...running.get(key)} : null, watch: fn => { watchers.add(fn); return () => watchers.delete(fn); }};
+  }
+  // Reads a fetch Response to a Blob, reporting bytes as they arrive. Without a readable body it falls back to blob().
+  async function readProgress(response, report, total = 0) {
+    const length = +(response.headers?.get?.('Content-Length') || 0) || total || 0, type = response.headers?.get?.('Content-Type') || '';
+    report({loaded: 0, total: length});
+    if (!response.body?.getReader) return response.blob();
+    const reader = response.body.getReader(), parts = [];
+    let loaded = 0;
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      parts.push(value); loaded += value.byteLength; report({loaded, total: Math.max(length, loaded)});
+    }
+    return new Blob(parts, {type});
+  }
+  // What the attachment says while it downloads: "Downloading…" until bytes arrive, then percent and sizes.
+  function downloadLabel(job, size, fmt) {
+    if (!job) return fmt(size);
+    if (job.phase === 'handed') return 'Saving to Downloads';
+    if (job.phase === 'saved') return 'Downloaded';
+    const total = job.total || size || 0;
+    if (!job.loaded) return 'Downloading…' + (total ? ' · ' + fmt(total) : '');
+    return 'Downloading' + (total ? ' ' + Math.min(99, Math.floor(job.loaded * 100 / total)) + '% · ' + fmt(job.loaded) + ' of ' + fmt(total) : ' ' + fmt(job.loaded));
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, fileDownloads, readProgress, downloadLabel};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
+  const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
+  downloads.watch(key => { for (const a of $('messenger')?.querySelectorAll('.u-file[data-file]') || []) if (a.dataset.file === key) paintFile(a); });
   const s = {tab: 'people', person: null, overlay: null, search: null, low: false, seg: (() => { try { const v = sessionStorage.getItem('messenger-inbox-seg') || (sessionStorage.getItem('messenger-inbox-low') === '1' ? 'low' : 'all'); return ['all', 'unread', 'medium', 'low'].includes(v) ? v : 'all'; } catch { return 'all'; } })(), ready: false, epoch: 0, busy: false, drafts: {}, people: [], login: null};
   let api, timer, lastFocus, updateHold, connectorController, native;
   let nativeRows = [], nativeFocus = null;
@@ -1988,7 +2029,7 @@
     }
     else if (visual) b.append(visualMedia(m));
     else if (m.msgtype === 'm.audio') b.append(voice(m));
-    else if (m.msgtype === 'm.file') { const a = node('a', 'u-file'); if (!m.pending && !m.failed) a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-name', m.media?.filename || 'File'), node('span', 'u-file-size', fmtSize(m.media?.size))); b.append(a); }
+    else if (m.msgtype === 'm.file') b.append(fileLink(m));
     else if (m.msgtype === 'm.location') { const geo = /^geo:([-\d.]+),([-\d.]+)/.exec(m.media?.geo || ''); const a = node('a', 'u-file', '📍 ' + (m.original || 'Location')); if (geo) { a.href = 'https://www.openstreetmap.org/?mlat=' + geo[1] + '&mlon=' + geo[2] + '#map=16/' + geo[1] + '/' + geo[2]; a.target = '_blank'; a.rel = 'noopener noreferrer'; } b.append(a); }
     const story = !m.deleted && storyOf(m.original, m.outgoing);
     if (story) {
@@ -2335,7 +2376,7 @@
     if (!m.deleted) item('Forward to Wizard', 'forward', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
-    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
+    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { if (m.msgtype === 'm.file' && !m.photos) return saveFile(m); for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     if (opts.selectText && m.original && !m.deleted) item('Select text', 'textsel', opts.selectText);
     if (opts.select && !m.deleted && !m.pending) item('Select', 'check', opts.select);
@@ -2352,6 +2393,49 @@
     const box = node('div', 'u-grid');
     for (const k of [...QUICK, ...MORE]) box.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn'));
     return box;
+  }
+  // File attachments (issue 157): a tap shows Downloading at once, then progress, and further taps on the same file
+  // do nothing until it is saved. The state lives here, not on the bubble, so a repaint keeps it.
+  // The Android app (0.8.4+) hands a real URL to Android's download manager (it cannot save a blob URL), which shows
+  // its own progress. The box answers only once it holds the whole file, so it is fetched here first and the
+  // download manager then gets it from the box's cache at once.
+  const appDownloads = () => { const v = /WizardOS-Android\/(\d+)\.(\d+)\.(\d+)/.exec(navigator.userAgent || ''); return !!v && (+v[1] * 1e6 + +v[2] * 1e3 + +v[3]) >= 8004; };
+  function handTo(href, name) { const a = node('a'); a.href = href; a.download = name; a.rel = 'noopener'; a.hidden = true; a.addEventListener('click', e => e.stopPropagation()); $('messenger').append(a); a.click(); a.remove(); }
+  function paintFile(a) {
+    const job = downloads.state(a.dataset.file), size = +a.dataset.bytes || 0;
+    a.classList.toggle('loading', !!job && job.phase === 'loading'); a.classList.toggle('done', !!job && job.phase !== 'loading');
+    a.setAttribute('aria-busy', String(!!job && job.phase === 'loading'));
+    if (job) a.setAttribute('aria-disabled', 'true'); else a.removeAttribute('aria-disabled');
+    const total = job?.total || size;
+    a.style.setProperty('--dl', job?.loaded && total ? Math.min(100, Math.round(job.loaded * 100 / total)) + '%' : '0%');
+    a.classList.toggle('known', !!job?.loaded && !!total);
+    a.querySelector('.u-file-size').textContent = downloadLabel(job, size, fmtSize);
+  }
+  function saveFile(m) {
+    const url = mediaURL(m.id), name = m.media?.filename || 'file';
+    const run = downloads.start(m.id, async report => {
+      report({total: m.media?.size || 0});
+      const r = await fetch(url, {credentials: 'same-origin'});
+      if (!r.ok) throw new Error('Could not download ' + name + '. Try again.');
+      if (appDownloads()) {
+        try { await r.body?.cancel(); } catch { /* the box already holds the file */ }
+        handTo(url, name); report({phase: 'handed'}); await sleep(6000); return;
+      }
+      const blob = await readProgress(r, report, m.media?.size || 0), href = URL.createObjectURL(blob);
+      handTo(href, name); setTimeout(() => URL.revokeObjectURL(href), 60000);
+      report({phase: 'saved'}); await sleep(2500);
+    });
+    if (!run) return toast(name + ' is already downloading');
+    run.catch(e => toast(e?.message || 'Could not download that file'));
+  }
+  function fileLink(m) {
+    const a = node('a', 'u-file'), name = m.media?.filename || 'File';
+    a.dataset.file = m.id; a.dataset.bytes = String(m.media?.size || 0);
+    a.append(node('span', 'u-file-icon', '📎'), node('span', 'u-file-text'), node('span', 'u-file-bar'));
+    a.firstChild.nextSibling.append(node('span', 'u-file-name', name), node('span', 'u-file-size', fmtSize(m.media?.size)));
+    if (!m.pending && !m.failed) { a.href = mediaURL(m.id); a.download = m.media?.filename || 'file'; a.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); saveFile(m); }); }
+    a.querySelector('.u-file-size').setAttribute('aria-live', 'polite');
+    paintFile(a); return a;
   }
   function toast(text, ms = 1600) { const el = node('p', 'u-toast', text); $('messenger').append(el); setTimeout(() => el.remove(), ms); }
   // A yes/no question in the usual bottom sheet; closing it any other way (X, backdrop, Back) counts as no.
