@@ -73,6 +73,7 @@ class Blob:
         self.path, self.mime, self.filename, self.inline = Path(path), mime, filename, inline
 
 
+_MEDIA_LOCKS = tuple(threading.Lock() for _ in range(32))  # media cache fills, by file key
 # Served inline only for these; everything else (SVG, HTML, PDF...) is an attachment download.
 INLINE_MIME = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'audio/ogg', 'audio/mpeg', 'audio/mp4',
                'audio/webm', 'audio/aac', 'audio/x-m4a', 'video/mp4', 'video/webm', 'video/quicktime'}
@@ -2862,41 +2863,44 @@ class UnifiedInbox:
         key = hashlib.sha256((mxc + '|' + (('thumb%d' % size if size != 800 else 'thumb') if (thumb or raw_thumb) else 'full')).encode()).hexdigest()
         path = cache / key
         meta_path = cache / (key + '.type')
-        if not path.exists():
-            server, media_id = match.groups()
-            if thumb:
-                url = '/_matrix/client/v1/media/thumbnail/%s/%s?%s' % (server, media_id, urlencode({'width': size, 'height': size, 'method': 'scale' if size == 800 else 'crop', 'animated': 'true'}))
+        # One homeserver fetch per file at a time (issue 157): a second request for the same file waits for the first
+        # and is then served from its cache, so repeat taps never download it from the homeserver again.
+        with _MEDIA_LOCKS[int(key[:8], 16) % len(_MEDIA_LOCKS)]:
+            if not path.exists():
+                server, media_id = match.groups()
+                if thumb:
+                    url = '/_matrix/client/v1/media/thumbnail/%s/%s?%s' % (server, media_id, urlencode({'width': size, 'height': size, 'method': 'scale' if size == 800 else 'crop', 'animated': 'true'}))
+                else:
+                    url = '/_matrix/client/v1/media/download/%s/%s' % (server, media_id)
+                started = time.time()
+                req = Request(self.matrix.rstrip('/') + url, headers={'Authorization': 'Bearer ' + self.matrix_token()})
+                tmp = cache / (key + '.part-' + secrets.token_hex(4))
+                try:
+                    with urlopen(req, timeout=60) as response, tmp.open('wb') as out:
+                        got = response.headers.get('Content-Type', '').split(';')[0].strip()
+                        total = 0
+                        while True:
+                            chunk = response.read(65536)
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > 200 * 1024 * 1024:
+                                fail('too_large', 'That file is too large to show', 413)
+                            out.write(chunk)
+                except (HTTPError, URLError, OSError):
+                    tmp.unlink(missing_ok=True)
+                    fail('upstream_unavailable', 'Could not load that media. Try again.', 503)
+                except EngineError:
+                    tmp.unlink(missing_ok=True)
+                    raise
+                with tmp.open('rb') as f:
+                    sniffed = sniff(f.read(64))
+                meta_path.write_text(sniffed or got or mime)
+                os.replace(tmp, path)
+                self.timing('media', started)
+                self.evict(cache)
             else:
-                url = '/_matrix/client/v1/media/download/%s/%s' % (server, media_id)
-            started = time.time()
-            req = Request(self.matrix.rstrip('/') + url, headers={'Authorization': 'Bearer ' + self.matrix_token()})
-            tmp = cache / (key + '.part-' + secrets.token_hex(4))
-            try:
-                with urlopen(req, timeout=60) as response, tmp.open('wb') as out:
-                    got = response.headers.get('Content-Type', '').split(';')[0].strip()
-                    total = 0
-                    while True:
-                        chunk = response.read(65536)
-                        if not chunk:
-                            break
-                        total += len(chunk)
-                        if total > 200 * 1024 * 1024:
-                            fail('too_large', 'That file is too large to show', 413)
-                        out.write(chunk)
-            except (HTTPError, URLError, OSError):
-                tmp.unlink(missing_ok=True)
-                fail('upstream_unavailable', 'Could not load that media. Try again.', 503)
-            except EngineError:
-                tmp.unlink(missing_ok=True)
-                raise
-            with tmp.open('rb') as f:
-                sniffed = sniff(f.read(64))
-            meta_path.write_text(sniffed or got or mime)
-            os.replace(tmp, path)
-            self.timing('media', started)
-            self.evict(cache)
-        else:
-            os.utime(path)
+                os.utime(path)
         served = meta_path.read_text().strip() if meta_path.exists() else mime
         if served == 'audio/webm' and mime.startswith('video/'):
             served = 'video/webm'
