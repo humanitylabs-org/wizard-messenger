@@ -52,7 +52,7 @@ class BrowserAuth:
             self.tickets[hashlib.sha256(token.encode()).hexdigest()]={'expires':time.time()+(7*24*3600 if bootstrap else 300),'bootstrap':bootstrap}
             self._save()
             return token
-    def create(self,ticket=None,allow_bootstrap=False):
+    def create(self,ticket=None,allow_bootstrap=False,owner_setup=False):
         with self.lock:
             self._clean()
             if ticket is not None:
@@ -68,8 +68,9 @@ class BrowserAuth:
             while len(self.sessions)>=256:
                 del self.sessions[min(self.sessions,key=lambda k:self.sessions[k]['expires'])]
             token=secrets.token_urlsafe(32)
-            session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+SESSION_SECONDS, 'setup_only': ticket is not None,
-                     'owner_enrollment': bool(ticket is not None and isinstance(issued, dict) and issued.get('bootstrap'))}
+            # owner_setup: first setup on a fresh trusted-Wizard install, proven by the owner edge (no ticket).
+            session={'csrf':secrets.token_urlsafe(32),'expires':time.time()+SESSION_SECONDS, 'setup_only': ticket is not None or owner_setup,
+                     'owner_enrollment': bool(owner_setup or (ticket is not None and isinstance(issued, dict) and issued.get('bootstrap')))}
             self.sessions[hashlib.sha256(token.encode()).hexdigest()]=session
             self._save()
             return token,session
@@ -558,11 +559,18 @@ class ViewHandler(Handler):
                 self.pending_cookie=self._cookie(token)
             elif method=='GET':
                 if self.service.trusted_owner.enabled and self._session() is None:
-                    # Never create an identity, redeem enrollment or change its passphrase.
+                    # Never create an identity, redeem enrollment or change its passphrase here.
                     self._trusted_owner()
                     with self.service.setup_lock:
                         if not self.service.auth.credential:
-                            raise EngineError('setup_link_required','Finish the existing Messenger enrollment first',401)
+                            if self.service.engine.status().get('account_configured',False):
+                                raise EngineError('setup_link_required','Finish the existing Messenger enrollment first',401)
+                            # A fresh install (issue 148): the owner edge's proof is the owner's Wizard sign-in, the
+                            # same trust a setup link carries. Give a setup-only session that can only create the
+                            # first address. No ticket is minted and nothing is created until the owner submits.
+                            token,session=self.service.auth.create(owner_setup=True)
+                            self.pending_cookie=self._cookie(token)
+                            return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
                         password=self.service.trusted_owner.password(self.service.auth.credential)
                         if password is None:
                             raise EngineError('session_unlock_required','Unlock once with your existing passphrase and choose Remember this Wizard',401)
@@ -572,7 +580,8 @@ class ViewHandler(Handler):
                         token,session=self.service.auth.create()
                         self.pending_cookie=self._cookie(token)
                     return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
-                if self.service.trusted_owner.enabled and self.service.engine.status().get('state')!='ready':
+                # Nothing to unlock before the first address exists: a setup-only session just keeps going.
+                if self.service.trusted_owner.enabled and self.service.auth.credential and self.service.engine.status().get('state')!='ready':
                     with self.service.setup_lock:
                         password=self.service.trusted_owner.password(self.service.auth.credential)
                         if password is None:
