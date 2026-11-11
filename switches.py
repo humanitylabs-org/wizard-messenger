@@ -25,6 +25,11 @@ SWITCHES = (
                     'zooming in loads the original.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#164']},
+    {'id': 'photo-prefetch', 'name': 'Background photo download',
+     'description': 'The phone quietly downloads recent photos from your newest chats, on Wi-Fi only unless you choose '
+                    'Always, so they open at once.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#166']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
