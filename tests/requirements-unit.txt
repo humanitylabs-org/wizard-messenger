@@ -9,3 +9,4 @@ webauthn
 pyOpenSSL
 pywebpush
 uvicorn
+Pillow
