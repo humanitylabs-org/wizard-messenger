@@ -78,7 +78,21 @@
     "built_from_source_revision": "a23fd8e26a7205f861a409681de4437f7394a386",
     "custom_build": true,
     "official_upstream_binary": false,
-    "corresponding_source_sha256": "6759f032d9f7528a5104ba94dbb9d16759300836eec3b3ef098fe5855e659bf1"
+    "corresponding_source_sha256": "6759f032d9f7528a5104ba94dbb9d16759300836eec3b3ef098fe5855e659bf1",
+    "published_image": {
+      "repository": "ghcr.io/humanitylabs-org/wizard-signal-bridge",
+      "workflow": ".github/workflows/bridges.yml",
+      "tags": [
+        "sha-<wizard-messenger commit>",
+        "0.2610.0-native-albums1"
+      ],
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "digest": null,
+      "status": "built from plumbing/signal-bridge/Dockerfile (same bytes as built_from_source_revision) by the first main run of bridges.yml; digest and Store recipe pin follow once published. Until then runtipi/docker-compose.yml keeps upstream_image."
+    }
   },
   "slack": {
     "tag": "v0.2610.0",

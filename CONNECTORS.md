@@ -92,7 +92,9 @@ supports private Synapse. `bbctl` is Beeper-server-only and is **not used** here
    read-only capabilities.
 4. Every connector bridge is part of the Store recipe `runtipi/docker-compose.yml`
    (public images pinned by digest; LINE and ChatGPT Dots are built from pinned
-   upstream commits by `.github/workflows/bridges.yml`). Each bridge waits for its
+   upstream commits by `.github/workflows/bridges.yml`, which also publishes the
+   patched Signal native-albums bridge `ghcr.io/humanitylabs-org/wizard-signal-bridge`;
+   the recipe keeps upstream Signal until that image's digest is pinned). Each bridge waits for its
    `/data/configured` marker, so an unpicked network does no work. Keep
    `MESSENGER_CONNECTORS` empty by default; networks the owner picks in Settings
    are remembered in `unified/connectors.json`.
