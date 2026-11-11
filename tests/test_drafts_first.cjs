@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {chatOrder} = require('../static/unified.js');
-// Issue 133: "Drafts at top" (Settings, off by default) floats chats with a waiting draft above the rest.
+// Issue 133: "Drafts at top" (always on since issue 150) floats chats with a waiting draft above the rest.
 const now = Date.UTC(2026, 10, 7);
 const chat = (id, daysAgo, extra = {}) => ({id, display_name: id, last: {timestamp: now - daysAgo * 864e5}, ...extra});
 const rows = [chat('jay', 30), chat('ann', 0), chat('bob', 2, {pinned: true}), chat('cy', 1)];

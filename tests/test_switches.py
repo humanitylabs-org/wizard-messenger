@@ -6,7 +6,7 @@ from pathlib import Path
 
 import test_trusted_owner
 import test_web
-from switches import CONTRACT, SwitchStore
+from switches import CONTRACT, SwitchStore, UnknownSwitch
 
 TOKEN = test_web.TOKEN
 ORIGIN = test_web.ORIGIN
@@ -26,16 +26,12 @@ class SwitchEndpoint(unittest.TestCase):
         h = self.owner_headers(); del h['X-Messenger-CSRF']
         return h
 
-    def test_lists_drafts_first_off_by_default(self):
+    def test_lists_every_switch_off_by_default(self):
         for path in ('/api/view/switches', '/api/switches'):
             status, _, body = self.request('GET', path, headers=self.owner())
             self.assertEqual(status, 200)
             self.assertEqual(body['contract'], CONTRACT)
             self.assertEqual(body['switches'], [{
-                'id': 'drafts-first', 'name': 'Drafts at top',
-                'description': 'Chats with a waiting draft lead the Inbox, newest draft first.',
-                'on': False, 'default': False,
-                'issues': ['humanitylabs-org/wizard-messenger#133', 'humanitylabs-org/wizard-messenger#150']}, {
                 'id': 'photo-warm', 'name': 'Photos ready on arrival',
                 'description': 'The box fetches incoming photos, stickers, GIFs and videos as they arrive, so they open at once.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#162']}, {
@@ -59,41 +55,41 @@ class SwitchEndpoint(unittest.TestCase):
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
-        status, _, body = self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, h)
+        status, _, body = self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, h)
         self.assertEqual(status, 200)
         self.assertTrue(body['switches'][0]['on'])
         self.assertTrue(self.request('GET', '/api/switches', headers=self.owner())[2]['switches'][0]['on'])
         # Messenger's own Settings sends its CSRF token as well; that is fine.
-        status, _, body = self.request('POST', '/api/switches', {'id': 'drafts-first', 'on': False}, {**self.owner_headers(), **WRITE})
+        status, _, body = self.request('POST', '/api/switches', {'id': 'photo-warm', 'on': False}, {**self.owner_headers(), **WRITE})
         self.assertEqual(status, 200)
         self.assertFalse(body['switches'][0]['on'])
 
     def test_owner_only(self):
         status, _, body = self.request('GET', '/api/view/switches', headers={'Origin': ORIGIN})
         self.assertEqual(status, 401); self.assertIsInstance(body['error'], str)
-        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, {'Origin': ORIGIN, **WRITE})[0], 401)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, {'Origin': ORIGIN, **WRITE})[0], 401)
         for auth in ({'Authorization': 'Bearer ' + TOKEN}, {**self.owner(), 'Authorization': 'Bearer ' + TOKEN}):
             status, _, body = self.request('GET', '/api/view/switches', headers=auth)
             self.assertEqual(status, 403); self.assertIsInstance(body['error'], str)
-            self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, {**auth, **WRITE})[0], 403)
-        self.assertFalse(self.server.switches.is_on('drafts-first'))
+            self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, {**auth, **WRITE})[0], 403)
+        self.assertFalse(self.server.switches.is_on('photo-warm'))
 
     def test_write_needs_origin_and_header(self):
-        body = {'id': 'drafts-first', 'on': True}
+        body = {'id': 'photo-warm', 'on': True}
         cookie = {'Cookie': self.owner()['Cookie'], **WRITE}
         self.assertEqual(self.request('POST', '/api/view/switches', body, cookie)[0], 403)  # no Origin
         self.assertEqual(self.request('POST', '/api/view/switches', body, {**cookie, 'Origin': 'https://evil.example'})[0], 403)
         status, _, reply = self.request('POST', '/api/view/switches', body, self.owner())  # no X-Wizard-Switch
         self.assertEqual(status, 403); self.assertIsInstance(reply['error'], str)
         self.assertEqual(self.request('POST', '/api/view/switches', body, {**self.owner(), 'X-Wizard-Switch': '0'})[0], 403)
-        self.assertFalse(self.server.switches.is_on('drafts-first'))
+        self.assertFalse(self.server.switches.is_on('photo-warm'))
 
     def test_unknown_id_and_bad_body(self):
         h = {**self.owner(), **WRITE}
         status, _, body = self.request('POST', '/api/view/switches', {'id': 'nope', 'on': True}, h)
         self.assertEqual(status, 404); self.assertIsInstance(body['error'], str)
-        for bad in ({'id': 'drafts-first'}, {'id': 'drafts-first', 'on': 'yes'}, {'id': 7, 'on': True}, {'on': True},
-                    {'id': 'drafts-first', 'on': True, 'extra': 1}):
+        for bad in ({'id': 'photo-warm'}, {'id': 'photo-warm', 'on': 'yes'}, {'id': 7, 'on': True}, {'on': True},
+                    {'id': 'photo-warm', 'on': True, 'extra': 1}):
             status, _, body = self.request('POST', '/api/view/switches', bad, h)
             self.assertEqual(status, 400, bad); self.assertIsInstance(body['error'], str)
         status, _, body = self.request('POST', '/api/view/switches', b'not json', {**h, 'Content-Type': 'application/json'})
@@ -121,41 +117,53 @@ class SwitchesWithWizardOwnerProof(unittest.TestCase):
     def test_proof_alone_lists_and_flips_without_a_session(self):
         status, _, body = self.request('GET', '/api/view/switches')
         self.assertEqual(status, 200); self.assertFalse(body['switches'][0]['on'])
-        status, _, body = self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, headers=WRITE)
+        status, _, body = self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, headers=WRITE)
         self.assertEqual(status, 200); self.assertTrue(body['switches'][0]['on'])
-        self.assertTrue(self.server.switches.is_on('drafts-first'))
+        self.assertTrue(self.server.switches.is_on('photo-warm'))
 
     def test_no_proof_a_reused_proof_or_a_bearer_is_refused(self):
         self.assertEqual(self.request('GET', '/api/view/switches', proof=False)[0], 403)
         from trusted_owner import PLATFORM_HEADER, sign_platform_request
         once = sign_platform_request(self.proof, 'messenger', 'POST', '/api/view/switches')
         h = {**WRITE, PLATFORM_HEADER: once}
-        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': True}, headers=h)[0], 200)
-        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': False}, headers=h)[0], 403)
-        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': False},
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, headers=h)[0], 200)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': False}, headers=h)[0], 403)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': False},
                                       headers={**WRITE, 'Authorization': 'Bearer ' + TOKEN})[0], 403)
-        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'drafts-first', 'on': False}, headers={})[0], 403)
-        self.assertTrue(self.server.switches.is_on('drafts-first'))
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': False}, headers={})[0], 403)
+        self.assertTrue(self.server.switches.is_on('photo-warm'))
 
 
 class SwitchStorage(unittest.TestCase):
     def test_kept_on_the_box_and_survives_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
-            SwitchStore(path).set('drafts-first', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'drafts-first': True}})
+            SwitchStore(path).set('photo-warm', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True}})
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertTrue(SwitchStore(path).is_on('drafts-first'))
-            SwitchStore(path).set('drafts-first', False)
+            self.assertTrue(SwitchStore(path).is_on('photo-warm'))
+            SwitchStore(path).set('photo-warm', False)
             self.assertEqual(json.loads(path.read_text()), {'switches': {}})
+
+    def test_drafts_at_top_is_no_longer_a_switch(self):
+        # Issue 150: Drafts at top was approved, so it is always on and leaves the list; a box that stored it on or
+        # off before keeps working and the stale value is ignored.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"drafts-first": true, "photo-warm": true}}')
+            store = SwitchStore(path)
+            self.assertNotIn('drafts-first', [s['id'] for s in store.listing()['switches']])
+            self.assertTrue(store.is_on('photo-warm'))
+            with self.assertRaises(UnknownSwitch):
+                store.set('drafts-first', True)
 
     def test_a_damaged_file_reads_as_defaults(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
-            for raw in ('{', '[]', '{"switches": {"drafts-first": "1", "gone": true}}'):
+            for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
-                self.assertFalse(SwitchStore(path).is_on('drafts-first'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['drafts-first', 'photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings'])
+                self.assertFalse(SwitchStore(path).is_on('photo-warm'))
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings'])
 
 
 if __name__ == '__main__':
