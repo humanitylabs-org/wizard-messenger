@@ -140,7 +140,7 @@
       "path": "/api/view/switches",
       "auth": "owner cookie + same-origin Origin + X-Wizard-Switch: 1 (no CSRF token needed, for the WizardOS Tracker)",
       "body": {
-        "id": "drafts-first",
+        "id": "photo-warm",
         "on": "true|false"
       },
       "result": "the same listing; unknown id 404, bad body 400, not the owner 401/403; errors are {error}"

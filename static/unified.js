@@ -111,7 +111,7 @@
     return {left:Math.max(left, Math.min(anchor.left, right - width)),
       top:Math.max(top, Math.min(above >= top ? above : below, bottom - height)), width, height};
   }
-  // Inbox order: pinned first, then newest last message. With "Drafts at top" on (Settings, off by default; issue 133),
+  // Inbox order: pinned first, then newest last message. With draftsFirst (always on since issue 150; issue 133),
   // chats with a waiting draft (yours or your Wizard's) lead the list, newest draft first, like WhatsApp/Telegram.
   // draftOf(row) returns that chat's draft ({updated}) or null. Never changes the input array.
   function chatOrder(rows, {draftsFirst = false, draftOf = () => null} = {}) {
@@ -1348,7 +1348,7 @@
     const rows = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
       .map(p => { const t = twins.twinOf.get(p.id); if (!t) return p; const low = !!(p.low_priority || t.low_priority); return {...p, muted: !!(p.muted || t.muted), low_priority: low, medium_priority: !low && !!(p.medium_priority || t.medium_priority), twin: t}; })
       .concat(twins.visible);
-    const everyone = chatOrder(rows, {draftsFirst: draftsFirst(), draftOf: p => p.native ? null : (s.draftIndex?.[p.id] || ((s.drafts[p.id] || '').trim() ? {updated: 0} : null))});
+    const everyone = chatOrder(rows, {draftsFirst: true, draftOf: p => p.native ? null : (s.draftIndex?.[p.id] || ((s.drafts[p.id] || '').trim() ? {updated: 0} : null))});
     // Low priority (Beeper's name; WhatsApp's Archive): out of All/Unread, unread counts and notifications, and a new
     // message never brings a chat back. Medium priority stays in All but never pings (no push, badge or Unread).
     // Row 1 picks the folder (All, Unread, Medium, Low); row 2 (network, Filters) narrows it.
@@ -4349,16 +4349,14 @@
     }
     paint(); return row;
   }
-  // Drafts at top (issue 133, off by default): chats with a waiting draft lead the Inbox; drawList() reads it through
-  // chatOrder(). Since issue 150 the state lives on the box for the owner (api/view/switches, wizard.app-switches/1),
-  // so the Tracker's Try it toggle, this Settings row and every device agree. A device that still holds the old
-  // per-device key moves it to the box once, then the key goes away.
+  // Feature switches live on the box for the owner (api/view/switches, wizard.app-switches/1, issue 150), so the
+  // Tracker's Try it toggle, Settings and every device agree. Drafts at top (issue 133) was approved and is always on
+  // now (drawList passes draftsFirst: true); the old per-device key it left behind is dropped once.
   const DRAFTS_FIRST_KEY = 'messenger.draftsFirst';
   const SWITCH_POLL_MS = 5000;
-  const switchState = {on: {}, migrated: false, paints: {}};
+  const switchState = {on: {}, paints: {}};
   const repaintSwitches = () => { for (const paint of Object.values(switchState.paints)) paint(); };
-  try { switchState.on['drafts-first'] = localStorage.getItem(DRAFTS_FIRST_KEY) === '1'; } catch { /* no storage */ }
-  function draftsFirst() { return switchState.on['drafts-first'] === true; }
+  try { localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
   async function switchCall(body) {
     const headers = {Accept: 'application/json'};
     if (body) Object.assign(headers, {'Content-Type': 'application/json', 'X-Wizard-Switch': '1', 'X-Messenger-CSRF': csrf()});
@@ -4368,21 +4366,13 @@
     return data;
   }
   function applySwitches(data) {
-    const before = draftsFirst(), was = JSON.stringify(switchState.on);
+    const was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
     if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); }
-    if (before !== draftsFirst()) drawList();
   }
   async function syncSwitches() {
     try {
-      let data = await switchCall();
-      if (!switchState.migrated) {
-        let legacy = null; try { legacy = localStorage.getItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
-        if (legacy === '1' && !data.switches.some(x => x.id === 'drafts-first' && x.on)) data = await switchCall({id: 'drafts-first', on: true});
-        try { localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
-        switchState.migrated = true;
-      }
-      applySwitches(data);
+      applySwitches(await switchCall());
     } catch { /* not signed in yet or an older box: keep what we have, try again on the next poll */ }
   }
   async function setSwitch(id, on) {
@@ -4403,7 +4393,6 @@
     switchState.paints[id] = paint;
     paint(); return row;
   }
-  function draftsFirstRow() { return switchRow('drafts-first', 'Drafts at top', 'Chats stay in last-message order', 'Chats with a waiting draft lead the list'); }
   // Issue 162: the box fetches incoming photos as they arrive.
   function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
   // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
@@ -4521,7 +4510,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

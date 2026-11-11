@@ -1,7 +1,6 @@
-// Drafts at top (issue 133, Miguel 7 Nov 2026): Settings > Drafts at top (Off by default) floats chats with a waiting draft
-// (yours or your Wizard's) to the top of the Inbox, newest draft first, with the existing "Draft:" line.
-// Since issue 150 the state lives on the box (api/view/switches, wizard.app-switches/1): Settings, the Tracker's Try it
-// toggle and other devices agree, and a device's old per-device key moves to the box once.
+// Drafts at top (issue 133, Miguel 7 Nov 2026): chats with a waiting draft (yours or your Wizard's) lead the Inbox,
+// newest draft first, with the existing "Draft:" line. Approved in issue 150, so it is always on: no Settings row, no
+// box switch, and the old per-device key is dropped.
 // Synthetic API only; phone + desktop x two skins. node tests/drafts_first_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -44,8 +43,8 @@ const SKINS = {
       };
       if (!mark()) new MutationObserver((_, o) => { if (mark()) o.disconnect(); }).observe(document, {childList: true});
     }, [scheme, SKINS[scheme]]);
-    const box = {on: false, posts: []};
-    const listing = () => ({contract: 'wizard.app-switches/1', switches: [{id: 'drafts-first', name: 'Drafts at top', description: '', on: box.on, default: false, issues: ['humanitylabs-org/wizard-messenger#133']}]});
+    const box = {posts: []};
+    const listing = () => ({contract: 'wizard.app-switches/1', switches: []});
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
     const ownKey = '11'.repeat(32);
@@ -59,7 +58,6 @@ const SKINS = {
         if (req.method() === 'POST') {
           const h = req.headers(); box.posts.push(body());
           if (h['x-wizard-switch'] !== '1' || h['content-type'] !== 'application/json') return route.fulfill({status: 403, contentType: 'application/json', body: '{"error":"header"}'});
-          box.on = body().on;
         }
         return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(listing())});
       }
@@ -96,47 +94,24 @@ const SKINS = {
     await page.goto('https://messenger.test/');
     await page.locator('.u-person', {hasText: 'James Carter'}).waitFor({timeout: 15000});
     await marco().locator('.u-snippet.draft').waitFor({timeout: 10000});
-    // Off by default: the old chat with a draft keeps its place (last), with its Draft line.
-    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.draftsFirst')), null, 'nothing saved by default');
-    let names = await order(); assert.equal(names[names.length - 1], 'Marco Bianchi', 'off: last-message order ' + JSON.stringify(names));
-    assert.match(await marco().locator('.u-snippet').innerText(), /^Draft: Here is the PDF$/, 'the draft line shows its first line');
-    await page.locator('[aria-label="Settings"]').first().click();
-    const sw = page.locator('.u-sheet .u-more-drafts-first'); await sw.waitFor();
-    assert.equal(await sw.getByRole('radio', {name: 'Off'}).getAttribute('aria-checked'), 'true', 'Off is checked by default');
-    for (const b of await sw.getByRole('radio').all()) { const r = await b.boundingBox(); assert.ok(r.height >= 43.5 && r.width >= 43.5, '44px targets'); }
-    await sw.getByRole('radio', {name: 'On'}).click();
-    assert.equal(await sw.getByRole('radio', {name: 'On'}).getAttribute('aria-checked'), 'true', 'tap registers at once');
+    // Always on (approved, issue 150): the old chat with a draft leads the Inbox, with its Draft line, and no box
+    // switch or per-device setting is needed for it.
     await page.waitForTimeout(300);
-    assert.equal(box.on, true, 'saved on the box'); assert.deepEqual(box.posts.at(-1), {id: 'drafts-first', on: true});
-    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.draftsFirst')), null, 'nothing kept per device');
-    await page.waitForTimeout(150); await shot('settings-on');
+    let names = await order(); assert.equal(names[0], 'Marco Bianchi', 'the chat with a draft leads ' + JSON.stringify(names));
+    assert.match(await marco().locator('.u-snippet').innerText(), /^Draft: Here is the PDF$/, 'the draft line shows its first line');
+    await shot('inbox');
+    await page.locator('[aria-label="Settings"]').first().click();
+    await page.locator('.u-sheet .u-more-view').waitFor();
+    assert.equal(await page.locator('.u-sheet .u-more-drafts-first').count(), 0, 'no Drafts at top row in Settings');
+    await page.waitForTimeout(150); await shot('settings');
     await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);
-    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'on: the chat with a draft leads ' + JSON.stringify(names));
-    await shot('inbox-on');
+    // A device that had the old per-device key drops it, and the order does not depend on it.
+    await page.evaluate(() => localStorage.setItem('messenger.draftsFirst', '0'));
     await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor(); await marco().locator('.u-snippet.draft').waitFor();
     await page.waitForTimeout(600);
-    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'remembered after reload (from the box) ' + JSON.stringify(names));
-    // Flipped elsewhere (the Tracker card, another device): the Inbox repaints within a few seconds.
-    box.on = false;
-    await page.waitForFunction(() => { const n = [...document.querySelectorAll('#unified-inbox .u-person strong')]; return n.length && !(n[0].textContent || '').startsWith('Marco'); }, null, {timeout: 7000});
-    box.on = true;
-    await page.waitForFunction(() => (document.querySelector('#unified-inbox .u-person strong')?.textContent || '').startsWith('Marco'), null, {timeout: 7000});
-    await page.locator('[aria-label="Settings"]').first().click();
-    await page.locator('.u-sheet .u-more-drafts-first').getByRole('radio', {name: 'Off'}).click();
-    await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);
-    names = await order(); assert.equal(names[names.length - 1], 'Marco Bianchi', 'off again: back to last-message order');
-    assert.equal(box.on, false, 'off saved on the box');
-    // A device that turned it on before issue 150 moves its setting to the box once, then the key goes away.
-    box.posts.length = 0;
-    await page.evaluate(() => localStorage.setItem('messenger.draftsFirst', '1'));
-    await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor(); await marco().locator('.u-snippet.draft').waitFor();
-    await page.waitForFunction(() => localStorage.getItem('messenger.draftsFirst') === null, null, {timeout: 5000});
-    assert.equal(box.on, true, 'migrated to the box'); assert.equal(box.posts.length, 1, 'moved once');
-    await page.waitForTimeout(300);
-    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'migrated device keeps drafts first');
-    box.on = false; await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor(); await page.waitForTimeout(800);
-    assert.equal(box.posts.length, 1, 'no second move once the key is gone');
-    names = await order(); assert.equal(names[names.length - 1], 'Marco Bianchi', 'box off wins after the move');
+    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.draftsFirst')), null, 'old key dropped');
+    names = await order(); assert.equal(names[0], 'Marco Bianchi', 'still drafts first after reload ' + JSON.stringify(names));
+    assert.deepEqual(box.posts, [], 'nothing written to the box');
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(`${scheme}-${label}: ok`);
     await ctx.close();

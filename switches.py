@@ -1,7 +1,8 @@
 """Messenger's own feature switches, kept on the box for its owner (wizard.app-switches/1).
 
 The WizardOS Tracker's Try it toggle, Messenger's Settings and the agent all read and set the same state here, so a
-switch no longer differs per device. Every switch is off until the owner turns it on.
+switch no longer differs per device. Every switch is off until the owner turns it on. A switch that was approved
+(Drafts at top, issue 150) leaves this list and its behaviour is simply on; a stored value for it is ignored.
 """
 import json
 import os
@@ -12,10 +13,6 @@ from pathlib import Path
 CONTRACT = 'wizard.app-switches/1'
 
 SWITCHES = (
-    {'id': 'drafts-first', 'name': 'Drafts at top',
-     'description': 'Chats with a waiting draft lead the Inbox, newest draft first.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#133', 'humanitylabs-org/wizard-messenger#150']},
     {'id': 'photo-warm', 'name': 'Photos ready on arrival',
      'description': 'The box fetches incoming photos, stickers, GIFs and videos as they arrive, so they open at once.',
      'default': False,
