@@ -284,7 +284,51 @@
     }
     return {add, pump, match, clear, has: url => !!entries[url], stats: () => ({files: Object.keys(entries).length, bytes: total(), queued: queue.length, running})};
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher};
+  // Photo timings (issue 168, switch photo-timings, off by default). The view measures each photo stage and sends only
+  // names and milliseconds to the box, which keeps the last few hundred (api/unified/status timings):
+  // photo_thumb: a bubble thumbnail's request, from the browser's resource timing.
+  // photo_tap: a tap until the viewer shows a picture. photo_sharp: a tap until the screen-size copy is in.
+  // photo_black: 1 when the viewer's first frame had no picture yet, else 0.
+  // post(samples) sends a batch; later(fn, ms) schedules; on() says whether the switch is on.
+  function photoTimings({post, later, on}) {
+    const batch = []; let timer = null;
+    const flush = () => {
+      timer = null; const out = batch.splice(0);
+      if (out.length) Promise.resolve().then(() => post(out)).catch(() => {});
+    };
+    const add = (name, ms) => {
+      if (!on() || typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return;
+      batch.push({name, ms: Math.round(ms)});
+      if (batch.length >= 50) flush(); else if (!timer) timer = later(flush, 3000) || true;
+    };
+    // One opened photo, timed from the tap at t0. Each stage counts once.
+    const tap = t0 => {
+      const done = new Set(), once = (name, ms) => { if (!done.has(name)) { done.add(name); add(name, ms); } };
+      return {firstFrame: painted => once('photo_black', painted ? 0 : 1), shown: t => once('photo_tap', t - t0), sharp: t => once('photo_sharp', t - t0)};
+    };
+    return {add, tap, flush, pending: () => batch.length};
+  }
+  // The Settings lines for photo timings: the view's stages against their targets (thumbnail under 300 ms, tap to
+  // picture under 150 ms, no black frames), then per network what the box saw: bridge hand-over, arrival to ready on
+  // the box, and the originals' size. label(network) names a network.
+  function timingSummary(timings, label = x => x) {
+    const t = timings || {}, ms = v => Math.round(v) + ' ms', lines = [];
+    const stage = (key, name, target) => { const x = t[key]; if (x?.n) lines.push(name + ' ' + ms(x.p50) + ' (p90 ' + ms(x.p90 ?? x.p50) + ', target under ' + target + ' ms, ' + x.n + ' measured)'); };
+    stage('photo_thumb', 'Thumbnail', 300);
+    stage('photo_tap', 'Tap to picture', 150);
+    if (t.photo_sharp?.n) lines.push('Tap to sharp copy ' + ms(t.photo_sharp.p50) + ' (p90 ' + ms(t.photo_sharp.p90 ?? t.photo_sharp.p50) + ')');
+    if (t.photo_black?.n) lines.push('Black first frames ' + Math.round(t.photo_black.sum ?? 0) + ' of ' + t.photo_black.n + ' opened (target 0)');
+    const nets = [...new Set(Object.keys(t).filter(k => /^photo_(handover|ready|kb)\./.test(k)).map(k => k.slice(k.indexOf('.') + 1)))].sort();
+    for (const net of nets) {
+      const parts = [], h = t['photo_handover.' + net], r = t['photo_ready.' + net], kb = t['photo_kb.' + net];
+      if (h?.n) parts.push('hand-over ' + ms(h.p50));
+      if (r?.n) parts.push('ready on the box ' + ms(r.p50));
+      if (kb?.n) parts.push('originals ' + Math.round(kb.p50) + ' KB');
+      if (parts.length) lines.push(label(net) + ': ' + parts.join(', ') + ' (p50)');
+    }
+    return lines;
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2331,20 +2375,22 @@
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
     const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
+    const tapped = performance.now();
     openMedia(window.WizardApp?.media, list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at,
-      item => photoView(item, list, at));
+      item => photoView(item, list, at, tapped));
   }
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
   // zooms natively); Close, Esc or Back closes it.
   // With "Photos open instantly" on (issue 164) a photo opens from its thumbnail and sharpens in place (photoStages),
   // the photos either side are fetched in the background, and zooming in (double tap or pinch) loads the original.
-  function photoView(item, list = [], at = -1) {
+  function photoView(item, list = [], at = -1, tapped = performance.now()) {
     view.photo?.close();
     const before = document.activeElement;
     const layer = node('div', 'u-photo-view'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true'); layer.setAttribute('aria-label', item.name || 'Photo'); layer.tabIndex = -1;
     const instant = switchState.on['photo-instant'] === true, m = list[at];
     const stages = item.kind !== 'video' && m ? photoStages(m, instant, mediaURL) : {first: item.url, sharp: null, full: item.url};
     let media, shown = stages.first, upgrade = () => {}, stop = () => {};
+    const clock = item.kind !== 'video' && switchState.on['photo-timings'] === true ? photoClock.tap(tapped) : null;
     const kept = [];
     if (item.kind === 'video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.setAttribute('playsinline', ''); }
     else {
@@ -2354,7 +2400,7 @@
         let best = 0; // 1: view copy shown, 2: original shown
         // A view copy this phone already downloaded in the background (issue 166) comes from Cache Storage.
         const swap = (url, rank) => {
-          const next = new Image(); next.onload = () => { if (layer.isConnected && rank > best) { best = rank; shown = next.src; media.src = next.src; layer.dataset.stage = rank === 2 ? 'full' : 'view'; } };
+          const next = new Image(); next.onload = () => { if (layer.isConnected && rank > best) { best = rank; shown = next.src; media.src = next.src; layer.dataset.stage = rank === 2 ? 'full' : 'view'; if (rank === 1) clock?.sharp(performance.now()); } };
           (rank === 1 && photoCache.has(url) ? photoCache.match(url) : Promise.resolve(null)).then(hit => { if (hit) kept.push(hit); next.src = hit || url; });
         };
         layer.dataset.stage = 'thumb'; swap(stages.sharp, 1);
@@ -2366,6 +2412,12 @@
       }
     }
     media.src = shown;
+    if (clock) {
+      // The first frame after the viewer is in the page: a picture already decoded, or black.
+      const painted = () => media.complete && media.naturalWidth > 0;
+      media.addEventListener('load', () => clock.shown(performance.now()), {once: true});
+      requestAnimationFrame(() => { clock.firstFrame(painted()); if (painted()) clock.shown(performance.now()); });
+    }
     const close = () => { if (!layer.isConnected) return false; stop(); for (const u of kept.splice(0)) URL.revokeObjectURL(u); try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
     layer.append(media, iconButton('close', 'Close', close, 'u-photo-view-close'));
     layer.onclick = e => { if (e.target === layer) close(); };
@@ -4332,6 +4384,36 @@
   function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
   // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
   function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
+  // Issue 168: photo timings, measured in this view and on the box, summed up under the switch.
+  const photoClock = photoTimings({
+    post: samples => call('photos/timings', {samples}),
+    later: (fn, ms) => setTimeout(fn, ms),
+    on: () => switchState.on['photo-timings'] === true,
+  });
+  const thumbWatch = (() => {
+    try {
+      const watch = new PerformanceObserver(list => {
+        for (const e of list.getEntries()) if (e.initiatorType === 'img' && e.name.includes('/api/unified/media/') && e.name.endsWith('kind=thumb')) photoClock.add('photo_thumb', e.duration);
+      });
+      watch.observe({type: 'resource'}); return watch;
+    } catch { return null; } // no PerformanceObserver: thumbnails are not timed
+  })();
+  function photoTimingsRow() {
+    const row = switchRow('photo-timings', 'Photo timings', 'Photo load times are not measured', 'Photo load times are measured and shown here');
+    const sum = node('div', 'u-more-timings'); row.append(sum);
+    const paint = () => {
+      sum.replaceChildren(); sum.hidden = switchState.on['photo-timings'] !== true;
+      if (sum.hidden) return;
+      sum.append(node('span', '', 'Measuring…'));
+      call('status').then(r => {
+        const lines = timingSummary(r?.timings, netLabel);
+        sum.replaceChildren(...(lines.length ? lines : ['No photos measured yet. Open a few chats with photos.']).map(x => node('span', '', x)));
+      }).catch(() => sum.replaceChildren(node('span', '', 'Timings are not available right now.')));
+    };
+    const base = switchState.paints['photo-timings'];
+    switchState.paints['photo-timings'] = () => { base(); paint(); };
+    paint(); return row;
+  }
   // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher). The switch lives
   // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
@@ -4413,7 +4495,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow(), photoPrefetchRow());
+    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow(), photoPrefetchRow(), photoTimingsRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

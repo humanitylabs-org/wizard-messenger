@@ -1821,6 +1821,8 @@ class UnifiedInbox:
                                event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, album=album, push_live=live, mentions=mentions, mentioned=mentioned)
         self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
         self.warm_photo(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
+        if live:
+            self.photo_arrived(identity['network'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
 
     WARM_DAYS = 3
     EDIT_TEXT = ('m.text', 'm.notice', 'm.emote')
@@ -2066,6 +2068,9 @@ class UnifiedInbox:
             if picture and switches and switches.is_on('photo-instant'):
                 self.media(message_id, 'view')
             self.timing('photo_warm', started)
+            stamp = message.get('timestamp') or 0
+            if self.photo_timings_on() and stamp and time.time() * 1000 - stamp < 3600000:
+                self.sample('photo_ready.' + str(message.get('network')), time.time() * 1000 - stamp)
         except EngineError as e:
             if e.status != 404:
                 self.retry_photo(message_id, attempt)
@@ -3158,7 +3163,54 @@ class UnifiedInbox:
         return {'ok': True}
 
     def timing(self, name, started):
-        self.timings = (self.timings + [(name, int((time.time() - started) * 1000))])[-200:]
+        self.sample(name, int((time.time() - started) * 1000))
+
+    def sample(self, name, value):
+        self.timings = (getattr(self, 'timings', []) + [(name, int(value))])[-500:]
+
+    def photo_timings_on(self):
+        switches = getattr(self, 'switches', None)
+        return bool(switches and switches.is_on('photo-timings'))
+
+    def photo_arrived(self, network, msgtype, outgoing, media, stamp):
+        """Switch photo-timings (issue 168): for a live picture from someone else, how long the network and its bridge
+        took to hand it to the box (now minus the message's own time) and how big the original is, per network."""
+        if msgtype not in PHOTO_WARM_TYPES or outgoing or not isinstance(media, dict) or not self.photo_timings_on():
+            return
+        if stamp:
+            self.sample('photo_handover.' + str(network), max(0, time.time() * 1000 - stamp))
+        size = media.get('size')
+        if isinstance(size, (int, float)) and size > 0:
+            self.sample('photo_kb.' + str(network), size / 1024)
+
+    PHOTO_CLIENT_TIMINGS = ('photo_thumb', 'photo_tap', 'photo_sharp', 'photo_black')
+
+    def photo_client_timings(self, payload):
+        """The view's own photo timings (switch photo-timings): thumbnail load, tap to first picture, tap to sharp
+        copy, and 1/0 per open for a black first frame. Only known names and plain numbers are kept."""
+        if not self.photo_timings_on():
+            return {'ok': False, 'kept': 0}
+        kept = 0
+        samples = payload.get('samples') if isinstance(payload, dict) else None
+        for item in (samples if isinstance(samples, list) else [])[:100]:
+            if not isinstance(item, dict) or item.get('name') not in self.PHOTO_CLIENT_TIMINGS:
+                continue
+            ms = item.get('ms')
+            if isinstance(ms, bool) or not isinstance(ms, (int, float)) or not 0 <= ms <= 600000:
+                continue
+            self.sample(item['name'], ms)
+            kept += 1
+        return {'ok': True, 'kept': kept}
+
+    def timing_stats(self):
+        stats = {}
+        for name, ms in getattr(self, 'timings', []):
+            stats.setdefault(name, []).append(ms)
+        out = {}
+        for k, v in stats.items():
+            v = sorted(v)
+            out[k] = {'n': len(v), 'p50': v[len(v) // 2], 'p90': v[min(len(v) - 1, (len(v) * 9) // 10)], 'max': v[-1], 'sum': sum(v)}
+        return out
 
     def dispatch(self, method, path, payload, query=None, raw=None):
         parts = path.split('?')[0].strip('/').split('/')
@@ -3166,12 +3218,11 @@ class UnifiedInbox:
         query = query or {}
         q = lambda k, d=None: (query.get(k) or [d])[0]
         if suffix == ['status'] and method == 'GET':
-            stats = {}
-            for name, ms in self.timings:
-                stats.setdefault(name, []).append(ms)
             return {'telegram': self.telegram_status(), 'matrix_error': self.store.get('sync_error'), 'marmot': self.engine.status().get('state'),
-                    'timings': {k: {'n': len(v), 'p50': sorted(v)[len(v) // 2]} for k, v in stats.items()},
+                    'timings': self.timing_stats(),
                     'read_sync': self.read_sync_stats()}
+        if suffix == ['photos', 'timings'] and method == 'POST':
+            return self.photo_client_timings(payload)
         if suffix == ['sync'] and method == 'POST':
             # The background long-poll keeps the store current; this answers at once.
             return {'state': 'syncing' if self.sync_lock.locked() else 'ready', 'error': self.store.get('sync_error') or None}

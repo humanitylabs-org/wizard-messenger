@@ -30,6 +30,11 @@ SWITCHES = (
                     'Always, so they open at once.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#166']},
+    {'id': 'photo-timings', 'name': 'Photo timings',
+     'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, black '
+                    'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#168']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
