@@ -114,6 +114,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.37 (unlock fix)
+
+Store recipe: pins the image built from main `8cafa04` (#174). A Messenger whose Wizard holds no remembered key (restart, `trusted-owner-unlock.json` missing or unreadable) now shows the unlock card once instead of sitting on "Opening your messages…"; unlocking remembers this Wizard again. Refs #162 #164.
+
 ## 0.2.0-unified.16.36 (photo-speed switches ship; all off by default)
 
 Store recipe only: pins the image built from main `2590ec2`, which carries the photo-speed work from #163 (photos fetched on the box as they arrive, `photo-warm`), #165 (view-size copies and a thumbnail-first viewer, `photo-instant`), #167 (background photo download on the phone, `photo-prefetch`), #169 (per-stage photo timings in Settings, `photo-timings`) and #171 (ready placeholder in Wizard's viewer, `viewer-placeholder`), plus #172 (Drafts at top always on). Every photo switch is off until the owner turns it on from the Tracker. The version strings inside the image still read 16.35; the recipe version is the one the App Manager compares.

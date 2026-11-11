@@ -2,7 +2,7 @@
 wizard: 0.2
 id: messenger
 name: Messenger
-version: 0.2.0-unified.16.36
+version: 0.2.0-unified.16.37
 type: service
 category: app
 summary: Encrypted text conversations with your peers, inside Wizard.
