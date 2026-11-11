@@ -131,6 +131,16 @@
     if (!item?.url) return 'none';
     fallback(item); return 'messenger';
   }
+  // With "Photos open instantly" on (issue 164), Messenger's own viewer shows a still photo in stages: the thumbnail the
+  // bubble already shows (so the first frame is never black), then the box's screen-size view copy, then the original
+  // only on zoom. Off, or for GIFs, videos and photos still sending, it opens the original as before. url(id, kind)
+  // builds a media URL.
+  function photoStages(m, on, url) {
+    const still = on && !m?.local && !m?.pending && (m?.msgtype === 'm.image' || m?.msgtype === 'm.file') && m?.media?.mime !== 'image/gif'
+      && (!m?.media?.mime || String(m.media.mime).startsWith('image/'));
+    const full = m?.local || url(m?.id);
+    return still ? {first: url(m.id, 'thumb'), sharp: url(m.id, 'view'), full} : {first: full, sharp: null, full};
+  }
   // A tapped file attachment downloads once, and shows that it is downloading (issue 157). The box fetches the whole
   // file from its homeserver before it answers, so a plain link looked dead for seconds and every extra tap started
   // another download. start(key, work) runs work(report) unless that key is already running (then it returns null);
@@ -170,7 +180,7 @@
     if (!job.loaded) return 'Downloading…' + (total ? ' · ' + fmt(total) : '');
     return 'Downloading' + (total ? ' ' + Math.min(99, Math.floor(job.loaded * 100 / total)) + '% · ' + fmt(job.loaded) + ' of ' + fmt(total) : ' ' + fmt(job.loaded));
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, fileDownloads, readProgress, downloadLabel};
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2215,19 +2225,37 @@
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
     const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
-    openMedia(window.WizardApp?.media, list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at, photoView);
+    openMedia(window.WizardApp?.media, list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at,
+      item => photoView(item, list, at));
   }
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
   // zooms natively); Close, Esc or Back closes it.
-  function photoView(item) {
+  // With "Photos open instantly" on (issue 164) a photo opens from its thumbnail and sharpens in place (photoStages),
+  // the photos either side are fetched in the background, and zooming in (double tap or pinch) loads the original.
+  function photoView(item, list = [], at = -1) {
     view.photo?.close();
     const before = document.activeElement;
     const layer = node('div', 'u-photo-view'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true'); layer.setAttribute('aria-label', item.name || 'Photo'); layer.tabIndex = -1;
-    let media;
+    const instant = switchState.on['photo-instant'] === true, m = list[at];
+    const stages = item.kind !== 'video' && m ? photoStages(m, instant, mediaURL) : {first: item.url, sharp: null, full: item.url};
+    let media, shown = stages.first, upgrade = () => {}, stop = () => {};
     if (item.kind === 'video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.setAttribute('playsinline', ''); }
-    else { media = node('img'); media.alt = item.name || 'Photo'; media.draggable = false; media.onerror = () => { media.replaceWith(node('p', 'u-photo-view-error', 'Photo unavailable')); }; }
-    media.src = item.url;
-    const close = () => { if (!layer.isConnected) return false; try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
+    else {
+      media = node('img'); media.alt = item.name || 'Photo'; media.draggable = false;
+      media.onerror = () => { if (shown !== stages.full) { shown = stages.full; media.src = shown; return; } media.replaceWith(node('p', 'u-photo-view-error', 'Photo unavailable')); };
+      if (stages.sharp) {
+        let best = 0; // 1: view copy shown, 2: original shown
+        const swap = (url, rank) => { const next = new Image(); next.onload = () => { if (layer.isConnected && rank > best) { best = rank; shown = url; media.src = url; layer.dataset.stage = rank === 2 ? 'full' : 'view'; } }; next.src = url; };
+        layer.dataset.stage = 'thumb'; swap(stages.sharp, 1);
+        upgrade = () => { if (best < 2 && !layer.dataset.zoom) { layer.dataset.zoom = '1'; swap(stages.full, 2); } };
+        media.addEventListener('dblclick', upgrade);
+        const vv = window.visualViewport, zoomed = () => { if ((vv?.scale || 1) > 1.05) upgrade(); };
+        vv?.addEventListener('resize', zoomed); stop = () => vv?.removeEventListener('resize', zoomed);
+        view.photoWarm = [list[at - 1], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(Boolean).map(url => { const img = new Image(); img.src = url; return img; });
+      }
+    }
+    media.src = shown;
+    const close = () => { if (!layer.isConnected) return false; stop(); try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
     layer.append(media, iconButton('close', 'Close', close, 'u-photo-view-close'));
     layer.onclick = e => { if (e.target === layer) close(); };
     layer.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
@@ -4191,6 +4219,8 @@
   function draftsFirstRow() { return switchRow('drafts-first', 'Drafts at top', 'Chats stay in last-message order', 'Chats with a waiting draft lead the list'); }
   // Issue 162: the box fetches incoming photos as they arrive.
   function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
+  // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
+  function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
     const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
@@ -4203,7 +4233,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow());
+    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

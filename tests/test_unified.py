@@ -1,5 +1,7 @@
 import time
+import importlib.util
 import json
+import sys
 import os
 from pathlib import Path
 import tempfile
@@ -769,6 +771,86 @@ class SignalMvpTests(unittest.TestCase):
             full = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['full']})
         self.assertTrue(Path(str(thumb.path) + '.thumb').exists())
         self.assertFalse(Path(str(full.path) + '.thumb').exists())
+
+    def view_resp(self, data):
+        class Resp:
+            headers = {'Content-Type': 'image/jpeg'}
+            def __init__(self): self.data = data
+            def read(self, n=-1):
+                d, self.data = self.data, b''
+                return d
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        return Resp
+
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'Pillow not installed')
+    def test_view_copy_is_screen_size_jpeg_made_once_from_the_original(self):
+        # Issue 164: kind=view is a ~1600 px JPEG q80 built on the box from the cached original, kept with a .view mark.
+        from PIL import Image
+        import io
+        big = io.BytesIO(); Image.new('RGB', (4000, 3000), (200, 30, 30)).save(big, 'JPEG', quality=95)
+        small = io.BytesIO(); Image.new('RGB', (900, 600), (20, 30, 200)).save(small, 'JPEG')
+        self.ingest(self.event('$big', {'msgtype': 'm.image', 'body': 'b.jpg', 'url': 'mxc://messenger.internal/big', 'info': {'mimetype': 'image/jpeg'}}),
+                    self.event('$small', {'msgtype': 'm.image', 'body': 's.jpg', 'url': 'mxc://messenger.internal/small', 'info': {'mimetype': 'image/jpeg'}}),
+                    self.event('$doc', {'msgtype': 'm.file', 'body': 'a.pdf', 'url': 'mxc://messenger.internal/doc', 'info': {'mimetype': 'application/pdf'}}))
+        with patch('unified.urlopen', side_effect=lambda *a, **k: self.view_resp(big.getvalue())()) as op:
+            view = self.inbox.dispatch('GET', '/api/unified/media/$big', {}, {'kind': ['view']})
+            again = self.inbox.dispatch('GET', '/api/unified/media/$big', {}, {'kind': ['view']})
+            full = self.inbox.dispatch('GET', '/api/unified/media/$big', {}, {'kind': ['full']})
+            self.assertEqual(op.call_count, 1)  # the original is fetched once; the copy is made from it
+        self.assertEqual((view.mime, view.inline), ('image/jpeg', True))
+        self.assertEqual(view.path, again.path)
+        self.assertNotEqual(view.path, full.path)
+        self.assertTrue(Path(str(view.path) + '.view').exists())
+        with Image.open(view.path) as img:
+            self.assertEqual(img.size, (1600, 1200))
+        self.assertLess(view.path.stat().st_size, full.path.stat().st_size)
+        with patch('unified.urlopen', side_effect=lambda *a, **k: self.view_resp(small.getvalue())()):
+            view = self.inbox.dispatch('GET', '/api/unified/media/$small', {}, {'kind': ['view']})
+        full = self.inbox.dispatch('GET', '/api/unified/media/$small', {}, {'kind': ['full']})
+        self.assertEqual(view.path, full.path)  # already small: the original is the view copy
+        with self.assertRaises(EngineError) as e:
+            self.inbox.dispatch('GET', '/api/unified/media/$doc', {}, {'kind': ['view']})
+        self.assertEqual(e.exception.status, 404)
+
+    def test_view_copy_without_pillow_serves_the_original(self):
+        self.ingest(self.event('$jpg', {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/jpg', 'info': {'mimetype': 'image/jpeg'}}))
+        with patch('unified.urlopen', side_effect=lambda *a, **k: self.view_resp(b'\xff\xd8\xff\xe0jpegdata')()), \
+                patch.dict(sys.modules, {'PIL': None}):
+            view = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['view']})
+            full = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['full']})
+        self.assertEqual(view.path, full.path)
+
+    def test_photo_warm_builds_the_view_copy_with_photo_instant(self):
+        pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}
+        self.ingest(self.event('$pic', pic))
+        calls = []
+        self.inbox.media = lambda mid, kind: calls.append(kind)
+        self.inbox.warm_photo_now('$pic')
+        self.assertEqual(calls, ['thumb', None])
+        self.inbox.switches.set('photo-instant', True)
+        calls.clear(); self.inbox.warm_photo_now('$pic')
+        self.assertEqual(calls, ['thumb', None, 'view'])
+
+    def test_cache_drops_originals_then_view_copies_then_thumbnails(self):
+        cache = Path(self.tmp.name) / 'cache3'
+        cache.mkdir()
+        def put(name, age, mark=None):
+            path = cache / name
+            path.write_bytes(b'x' * 100)
+            (cache / (name + '.type')).write_text('image/jpeg')
+            if mark:
+                (cache / (name + '.' + mark)).touch()
+            os.utime(path, (1000 + age, 1000 + age))
+        with patch.object(unified, 'MEDIA_CACHE_MAX', 250):
+            self.inbox.switches.set('photo-instant', True)
+            put('thumb', 0, 'thumb'); put('view', 1, 'view'); put('full', 9)
+            self.inbox.evict(cache)
+            self.assertEqual(sorted(p.name for p in cache.iterdir() if '.' not in p.name), ['thumb', 'view'])
+            put('full', 9)
+            with patch.object(unified, 'MEDIA_CACHE_MAX', 150):
+                self.inbox.evict(cache)
+            self.assertEqual(sorted(p.name for p in cache.iterdir()), ['thumb', 'thumb.thumb', 'thumb.type'])
 
     def test_media_proxy_caches_and_serves_safe_types_only(self):
         self.ingest(self.event('$svg', {'msgtype': 'm.file', 'body': 'x.svg', 'url': 'mxc://messenger.internal/svg', 'info': {'mimetype': 'image/svg+xml'}}))

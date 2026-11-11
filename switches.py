@@ -20,6 +20,11 @@ SWITCHES = (
      'description': 'The box fetches incoming photos, stickers, GIFs and videos as they arrive, so they open at once.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#162']},
+    {'id': 'photo-instant', 'name': 'Photos open instantly',
+     'description': 'A tapped photo shows its thumbnail at once and sharpens to a screen-size copy the box keeps; '
+                    'zooming in loads the original.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#164']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

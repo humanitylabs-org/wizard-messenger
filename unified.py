@@ -152,6 +152,10 @@ MEDIA_CACHE_MAX = 300 * 1024 * 1024
 PHOTO_WARM_MAX = 25 * 1024 * 1024
 PHOTO_WARM_TYPES = ('m.image', 'm.sticker', 'm.video')
 PHOTO_WARM_RETRY = (5, 30, 120)
+# Switch photo-instant (issue 164): a screen-size "view" copy of each still photo, built on the box from the original.
+PHOTO_VIEW_SIDE = 1600
+PHOTO_VIEW_QUALITY = 80
+PHOTO_VIEW_MAX_PIXELS = 80_000_000  # larger originals are served as they are, never decoded on the box
 
 
 def photo_cache_max():
@@ -160,6 +164,36 @@ def photo_cache_max():
     except ValueError:
         mb = 2048
     return max(mb, 300) * 1024 * 1024
+
+
+def shrink_photo(source, target):
+    """Write a JPEG copy of the photo at source, longest side at most PHOTO_VIEW_SIDE, to target. None when Pillow is
+    missing, the file is not a still image, it is too large to decode safely, or it is already that small."""
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return None
+    try:
+        with Image.open(source) as img:
+            if getattr(img, 'n_frames', 1) > 1 or img.width * img.height > PHOTO_VIEW_MAX_PIXELS:
+                return None
+            if max(img.size) <= PHOTO_VIEW_SIDE and img.format == 'JPEG':
+                return None
+            img.draft('RGB', (PHOTO_VIEW_SIDE, PHOTO_VIEW_SIDE))
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGBA')
+                flat = Image.new('RGB', img.size, (255, 255, 255))
+                flat.paste(img, mask=img.getchannel('A'))
+                img = flat
+            else:
+                img = img.convert('RGB')
+            img.thumbnail((PHOTO_VIEW_SIDE, PHOTO_VIEW_SIDE))
+            img.save(target, 'JPEG', quality=PHOTO_VIEW_QUALITY, optimize=True)
+        return target
+    except Exception:
+        Path(target).unlink(missing_ok=True)
+        return None
 
 
 def webm_to_ogg(data):
@@ -2024,9 +2058,13 @@ class UnifiedInbox:
         try:
             message = self.store.message(message_id)
             media = json.loads(message['media']) if message.get('media') else {}
-            if media.get('thumb') or is_picture(message.get('msgtype'), media):
+            picture = is_picture(message.get('msgtype'), media)
+            if media.get('thumb') or picture:
                 self.media(message_id, 'thumb')
             self.media(message_id, None)
+            switches = getattr(self, 'switches', None)
+            if picture and switches and switches.is_on('photo-instant'):
+                self.media(message_id, 'view')
             self.timing('photo_warm', started)
         except EngineError as e:
             if e.status != 404:
@@ -2910,6 +2948,8 @@ class UnifiedInbox:
             if not pick.get('mxc'):
                 fail('not_found', 'No link preview', 404)
             return self.media_blob(pick['mxc'], 'image/jpeg', 'preview', thumb=True)
+        if kind == 'view':
+            return self.view_copy(message, media)
         if media and media.get('marmot') and message['network'] == 'messenger':
             return self.marmot_media(message, media, kind)
         if not media or not media.get('mxc'):
@@ -2925,6 +2965,34 @@ class UnifiedInbox:
             # The homeserver's thumbnailer turns an animated GIF into a still picture: send the GIF itself.
             return self.media_blob(mxc, mime, media.get('filename') or 'media')
         return self.media_blob(mxc, mime, media.get('filename') or 'media', thumb=thumb and not media.get('thumb'), raw_thumb=thumb)
+
+    def view_copy(self, message, media):
+        """A still photo's screen-size copy (longest side PHOTO_VIEW_SIDE, JPEG q80), made once from the cached original
+        and kept next to it (issue 164). GIFs, small originals and anything that cannot be decoded get the original."""
+        if not media or not is_picture(message.get('msgtype'), media):
+            fail('not_found', 'No preview for that message', 404)
+        full = self.media(message['id'], None)
+        if full.mime not in ('image/jpeg', 'image/png', 'image/webp'):
+            return full
+        path = full.path.with_name(hashlib.sha256((full.path.name + '|view%d' % PHOTO_VIEW_SIDE).encode()).hexdigest())
+        meta_path, marker = Path(str(path) + '.type'), Path(str(path) + '.view')
+        with _MEDIA_LOCKS[int(path.name[:8], 16) % len(_MEDIA_LOCKS)]:
+            if path.exists() and marker.exists():
+                os.utime(path)
+                return Blob(path, 'image/jpeg', full.filename, True)
+            if meta_path.exists() and meta_path.read_text().strip() == 'original':
+                return full  # this original was already found not worth a copy
+            started = time.time()
+            made = shrink_photo(full.path, path.with_name(path.name + '.part-' + secrets.token_hex(4)))
+            if not made:
+                meta_path.write_text('original')
+                return full
+            meta_path.write_text('image/jpeg')
+            marker.touch()
+            os.replace(made, path)
+            self.timing('photo_view', started)
+            self.evict(path.parent)
+        return Blob(path, 'image/jpeg', full.filename, True)
 
     def media_blob(self, mxc, mime, name, *, thumb=False, raw_thumb=False, size=800):
         match = re.fullmatch(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)', mxc or '')
@@ -2987,17 +3055,19 @@ class UnifiedInbox:
     def evict(self, cache):
         switches = getattr(self, 'switches', None)  # some tests build a bare inbox
         warm = bool(switches and switches.is_on('photo-warm'))
+        tiered = warm or bool(switches and switches.is_on('photo-instant'))
         limit = photo_cache_max() if warm else MEDIA_CACHE_MAX
         files = []
         for p in cache.iterdir():
-            if not p.is_file() or p.name.endswith(('.type', '.thumb')):
+            if not p.is_file() or p.name.endswith(('.type', '.thumb', '.view')):
                 continue
             try:
                 st = p.stat()
             except OSError:
                 continue
-            # With photo-warm on, full files go before thumbnails, oldest first within each.
-            tier = 1 if warm and Path(str(p) + '.thumb').exists() else 0
+            # With photo-warm or photo-instant on, full files go first, then view copies, then thumbnails, oldest
+            # first within each.
+            tier = (2 if Path(str(p) + '.thumb').exists() else 1 if Path(str(p) + '.view').exists() else 0) if tiered else 0
             files.append((tier, st.st_atime, st.st_size, p))
         total = sum(f[2] for f in files)
         for _, _, size, p in sorted(files, key=lambda f: (f[0], f[1])):
@@ -3006,6 +3076,7 @@ class UnifiedInbox:
             p.unlink(missing_ok=True)
             Path(str(p) + '.type').unlink(missing_ok=True)
             Path(str(p) + '.thumb').unlink(missing_ok=True)
+            Path(str(p) + '.view').unlink(missing_ok=True)
             total -= size
 
     def react(self, message_id, payload):
@@ -3130,7 +3201,7 @@ class UnifiedInbox:
         if suffix and suffix[0] == 'picker' and method == 'GET':
             return self.picker(suffix[1:], q)
         if len(suffix) == 2 and suffix[0] == 'media' and method == 'GET':
-            return self.media(text(suffix[1], 300), q('kind') if q('kind') in ('thumb', 'link0', 'link1') else 'full')
+            return self.media(text(suffix[1], 300), q('kind') if q('kind') in ('thumb', 'view', 'link0', 'link1') else 'full')
         if len(suffix) >= 3 and suffix[0] == 'people' and suffix[2] == 'catch-up':
             # Owner session only: no agent capability maps to these routes (permissions.capability_for -> None).
             pid = suffix[1]
