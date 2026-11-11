@@ -25,6 +25,11 @@ SWITCHES = (
                     'zooming in loads the original.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#164']},
+    {'id': 'viewer-placeholder', 'name': "Photos ready in Wizard's viewer",
+     'description': "A photo opened in Wizard's shared viewer comes with a ready copy (the one this phone downloaded, "
+                    'else its thumbnail) to show until the original is in. Save and Share still use the original.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#170']},
     {'id': 'photo-prefetch', 'name': 'Background photo download',
      'description': 'The phone quietly downloads recent photos from your newest chats, on Wi-Fi only unless you choose '
                     'Always, so they open at once.',

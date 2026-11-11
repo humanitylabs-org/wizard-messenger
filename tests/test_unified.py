@@ -741,9 +741,10 @@ class SignalMvpTests(unittest.TestCase):
         self.inbox.warm_photo_now('$on')
         samples = [{'name': 'photo_tap', 'ms': 40}, {'name': 'photo_tap', 'ms': 60}, {'name': 'photo_black', 'ms': 1},
                    {'name': 'photo_black', 'ms': 0}, {'name': 'photo_thumb', 'ms': 120.6},
+                   {'name': 'photo_wizard', 'ms': 15},
                    {'name': 'evil', 'ms': 1}, {'name': 'photo_tap', 'ms': -1}, {'name': 'photo_tap', 'ms': True},
                    {'name': 'photo_tap', 'ms': 'x'}, {'name': 'photo_tap', 'ms': 10 ** 9}, 'junk']
-        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/photos/timings', {'samples': samples}), {'ok': True, 'kept': 5})
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/photos/timings', {'samples': samples}), {'ok': True, 'kept': 6})
         t = self.inbox.dispatch('GET', '/api/unified/status', {})['timings']
         self.assertEqual(t['photo_handover.telegram']['n'], 1)
         self.assertGreaterEqual(t['photo_handover.telegram']['p50'], 2000)

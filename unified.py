@@ -3183,11 +3183,11 @@ class UnifiedInbox:
         if isinstance(size, (int, float)) and size > 0:
             self.sample('photo_kb.' + str(network), size / 1024)
 
-    PHOTO_CLIENT_TIMINGS = ('photo_thumb', 'photo_tap', 'photo_sharp', 'photo_black')
+    PHOTO_CLIENT_TIMINGS = ('photo_thumb', 'photo_tap', 'photo_sharp', 'photo_black', 'photo_wizard')
 
     def photo_client_timings(self, payload):
         """The view's own photo timings (switch photo-timings): thumbnail load, tap to first picture, tap to sharp
-        copy, and 1/0 per open for a black first frame. Only known names and plain numbers are kept."""
+        copy, 1/0 per open for a black first frame, and tap to hand-over to Wizard's viewer. Only known names and plain numbers are kept."""
         if not self.photo_timings_on():
             return {'ok': False, 'kept': 0}
         kept = 0

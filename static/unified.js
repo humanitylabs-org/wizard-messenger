@@ -141,6 +141,18 @@
     const full = m?.local || url(m?.id);
     return still ? {first: url(m.id, 'thumb'), sharp: url(m.id, 'view'), full} : {first: full, sharp: null, full};
   }
+  // The items Messenger hands Wizard's shared media viewer. With "Photos ready in Wizard's viewer" on (issue 170), each
+  // still photo also carries a placeholder: the screen-size view copy this phone already downloaded (blobs maps its URL
+  // to a blob: URL), else the thumbnail the bubble shows. Wizard shows it until the original is in, so the first frame
+  // is never black; Save and Share keep the original (url). Off, the items are exactly as before.
+  function viewerItems(list, {placeholder = false, url, who = () => 'Photo', blobs = {}} = {}) {
+    return (list || []).map(x => {
+      const item = {url: url(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)};
+      const stages = placeholder && item.kind === 'image' ? photoStages(x, true, url) : null;
+      if (stages?.sharp) item.placeholder = blobs[stages.sharp] || stages.first;
+      return item;
+    });
+  }
   // A tapped file attachment downloads once, and shows that it is downloading (issue 157). The box fetches the whole
   // file from its homeserver before it answers, so a plain link looked dead for seconds and every extra tap started
   // another download. start(key, work) runs work(report) unless that key is already running (then it returns null);
@@ -289,6 +301,7 @@
   // photo_thumb: a bubble thumbnail's request, from the browser's resource timing.
   // photo_tap: a tap until the viewer shows a picture. photo_sharp: a tap until the screen-size copy is in.
   // photo_black: 1 when the viewer's first frame had no picture yet, else 0.
+  // photo_wizard: a tap until the photo is handed to Wizard's shared viewer (issue 170).
   // post(samples) sends a batch; later(fn, ms) schedules; on() says whether the switch is on.
   function photoTimings({post, later, on}) {
     const batch = []; let timer = null;
@@ -317,6 +330,7 @@
     stage('photo_thumb', 'Thumbnail', 300);
     stage('photo_tap', 'Tap to picture', 150);
     if (t.photo_sharp?.n) lines.push('Tap to sharp copy ' + ms(t.photo_sharp.p50) + ' (p90 ' + ms(t.photo_sharp.p90 ?? t.photo_sharp.p50) + ')');
+    if (t.photo_wizard?.n) lines.push('Tap to Wizard\'s viewer ' + ms(t.photo_wizard.p50) + ' (p90 ' + ms(t.photo_wizard.p90 ?? t.photo_wizard.p50) + ', ' + t.photo_wizard.n + ' opened)');
     if (t.photo_black?.n) lines.push('Black first frames ' + Math.round(t.photo_black.sum ?? 0) + ' of ' + t.photo_black.n + ' opened (target 0)');
     const nets = [...new Set(Object.keys(t).filter(k => /^photo_(handover|ready|kb)\./.test(k)).map(k => k.slice(k.indexOf('.') + 1)))].sort();
     for (const net of nets) {
@@ -328,7 +342,7 @@
     }
     return lines;
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2375,10 +2389,20 @@
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
     const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
-    const tapped = performance.now();
-    openMedia(window.WizardApp?.media, list.map(x => ({url: mediaURL(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)})), at,
-      item => photoView(item, list, at, tapped));
+    const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
+    const open = blobs => {
+      const how = openMedia(window.WizardApp?.media, viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+      if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
+    };
+    // Issue 170: the tapped photo and the ones either side, when this phone already has their view copies, go to
+    // Wizard as blob: URLs, so the first frame and the first swipe show a sharp picture. A slow cache never holds the tap.
+    const near = placeholder ? [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(u => u && photoCache.has(u)) : [];
+    if (!near.length) { open({}); return; }
+    const blobs = {}, keep = viewerBlobs;
+    const reads = near.map(u => photoCache.match(u).then(b => { if (b) { blobs[u] = b; keep.push(b); while (keep.length > 12) URL.revokeObjectURL(keep.shift()); } }));
+    Promise.race([Promise.all(reads), sleep(120)]).then(() => open({...blobs}));
   }
+  const viewerBlobs = []; // blob: URLs handed to Wizard's viewer; the oldest are revoked once more than 12 are out
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
   // zooms natively); Close, Esc or Back closes it.
   // With "Photos open instantly" on (issue 164) a photo opens from its thumbnail and sharpens in place (photoStages),
@@ -4384,6 +4408,8 @@
   function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
   // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
   function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
+  // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
+  function viewerPlaceholderRow() { return switchRow('viewer-placeholder', 'Photos ready in Wizard\'s viewer', 'Wizard\'s viewer loads the original', 'Wizard\'s viewer shows a ready copy first'); }
   // Issue 168: photo timings, measured in this view and on the box, summed up under the switch.
   const photoClock = photoTimings({
     post: samples => call('photos/timings', {samples}),
@@ -4495,7 +4521,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow(), photoPrefetchRow(), photoTimingsRow());
+    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

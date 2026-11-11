@@ -43,6 +43,11 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'A tapped photo shows its thumbnail at once and sharpens to a screen-size copy the box keeps; '
                                'zooming in loads the original.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#164']}, {
+                'id': 'viewer-placeholder', 'name': "Photos ready in Wizard's viewer",
+                'description': "A photo opened in Wizard's shared viewer comes with a ready copy (the one this phone "
+                               'downloaded, else its thumbnail) to show until the original is in. Save and Share still use '
+                               'the original.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#170']}, {
                 'id': 'photo-prefetch', 'name': 'Background photo download',
                 'description': 'The phone quietly downloads recent photos from your newest chats, on Wi-Fi only unless you '
                                'choose Always, so they open at once.',
@@ -150,7 +155,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"drafts-first": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('drafts-first'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['drafts-first', 'photo-warm', 'photo-instant', 'photo-prefetch', 'photo-timings'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['drafts-first', 'photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings'])
 
 
 if __name__ == '__main__':
