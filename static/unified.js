@@ -180,7 +180,111 @@
     if (!job.loaded) return 'Downloading…' + (total ? ' · ' + fmt(total) : '');
     return 'Downloading' + (total ? ' ' + Math.min(99, Math.floor(job.loaded * 100 / total)) + '% · ' + fmt(job.loaded) + ' of ' + fmt(total) : ' ' + fmt(job.loaded));
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel};
+  // Background photo download (issue 166, switch photo-prefetch, off by default): the phone quietly fetches thumbnails
+  // of the last messages of the most recent chats, then the box's view copies of the newest photos in each, so a
+  // tapped photo is already on the device. PREFETCH holds the sizes; prefetchPlan() lists what to fetch, in order.
+  const PREFETCH = {chats: 15, messages: 40, views: 10, cap: 300 * 1024 * 1024, concurrency: 2};
+  // Whether a message's bubble shows a thumbnail (api/unified/media/<id>?kind=thumb): photos, stickers, image files
+  // and videos that carry a poster.
+  function hasThumb(m) {
+    if (!m?.id || !m.media || m.local || m.pending || m.deleted || m.unavailable) return false;
+    const mime = String(m.media.mime || '');
+    return m.msgtype === 'm.image' || m.msgtype === 'm.sticker' || (m.msgtype === 'm.file' && mime.startsWith('image/')) || (m.msgtype === 'm.video' && !!m.media.thumb);
+  }
+  // chats: newest first. messagesOf(id): that chat's messages, oldest first. url(id, kind) builds a media URL.
+  // Every thumbnail first (newest chat, newest message first), then the view copies.
+  function prefetchPlan(chats, messagesOf, url, limits = PREFETCH) {
+    const thumbs = [], views = [];
+    for (const chat of (chats || []).slice(0, limits.chats)) {
+      const recent = (messagesOf(chat.id) || []).slice(-limits.messages).reverse();
+      let n = 0;
+      for (const m of recent) {
+        if (!hasThumb(m)) continue;
+        thumbs.push({url: url(m.id, 'thumb'), kind: 'thumb', id: m.id});
+        const sharp = n < limits.views ? photoStages(m, true, url).sharp : null;
+        if (sharp) { views.push({url: sharp, kind: 'view', id: m.id}); n += 1; }
+      }
+    }
+    return [...thumbs, ...views];
+  }
+  // mode 'off' | 'wifi' (default) | 'always'. conn is navigator.connection (absent in Safari and Firefox). With
+  // "Wi-Fi only" a phone downloads only when the browser says it is on Wi-Fi or a cable and Data Saver is off; a phone
+  // whose browser cannot tell downloads nothing, so cellular is never used by guess. A desktop that cannot tell is
+  // treated as unmetered.
+  function prefetchAllowed(mode, conn, mobile) {
+    if (mode === 'off') return false;
+    if (mode === 'always') return true;
+    if (conn?.saveData) return false;
+    const type = conn?.type;
+    if (type === 'wifi' || type === 'ethernet') return true;
+    if (type === 'cellular' || type === 'bluetooth' || type === 'wimax' || type === 'none') return false;
+    return !mobile;
+  }
+  // The download queue: one or two at a time, low priority, paused while busy() (the owner is loading something) or
+  // while allowed() says no. Each file is kept in Cache Storage (open() gives the cache, or null without one) and
+  // listed in index ({load, save}) with its size. Over cap, view copies go first, oldest first, then thumbnails.
+  function photoPrefetcher({get, open, index, allowed, busy, later, now = () => Date.now(), cap = PREFETCH.cap, concurrency = PREFETCH.concurrency, retryMs = 800}) {
+    let entries = {}; try { entries = index.load() || {}; } catch { entries = {}; }
+    const queue = [], queued = new Set(), failed = new Set();
+    let running = 0, waiting = false, epoch = 0;
+    const save = () => { try { index.save(entries); } catch { /* storage full or blocked */ } };
+    const total = () => Object.values(entries).reduce((n, e) => n + (e.size || 0), 0);
+    function add(items, front = false) {
+      const fresh = (items || []).filter(x => x?.url && !entries[x.url] && !queued.has(x.url) && !failed.has(x.url));
+      for (const x of fresh) queued.add(x.url);
+      // Thumbnails always go before any view copy still waiting; a live message goes before everything.
+      if (front) queue.unshift(...fresh);
+      else {
+        const at = queue.findIndex(x => x.kind === 'view');
+        queue.splice(at < 0 ? queue.length : at, 0, ...fresh.filter(x => x.kind !== 'view'));
+        queue.push(...fresh.filter(x => x.kind === 'view'));
+      }
+      pump(); return fresh.length;
+    }
+    function wait() { if (waiting) return; waiting = true; later(() => { waiting = false; pump(); }, retryMs); }
+    function pump() {
+      while (running < concurrency && queue.length) {
+        if (!allowed()) return;
+        if (busy()) { wait(); return; }
+        const item = queue.shift(), mine = epoch; running += 1;
+        Promise.resolve().then(() => work(item, mine)).catch(() => { failed.add(item.url); })
+          .finally(() => { running -= 1; queued.delete(item.url); pump(); });
+      }
+    }
+    async function work(item, mine) {
+      const res = await get(item.url);
+      if (!res?.ok) { failed.add(item.url); return; }
+      const blob = await res.blob();
+      if (mine !== epoch) return;
+      const cache = await open();
+      if (cache) await cache.put(item.url, new Response(blob, {headers: {'Content-Type': blob.type || res.headers?.get?.('Content-Type') || 'application/octet-stream'}}));
+      if (mine !== epoch) return;
+      entries[item.url] = {kind: item.kind, size: blob.size || 0, at: now()};
+      await evict(cache); save();
+    }
+    async function evict(cache) {
+      let size = total(); if (size <= cap) return;
+      const order = Object.entries(entries).sort(([, a], [, b]) => (a.kind === 'view' ? 0 : 1) - (b.kind === 'view' ? 0 : 1) || a.at - b.at);
+      for (const [url, e] of order) {
+        if (size <= cap) break;
+        delete entries[url]; size -= e.size || 0;
+        try { await cache?.delete(url); } catch { /* already gone */ }
+      }
+    }
+    // A blob: URL for a file kept here, or null. The caller revokes it.
+    async function match(url) {
+      if (!entries[url]) return null;
+      try { const cache = await open(); const hit = await cache?.match(url); return hit ? URL.createObjectURL(await hit.blob()) : null; } catch { return null; }
+    }
+    // Lock: forget every kept file.
+    async function clear() {
+      epoch += 1; queue.length = 0; queued.clear(); failed.clear();
+      const urls = Object.keys(entries); entries = {}; save();
+      try { const cache = await open(); for (const url of urls) await cache?.delete(url); } catch { /* nothing kept */ }
+    }
+    return {add, pump, match, clear, has: url => !!entries[url], stats: () => ({files: Object.keys(entries).length, bytes: total(), queued: queue.length, running})};
+  }
+  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -811,7 +915,7 @@
     if (n === badgeShown) return; badgeShown = n;
     try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
-  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
+  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { photoCache.clear(); } catch { /* not started */ } try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
   let recent = [];
   let csrf = () => '';
   let feedCtl = null;
@@ -882,6 +986,7 @@
     if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
     for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
+    if (r.messages) prefetchLive(r.messages);
     if (s.person && store.threads[s.person]) { paintHead(); paintThread(); }
     if ((!s.person || split.on) && s.tab !== 'messenger') drawList();
     persist();
@@ -915,6 +1020,7 @@
     keys.forEach((k, i) => { store.lists[k] = rows[i][k] || []; });
     // The older of the two cursors, so the change feed cannot skip anything between the two reads.
     if (!store.seq && rows.length) { store.seq = Math.min(...rows.map(r => r.seq || 0)); feed(); }
+    prefetchSoon();
   }
   // Whether a list load that started earlier may still paint: in the split the open chat never cancels it.
   const listLive = (epoch, gen) => split.on ? gen === split.listGen && s.ready : s.epoch === epoch && !s.person;
@@ -2239,13 +2345,18 @@
     const instant = switchState.on['photo-instant'] === true, m = list[at];
     const stages = item.kind !== 'video' && m ? photoStages(m, instant, mediaURL) : {first: item.url, sharp: null, full: item.url};
     let media, shown = stages.first, upgrade = () => {}, stop = () => {};
+    const kept = [];
     if (item.kind === 'video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.setAttribute('playsinline', ''); }
     else {
       media = node('img'); media.alt = item.name || 'Photo'; media.draggable = false;
       media.onerror = () => { if (shown !== stages.full) { shown = stages.full; media.src = shown; return; } media.replaceWith(node('p', 'u-photo-view-error', 'Photo unavailable')); };
       if (stages.sharp) {
         let best = 0; // 1: view copy shown, 2: original shown
-        const swap = (url, rank) => { const next = new Image(); next.onload = () => { if (layer.isConnected && rank > best) { best = rank; shown = url; media.src = url; layer.dataset.stage = rank === 2 ? 'full' : 'view'; } }; next.src = url; };
+        // A view copy this phone already downloaded in the background (issue 166) comes from Cache Storage.
+        const swap = (url, rank) => {
+          const next = new Image(); next.onload = () => { if (layer.isConnected && rank > best) { best = rank; shown = next.src; media.src = next.src; layer.dataset.stage = rank === 2 ? 'full' : 'view'; } };
+          (rank === 1 && photoCache.has(url) ? photoCache.match(url) : Promise.resolve(null)).then(hit => { if (hit) kept.push(hit); next.src = hit || url; });
+        };
         layer.dataset.stage = 'thumb'; swap(stages.sharp, 1);
         upgrade = () => { if (best < 2 && !layer.dataset.zoom) { layer.dataset.zoom = '1'; swap(stages.full, 2); } };
         media.addEventListener('dblclick', upgrade);
@@ -2255,7 +2366,7 @@
       }
     }
     media.src = shown;
-    const close = () => { if (!layer.isConnected) return false; stop(); try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
+    const close = () => { if (!layer.isConnected) return false; stop(); for (const u of kept.splice(0)) URL.revokeObjectURL(u); try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
     layer.append(media, iconButton('close', 'Close', close, 'u-photo-view-close'));
     layer.onclick = e => { if (e.target === layer) close(); };
     layer.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
@@ -4183,7 +4294,7 @@
   function applySwitches(data) {
     const before = draftsFirst(), was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
-    if (was !== JSON.stringify(switchState.on)) repaintSwitches();
+    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); }
     if (before !== draftsFirst()) drawList();
   }
   async function syncSwitches() {
@@ -4221,6 +4332,75 @@
   function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
   // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
   function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
+  // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher). The switch lives
+  // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
+  const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
+  const prefetchMode = () => { if (switchState.on['photo-prefetch'] !== true) return 'off'; try { return localStorage.getItem(PREFETCH_MODE_KEY) === 'always' ? 'always' : 'wifi'; } catch { return 'wifi'; } };
+  const prefetchBusy = {loads: 0, until: 0};
+  const onPhone = () => { try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches; } catch { return false; } };
+  const photoCache = photoPrefetcher({
+    get: url => fetch(url, {credentials: 'same-origin', priority: 'low'}),
+    open: () => { try { return typeof caches === 'undefined' ? null : caches.open(PREFETCH_CACHE).catch(() => null); } catch { return null; } },
+    index: {load: () => JSON.parse(localStorage.getItem(PREFETCH_INDEX_KEY) || '{}'), save: e => localStorage.setItem(PREFETCH_INDEX_KEY, JSON.stringify(e))},
+    allowed: () => !document.hidden && prefetchAllowed(prefetchMode(), navigator.connection, onPhone()),
+    busy: () => prefetchBusy.loads > 0 || Date.now() < prefetchBusy.until,
+    later: (fn, ms) => setTimeout(fn, ms),
+  });
+  // Anything the owner asks for (a chat, older messages, a send) pauses the queue; so does a tap, for a moment.
+  const watchBusy = inner => (path, ...rest) => {
+    if (String(path).includes('api/unified/updates')) return inner(path, ...rest);
+    prefetchBusy.loads += 1;
+    return Promise.resolve().then(() => inner(path, ...rest)).finally(() => { prefetchBusy.loads -= 1; photoCache.pump(); });
+  };
+  function startPrefetch() {
+    document.addEventListener('pointerdown', () => { prefetchBusy.until = Date.now() + 1500; }, {capture: true, passive: true});
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) photoCache.pump(); });
+    try { navigator.connection?.addEventListener?.('change', () => photoCache.pump()); } catch { /* no Network Information API */ }
+  }
+  let prefetchTimer = null, rawApi = null;
+  const prefetchLoaded = new Set();
+  // After the chat list loads: the 15 newest chats. A chat this device has not opened is read once per session.
+  function prefetchSoon() {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = setTimeout(async () => {
+      if (prefetchMode() === 'off' || !s.ready) return;
+      const chats = [...(store.lists.people || []), ...(store.lists.groups || [])].sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, PREFETCH.chats);
+      const fetched = Object.create(null);
+      const messagesOf = id => store.threads[id]?.messages || fetched[id] || [];
+      photoCache.add(prefetchPlan(chats, messagesOf, mediaURL));
+      for (const p of chats) {
+        if (store.threads[p.id] || prefetchLoaded.has(p.id) || !(rawApi || api)) continue;
+        if (prefetchMode() === 'off' || !prefetchAllowed(prefetchMode(), navigator.connection, onPhone())) return;
+        while (prefetchBusy.loads > 0 || Date.now() < prefetchBusy.until) await sleep(800);
+        prefetchLoaded.add(p.id);
+        try { fetched[p.id] = (await (rawApi || api)('api/unified/people/' + encodeURIComponent(p.id) + '?limit=' + PREFETCH.messages, {})).messages || []; } catch { continue; }
+        photoCache.add(prefetchPlan([p], messagesOf, mediaURL));
+      }
+    }, 1500);
+  }
+  // A live new message: its thumbnail and view copy go to the front of the queue.
+  function prefetchLive(messages) {
+    if (prefetchMode() === 'off') return;
+    for (const [pid, rows] of Object.entries(messages || {})) photoCache.add(prefetchPlan([{id: pid}], () => rows, mediaURL), true);
+  }
+  function photoPrefetchRow() {
+    const id = 'photo-prefetch', name = 'Background photo download';
+    const row = node('div', 'u-more-row u-more-' + id), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', name);
+    row.append(node('span', 'u-more-label', name), group);
+    const paint = () => { const mode = prefetchMode(); for (const b of group.children) { const on = b.dataset.mode === mode; b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
+    const choose = async mode => {
+      if (mode !== 'off') { try { localStorage.setItem(PREFETCH_MODE_KEY, mode); } catch { /* no storage: Wi-Fi only */ } }
+      const on = mode !== 'off';
+      if ((switchState.on[id] === true) !== on) await setSwitch(id, on); else paint();
+      if (on) prefetchSoon();
+    };
+    for (const [mode, label, hint] of [['off', 'Off', 'Photos load when you open them'], ['wifi', 'Wi-Fi only', 'Recent photos download on Wi-Fi'], ['always', 'Always', 'Recent photos download on any network']]) {
+      const b = button(label, () => choose(mode), 'u-view-btn');
+      b.dataset.mode = mode; b.title = hint; b.setAttribute('role', 'radio'); group.append(b);
+    }
+    switchState.paints[id] = paint;
+    paint(); return row;
+  }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
     const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
@@ -4233,7 +4413,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow());
+    group.append(inboxViewRow(), draftsFirstRow(), photoWarmRow(), photoInstantRow(), photoPrefetchRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.
@@ -4626,7 +4806,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { api = options.api; native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;

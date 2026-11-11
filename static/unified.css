@@ -1146,9 +1146,11 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-cu-off { border: 1px solid var(--wz-border, var(--line)); }
 
 /* Inbox view (Settings): a two-way choice, Chats (default) or Compact; 44px tap targets, theme tokens only. */
-.u-more-view, .u-more-drafts-first, .u-more-photo-warm, .u-more-photo-instant { justify-content: space-between; flex-wrap: wrap; }
-.u-more-view .u-more-label, .u-more-drafts-first .u-more-label, .u-more-photo-warm .u-more-label, .u-more-photo-instant .u-more-label { flex: 1 1 8rem; min-width: 0; }
+.u-more-view, .u-more-drafts-first, .u-more-photo-warm, .u-more-photo-instant, .u-more-photo-prefetch { justify-content: space-between; flex-wrap: wrap; }
+.u-more-view .u-more-label, .u-more-drafts-first .u-more-label, .u-more-photo-warm .u-more-label, .u-more-photo-instant .u-more-label, .u-more-photo-prefetch .u-more-label { flex: 1 1 8rem; min-width: 0; }
 .u-view-choice { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; border-radius: 12px; background: var(--raised); flex: 0 1 15rem; }
 .u-view-btn { min-height: 44px; min-width: 44px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2, var(--ink)); font: inherit; font-weight: 600; cursor: pointer; }
 .u-view-btn.on { background: var(--accent); color: var(--on-accent); }
+.u-more-photo-prefetch .u-view-choice { grid-template-columns: repeat(3, 1fr); flex-basis: 20rem; }
+.u-more-photo-prefetch .u-view-btn { padding: 0 10px; white-space: nowrap; }
 .u-view-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -42,7 +42,11 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'photo-instant', 'name': 'Photos open instantly',
                 'description': 'A tapped photo shows its thumbnail at once and sharpens to a screen-size copy the box keeps; '
                                'zooming in loads the original.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#164']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#164']}, {
+                'id': 'photo-prefetch', 'name': 'Background photo download',
+                'description': 'The phone quietly downloads recent photos from your newest chats, on Wi-Fi only unless you '
+                               'choose Always, so they open at once.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#166']}])
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -142,7 +146,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"drafts-first": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('drafts-first'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['drafts-first', 'photo-warm', 'photo-instant'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['drafts-first', 'photo-warm', 'photo-instant', 'photo-prefetch'])
 
 
 if __name__ == '__main__':
