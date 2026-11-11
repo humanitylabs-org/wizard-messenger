@@ -723,6 +723,38 @@ class SignalMvpTests(unittest.TestCase):
         self.inbox.warm_photo_now('$pic')
         self.assertEqual(retried, [('$pic', 1)])  # a missing file is not retried
 
+    def test_photo_timings_only_with_the_switch(self):
+        # Issue 168: off, nothing is measured and the view's samples are refused; on, the box keeps the bridge
+        # hand-over, arrival to ready and original size per network, plus the view's own stage timings.
+        now = int(time.time() * 1000)
+        pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg', 'size': 204800}}
+        self.inbox.media = lambda mid, kind: None
+        self.inbox.ingest(self.a, self.inbox.rooms['!a'], self.event('$off', pic, ts=now - 2000), live=True)
+        self.inbox.warm_photo_now('$off')
+        post = {'samples': [{'name': 'photo_tap', 'ms': 40}]}
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/photos/timings', post), {'ok': False, 'kept': 0})
+        status = self.inbox.dispatch('GET', '/api/unified/status', {})['timings']
+        self.assertFalse([k for k in status if k.startswith(('photo_handover', 'photo_ready', 'photo_kb', 'photo_tap'))])
+        self.inbox.switches.set('photo-timings', True)
+        self.inbox.ingest(self.a, self.inbox.rooms['!a'], self.event('$on', pic, ts=now - 2000), live=True)
+        self.inbox.ingest(self.a, self.inbox.rooms['!a'], self.event('$backlog', pic, ts=now - 2000))  # not live: no hand-over
+        self.inbox.warm_photo_now('$on')
+        samples = [{'name': 'photo_tap', 'ms': 40}, {'name': 'photo_tap', 'ms': 60}, {'name': 'photo_black', 'ms': 1},
+                   {'name': 'photo_black', 'ms': 0}, {'name': 'photo_thumb', 'ms': 120.6},
+                   {'name': 'evil', 'ms': 1}, {'name': 'photo_tap', 'ms': -1}, {'name': 'photo_tap', 'ms': True},
+                   {'name': 'photo_tap', 'ms': 'x'}, {'name': 'photo_tap', 'ms': 10 ** 9}, 'junk']
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/photos/timings', {'samples': samples}), {'ok': True, 'kept': 5})
+        t = self.inbox.dispatch('GET', '/api/unified/status', {})['timings']
+        self.assertEqual(t['photo_handover.telegram']['n'], 1)
+        self.assertGreaterEqual(t['photo_handover.telegram']['p50'], 2000)
+        self.assertEqual(t['photo_kb.telegram'], {'n': 1, 'p50': 200, 'p90': 200, 'max': 200, 'sum': 200})
+        self.assertEqual(t['photo_ready.telegram']['n'], 1)
+        self.assertGreaterEqual(t['photo_ready.telegram']['p50'], 2000)
+        self.assertEqual(t['photo_tap'], {'n': 2, 'p50': 60, 'p90': 60, 'max': 60, 'sum': 100})
+        self.assertEqual(t['photo_black']['sum'], 1)
+        self.assertEqual(t['photo_thumb']['p50'], 120)
+        self.assertNotIn('evil', t)
+
     def test_photo_warm_retry_gives_up_after_the_last_backoff(self):
         with patch('unified.threading.Timer') as timer:
             self.inbox.retry_photo('$pic', len(unified.PHOTO_WARM_RETRY))
