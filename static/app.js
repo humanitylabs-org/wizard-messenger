@@ -170,6 +170,9 @@
   // Set by boot from api/view/trusted-owner. Remembered on this device so a reload that lands mid-restart (the gateway
   // answering 502) is still treated as a trusted Wizard: never a passphrase box because one answer was missing.
   const TRUSTED_KEY = 'messenger-trusted-wizard';
+  // Whether Wizard still holds the remembered key (trusted-owner answer). False + "session_unlock_required" means the key is gone for good.
+  let trustedRemembered = true;
+  const passphraseNeeded = code => code === 'remembered_unlock_unavailable' || (code === 'session_unlock_required' && !trustedRemembered);
   let trustedWizard = (() => { try { return localStorage.getItem(TRUSTED_KEY) === '1'; } catch { return false; } })();
   function readRecord(group) {
     if (!state.records.has(group)) {
@@ -261,6 +264,9 @@
       // A trusted Wizard has no Messenger password: any lost or refused session (restart, expiry, evicted, Lock in
       // another tab) just opens a fresh one from Wizard sign-in, with "Opening" on screen. Never a dead card.
       if ((unlockRequired || code === 'unauthorized' || code === 'csrf_invalid') && trustedWizard && state.authenticated && path !== 'api/view/session') { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
+      // Wizard holds no usable key (never remembered, or its envelope no longer opens): looping on "Opening" is a lockout.
+      // Show the passphrase box once; unlocking with it remembers this Wizard again (issue 162/164).
+      if (unlockRequired && trustedWizard && path === 'api/view/session' && passphraseNeeded(code)) { disconnect(true); throw new APIError(code, 401); }
       if (unlockRequired && trustedWizard) { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
@@ -306,7 +312,8 @@
   }
   // On a Wizard that vouches for its owner there is no Messenger password, ever. A "locked" answer only means the
   // server is still opening its vault after a restart: keep showing "Opening" and ask again; the session call
-  // unlocks it from the key Wizard holds. Never show a passphrase box here.
+  // unlocks it from the key Wizard holds. No passphrase box here, EXCEPT when Wizard holds no usable key (never remembered,
+  // or its envelope no longer opens): then the session answer says so for good and the unlock gate shows once (boot catch / api()).
   // It never gives up: after about two minutes Try again shows too, but the view keeps asking by itself (every 15 s)
   // so a server that comes back later still opens with no tap (Miguel, 30 Oct 2026: "must stay signed in").
   let trustedTries = 0, trustedTimer = null;
@@ -318,7 +325,7 @@
     trustedTimer = setTimeout(() => { if (state.operation?.bootstrap) return; boot(); }, trustedTries > 30 ? 15000 : Math.min(1000 * trustedTries, 4000));
   }
   function gate(mode) {
-    if (mode === 'locked' && trustedWizard) return recoverTrusted();
+    if (mode === 'locked' && trustedWizard && !state.sessionLocked) return recoverTrusted();
     if (mode === 'ready') { trustedTries = 0; bootTries = 0; clearTimeout(trustedTimer); clearTimeout(bootTimer); }
     const changed = state.mode !== mode;
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
@@ -1189,6 +1196,7 @@
             let answer = null; try { answer = await response.json(); } catch { throw new APIError('server_restarting', response.status); }
             if (response.status === 403 && answer?.error?.code === 'trusted_gateway_required' && toGateway(true)) return;
             trustedWizard = response.ok && answer?.result?.enabled === true;
+            trustedRemembered = answer?.result?.remembered !== false;
             try { if (trustedWizard) localStorage.setItem(TRUSTED_KEY, '1'); else localStorage.removeItem(TRUSTED_KEY); } catch { /* storage blocked */ }
           } catch (error) { if (error.name === 'AbortError') throw error; if (!transient(error)) trustedWizard = false; else throw error; }
         }
@@ -1208,7 +1216,7 @@
         bootTries = 0; if (state.mode === 'ready') trustedTries = 0;
       } catch (error) {
         if (error.name === 'AbortError') return;
-        if (['session_unlock_required', 'remembered_unlock_unavailable', 'locked', 'vault_locked'].includes(error.code)) { if (trustedWizard) recoverTrusted(); return; }
+        if (['session_unlock_required', 'remembered_unlock_unavailable', 'locked', 'vault_locked'].includes(error.code)) { if (trustedWizard && !(state.mode === 'locked' && state.sessionLocked)) recoverTrusted(); return; }
         // Messenger restarting (502/empty body) or the phone briefly offline: keep "Opening" and retry by itself,
         // like sends do. Only a real sign-out lands on the Try again card (a home-screen Messenger has no Wizard to reopen from).
         // It keeps trying for as long as the page is open: after ~3 minutes the Try again card shows as well, but the

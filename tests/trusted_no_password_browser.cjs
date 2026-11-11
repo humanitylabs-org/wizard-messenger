@@ -19,11 +19,11 @@ const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'te
       const url = new URL(route.request().url()), p = url.pathname.slice(1);
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       const err = (status, code) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code, message: 'Enter your passphrase to open Messenger'}})});
-      if (p === 'api/view/trusted-owner') return ok({enabled: true, remembered: true});
+      if (p === 'api/view/trusted-owner') return ok({enabled: true, remembered: true}); // key held: a refusal can only be a restart
       if (p === 'api/view/session') {
         sessions++;
         if (restarted && scenario === 'session-401' && lockedLeft-- > 0) return err(401, 'session_unlock_required');
-        if (restarted && scenario === 'never-recovers') return err(401, 'remembered_unlock_unavailable');
+        if (restarted && scenario === 'never-recovers') return err(401, 'session_unlock_required');
         return ok({authenticated: true, csrf_token: 'fixture'});
       }
       if (p === 'api/status') { if (restarted && scenario === 'status-locked' && lockedLeft-- > 0) return ok({state: 'locked', account_configured: true}); return ok({state: 'ready', account_configured: true}); }
