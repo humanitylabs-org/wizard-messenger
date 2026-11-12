@@ -3170,12 +3170,14 @@
     paint(key); return sheet;
   }
   function reactionChip(reaction, reactions, {pid, toggle}) {
-    const chip = button(reaction.key + (reaction.count > 1 ? ' ' + reaction.count : ''),e => {
+    // Issue 184: the box already turns picture reactions into emoji; an internal mxc:// address is never shown.
+    const shown = String(reaction.key).startsWith('mxc://') ? '\u2728' : reaction.key;
+    const chip = button(shown + (reaction.count > 1 ? ' ' + reaction.count : ''),e => {
       if (chip.dataset.held) { delete chip.dataset.held; return; }
       if (e.pointerType === 'touch' || matchMedia('(hover: none)').matches) reactorList(reactions,reaction.key,pid);
       else toggle();
     },'u-react' + (reaction.mine ? ' mine' : ''));
-    chip.setAttribute('aria-label',reaction.key + ', ' + reaction.count + ' reactions. Hold or right-click to see who reacted.');
+    chip.setAttribute('aria-label',shown + ', ' + reaction.count + ' reactions. Hold or right-click to see who reacted.');
     const tip = node('span','u-reactor-tooltip'); tip.setAttribute('role','tooltip'); tip.hidden = true;
     const group = reactorGroups([reaction])[0];
     for (const user of group.reactors.slice(0,8)) { const row = node('span','u-reactor-row'); row.append(reactorFace(user,pid),node('span','',user.name || user.id)); tip.append(row); }
