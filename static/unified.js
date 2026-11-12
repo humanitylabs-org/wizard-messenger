@@ -718,6 +718,25 @@
     return h;
   }
   const hasListPane = () => !!$('u-pane-list')?.querySelector('.u-list');
+  // Issue 176 (switch new-contact-drafts): New chat also takes a WhatsApp number, a Telegram @username or a LINE ID.
+  // The box looks the contact up and opens an empty chat on the owner's side; nothing is sent until he taps Send.
+  function startChatForm(done) {
+    const form = node('form', 'u-start-chat'), net = node('select', 'u-start-net'), to = node('input', 'u-start-to');
+    const go = node('button', 'secondary', 'Start chat'), note = node('p', 'u-start-note');
+    form.setAttribute('aria-label', 'New chat by number or ID'); net.setAttribute('aria-label', 'Network'); to.setAttribute('aria-label', 'Phone number or ID');
+    for (const [value, label] of [['whatsapp', 'WhatsApp'], ['telegram', 'Telegram'], ['line', 'LINE']]) { const o = node('option', '', label); o.value = value; net.append(o); }
+    const hint = () => { to.placeholder = {whatsapp: 'Phone number, e.g. +66 92 264 3444', telegram: 'Telegram @username', line: 'LINE ID or @account'}[net.value]; };
+    to.type = 'text'; to.autocomplete = 'off'; go.type = 'submit'; net.onchange = hint; hint();
+    form.append(node('p', 'u-start-title', 'Someone new'), net, to, go, note);
+    form.onsubmit = async e => {
+      e.preventDefault(); if (go.disabled || !to.value.trim()) return;
+      go.disabled = true; note.textContent = 'Looking them up… nothing is sent.';
+      try { const r = await call('start-chat', {network: net.value, to: to.value}); note.textContent = ''; done(r.chat_id); }
+      catch (err) { note.textContent = err?.message || 'Could not start the chat. Nothing was sent.'; }
+      finally { go.disabled = false; }
+    };
+    return form;
+  }
   // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
   // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
   function fillEmpty(thread, focus = false) {
@@ -726,7 +745,9 @@
     const box = node('div', 'u-newmsg'), token = {}; thread.__pick = token;
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
-    box.append(node('h2', '', 'New message'), search, list, wizard); thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
+    box.append(node('h2', '', 'New message'), search, list, wizard);
+    if (switchState.on['new-contact-drafts'] === true) box.append(startChatForm(id => openPerson(id)));
+    thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
     if (focus) requestAnimationFrame(() => search.focus());
     let all = null;
     const draw = () => {
@@ -891,6 +912,7 @@
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
     const settled = sharing ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
     if (!sharing) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
+    if (!sharing && switchState.on['new-contact-drafts'] === true) sheet.append(startChatForm(id => { closeOverlay(); openPerson(id); }));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
@@ -4398,6 +4420,8 @@
   // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
   function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
   // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
+  // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
+  function newContactRow() { return switchRow('new-contact-drafts', 'Drafts to new contacts', 'Drafts only in chats you already have', 'Drafts can start a chat by number or ID'); }
   function viewerPlaceholderRow() { return switchRow('viewer-placeholder', 'Photos ready in Wizard\'s viewer', 'Wizard\'s viewer loads the original', 'Wizard\'s viewer shows a ready copy first'); }
   // Issue 168: photo timings, measured in this view and on the box, summed up under the switch.
   const photoClock = photoTimings({
@@ -4510,7 +4534,7 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow());
     sheet.append(head, agents, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

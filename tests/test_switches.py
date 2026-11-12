@@ -51,7 +51,12 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'photo-timings', 'name': 'Photo timings',
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
+                'id': 'new-contact-drafts', 'name': 'Drafts to new contacts',
+                'description': 'Agents with Draft-only access, and you with New chat, can start a chat with a WhatsApp '
+                               'number, a Telegram @username or a LINE ID. The chat waits with its draft; nothing is sent '
+                               'until you tap Send.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#176']}])
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -163,7 +168,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-contact-drafts'])
 
 
 if __name__ == '__main__':

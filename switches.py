@@ -37,6 +37,11 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
+    {'id': 'new-contact-drafts', 'name': 'Drafts to new contacts',
+     'description': 'Agents with Draft-only access, and you with New chat, can start a chat with a WhatsApp number, a '
+                    'Telegram @username or a LINE ID. The chat waits with its draft; nothing is sent until you tap Send.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#176']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
