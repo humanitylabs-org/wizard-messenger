@@ -123,6 +123,13 @@
   // A tapped photo opens in Wizard's media viewer. When Wizard does not open it (an older or busy shell, a frame it
   // will not serve, or no WizardApp.media), Messenger shows the photo full size itself, so a tap is never dead (issue 144).
   // Returns 'wizard', 'messenger' or 'none'.
+  // Wizard's viewer exists only when Wizard is around Messenger: framed in the shell, or connected to a Wizard host.
+  // Opened on its own (the installed Android app or a browser tab) the shared client's media.view only tries a new
+  // window, which an installed app never shows, yet it reports success, so a tap did nothing (issue 180). Then
+  // Messenger's own full-screen view opens instead.
+  function hostViewer(app, framed) {
+    return framed || app?.hosted === true ? app?.media : null;
+  }
   function openMedia(media, items, at, fallback) {
     let shown = false;
     try { shown = typeof media?.view === 'function' && media.view(items, at) === true; } catch { shown = false; }
@@ -348,7 +355,7 @@
     if (!n('total')) return 'No agent drafts sent or discarded yet.';
     return 'Agent drafts: ' + n('sent_as_drafted') + ' sent as drafted · ' + n('edited') + ' edited · ' + n('discarded') + ' discarded';
   }
-  if (typeof module !== 'undefined') module.exports = {draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  if (typeof module !== 'undefined') module.exports = {draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2422,7 +2429,7 @@
     const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
     const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
     const open = blobs => {
-      const how = openMedia(window.WizardApp?.media, viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
       if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
     };
     // Issue 170: the tapped photo and the ones either side, when this phone already has their view copies, go to
@@ -4991,7 +4998,7 @@
       // Groups count toward the badge before the Groups tab is ever opened.
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
-    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(s.overlay || s.person || s.search != null || s.low || s.seg === 'medium' || detailOpen()), back,
+    active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(view.photo || s.overlay || s.person || s.search != null || s.low || s.seg === 'medium' || detailOpen()), back,
     signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; split.threadGen++; split.listGen++; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();
