@@ -30,7 +30,8 @@ class LinePhotoGroupTests(unittest.TestCase):
         self.inbox.owner = '@owner:test'
         self.line = self.inbox.store.identity('line', '!line-room', 'LINE friend')
         self.pid = self.line['person_id']
-        self.payload = {'client_id': 'line_group_123', 'text': 'Holiday', 'upload_ids': ['u0', 'u1', 'u2'],
+        # Words with LINE photos go as their own message (issue 186, tests/test_line_photo_text.py).
+        self.payload = {'client_id': 'line_group_123', 'text': '', 'upload_ids': ['u0', 'u1', 'u2'],
                         'media': [{'w': 640, 'h': 480}] * 3}
         self.stage(self.pid)
 
@@ -60,13 +61,13 @@ class LinePhotoGroupTests(unittest.TestCase):
         group = contents[0][MARKER]['id']
         self.assertRegex(group, r'^[0-9]{1,19}$')
         self.assertEqual([c[MARKER] for c in contents], [{'id': group, 'index': i, 'count': 3} for i in range(3)])
-        self.assertEqual(contents[0]['body'], 'Holiday')
+        self.assertEqual(contents[0]['body'], 'photo0.jpg')
         self.assertEqual(contents[1]['body'], 'photo1.jpg')
-        # Messenger shows the send as one album, in order, with the caption once.
+        # Messenger shows the send as one album, in order.
         self.assertEqual([m['id'] for m in result['messages']], ['$eline_group_123', '$eline_group_123.p01', '$eline_group_123.p02'])
         self.assertEqual({m['album'] for m in result['messages']}, {'line:' + group})
         self.assertEqual([m['media']['album_index'] for m in result['messages']], [0, 1, 2])
-        self.assertEqual([m['original'] for m in result['messages']], ['Holiday', '', ''])
+        self.assertEqual([m['original'] for m in result['messages']], ['', '', ''])
         self.assertFalse(self.inbox.uploads)
 
     def test_retry_repeats_nothing_and_sync_echo_adds_no_rows(self):

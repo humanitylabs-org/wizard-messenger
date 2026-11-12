@@ -3317,10 +3317,14 @@
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
       const sendingDraft = view.sd; sendingDraft?.closeForSend(text);
       const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
-      const jobs = [];
+      // Issue 186: LINE carries no words on a photo, so photos plus text go as the photos, then the text as its own
+      // message (the way LINE sends them), each with its own sent / failed + Retry bubble.
+      const apart = !!(photos.length && text && !reviewed && (p.identities || []).find(i => i.id === channel.value)?.network === 'line');
+      const jobs = [], words = apart ? '' : text;
       if (!a.length) jobs.push({text, photo: null, reply, identity_id: channel.value});
-      else if (photos.length === 1) jobs.push({text, photo: photos[0], reply, identity_id: channel.value});
-      else if (photos.length) jobs.push({text, photos, reply, identity_id: channel.value});
+      else if (photos.length === 1) jobs.push({text: words, photo: photos[0], reply, identity_id: channel.value});
+      else if (photos.length) jobs.push({text: words, photos, reply, identity_id: channel.value});
+      if (apart) jobs.push({text, photo: null, reply: null, identity_id: channel.value});
       files.forEach((f, i) => jobs.push({text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
       let delivered = 0;
       for (const job of jobs) queueSend(id, {...job, onDelivered: () => { if (++delivered === jobs.length) sendingDraft?.afterSend(); }, onFailure: e => restoreSend(id, job, e)});

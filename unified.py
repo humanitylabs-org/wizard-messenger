@@ -173,6 +173,9 @@ MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 
 # LINE: plumbing/line-own-read-sync.patch maps LINE's GID/GSEQ/GTOTAL (issue 187), both ways since issue 188.
 NATIVE_ALBUM_MARKERS = {'signal': 'org.wizard.signal.album', 'line': 'org.wizard.line.album'}
 NATIVE_ALBUM_PREFIXES = tuple(network + ':' for network in NATIVE_ALBUM_MARKERS)
+# Networks whose bridge rejects a photo that carries a caption (beeper/line declares Caption: CapLevelRejected, so the
+# whole message failed and nothing arrived, issue 186). The words go as their own text message right after the photos.
+CAPTIONLESS_PHOTOS = frozenset(('line',))
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
 # Switch photo-warm (issue 162): incoming pictures are fetched on arrival, so the box keeps more of them.
@@ -2592,6 +2595,9 @@ class UnifiedInbox:
             fail('review_required', 'This chat translates before sending', 409)
         mentions = find_mentions(body, self.store.members(identity))
         reply_to = self.reply_target(identity, payload.get('reply_to'))
+        caption = None
+        if identity['network'] in CAPTIONLESS_PHOTOS and body and upload and upload['kind'] == 'image':
+            caption, body, mentions = (body, mentions), '', []
         if identity['network'] not in MATRIX_NETWORKS:
             if upload:
                 if any(u['kind'] == 'voice' for u in (gallery or [upload])):
@@ -2614,7 +2620,7 @@ class UnifiedInbox:
             content = {'msgtype': 'm.text', 'body': body}
         if gallery and identity['network'] == 'line' and self.switch_on('line-photo-groups'):
             metadata = payload.get('media') if isinstance(payload.get('media'), list) else []
-            return self.send_line_group(identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata)
+            return self.send_line_group(identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata, caption)
         if gallery:
             metadata = payload.get('media') if isinstance(payload.get('media'), list) else []
             items = [self.media_content(u, body if i == 0 else '', {'media': metadata[i] if i < len(metadata) else {}})[1]
@@ -2630,6 +2636,24 @@ class UnifiedInbox:
         result = self.mx(self.room(identity['address']) + '/send/m.room.message/' + client_id, 'PUT', content)
         self.timing('send', started)
         event = result['event_id']
+        if caption:
+            # Photos first, then the words (issue 186). Rows are stored only after both receipts; the
+            # transactions are deterministic, so a retry after a failed text never sends the photos again.
+            said = self.send_caption(identity, client_id, *caption)
+            stamp = int(time.time() * 1000)
+            with self.store.db() as db:
+                if not db.in_transaction:
+                    db.execute('BEGIN')
+                if gallery:
+                    self.store_gallery(event, identity, self.owner, True, content, stamp, reply_to=reply_to, client_id=client_id)
+                else:
+                    self.store.add_message(event, identity, self.owner, True, '', stamp, msgtype=msgtype, media=media,
+                                           reply_to=reply_to, client_id=client_id)
+                self.store_caption(db, identity, said, caption, stamp + 1)
+            for key in (upload_ids or [payload.get('upload_id')]):
+                self.drop_upload(key)
+            rows = (self.album_rows(event) if gallery else [self.row(event)]) + [self.row(said[0])]
+            return {'state': 'sent', 'event_id': event, 'message': rows[0], 'messages': rows}
         if msgtype == 'm.file':
             # Bridges use m.file body as the filename; text follows separately (James, 26 Oct 2026).
             # Keep the handle until BOTH receipts; deterministic transactions make partial retries safe.
@@ -2665,7 +2689,19 @@ class UnifiedInbox:
         switches = getattr(self, 'switches', None)  # some tests build an inbox without __init__
         return bool(switches and switches.is_on(switch_id))
 
-    def send_line_group(self, identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata):
+    def send_caption(self, identity, client_id, body, mentions):
+        """The words sent after captionless photos (issue 186), transaction <client_id>.caption."""
+        txn = client_id + '.caption'
+        content = dict({'msgtype': 'm.text', 'body': body}, **mention_content(body, mentions))
+        return self.mx(self.room(identity['address']) + '/send/m.room.message/' + txn, 'PUT', content)['event_id'], txn
+
+    def store_caption(self, db, identity, said, caption, stamp):
+        event, txn = said
+        body, mentions = caption
+        self.store.add_message(event, identity, self.owner, True, body, stamp, client_id=txn, mentions=mentions)
+        db.execute('UPDATE message SET client_id=COALESCE(client_id,?) WHERE id=?', (txn, event))  # sync may have stored it first
+
+    def send_line_group(self, identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata, caption=None):
         """Issue 188 (switch line-photo-groups): the LINE bridge reads no org.wizard.gallery, so only the first photo
         of a multi-photo send reached LINE. Here each photo is its own Matrix image, sent in order and marked with
         org.wizard.line.album {id, index, count}; the patched bridge turns the marker into LINE's own GID/GSEQ/GTOTAL
@@ -2685,6 +2721,7 @@ class UnifiedInbox:
             content[NATIVE_ALBUM_MARKERS['line']] = {'id': group_id, 'index': i, 'count': count}
             txn = client_id if i == 0 else '%s.p%02d' % (client_id, i)
             sent.append((self.mx(room + '/send/m.room.message/' + txn, 'PUT', content)['event_id'], txn, media, content))
+        said = self.send_caption(identity, client_id, *caption) if caption else None
         self.timing('send', started)
         stamp = int(time.time() * 1000)
         with self.store.db() as db:
@@ -2695,9 +2732,12 @@ class UnifiedInbox:
                                        msgtype='m.image', media=dict(media, album_index=i, album_count=count),
                                        reply_to=reply_to if i == 0 else None, client_id=txn, album='line:' + group_id,
                                        mentions=mentions if i == 0 else None)
+            if said:
+                self.store_caption(db, identity, said, caption, stamp + 1)
         for key in upload_ids:
             self.drop_upload(key)
-        return {'state': 'sent', 'event_id': sent[0][0], 'message': self.row(sent[0][0]), 'messages': self.album_rows(sent[0][0])}
+        rows = self.album_rows(sent[0][0]) + ([self.row(said[0])] if said else [])
+        return {'state': 'sent', 'event_id': sent[0][0], 'message': rows[0], 'messages': rows}
 
     def send_pick(self, identity, key, client_id, reply_to):
         kind, content = self.pick_content(key)
