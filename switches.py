@@ -48,6 +48,11 @@ SWITCHES = (
                     'never sends, and needs Draft-only access.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#178']},
+    {'id': 'row-tap-menu', 'name': 'Tap beside a message for its menu',
+     'description': "On a phone, tapping the empty space to the right of someone's message opens that message's menu "
+                    '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#182']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
