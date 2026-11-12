@@ -2030,7 +2030,7 @@
     for (const post of posts) if (post.photos) {
       // Explicit native ordinals, never event-ID or time-window guesses. Telegram
       // retains its existing timeline order. Incomplete/delayed albums stay usable.
-      if (post.network === 'signal' && post.photos.every(p => Number.isInteger(p.media?.album_index))) {
+      if ((post.network === 'signal' || post.network === 'line') && post.photos.every(p => Number.isInteger(p.media?.album_index))) {
         post.photos.sort((a, b) => a.media.album_index - b.media.album_index);
       }
       const photos = post.photos;

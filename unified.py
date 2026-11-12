@@ -169,6 +169,10 @@ def plain_name(network, label):
 
 
 MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots'))
+# Explicit per-part photo-group markers our patched bridges add ({id, index, count}).
+# LINE: plumbing/line-own-read-sync.patch maps LINE's GID/GSEQ/GTOTAL (issue 187).
+NATIVE_ALBUM_MARKERS = {'signal': 'org.wizard.signal.album', 'line': 'org.wizard.line.album'}
+NATIVE_ALBUM_PREFIXES = tuple(network + ':' for network in NATIVE_ALBUM_MARKERS)
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
 # Switch photo-warm (issue 162): incoming pictures are fetched on arrival, so the box keeps more of them.
@@ -1138,9 +1142,9 @@ class PeopleStore:
             targets = list(db.execute('SELECT id,album,media FROM message WHERE id=? OR source_event=?', (event_id, event_id)))
         for target, album, raw_media in targets:
             # Deletion clears content/URIs, but explicit non-content ordinals must
-            # survive so delayed Signal albums do not reorder their remaining tiles.
+            # survive so delayed Signal/LINE albums do not reorder their remaining tiles.
             media = json.loads(raw_media) if raw_media else {}
-            ordinal = {key: media[key] for key in ('album_index', 'album_count') if key in media} if (album or '').startswith('signal:') else {}
+            ordinal = {key: media[key] for key in ('album_index', 'album_count') if key in media} if (album or '').startswith(NATIVE_ALBUM_PREFIXES) else {}
             self.bump(target, ",deleted=1,original='',translated=NULL,media=?,transcript=NULL", (json.dumps(ordinal) if ordinal else None,))
         return bool(targets)
 
@@ -1868,14 +1872,17 @@ class UnifiedInbox:
 
         grouped = content.get('fi.mau.telegram.grouped_id')
         album = 'telegram:' + str(grouped) if identity['network'] == 'telegram' and isinstance(grouped, (str, int)) and str(grouped) else None
-        group = content.get('org.wizard.signal.album')
+        # Bridges that know the network's own photo group mark each part (Signal; LINE's
+        # GID/GSEQ/GTOTAL since issue 187). Only that network's marker counts.
+        marker = NATIVE_ALBUM_MARKERS.get(identity['network'])
+        group = content.get(marker) if marker else None
         media_mxc = media.get('mxc') if isinstance(media, dict) else None
-        if (identity['network'] == 'signal' and msgtype == 'm.image' and isinstance(media, dict)
+        if (marker and msgtype == 'm.image' and isinstance(media, dict)
                 and isinstance(media_mxc, str) and MXC.fullmatch(media_mxc)
                 and isinstance(group, dict) and isinstance(group.get('id'), str) and 0 < len(group['id']) <= 200
                 and type(group.get('index')) is int and type(group.get('count')) is int
                 and 2 <= group['count'] <= 100 and 0 <= group['index'] < group['count']):
-            album = 'signal:' + group['id']
+            album = identity['network'] + ':' + group['id']
             filename = content.get('filename') or content.get('body')
             media = dict(media, album_index=group['index'], album_count=group['count'])
             if isinstance(filename, str):
@@ -2685,7 +2692,7 @@ class UnifiedInbox:
         while hi < len(timeline) and same(timeline[hi]):
             hi += 1
         rows = [self.row(row['id']) for row in timeline[lo:hi]]
-        if message['network'] == 'signal' and all('album_index' in (r.get('media') or {}) for r in rows):
+        if message['network'] in NATIVE_ALBUM_MARKERS and all('album_index' in (r.get('media') or {}) for r in rows):
             rows.sort(key=lambda r: r['media']['album_index'])
         return rows
 
