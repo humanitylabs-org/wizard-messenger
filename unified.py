@@ -104,6 +104,29 @@ def download_mime(served, declared, name):
 
 MXC = re.compile(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)')
 
+# Issue 184: the LINE bridge sends LINE's own reactions (Like, Love, ...) as small pictures, so the Matrix reaction
+# key is an internal mxc:// address that must never be shown. Its six icons (beeper/line pkg/connector/assets at the
+# pinned commit) are recognised by their sha256 and shown as the emoji the bridge itself maps them to; any other
+# picture reaction (a paid LINE emoji, or an old row whose address was cut to 32 characters) shows IMAGE_REACTION.
+LINE_REACTION_ICONS = {
+    'ca02269a86711d61d423fb8c34256d529761833f2fb686ef40bddb99d26ba2a8': '\U0001F44D',    # icon_1003, LIKE
+    '2eb0e0396cdb642e5d0c6849e2111c02f01698ddf27b57297374c19f33ac7bc0': '\u2764\uFE0F',  # icon_1001, LOVE
+    '353f41f2ce05cf39ed3d785e563d25a414fb62319c265b94e6b2a8bcbd882cdd': '\U0001F606',    # icon_1002, LAUGH
+    '0622e4f1c8f2e76d68fec39f05822d12b0f3bd77d992f5805fccfefa207a468f': '\U0001F62E',    # icon_1004, SURPRISE
+    'e1ae31a59b01d3a3dfa2bb6280534ec94663571e6dde507f7b0d8cd97543ea06': '\U0001F622',    # icon_1006, SAD
+    '1d624d5c951e21d1cbc6947c115e881235516c853123482c893b370bd2e5e363': '\U0001F621',    # icon_1005, ANGRY
+}
+IMAGE_REACTION = '\u2728'
+ONLY_MXC = re.compile(r'\s*(?:mxc://[A-Za-z0-9.:_-]+/[A-Za-z0-9_-]*\s*)+')
+
+
+def reaction_key(key, known=None):
+    """The reaction as shown: an mxc:// picture key becomes its known emoji (by its first 32 characters, the length the
+    store keeps) or IMAGE_REACTION; every other key is unchanged."""
+    if not isinstance(key, str) or not key.startswith('mxc://'):
+        return key
+    return (known or {}).get(key[:32]) or IMAGE_REACTION
+
 # Bridges tag ghost names with their network ("Ana (WA)"); the Inbox already shows the network's icon.
 NAME_SUFFIX = {'whatsapp': ' (WA)', 'twitter': ' (Twitter)', 'linkedin': ' (LinkedIn)'}
 
@@ -473,6 +496,14 @@ class PeopleStore:
     def put(self, key, value):
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO kv VALUES (?,?)', (key, value))
+
+    def image_reactions(self):
+        """Picture reaction keys already matched to an emoji (issue 184): {first 32 characters of the mxc: emoji}."""
+        try:
+            known = json.loads(self.get('image_reactions') or '{}')
+        except ValueError:
+            return {}
+        return {k: v for k, v in known.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(known, dict) else {}
 
     # Issue 176: chats started for a new contact have no messages yet. They are listed while a draft waits in them
     # (draft_people is set by the web service: () -> person ids with a waiting draft), so a discarded draft also
@@ -1120,6 +1151,7 @@ class PeopleStore:
             return rows
         ids = [r['id'] for r in rows]
         replies = list({r['reply_to'] for r in rows if r.get('reply_to')})
+        image_reactions = self.image_reactions()
         with self.db() as db:
             reacts = {}
             identity_meta = {}
@@ -1128,7 +1160,8 @@ class PeopleStore:
                 chunk = ids[i:i + 500]
                 for r in db.execute('SELECT message_id,key,outgoing,sender FROM reaction WHERE message_id IN (%s) ORDER BY rowid' % ','.join('?' * len(chunk)), chunk):
                     agg = reacts.setdefault(r[0], {})
-                    entry = agg.setdefault(r[1], {'key': r[1], 'count': 0, 'mine': False})
+                    key = reaction_key(r[1], image_reactions)
+                    entry = agg.setdefault(key, {'key': key, 'count': 0, 'mine': False})
                     entry['count'] += 1
                     entry['mine'] = entry['mine'] or bool(r[2])
                     iid = by_id[r[0]]['identity_id']
@@ -1305,6 +1338,8 @@ def message_parts(event):
         info = content.get('info') or {}
         filename = content.get('filename') or body
         caption = body if content.get('filename') and body != content.get('filename') else ''
+        if ONLY_MXC.fullmatch(caption):
+            caption = ''  # issue 184: an internal media address is never a caption
         audio = content.get('org.matrix.msc1767.audio') or {}
         media = {'mxc': content.get('url'), 'mime': info.get('mimetype', ''), 'size': info.get('size'), 'w': info.get('w'), 'h': info.get('h'),
                  'duration': info.get('duration') or audio.get('duration'), 'filename': filename[:200] if kind == 'm.file' or kind == 'm.audio' else '',
@@ -1794,7 +1829,8 @@ class UnifiedInbox:
                 target = db.execute('SELECT 1 FROM message WHERE id=? AND identity_id=?', (relates.get('event_id', ''), identity['id'])).fetchone()
                 redacted = db.execute('SELECT 1 FROM scoped_redaction WHERE identity_id=? AND event_id=?', (identity['id'], event['event_id'])).fetchone()
                 if target and not redacted:
-                    self.store.react(event['event_id'], relates.get('event_id', ''), sender, relates['key'][:32], outgoing)
+                    key = self.picture_reaction(relates['key']) if relates['key'].startswith('mxc://') else relates['key']
+                    self.store.react(event['event_id'], relates.get('event_id', ''), sender, key[:32], outgoing)
             return
         if etype == 'm.room.message' and relates.get('rel_type') == 'm.replace':
             if self.apply_edit(identity, meta, sender, outgoing, relates.get('event_id'), content.get('m.new_content')):
@@ -3026,6 +3062,26 @@ class UnifiedInbox:
             self.evict(path.parent)
         return Blob(path, 'image/jpeg', full.filename, True)
 
+    def picture_reaction(self, mxc):
+        """The emoji for a reaction sent as a picture (LINE's own reactions, issue 184). The icon is fetched once and
+        matched by hash; the match is kept by the key's first 32 characters, so older rows with that key show it too."""
+        known = self.store.image_reactions()
+        if mxc[:32] in known:
+            return known[mxc[:32]]
+        failed = self.__dict__.setdefault('_picture_reaction_failed', set())
+        emoji = None
+        if MXC.fullmatch(mxc) and mxc not in failed:
+            try:
+                blob = self.media_blob(mxc, 'image/png', 'reaction.png')
+                emoji = LINE_REACTION_ICONS.get(hashlib.sha256(Path(blob.path).read_bytes()).hexdigest())
+            except Exception:  # the homeserver is away: show the neutral picture reaction, try again next start
+                failed.add(mxc)
+        if not emoji:
+            return IMAGE_REACTION
+        known[mxc[:32]] = emoji
+        self.store.put('image_reactions', json.dumps(known))
+        return emoji
+
     def media_blob(self, mxc, mime, name, *, thumb=False, raw_thumb=False, size=800):
         match = re.fullmatch(r'mxc://([A-Za-z0-9.:_-]+)/([A-Za-z0-9_-]+)', mxc or '')
         if not match:
@@ -3127,7 +3183,7 @@ class UnifiedInbox:
         for row in mine:
             self.mx(room + '/redact/' + quote(row[0], safe='') + '/' + secrets.token_hex(8), 'PUT', {})
             self.store.redact(row[0])
-        if payload.get('remove') is True or any(r[1] == key for r in mine):
+        if payload.get('remove') is True or any(reaction_key(r[1], self.store.image_reactions()) == key for r in mine):
             return {'message': self.row(message_id)}
         result = self.mx(room + '/send/m.reaction/' + secrets.token_hex(12), 'PUT',
                          {'m.relates_to': {'rel_type': 'm.annotation', 'event_id': message_id, 'key': key}})
