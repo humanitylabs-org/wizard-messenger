@@ -4459,6 +4459,8 @@
   function newContactRow() { return switchRow('new-contact-drafts', 'Drafts to new contacts', 'Drafts only in chats you already have', 'Drafts can start a chat by number or ID'); }
   // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
   function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
+  // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
+  function lineGroupsRow() { return switchRow('line-photo-groups', 'LINE photo groups', 'Only the first of several photos reaches LINE', 'Photos sent together reach LINE as one group'); }
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
   // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).
   const draftWatch = {watched: new Set(), all_unread: false, stats: null, paints: []};
@@ -4608,7 +4610,7 @@
     const draftStats = node('p', 'helper u-agent-draft-stats');
     const paintStats = () => { draftStats.hidden = switchState.on['agent-drafts'] !== true || agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow(), ...agentDraftsRow(), rowTapRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow(), ...agentDraftsRow(), rowTapRow(), lineGroupsRow());
     sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

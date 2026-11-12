@@ -170,7 +170,7 @@ def plain_name(network, label):
 
 MATRIX_NETWORKS = frozenset(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots'))
 # Explicit per-part photo-group markers our patched bridges add ({id, index, count}).
-# LINE: plumbing/line-own-read-sync.patch maps LINE's GID/GSEQ/GTOTAL (issue 187).
+# LINE: plumbing/line-own-read-sync.patch maps LINE's GID/GSEQ/GTOTAL (issue 187), both ways since issue 188.
 NATIVE_ALBUM_MARKERS = {'signal': 'org.wizard.signal.album', 'line': 'org.wizard.line.album'}
 NATIVE_ALBUM_PREFIXES = tuple(network + ':' for network in NATIVE_ALBUM_MARKERS)
 UPLOAD_MAX = 25 * 1024 * 1024
@@ -2612,6 +2612,9 @@ class UnifiedInbox:
             msgtype, content, media = self.media_content(upload, body, {} if gallery else payload)
         else:
             content = {'msgtype': 'm.text', 'body': body}
+        if gallery and identity['network'] == 'line' and self.switch_on('line-photo-groups'):
+            metadata = payload.get('media') if isinstance(payload.get('media'), list) else []
+            return self.send_line_group(identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata)
         if gallery:
             metadata = payload.get('media') if isinstance(payload.get('media'), list) else []
             items = [self.media_content(u, body if i == 0 else '', {'media': metadata[i] if i < len(metadata) else {}})[1]
@@ -2657,6 +2660,44 @@ class UnifiedInbox:
         if upload:
             self.drop_upload(payload.get('upload_id'))
         return {'state': 'sent', 'event_id': event, 'message': self.row(event)}
+
+    def switch_on(self, switch_id):
+        switches = getattr(self, 'switches', None)  # some tests build an inbox without __init__
+        return bool(switches and switches.is_on(switch_id))
+
+    def send_line_group(self, identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata):
+        """Issue 188 (switch line-photo-groups): the LINE bridge reads no org.wizard.gallery, so only the first photo
+        of a multi-photo send reached LINE. Here each photo is its own Matrix image, sent in order and marked with
+        org.wizard.line.album {id, index, count}; the patched bridge turns the marker into LINE's own GID/GSEQ/GTOTAL
+        photo group (and retries a photo alone if LINE refuses the group). An older bridge still delivers every photo,
+        in order. Transactions are deterministic, so a retry after a partial send repeats nothing; rows are stored
+        once every photo has its receipt."""
+        group_id = str(int(hashlib.sha256(client_id.encode()).hexdigest()[:15], 16))  # numeric, like LINE's ids
+        count, room = len(gallery), self.room(identity['address'])
+        sent = []
+        started = time.time()
+        for i, upload in enumerate(gallery):
+            _, content, media = self.media_content(upload, body if i == 0 else '', {'media': metadata[i] if i < len(metadata) else {}})
+            if i == 0:
+                content.update(mention_content(body, mentions))
+                if reply_to:
+                    content['m.relates_to'] = {'m.in_reply_to': {'event_id': reply_to}}
+            content[NATIVE_ALBUM_MARKERS['line']] = {'id': group_id, 'index': i, 'count': count}
+            txn = client_id if i == 0 else '%s.p%02d' % (client_id, i)
+            sent.append((self.mx(room + '/send/m.room.message/' + txn, 'PUT', content)['event_id'], txn, media, content))
+        self.timing('send', started)
+        stamp = int(time.time() * 1000)
+        with self.store.db() as db:
+            if not db.in_transaction:
+                db.execute('BEGIN')
+            for i, (event, txn, media, content) in enumerate(sent):
+                self.store.add_message(event, identity, self.owner, True, body if i == 0 else '', stamp,
+                                       msgtype='m.image', media=dict(media, album_index=i, album_count=count),
+                                       reply_to=reply_to if i == 0 else None, client_id=txn, album='line:' + group_id,
+                                       mentions=mentions if i == 0 else None)
+        for key in upload_ids:
+            self.drop_upload(key)
+        return {'state': 'sent', 'event_id': sent[0][0], 'message': self.row(sent[0][0]), 'messages': self.album_rows(sent[0][0])}
 
     def send_pick(self, identity, key, client_id, reply_to):
         kind, content = self.pick_content(key)

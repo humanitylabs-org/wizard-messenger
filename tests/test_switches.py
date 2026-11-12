@@ -66,7 +66,11 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': "On a phone, tapping the empty space to the right of someone's message opens that "
                                "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
                                'still opens it.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}, {
+                'id': 'line-photo-groups', 'name': 'LINE photo groups',
+                'description': 'Several photos sent together to a LINE chat go as one photo group, like LINE sends '
+                               'them, instead of only the first photo arriving.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#188']}])
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -178,7 +182,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-contact-drafts', 'agent-drafts', 'row-tap-menu'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-contact-drafts', 'agent-drafts', 'row-tap-menu', 'line-photo-groups'])
 
 
 if __name__ == '__main__':
