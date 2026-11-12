@@ -42,6 +42,12 @@ SWITCHES = (
                     'Telegram @username or a LINE ID. The chat waits with its draft; nothing is sent until you tap Send.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#176']},
+    {'id': 'agent-drafts', 'name': 'Agent keeps drafts ready',
+     'description': 'Pick chats (chat ⋯ > Agent keeps a draft ready), or every unread chat, and your agent keeps a reply '
+                    'drafted there for you to send, edit or discard. It learns from how you change its drafts. It '
+                    'never sends, and needs Draft-only access.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#178']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
