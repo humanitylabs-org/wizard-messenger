@@ -3196,6 +3196,11 @@ class UnifiedInbox:
         import start_chat
         return start_chat.start(self, network, to)
 
+    def draft_closed(self, row, outcome, sent_text=None):
+        """Issue 178 (switch agent-drafts): keep what the agent drafted next to what the owner sent, or that he discarded it."""
+        import draft_watch
+        return draft_watch.closed(self, row, outcome, sent_text)
+
     def drafts_changed(self, person_id):
         """A draft was created or closed: a started chat (no messages) shows or leaves the list with it."""
         if not isinstance(person_id, str) or person_id not in self.store.started():
@@ -3266,6 +3271,11 @@ class UnifiedInbox:
                     'read_sync': self.read_sync_stats()}
         if suffix == ['photos', 'timings'] and method == 'POST':
             return self.photo_client_timings(payload)
+        if suffix == ['draft-watch']:
+            # Owner session only: no agent capability maps to this route (permissions.capability_for -> None).
+            import draft_watch
+            if method == 'GET': return draft_watch.state(self)
+            if method == 'POST': return draft_watch.configure(self, payload)
         if suffix == ['start-chat'] and method == 'POST':
             return self.start_chat(payload.get('network'), payload.get('to'))
         if suffix == ['sync'] and method == 'POST':

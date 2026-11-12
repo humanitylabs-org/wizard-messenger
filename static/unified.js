@@ -342,7 +342,13 @@
     }
     return lines;
   }
-  if (typeof module !== 'undefined') module.exports = {backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  // Issue 178 (switch agent-drafts): how the owner handled his agent's drafts, as one short line for Settings.
+  function draftFeedbackLine(stats) {
+    const n = k => (stats && Number.isInteger(stats[k]) && stats[k] > 0 ? stats[k] : 0);
+    if (!n('total')) return 'No agent drafts sent or discarded yet.';
+    return 'Agent drafts: ' + n('sent_as_drafted') + ' sent as drafted · ' + n('edited') + ' edited · ' + n('discarded') + ' discarded';
+  }
+  if (typeof module !== 'undefined') module.exports = {draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1985,6 +1991,9 @@
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
       priorityAction(cur, anchor, 'right'),
       ...(cur.native ? [] : [{label: 'Labels', icon: 'tag', run: () => labelsSheet(cur)}]),
+      ...(cur.native || switchState.on['agent-drafts'] !== true ? [] : [draftWatch.watched.has(cur.id)
+        ? {label: 'Stop keeping a draft ready', icon: 'sparkle', run: () => watchChat(cur, false)}
+        : {label: 'Agent keeps a draft ready', icon: 'sparkle', run: () => watchChat(cur, true)}]),
     ], {side: 'right'}); };
     if (p.id) { // Catch me up: next to the chat options, never replaces them
       const head = root.querySelector('.u-thread-head'), more = head?.querySelector('[aria-label="Chat options"]'), cu = iconButton('sparkle', 'Catch me up', () => catchUp(id), 'u-catchup-btn');
@@ -2808,7 +2817,7 @@
         box.append(node('span', '', 'Drafted by ' + (by(sd.row).name || 'your Wizard') + ' · not sent. Edit it here and send when ready.'),
           iconButton('close', 'Discard draft', () => action(async () => {
             if (!await ask({title: 'Discard this draft?', body: 'Nothing is sent.', yes: 'Discard', no: 'Keep'})) return;
-            await clear(); ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; ui.grow(); ui.paintBar();
+            await clear(false, {outcome: 'discarded'}); ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; ui.grow(); ui.paintBar();
           })));
         return box;
       }
@@ -2881,7 +2890,7 @@
           const r = await api('api/drafts', {method: 'POST', body: {person_id: id, identity_id, text}});
           sd.row = r.draft; sd.saved = text;
         } else if (!text.trim() && !files && !items.length) {
-          await api('api/drafts/' + sd.row.id, {method: 'DELETE', body: {revision: sd.row.revision}}); sd.row = null; sd.saved = null;
+          await api('api/drafts/' + sd.row.id, {method: 'DELETE', body: {revision: sd.row.revision, outcome: 'discarded'}}); sd.row = null; sd.saved = null;
         } else if (text !== sd.row.text || identity_id !== sd.row.identity_id) {
           const r = await api('api/drafts/' + sd.row.id, {method: 'POST', body: {revision: sd.row.revision, person_id: id, identity_id, text}});
           sd.row = r.draft; sd.saved = text;
@@ -2962,17 +2971,18 @@
       });
     }
     // Sent (or emptied): the draft is done. Delete it so it never comes back.
-    async function clear(quiet = false) {
+    // why (issue 178): {outcome: 'sent', sent_text} or {outcome: 'discarded'}, so the box can pair an agent's draft with what went out.
+    async function clear(quiet = false, why = {}) {
       if (!quiet) { clearTimeout(sd.timer); sd.timer = null; } // (after Send, a timer is new text for a new draft)
       await sd.busy?.catch(() => {});
       const row = sd.row; sd.row = null; sd.saved = null; sd.conflict = null; sd.loadError = false; if (!row) return true;
       closedDrafts.add(row.id); draftWrote();
       let done = true;
-      try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); }
+      try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision, ...why}}); }
       catch (e) {
         // Someone else changed it after our send: their newer revision stays, and may show again.
         if (e.code === 'draft_changed') closedDrafts.delete(row.id);
-        else if (e.code !== 'not_found') { if (quiet && offline(e)) { sd.late = row; done = false; } else error(e); } /* never delete someone else's newer revision */
+        else if (e.code !== 'not_found') { if (quiet && offline(e)) { sd.late = row; sd.lateWhy = why; done = false; } else error(e); } /* never delete someone else's newer revision */
       }
       draftWrote(); refreshDraftIndex();
       return done;
@@ -2981,12 +2991,12 @@
     // not when the provider answers. The text and tray already went to the send, so nothing waits on a save: drop the
     // pending autosave, let a write already in flight land (its revision is the one to delete), then delete the server
     // copy. A send that fails puts the message back (restoreSend). Restarting Messenger: deleted after delivery instead.
-    function closeForSend() {
+    function closeForSend(sentText = '') {
       clearTimeout(sd.timer); sd.timer = null; sd.epoch++;
       const up = sd.uploading, wait = sd.closing;
       const run = (async () => {
         await wait; await sd.busy?.catch(() => {}); await Promise.resolve(up).catch(() => {});
-        return clear(true);
+        return clear(true, {outcome: 'sent', sent_text: sentText});
       })();
       sd.closing = run.finally(() => { if (sd.closing === closing) sd.closing = null; });
       const closing = sd.closing;
@@ -2995,7 +3005,7 @@
       return closing;
     }
     // Delivered after a delete that could not reach Messenger (restarting): delete it now.
-    async function afterSend() { await sd.closing; const row = sd.late; if (!row) return; sd.late = null; try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision}}); } catch { /* changed or gone: leave it */ } draftWrote(); refreshDraftIndex(); }
+    async function afterSend() { await sd.closing; const row = sd.late; if (!row) return; sd.late = null; try { await api('api/drafts/' + row.id, {method: 'DELETE', body: {revision: row.revision, ...(sd.lateWhy || {})}}); } catch { /* changed or gone: leave it */ } draftWrote(); refreshDraftIndex(); }
     async function check(first) {
       if (!alive()) { clearInterval(sd.poll); return; }
       if (!first && document.hidden) return;
@@ -3280,7 +3290,7 @@
       // draft ends now (closeForSend), never after the provider answers. A send the server refuses comes back into the
       // box and the server draft (restoreSend); one cut off by a restart keeps its Retry bubble (same client id).
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
-      const sendingDraft = view.sd; sendingDraft?.closeForSend();
+      const sendingDraft = view.sd; sendingDraft?.closeForSend(text);
       const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
       const jobs = [];
       if (!a.length) jobs.push({text, photo: null, reply, identity_id: channel.value});
@@ -3914,7 +3924,7 @@
       const reply = view.reply;
       const confirmSend = original => action(async () => {
         const r = await call('people/' + id + '/send', {preview_id: preview.id, send_original: original, reply_to: reply?.id || null, client_id: 'w' + uid()});
-        if (s.drafts[id] === preview.original || (s.drafts[id] || '').trim() === preview.original) { s.drafts[id] = ''; saveDrafts(); if (view.draft) { view.draft.value = ''; view.grow(); } view.sd?.clear(); }
+        if (s.drafts[id] === preview.original || (s.drafts[id] || '').trim() === preview.original) { s.drafts[id] = ''; saveDrafts(); if (view.draft) { view.draft.value = ''; view.grow(); } view.sd?.clear(false, {outcome: 'sent', sent_text: preview.original}); }
         view.reply = null; view.paintBar?.(); closeOverlay();
         if (r.message) { mergeMessages(id, [r.message]); paintThread(true); }
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
@@ -4390,7 +4400,7 @@
   function applySwitches(data) {
     const was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
-    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); }
+    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); if (switchState.on['agent-drafts'] === true) loadDraftWatch(); }
   }
   async function syncSwitches() {
     try {
@@ -4422,6 +4432,39 @@
   // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
   // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
   function newContactRow() { return switchRow('new-contact-drafts', 'Drafts to new contacts', 'Drafts only in chats you already have', 'Drafts can start a chat by number or ID'); }
+  // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
+  // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).
+  const draftWatch = {watched: new Set(), all_unread: false, stats: null, paints: []};
+  function paintDraftWatch() { draftWatch.paints = draftWatch.paints.filter(p => p()); }
+  async function loadDraftWatch() {
+    try { const r = await call('draft-watch'); Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null}); paintDraftWatch(); }
+    catch { /* an older box: no draft watch */ }
+  }
+  function applyDraftWatch(r) { Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null}); paintDraftWatch(); }
+  async function watchChat(p, on) {
+    try { applyDraftWatch(await call('draft-watch', {person_id: p.id, on})); toast(on ? 'Your agent keeps a draft ready here. It never sends.' : 'No more ready drafts here'); }
+    catch (e) { toast(e.message || 'Couldn’t save that. Try again.', 3000); }
+  }
+  function agentDraftsRow() {
+    const row = switchRow('agent-drafts', 'Agent keeps drafts ready', 'Agents draft only when asked', 'Agents keep a reply drafted in the chats you pick');
+    const all = node('div', 'u-more-row u-more-agent-drafts-all'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Draft for every unread chat');
+    all.append(node('span', 'u-more-label', 'Draft for every unread chat'), group);
+    for (const [on, label] of [['0', 'Off'], ['1', 'On']]) {
+      const b = button(label, () => action(async () => applyDraftWatch(await call('draft-watch', {all_unread: on === '1'}))), 'u-view-btn');
+      b.dataset.on = on; b.setAttribute('role', 'radio'); group.append(b);
+    }
+    all.append(node('span', 'u-more-timings', 'Pick chats with ⋯ > Agent keeps a draft ready. Your agent needs Draft-only access. It never sends.'));
+    const paint = () => {
+      all.hidden = switchState.on['agent-drafts'] !== true;
+      for (const b of group.children) { const pick = (b.dataset.on === '1') === draftWatch.all_unread; b.setAttribute('aria-checked', String(pick)); b.classList.toggle('on', pick); }
+      return all.isConnected || !all.parentNode;
+    };
+    const base = switchState.paints['agent-drafts'];
+    switchState.paints['agent-drafts'] = () => { base(); paint(); };
+    draftWatch.paints.push(paint);
+    if (switchState.on['agent-drafts'] === true) loadDraftWatch();
+    paint(); return [row, all];
+  }
   function viewerPlaceholderRow() { return switchRow('viewer-placeholder', 'Photos ready in Wizard\'s viewer', 'Wizard\'s viewer loads the original', 'Wizard\'s viewer shows a ready copy first'); }
   // Issue 168: photo timings, measured in this view and on the box, summed up under the switch.
   const photoClock = photoTimings({
@@ -4534,8 +4577,12 @@
   function moreSettings(sheet) {
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-other');
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow());
-    sheet.append(head, agents, group);
+    // Issue 178: how the owner handled his agent's ready drafts, right under the agents.
+    const draftStats = node('p', 'helper u-agent-draft-stats');
+    const paintStats = () => { draftStats.hidden = switchState.on['agent-drafts'] !== true || agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
+    draftWatch.paints.push(paintStats);
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow(), ...agentDraftsRow());
+    sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.
     const sync = () => {
@@ -4552,7 +4599,7 @@
       }
       sync();
     };
-    api('api/view/agents').then(st => { if (agents.isConnected) paintAgents(st); }).catch(e => error(e));
+    api('api/view/agents').then(st => { if (agents.isConnected) { paintAgents(st); paintStats(); } }).catch(e => error(e));
     // Saved drafts stay in their chats (above the composer); Settings has no list of them.
     const merges = moreLink('Suggested merges', () => mergeSuggestions(), 'u-settings-row'); merges.hidden = true; group.append(merges);
     call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; merges.hidden = false; sync(); merges.querySelector('.u-more-value').textContent = String(n); merges.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
@@ -4617,7 +4664,7 @@
         actions.append(
           button('Discard', () => action(async () => {
             if (!await ask({title: 'Discard this draft?', body: 'Nothing is sent.', yes: 'Discard', no: 'Keep'})) return;
-            await api('api/drafts/' + d.id, {method: 'DELETE', body: {revision: d.revision}}); toast('Draft discarded'); await paint();
+            await api('api/drafts/' + d.id, {method: 'DELETE', body: {revision: d.revision, outcome: 'discarded'}}); toast('Draft discarded'); await paint();
           }), 'secondary'),
           button('Edit', () => reviewAgentDraft(d), 'secondary'),
           button('Send draft', () => action(async () => sendAgentDraft(d, paint)), 'primary'));
@@ -4707,7 +4754,7 @@
         if (draft.state === 'sending') sheet.append(node('p', 'helper', 'Delivery is uncertain. Check the conversation before creating a replacement. Editing is locked.'));
         if (draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
           if (!await ask({title: 'Delete this local draft?', body: 'Nothing is sent.', yes: 'Delete', no: 'Keep'})) { await agentDrafts(); return; }
-          try { await api('api/drafts/' + draft.id, {method:'DELETE', body:{revision:draft.revision}}); await afterAgentDraft(); }
+          try { await api('api/drafts/' + draft.id, {method:'DELETE', body:{revision:draft.revision, outcome:'discarded'}}); await afterAgentDraft(); }
           catch (e) { problem.textContent = e.message; }
         }), 'secondary wide'));
         sheet.append(node('p', 'helper', 'Review the recipient and text, then click Send. Nothing is sent by reviewing.'), review,
@@ -4748,7 +4795,7 @@
       }), 'secondary wide'));
       if (!draft.export && draft.state !== 'sending') sheet.append(button('Delete draft', () => action(async () => {
         if (!await ask({title: 'Delete this local draft?', body: 'Nothing is sent.', yes: 'Delete', no: 'Keep'})) { await agentDrafts(); return; }
-        try { await api('api/drafts/' + draft.id, {method: 'DELETE', body: {revision: draft.revision}}); await agentDrafts(); }
+        try { await api('api/drafts/' + draft.id, {method: 'DELETE', body: {revision: draft.revision, outcome: 'discarded'}}); await agentDrafts(); }
         catch (e) { problem.textContent = e.message; }
       }), 'secondary wide'));
       sheet.append(review, button('Back to drafts', agentDrafts, 'secondary wide'));

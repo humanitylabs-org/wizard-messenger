@@ -57,6 +57,13 @@ class Drafts:
         # list() copies the values in one step under the GIL.
         return {r.get('person_id') for r in list(self.rows.values()) if r.get('state') == 'draft'}
     @staticmethod
+    def closed(unified, row, outcome, sent_text=None):
+        # Issue 178 (switch agent-drafts): the owner sent or discarded a draft; an agent's words in it are feedback.
+        hook = getattr(unified, 'draft_closed', None)
+        if callable(hook):
+            try: hook(row, outcome, sent_text)
+            except Exception: pass
+    @staticmethod
     def changed(unified, row):
         # A chat started for a new contact (issue 176) is listed only while its draft waits: tell the inbox.
         hook = getattr(unified, 'drafts_changed', None)
@@ -167,6 +174,8 @@ class Drafts:
                         raise EngineError('draft_frozen', 'Independent review outstanding; refresh independent terminal status first.', 409)
                     if row['state'] == 'sending': raise EngineError('draft_sending', 'Delivery may still be in progress', 409)
                     self.check(row, payload); del self.rows[ident]; self.save(); self.drop_files(ident)
+                    # The view says why it closed a draft: 'sent' (with the text it sent) or 'discarded'.
+                    if row['state'] == 'draft': self.closed(unified, row, payload.get('outcome'), payload.get('sent_text'))
                     self.changed(unified, row); return {'deleted': True}
                 if method == 'DELETE' and not owner:
                     # Discarding an unsent draft is a draft action, never a provider write.
@@ -194,8 +203,12 @@ class Drafts:
                     # Text and any files arrive together as ONE revision: a create with attachments is never visible
                     # as a text-only draft (revision 1) followed by an attach (revision 2).
                     added = self.store_files(ident, row.get('attachments', []), files) if files else []
+                    # The words an agent last wrote stay with the draft while the owner edits it (issue 178 feedback).
+                    wrote = {k: row[k] for k in ('agent_text', 'agent_name') if k in row}
+                    if not owner and fields['text'].strip():
+                        wrote = {'agent_text': fields['text'], 'agent_name': str(actor['name'])[:60]}
                     row = {**fields, 'id': ident, 'revision': row['revision'], 'state': 'draft', 'created_by': created_by,
-                           'attachments': row.get('attachments', []) + added}
+                           'attachments': row.get('attachments', []) + added, **wrote}
                     self.stamp(row, owner, actor)
                     previous = self.rows.get(ident); self.rows[ident] = row
                     try: self.commit(ident, added)
@@ -252,5 +265,6 @@ class Drafts:
                         'send_original': payload.get('send_original') is True, 'client_id': ident})
                     row['state'] = 'queued' if result.get('state') == 'queued' else 'sent'
                     row['delivery'] = result; self.save()
+                    if owner: self.closed(unified, row, 'sent', row.get('text'))
                     return {'draft': copy.deepcopy(row), 'delivery': result}
             raise EngineError('not_found', 'No such draft route', 404)
