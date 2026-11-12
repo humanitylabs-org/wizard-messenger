@@ -10,6 +10,21 @@ index 1dee41e..0662133 100644
  	OpSendChatRemoved        OperationType = 41
  	OpContactUpdate          OperationType = 49
  	OpReadReceipt            OperationType = 55
+diff --git a/pkg/connector/handle_message.go b/pkg/connector/handle_message.go
+index 57640ea..f13b878 100644
+--- a/pkg/connector/handle_message.go
++++ b/pkg/connector/handle_message.go
+@@ -426,7 +426,9 @@ func (lc *LineClient) convertLineMessage(ctx context.Context, portal *bridgev2.P
+ 	// Dispatch to content-type-specific handlers
+ 	switch ContentType(data.ContentType) {
+ 	case ContentImage:
+-		return h.ConvertImage(ctx, portal, intent, data, decryptedBody, replyRelatesTo)
++		converted, err := h.ConvertImage(ctx, portal, intent, data, decryptedBody, replyRelatesTo)
++		markLineAlbum(data.ContentMetadata, converted)
++		return converted, err
+ 	case ContentVideo:
+ 		return h.ConvertVideo(ctx, portal, intent, data, decryptedBody, replyRelatesTo)
+ 	case ContentAudio:
 diff --git a/pkg/connector/own_read.go b/pkg/connector/own_read.go
 new file mode 100644
 index 0000000..aa3e63e
@@ -130,6 +145,133 @@ index 0000000..73560f1
 +	}
 +	if _, ok := (&LineClient{}).makeOwnReadReceiptEvent(line.Operation{Type: 40, Param1: "C", Param2: "m"}); ok {
 +		t.Fatal("no known owner must not produce a receipt")
++	}
++}
+diff --git a/pkg/connector/photo_album.go b/pkg/connector/photo_album.go
+new file mode 100644
+index 0000000..ef8fbf9
+--- /dev/null
++++ b/pkg/connector/photo_album.go
+@@ -0,0 +1,55 @@
++package connector
++
++import (
++	"strconv"
++	"strings"
++
++	"maunium.net/go/mautrix/bridgev2"
++	"maunium.net/go/mautrix/event"
++)
++
++// lineAlbumKey is the Matrix content field that tells a client which LINE photo
++// group (one multi-photo send) an image belongs to. Wizard Messenger reads it and
++// shows the group as one album, the same way it reads org.wizard.signal.album.
++const lineAlbumKey = "org.wizard.line.album"
++
++// lineAlbum reads LINE's own grouping of a multi-photo send from the message
++// metadata: GID is the group, GSEQ the photo's 1-based place and GTOTAL the number
++// of photos. LINE's official clients set these; a single photo has none (or a
++// GTOTAL of 1). Nothing is guessed from timestamps.
++func lineAlbum(meta map[string]string) (map[string]any, bool) {
++	gid := strings.TrimSpace(meta["GID"])
++	if gid == "" || gid == "0" || len(gid) > 200 {
++		return nil, false
++	}
++	total, err := strconv.Atoi(strings.TrimSpace(meta["GTOTAL"]))
++	if err != nil || total < 2 || total > 100 {
++		return nil, false
++	}
++	seq, err := strconv.Atoi(strings.TrimSpace(meta["GSEQ"]))
++	if err != nil || seq < 1 || seq > total {
++		return nil, false
++	}
++	return map[string]any{"id": gid, "index": seq - 1, "count": total}, true
++}
++
++// markLineAlbum adds the photo-group marker to the image parts of a converted
++// LINE image message. Notices (oversized, failed download) stay unmarked.
++func markLineAlbum(meta map[string]string, converted *bridgev2.ConvertedMessage) {
++	if converted == nil {
++		return
++	}
++	album, ok := lineAlbum(meta)
++	if !ok {
++		return
++	}
++	for _, part := range converted.Parts {
++		if part == nil || part.Content == nil || part.Content.MsgType != event.MsgImage {
++			continue
++		}
++		if part.Extra == nil {
++			part.Extra = map[string]any{}
++		}
++		part.Extra[lineAlbumKey] = album
++	}
++}
+diff --git a/pkg/connector/photo_album_test.go b/pkg/connector/photo_album_test.go
+new file mode 100644
+index 0000000..cb321eb
+--- /dev/null
++++ b/pkg/connector/photo_album_test.go
+@@ -0,0 +1,60 @@
++package connector
++
++import (
++	"reflect"
++	"testing"
++
++	"maunium.net/go/mautrix/bridgev2"
++	"maunium.net/go/mautrix/event"
++)
++
++func TestLineAlbumReadsLineGrouping(t *testing.T) {
++	got, ok := lineAlbum(map[string]string{"GID": "612345", "GSEQ": "2", "GTOTAL": "3"})
++	want := map[string]any{"id": "612345", "index": 1, "count": 3}
++	if !ok || !reflect.DeepEqual(got, want) {
++		t.Fatalf("lineAlbum = %#v, %v; want %#v", got, ok, want)
++	}
++}
++
++func TestLineAlbumIgnoresSinglesAndBadMetadata(t *testing.T) {
++	for _, meta := range []map[string]string{
++		nil,
++		{},
++		{"GID": "1", "GSEQ": "1", "GTOTAL": "1"},
++		{"GID": "0", "GSEQ": "1", "GTOTAL": "2"},
++		{"GID": "", "GSEQ": "1", "GTOTAL": "2"},
++		{"GID": "1", "GSEQ": "0", "GTOTAL": "2"},
++		{"GID": "1", "GSEQ": "3", "GTOTAL": "2"},
++		{"GID": "1", "GSEQ": "x", "GTOTAL": "2"},
++		{"GID": "1", "GSEQ": "1", "GTOTAL": "101"},
++		{"GID": "1", "GSEQ": "1"},
++	} {
++		if got, ok := lineAlbum(meta); ok {
++			t.Errorf("lineAlbum(%v) = %#v, want no album", meta, got)
++		}
++	}
++}
++
++func TestMarkLineAlbumMarksImagePartsOnly(t *testing.T) {
++	converted := &bridgev2.ConvertedMessage{Parts: []*bridgev2.ConvertedMessagePart{
++		{Type: event.EventMessage, Content: &event.MessageEventContent{MsgType: event.MsgImage}},
++		{Type: event.EventMessage, Content: &event.MessageEventContent{MsgType: event.MsgNotice}},
++		nil,
++	}}
++	markLineAlbum(map[string]string{"GID": "g", "GSEQ": "1", "GTOTAL": "2"}, converted)
++	want := map[string]any{"id": "g", "index": 0, "count": 2}
++	if got := converted.Parts[0].Extra[lineAlbumKey]; !reflect.DeepEqual(got, want) {
++		t.Fatalf("image part marker = %#v, want %#v", got, want)
++	}
++	if _, ok := converted.Parts[1].Extra[lineAlbumKey]; ok {
++		t.Fatal("a notice part must not join an album")
++	}
++	markLineAlbum(map[string]string{"GID": "g", "GSEQ": "1", "GTOTAL": "2"}, nil)
++	single := &bridgev2.ConvertedMessage{Parts: []*bridgev2.ConvertedMessagePart{
++		{Type: event.EventMessage, Content: &event.MessageEventContent{MsgType: event.MsgImage}},
++	}}
++	markLineAlbum(map[string]string{}, single)
++	if single.Parts[0].Extra != nil {
++		t.Fatalf("a single photo got Extra %#v", single.Parts[0].Extra)
 +	}
 +}
 diff --git a/pkg/connector/sync.go b/pkg/connector/sync.go

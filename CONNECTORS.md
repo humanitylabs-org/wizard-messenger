@@ -233,3 +233,9 @@ connectors, read from source (mautrix repos at `v0.2610.0` or, where that archiv
 Not possible upstream: nothing is marked impossible, but a network only reports what its protocol sends
 (Signal needs "read receipts" on the primary phone; LinkedIn's reads arrive with the next conversation sync).
 `status.read_sync` shows per network how many native reads arrived (`seen`) and moved a chat (`cleared`).
+
+LINE photo groups (issue 187): the same `plumbing/line-own-read-sync.patch` maps LINE's own
+`GID`/`GSEQ`/`GTOTAL` metadata on each photo of a multi-photo send to `org.wizard.line.album`
+`{id, index, count}`; unified.py reads it like the Signal marker and the existing album view shows one
+message in LINE's order. No time-window guessing. Sending one bundled LINE album from Messenger is
+not done: LINE assigns `GID` server-side for its official clients only.
