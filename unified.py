@@ -474,6 +474,25 @@ class PeopleStore:
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO kv VALUES (?,?)', (key, value))
 
+    # Issue 176: chats started for a new contact have no messages yet. They are listed while a draft waits in them
+    # (draft_people is set by the web service: () -> person ids with a waiting draft), so a discarded draft also
+    # takes the empty chat off the list.
+    draft_people = None
+
+    def started(self):
+        try:
+            raw = json.loads(self.get('started_chats') or '{}')
+            return {k: int(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def mark_started(self, person_id):
+        with self.lock:
+            rows = self.started()
+            rows.setdefault(person_id, int(time.time() * 1000))
+            keep = dict(sorted(rows.items(), key=lambda kv: -kv[1])[:500])
+            self.put('started_chats', json.dumps(keep))
+
     def own_names(self):
         """Names the owner is known by on each network (private store, never logged)."""
         names = set()
@@ -597,6 +616,9 @@ class PeopleStore:
     def people(self, kind='person', chats=True, ids=None):
         # Chats: only conversations with messages, newest first, each with its latest line and unread count.
         # Directory (chats=False): everyone A-Z, used by New chat. A fixed handful of queries, never N+1.
+        # Started chats (issue 176) are read before the store lock: draft_people takes the drafts lock.
+        started = self.started() if chats and kind == 'person' else {}
+        waiting = (self.draft_people() if started and self.draft_people else set()) or set()
         with self.db() as db:
             persons = {r['id']: dict(r) for r in db.execute('SELECT * FROM person')}
             idents = {}
@@ -621,7 +643,7 @@ class PeopleStore:
         for pid, ident in idents.items():
             if pid not in persons or (ids is not None and pid not in ids):
                 continue
-            if chats and pid not in last:
+            if chats and pid not in last and not (pid in started and pid in waiting):
                 continue
             p = dict(persons[pid], identities=ident, labels=labels.get(pid, []))
             pic = next((pictures[i['address']] for i in ident if pictures.get(i['address'])), None)
@@ -646,6 +668,11 @@ class PeopleStore:
                 p['unread_mentions'] = mentions.get(pid, 0)
                 p['last_read_ts'] = max(i['last_read_ts'] for i in ident)
                 p['peer_read_ts'] = max(i['peer_read_ts'] for i in ident)
+            elif chats:
+                # A started chat (issue 176): no message yet, only the waiting draft. Nothing has been sent.
+                p['last'] = {'text': '', 'outgoing': False, 'sender': '', 'timestamp': started[pid]}  # no sent tick: nothing was sent
+                p.update(unread=0, unread_mentions=0, started=True,
+                         last_read_ts=max(i['last_read_ts'] for i in ident), peer_read_ts=max(i['peer_read_ts'] for i in ident))
             result.append(p)
         if chats:
             result.sort(key=lambda p: -p['last']['timestamp'])
@@ -3162,6 +3189,22 @@ class UnifiedInbox:
             self.mx(self.room(identity['address']) + '/typing/' + quote(self.owner, safe=''), 'PUT', {'typing': on, 'timeout': 6000} if on else {'typing': False})
         return {'ok': True}
 
+    def start_chat(self, network, to):
+        """Issue 176 (switch new-contact-drafts): open an empty chat with a new contact. Nothing is sent."""
+        if getattr(self, 'connectors', None) is None:
+            fail('unsupported_network', 'New chats need the connected networks of this Messenger', 409)
+        import start_chat
+        return start_chat.start(self, network, to)
+
+    def drafts_changed(self, person_id):
+        """A draft was created or closed: a started chat (no messages) shows or leaves the list with it."""
+        if not isinstance(person_id, str) or person_id not in self.store.started():
+            return
+        with self.store.db() as db:
+            ids = [r[0] for r in db.execute('SELECT id FROM identity WHERE person_id=?', (person_id,))]
+        for identity_id in ids:
+            self.store.touch_identity(identity_id)
+
     def timing(self, name, started):
         self.sample(name, int((time.time() - started) * 1000))
 
@@ -3223,6 +3266,8 @@ class UnifiedInbox:
                     'read_sync': self.read_sync_stats()}
         if suffix == ['photos', 'timings'] and method == 'POST':
             return self.photo_client_timings(payload)
+        if suffix == ['start-chat'] and method == 'POST':
+            return self.start_chat(payload.get('network'), payload.get('to'))
         if suffix == ['sync'] and method == 'POST':
             # The background long-poll keeps the store current; this answers at once.
             return {'state': 'syncing' if self.sync_lock.locked() else 'ready', 'error': self.store.get('sync_error') or None}

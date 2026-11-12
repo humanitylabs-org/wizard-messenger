@@ -52,6 +52,17 @@ class Drafts:
     def stamp(self, row, owner, actor):
         row['revision'] += 1; row['updated'] = int(time.time() * 1000)
         row['updated_by'] = {'id': 'owner', 'name': 'You'} if owner else {'id': str(actor['id'])[:80], 'name': str(actor['name'])[:60]}
+    def waiting_people(self):
+        # No lock: the people store calls this, and a draft write holds this lock while it tells that store.
+        # list() copies the values in one step under the GIL.
+        return {r.get('person_id') for r in list(self.rows.values()) if r.get('state') == 'draft'}
+    @staticmethod
+    def changed(unified, row):
+        # A chat started for a new contact (issue 176) is listed only while its draft waits: tell the inbox.
+        hook = getattr(unified, 'drafts_changed', None)
+        if callable(hook):
+            try: hook(row.get('person_id'))
+            except Exception: pass
     def drop_files(self, ident):
         shutil.rmtree(self.files / ident, ignore_errors=True)
     @staticmethod
@@ -155,13 +166,15 @@ class Drafts:
                     if row.get('export'):
                         raise EngineError('draft_frozen', 'Independent review outstanding; refresh independent terminal status first.', 409)
                     if row['state'] == 'sending': raise EngineError('draft_sending', 'Delivery may still be in progress', 409)
-                    self.check(row, payload); del self.rows[ident]; self.save(); self.drop_files(ident); return {'deleted': True}
+                    self.check(row, payload); del self.rows[ident]; self.save(); self.drop_files(ident)
+                    self.changed(unified, row); return {'deleted': True}
                 if method == 'DELETE' and not owner:
                     # Discarding an unsent draft is a draft action, never a provider write.
                     self.mine(row, actor); self.check(row, payload)
                     if row['state'] != 'draft' or row.get('export') or row.get('preview'):
                         raise EngineError('draft_closed', 'The owner is reviewing or has sent this draft', 409)
-                    del self.rows[ident]; self.save(); self.drop_files(ident); return {'deleted': True}
+                    del self.rows[ident]; self.save(); self.drop_files(ident)
+                    self.changed(unified, row); return {'deleted': True}
                 if method == 'POST':
                     if suffix: self.check(row, payload)
                     if suffix and not owner: self.mine(row, actor, edit=True)
@@ -190,6 +203,7 @@ class Drafts:
                         if previous is None: self.rows.pop(ident, None); self.drop_files(ident)
                         else: self.rows[ident] = previous
                         raise
+                    if previous is None: self.changed(unified, row)
                     return {'draft': copy.deepcopy(row)}
             if len(suffix) == 2 and method == 'POST' and (owner or (can_send and suffix[1] in ('preview', 'send'))):
                 self.check(row, payload)

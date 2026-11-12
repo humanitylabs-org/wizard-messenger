@@ -150,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
             result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.16.35'}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
-        elif method == 'tools/list': result={'tools':MCP_TOOLS+(agent_tools.TOOLS if agent_tools.offered(self) else [])}
+        elif method == 'tools/list': result={'tools':MCP_TOOLS+(agent_tools.listed(self) if agent_tools.offered(self) else [])}
         elif method == 'tools/call':
             params=payload.get('params') or {}
             if params.get('name') in agent_tools.NAMES:

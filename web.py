@@ -176,6 +176,8 @@ class ViewServer(MessengerServer):
             self.push = PushRuntime(data, self.unified, self.public_path)
             self.push.start()
         if self.unified:
+            if getattr(self.unified, 'store', None) is not None:
+                self.unified.store.draft_people = self.drafts.waiting_people
             self.unified.start()
 
     def server_close(self):

@@ -86,6 +86,16 @@ TOOLS = [
     _tool('messenger_remove_draft_attachment', 'Remove one attachment from a draft this agent may edit. Needs Draft-only or higher.',
           {'draft_id': _string('Draft id'), 'revision': _int('The draft\'s current revision'),
            'attachment_id': _string('Attachment id from the draft')}, ['draft_id', 'revision', 'attachment_id']),
+    # Issue 176, behind the switch new-contact-drafts (listed only while it is on).
+    _tool('messenger_start_draft', 'Start a chat with someone the owner has never chatted with and save a first message '
+          'there as a draft. `to` is a WhatsApp phone number with country code (+66 92 264 3444), a Telegram @username, '
+          'or a LINE ID / official account id (@propertyscout). The contact is looked up and an empty chat opens on the '
+          'owner\'s side only: nothing is sent to the contact, no friend request either. The owner reviews the draft '
+          'and taps Send, or discards it (which also removes the empty chat). Needs Draft-only or higher.',
+          {'network': {'type': 'string', 'enum': ['whatsapp', 'telegram', 'line'], 'description': 'whatsapp, telegram or line'},
+           'to': _string('Phone number (E.164, with +country code), Telegram @username, or LINE ID / @account'),
+           'text': _string('The first message, saved as a draft'), 'attachments': _attachments},
+          ['network', 'to', 'text']),
 ]
 NAMES = {t['name'] for t in TOOLS}
 # Tool -> the HTTP route it is equivalent to, so one policy table governs both surfaces.
@@ -97,7 +107,10 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           'messenger_update_draft': ('POST', '/api/drafts/x'),
           'messenger_delete_draft': ('DELETE', '/api/drafts/x'),
           'messenger_attach_to_draft': ('PUT', '/api/drafts/x/attachments'),
-          'messenger_remove_draft_attachment': ('DELETE', '/api/drafts/x/attachments/y')}
+          'messenger_remove_draft_attachment': ('DELETE', '/api/drafts/x/attachments/y'),
+          # Same level as saving any draft: it opens an empty chat and saves a draft, and never sends.
+          'messenger_start_draft': ('POST', '/api/drafts')}
+START_SWITCH = 'new-contact-drafts'
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -495,11 +508,38 @@ def delete_draft(handler, caller, args):
                                            _unified(handler), owner=False, actor=_actor(caller))
 
 
+def start_draft(handler, caller, args):
+    unified = _unified(handler)
+    if not unified.switches.is_on(START_SWITCH):
+        raise EngineError('feature_off', 'Starting new chats is off. The owner can turn on Messenger → Settings → '
+                          'Drafts to new contacts.', 403)
+    files = _load(args.get('attachments'))  # bad attachments fail before any bridge lookup
+    chat = unified.start_chat(args['network'], args['to'])
+    row = handler.service.drafts.dispatch('POST', [], {'person_id': chat['chat_id'], 'identity_id': chat['channel_id'],
+                                                       'text': args['text']},
+                                          unified, owner=False, actor=_actor(caller), files=files)['draft']
+    return {'chat': chat, 'draft': _draft(row),
+            'note': 'Started the chat and saved the draft. Nothing was sent to the contact; the owner reviews and '
+                    'sends it from Messenger, or discards it.'}
+
+
+def listed(handler):
+    """The tools this Messenger offers now: messenger_start_draft only while its switch is on."""
+    unified = getattr(handler.service, 'unified', None)
+    switches = getattr(unified, 'switches', None)
+    try:
+        on = bool(switches and switches.is_on(START_SWITCH))
+    except Exception:
+        on = False
+    return [t for t in TOOLS if on or t['name'] != 'messenger_start_draft']
+
+
 BODIES = {'messenger_list_chats': list_chats, 'messenger_read_thread': read_thread,
           'messenger_get_attachment': get_attachment,
           'messenger_list_drafts': list_drafts, 'messenger_create_draft': create_draft,
           'messenger_update_draft': update_draft, 'messenger_delete_draft': delete_draft,
-          'messenger_attach_to_draft': attach_to_draft, 'messenger_remove_draft_attachment': remove_draft_attachment}
+          'messenger_attach_to_draft': attach_to_draft, 'messenger_remove_draft_attachment': remove_draft_attachment,
+          'messenger_start_draft': start_draft}
 
 
 def _result(data, error=False):
