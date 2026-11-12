@@ -721,6 +721,7 @@ html[data-color-scheme=light] { --sheet-solid: #f6f6f8; }
 .u-more-agent .u-agent-name { flex: none; overflow-wrap: anywhere; }
 .u-more-what { grid-column: 1 / -1; margin-top: -6px; color: var(--ink-3); font-size: 0.8125rem; line-height: 1.35; }
 .u-sheet select.u-more-level { width: auto; max-width: 100%; min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--ink-2); font-size: 1rem; text-align: right; cursor: pointer; }
+.u-agent-off { justify-self: end; align-self: center; color: var(--ink-3); font-size: 1rem; }
 .u-more-note { margin: 0; padding: 10px 14px; color: var(--ink-2); font-size: 0.8125rem; }
 .u-more-note.warn { color: var(--warn); }
 .u-more-notify { display: grid; gap: 2px; padding: 0; }

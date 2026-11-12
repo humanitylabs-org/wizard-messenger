@@ -4372,8 +4372,17 @@
     draft_only: 'Reads and drafts. Only you send.', draft_and_send: 'Reads and sends without your review.'};
   // One agent row (Miguel): the agent's name and its level picker, nothing under it. The recommended level says so
   // inside the picker's options (Settings only; Advanced's older keys keep short labels). A change saves at once.
-  function levelRow(agent, name, levels, save, {recommend = false} = {}) {
+  function levelRow(agent, name, levels, save, {recommend = false, connected = true} = {}) {
     const row = node('div', 'u-more-row u-more-agent');
+    // Issue 1335 (wizard-ux): without the gateway's key Messenger treats every agent as unknown, so a chosen level
+    // would look like access the agent doesn't have. Say so plainly instead; the saved choice comes back once connected.
+    if (!connected) {
+      const kept = levels.find(l => l.id === agent.level);
+      const off = node('span', 'u-more-level u-agent-off', 'Not connected');
+      if (kept) off.title = kept.label + ' is saved for when the agent is connected.';
+      row.append(node('strong', 'u-agent-name', name), off);
+      return row;
+    }
     const choice = node('select', 'u-more-level'); choice.setAttribute('aria-label', 'What ' + name + ' may do');
     const shown = levels.filter(l => l.id !== 'draft_and_send' || agent.level === 'draft_and_send');
     for (const l of shown) {
@@ -4628,7 +4637,7 @@
         agents.append(levelRow(agent, agent.label || 'Your Wizard agent', st.wizard_levels || [], async level => {
           await api('api/view/agents/wizard/' + encodeURIComponent(agent.id), {method: 'POST', body: {level}});
           const next = await api('api/view/agents'); if (agents.isConnected) paintAgents(next);
-        }, {recommend: true}));
+        }, {recommend: true, connected: st.gateway_connected !== false}));
       }
       sync();
     };
