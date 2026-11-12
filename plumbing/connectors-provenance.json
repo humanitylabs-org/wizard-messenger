@@ -185,8 +185,8 @@
     "patches": [
       {
         "file": "plumbing/line-own-read-sync.patch",
-        "sha256": "18c2648923043ddfea669ee9a05220959657ab2a211adf364e651c35c065474d",
-        "purpose": "SEND_CHAT_CHECKED (type 40): reads the owner does in the LINE app become a Matrix read receipt from the owner (upstream only bridged other people's reads, type 55). Photo groups (issue 187): LINE's own GID/GSEQ/GTOTAL metadata on a multi-photo send becomes org.wizard.line.album {id, index, count} on each image part, so Messenger shows one album"
+        "sha256": "fbe381079e53216fa667113014ceb8d9345676ded8d2db90118eef8e496210e5",
+        "purpose": "SEND_CHAT_CHECKED (type 40): reads the owner does in the LINE app become a Matrix read receipt from the owner (upstream only bridged other people's reads, type 55). Photo groups (issue 187): LINE's own GID/GSEQ/GTOTAL metadata on a multi-photo send becomes org.wizard.line.album {id, index, count} on each image part, so Messenger shows one album. Sending photo groups (issue 188): an outgoing image marked org.wizard.line.album gets GID/GSEQ/GTOTAL, and is retried once without them if LINE refuses the group"
       }
     ]
   }

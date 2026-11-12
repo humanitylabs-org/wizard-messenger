@@ -53,6 +53,11 @@ SWITCHES = (
                     '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#182']},
+    {'id': 'line-photo-groups', 'name': 'LINE photo groups',
+     'description': 'Several photos sent together to a LINE chat go as one photo group, like LINE sends them, instead '
+                    'of only the first photo arriving.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#188']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

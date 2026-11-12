@@ -149,16 +149,18 @@ index 0000000..73560f1
 +}
 diff --git a/pkg/connector/photo_album.go b/pkg/connector/photo_album.go
 new file mode 100644
-index 0000000..ef8fbf9
+index 0000000..ae03077
 --- /dev/null
 +++ b/pkg/connector/photo_album.go
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,141 @@
 +package connector
 +
 +import (
++	"encoding/json"
 +	"strconv"
 +	"strings"
 +
++	"github.com/beeper/line/pkg/line"
 +	"maunium.net/go/mautrix/bridgev2"
 +	"maunium.net/go/mautrix/event"
 +)
@@ -208,15 +210,100 @@ index 0000000..ef8fbf9
 +		part.Extra[lineAlbumKey] = album
 +	}
 +}
++
++// Sending (issue 188): Wizard Messenger sends several photos picked together to
++// a LINE chat as one Matrix image per photo, in order, each carrying
++// org.wizard.line.album {id, index, count}. The bridge passes that grouping on
++// to LINE as GID/GSEQ/GTOTAL, the metadata LINE's own clients use for a photo
++// group. Messenger only adds the marker while its "LINE photo groups" switch
++// is on, so without it nothing here runs.
++var lineAlbumMetaKeys = [...]string{"GID", "GSEQ", "GTOTAL"}
++
++// lineAlbumSendMeta reads Messenger's marker from an outgoing event's raw
++// content and returns the LINE metadata for it. A malformed marker is ignored,
++// and the photo goes as a plain single photo.
++func lineAlbumSendMeta(raw map[string]any) (map[string]string, bool) {
++	group, ok := raw[lineAlbumKey].(map[string]any)
++	if !ok {
++		return nil, false
++	}
++	id, ok := group["id"].(string)
++	if !ok || id == "" || len(id) > 64 || strings.Trim(id, "0123456789") != "" {
++		return nil, false
++	}
++	index, ok := wholeNumber(group["index"])
++	if !ok {
++		return nil, false
++	}
++	count, ok := wholeNumber(group["count"])
++	if !ok || count < 2 || count > 100 || index < 0 || index >= count {
++		return nil, false
++	}
++	return map[string]string{
++		"GID":    id,
++		"GSEQ":   strconv.Itoa(index + 1),
++		"GTOTAL": strconv.Itoa(count),
++	}, true
++}
++
++// wholeNumber accepts the JSON number forms a decoded event can hold.
++func wholeNumber(v any) (int, bool) {
++	switch n := v.(type) {
++	case float64:
++		if n != float64(int(n)) {
++			return 0, false
++		}
++		return int(n), true
++	case int:
++		return n, true
++	case int64:
++		return int(n), true
++	case json.Number:
++		i, err := n.Int64()
++		return int(i), err == nil
++	}
++	return 0, false
++}
++
++// applyLineAlbumSend adds the photo-group metadata to an outgoing image and
++// reports whether it did.
++func applyLineAlbumSend(meta map[string]string, raw map[string]any) bool {
++	if meta == nil {
++		return false
++	}
++	group, ok := lineAlbumSendMeta(raw)
++	if !ok {
++		return false
++	}
++	for k, v := range group {
++		meta[k] = v
++	}
++	return true
++}
++
++// clearLineAlbumSend drops the photo-group metadata again, for the one retry
++// after LINE refuses a grouped photo: the photo still arrives, on its own.
++func clearLineAlbumSend(meta map[string]string) {
++	for _, k := range lineAlbumMetaKeys {
++		delete(meta, k)
++	}
++}
++
++// shouldRetrySendWithoutAlbum is true when LINE itself refused a grouped photo
++// (a TalkException that is not about the login).
++func shouldRetrySendWithoutAlbum(grouped bool, err error) bool {
++	return grouped && err != nil && line.IsTalkException(err) && !line.IsAuthError(err)
++}
 diff --git a/pkg/connector/photo_album_test.go b/pkg/connector/photo_album_test.go
 new file mode 100644
-index 0000000..cb321eb
+index 0000000..fc833f9
 --- /dev/null
 +++ b/pkg/connector/photo_album_test.go
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,121 @@
 +package connector
 +
 +import (
++	"errors"
 +	"reflect"
 +	"testing"
 +
@@ -274,6 +361,100 @@ index 0000000..cb321eb
 +		t.Fatalf("a single photo got Extra %#v", single.Parts[0].Extra)
 +	}
 +}
++
++func TestLineAlbumSendMetaFromMessengerMarker(t *testing.T) {
++	raw := map[string]any{lineAlbumKey: map[string]any{"id": "123456789012345", "index": float64(1), "count": float64(3)}}
++	meta := map[string]string{"contentType": "1"}
++	if !applyLineAlbumSend(meta, raw) {
++		t.Fatal("a valid marker must group the photo")
++	}
++	want := map[string]string{"contentType": "1", "GID": "123456789012345", "GSEQ": "2", "GTOTAL": "3"}
++	if !reflect.DeepEqual(meta, want) {
++		t.Fatalf("metadata = %#v, want %#v", meta, want)
++	}
++	// What LINE sends back for the photo reads as the same album again.
++	if got, ok := lineAlbum(meta); !ok || !reflect.DeepEqual(got, map[string]any{"id": "123456789012345", "index": 1, "count": 3}) {
++		t.Fatalf("round trip = %#v, %v", got, ok)
++	}
++	clearLineAlbumSend(meta)
++	if !reflect.DeepEqual(meta, map[string]string{"contentType": "1"}) {
++		t.Fatalf("after clear = %#v", meta)
++	}
++}
++
++func TestLineAlbumSendMetaIgnoresBadMarkers(t *testing.T) {
++	for _, group := range []any{
++		nil, "x", []any{},
++		map[string]any{},
++		map[string]any{"id": "", "index": float64(0), "count": float64(2)},
++		map[string]any{"id": "12a", "index": float64(0), "count": float64(2)},
++		map[string]any{"id": "1", "index": float64(0), "count": float64(1)},
++		map[string]any{"id": "1", "index": float64(2), "count": float64(2)},
++		map[string]any{"id": "1", "index": float64(-1), "count": float64(2)},
++		map[string]any{"id": "1", "index": 0.5, "count": float64(2)},
++		map[string]any{"id": "1", "index": "0", "count": float64(2)},
++		map[string]any{"id": "1", "index": float64(0), "count": float64(101)},
++		map[string]any{"id": 1, "index": float64(0), "count": float64(2)},
++	} {
++		meta := map[string]string{}
++		if applyLineAlbumSend(meta, map[string]any{lineAlbumKey: group}) || len(meta) != 0 {
++			t.Errorf("marker %#v grouped the photo: %#v", group, meta)
++		}
++	}
++	if applyLineAlbumSend(map[string]string{}, nil) || applyLineAlbumSend(nil, map[string]any{}) {
++		t.Fatal("no marker must not group")
++	}
++}
++
++func TestShouldRetrySendWithoutAlbum(t *testing.T) {
++	refused := errors.New(`API error 400: {"code":10051,"message":"RESPONSE_ERROR","data":{"name":"TalkException","code":1,"reason":"illegal argument"}}`)
++	login := errors.New(`API error 400: {"code":10051,"message":"RESPONSE_ERROR","data":{"name":"TalkException","code":119,"reason":"Access token refresh required"}}`)
++	if !shouldRetrySendWithoutAlbum(true, refused) {
++		t.Fatal("LINE refusing a grouped photo must retry it alone")
++	}
++	for _, c := range []struct {
++		grouped bool
++		err     error
++	}{{false, refused}, {true, nil}, {true, errors.New("dial tcp: timeout")}, {true, login}} {
++		if shouldRetrySendWithoutAlbum(c.grouped, c.err) {
++			t.Errorf("retry for grouped=%v err=%v", c.grouped, c.err)
++		}
++	}
++}
+diff --git a/pkg/connector/send_message.go b/pkg/connector/send_message.go
+index d503128..5e7a022 100644
+--- a/pkg/connector/send_message.go
++++ b/pkg/connector/send_message.go
+@@ -668,6 +668,10 @@ func (lc *LineClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
+ 		lc.UserLogin.Bridge.Log.Info().Str("portal", portalMid).Int("content_type", contentType).Msg("Sending plain text message (no E2EE)")
+ 	}
+ 
++	// Issue 188: a photo Messenger sent as part of a group carries LINE's group metadata.
++	grouped := effectiveMsgType == event.MsgImage && msg.Event != nil &&
++		applyLineAlbumSend(contentMetadata, msg.Event.Content.Raw)
++
+ 	now := time.Now().UnixMilli()
+ 	lineMsg := &line.Message{
+ 		ID:              fmt.Sprintf("local-%d", now),
+@@ -830,6 +834,18 @@ func (lc *LineClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
+ 		sentMsg, err = sendLineMessage(retryReqSeq, lineMsg)
+ 	}
+ 
++	if shouldRetrySendWithoutAlbum(grouped, err) {
++		clearLineAlbumSend(lineMsg.ContentMetadata)
++		lc.UserLogin.Bridge.Log.Warn().
++			Err(err).
++			Str("chat_mid", portalMid).
++			Msg("SendMessage refused a grouped photo, retrying it as a single photo")
++
++		retryReqSeq := int(time.Now().UnixMilli() % 1_000_000_000)
++		lc.trackReqSeq(retryReqSeq)
++		sentMsg, err = sendLineMessage(retryReqSeq, lineMsg)
++	}
++
+ 	if err != nil {
+ 		return nil, wrapSendError(err)
+ 	}
 diff --git a/pkg/connector/sync.go b/pkg/connector/sync.go
 index c74ad6c..04c6151 100644
 --- a/pkg/connector/sync.go
