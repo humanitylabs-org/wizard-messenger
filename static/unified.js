@@ -2534,7 +2534,7 @@
   }
 
   // Shared by both message renderers. Chat-row holdToMenu deliberately stays separate.
-  function messageGestures(row, bubble, {selection, id, menu, reply, album}) {
+  function messageGestures(row, bubble, {selection, id, menu, reply, album, rowTap}) {
     const interactive = 'a,button,input,textarea,select,img,video,audio,.u-media,.u-reply,.u-wave,.reply-quote';
     // A photo, video, GIF or sticker IS the message when it has no caption (16.16 drew them without bubble chrome), so
     // holding or right-clicking it must reach the same menu, reactions first (Miguel, 5 Nov 2026: "I couldn't react
@@ -2606,9 +2606,25 @@
       e.preventDefault(); cancel();
       if (!selection()?.active) (onMedia(e) ? openMedia : open)();
     });
+    // Issue 182 (switch row-tap-menu): a clean finger tap on the row's empty space right of a received bubble opens
+    // the same menu a hold opens (media gets the media menu). A drag (scroll) never does; selection mode's own
+    // capture click handler on the thread runs first and keeps its toggle.
+    if (!rowTap) return;
+    let rx = 0, ry = 0, rtouch = false, rmoved = true;
+    row.addEventListener('pointerdown', e => { rtouch = e.pointerType === 'touch' || e.pointerType === 'pen'; rx = e.clientX; ry = e.clientY; rmoved = e.target !== row; });
+    row.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - rx, e.clientY - ry) > 8) rmoved = true; });
+    row.addEventListener('pointercancel', () => { rmoved = true; });
+    row.addEventListener('click', e => {
+      if (e.target !== row || !rowTap() || !rtouch || rmoved || selection()?.active || textMode()) return;
+      const box = bubble.getBoundingClientRect();
+      if (e.clientX <= box.right || e.clientY < box.top || e.clientY > box.bottom) return;
+      e.stopPropagation(); touch = true;
+      (bubble.querySelector('.u-media') ? openMedia : open)();
+    });
   }
   function gestures(row, b, m) {
-    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: o => menu(m, b, o), reply: () => startReply(m)});
+    messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: o => menu(m, b, o), reply: () => startReply(m),
+      rowTap: m.outgoing ? null : () => switchState.on['row-tap-menu'] === true});
   }
   function menu(m, b, opts = {}) {
     const t = store.threads[view.id]; if (!t) return;
@@ -4439,6 +4455,8 @@
   // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
   // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
   function newContactRow() { return switchRow('new-contact-drafts', 'Drafts to new contacts', 'Drafts only in chats you already have', 'Drafts can start a chat by number or ID'); }
+  // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
+  function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
   // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).
   const draftWatch = {watched: new Set(), all_unread: false, stats: null, paints: []};
@@ -4588,7 +4606,7 @@
     const draftStats = node('p', 'helper u-agent-draft-stats');
     const paintStats = () => { draftStats.hidden = switchState.on['agent-drafts'] !== true || agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow(), ...agentDraftsRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow(), ...agentDraftsRow(), rowTapRow());
     sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

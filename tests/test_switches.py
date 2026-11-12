@@ -61,7 +61,12 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Pick chats (chat ⋯ > Agent keeps a draft ready), or every unread chat, and your agent keeps '
                                'a reply drafted there for you to send, edit or discard. It learns from how you change its '
                                'drafts. It never sends, and needs Draft-only access.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#178']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#178']}, {
+                'id': 'row-tap-menu', 'name': 'Tap beside a message for its menu',
+                'description': "On a phone, tapping the empty space to the right of someone's message opens that "
+                               "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
+                               'still opens it.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}])
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -173,7 +178,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-contact-drafts', 'agent-drafts'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-contact-drafts', 'agent-drafts', 'row-tap-menu'])
 
 
 if __name__ == '__main__':

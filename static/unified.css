@@ -1151,8 +1151,8 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-cu-off { border: 1px solid var(--wz-border, var(--line)); }
 
 /* Inbox view (Settings): a two-way choice, Chats (default) or Compact; 44px tap targets, theme tokens only. */
-.u-more-view, .u-more-photo-warm, .u-more-photo-instant, .u-more-viewer-placeholder, .u-more-photo-prefetch, .u-more-photo-timings, .u-more-new-contact-drafts, .u-more-agent-drafts, .u-more-agent-drafts-all { justify-content: space-between; flex-wrap: wrap; }
-.u-more-view .u-more-label, .u-more-photo-warm .u-more-label, .u-more-photo-instant .u-more-label, .u-more-viewer-placeholder .u-more-label, .u-more-photo-prefetch .u-more-label, .u-more-photo-timings .u-more-label, .u-more-new-contact-drafts .u-more-label, .u-more-agent-drafts .u-more-label, .u-more-agent-drafts-all .u-more-label { flex: 1 1 8rem; min-width: 0; }
+.u-more-view, .u-more-photo-warm, .u-more-photo-instant, .u-more-viewer-placeholder, .u-more-photo-prefetch, .u-more-photo-timings, .u-more-new-contact-drafts, .u-more-agent-drafts, .u-more-agent-drafts-all, .u-more-row-tap-menu { justify-content: space-between; flex-wrap: wrap; }
+.u-more-view .u-more-label, .u-more-photo-warm .u-more-label, .u-more-photo-instant .u-more-label, .u-more-viewer-placeholder .u-more-label, .u-more-photo-prefetch .u-more-label, .u-more-photo-timings .u-more-label, .u-more-new-contact-drafts .u-more-label, .u-more-agent-drafts .u-more-label, .u-more-agent-drafts-all .u-more-label, .u-more-row-tap-menu .u-more-label { flex: 1 1 8rem; min-width: 0; }
 .u-more-timings { flex: 1 0 100%; display: flex; flex-direction: column; gap: .125rem; font-size: .8125rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .u-more-timings[hidden] { display: none; }
 .u-agent-draft-stats { margin: .375rem .875rem 0; font-variant-numeric: tabular-nums; }
