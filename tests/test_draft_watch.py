@@ -179,10 +179,10 @@ class ToolList(unittest.TestCase):
         on = set()
         handler = Mock(); handler.service.unified.switches.is_on = lambda sid: sid in on
         names = lambda: {t['name'] for t in agent_tools.listed(handler)}
-        self.assertFalse({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft'} & names())
+        self.assertFalse({'messenger_chats_needing_draft', 'messenger_draft_feedback'} & names())
+        self.assertIn('messenger_start_draft', names())  # issue 176: on for everyone
         on.add(SWITCH)
-        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback'} <= names())
-        self.assertNotIn('messenger_start_draft', names())
+        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft'} <= names())
         self.assertEqual(agent_tools.ROUTES['messenger_chats_needing_draft'], ('GET', '/api/unified/people'))
         self.assertEqual(agent_tools.ROUTES['messenger_draft_feedback'], ('GET', '/api/drafts'))
 

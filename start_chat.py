@@ -1,6 +1,6 @@
 """Start a chat with someone the owner has never chatted with, without sending anything (issue 176).
 
-Behind the off-by-default switch `new-contact-drafts`. The bridge resolves the contact and opens an empty chat
+On for everyone (the switch `new-contact-drafts` was removed once approved). The bridge resolves the contact and opens an empty chat
 room on the owner's side; no message, friend request or attachment goes to the contact. The first message is the
 draft the owner later sends from Messenger.
 
@@ -18,7 +18,6 @@ from urllib.parse import quote
 
 from engine import EngineError
 
-SWITCH = 'new-contact-drafts'
 NETWORKS = ('whatsapp', 'telegram', 'line')
 LABELS = {'whatsapp': 'WhatsApp', 'telegram': 'Telegram', 'line': 'LINE'}
 NOT_FOUND = {'whatsapp': "This number isn't on WhatsApp", 'telegram': 'Telegram username not found',
@@ -89,8 +88,6 @@ def resolve(connectors, network, ident):
 
 def start(inbox, network, to):
     """Resolve the contact, open the empty chat and file it in the people store. Returns the chat."""
-    if not inbox.switches.is_on(SWITCH):
-        _fail('feature_off', 'Starting new chats is off. The owner can turn on Settings > Drafts to new contacts.', 403)
     ident = identifier(network, to)
     network = network.strip().lower()
     connectors = inbox.connectors

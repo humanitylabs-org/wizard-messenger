@@ -87,7 +87,7 @@ TOOLS = [
     _tool('messenger_remove_draft_attachment', 'Remove one attachment from a draft this agent may edit. Needs Draft-only or higher.',
           {'draft_id': _string('Draft id'), 'revision': _int('The draft\'s current revision'),
            'attachment_id': _string('Attachment id from the draft')}, ['draft_id', 'revision', 'attachment_id']),
-    # Issue 176, behind the switch new-contact-drafts (listed only while it is on).
+    # Issue 176: on for everyone.
     _tool('messenger_start_draft', 'Start a chat with someone the owner has never chatted with and save a first message '
           'there as a draft. `to` is a WhatsApp phone number with country code (+66 92 264 3444), a Telegram @username, '
           'or a LINE ID / official account id (@propertyscout). The contact is looked up and an empty chat opens on the '
@@ -126,11 +126,9 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           # Reads: the same level as listing chats and drafts.
           'messenger_chats_needing_draft': ('GET', '/api/unified/people'),
           'messenger_draft_feedback': ('GET', '/api/drafts')}
-START_SWITCH = 'new-contact-drafts'
 WATCH_SWITCH = 'agent-drafts'
 # Tools offered only while their switch is on.
-SWITCHED = {'messenger_start_draft': START_SWITCH, 'messenger_chats_needing_draft': WATCH_SWITCH,
-            'messenger_draft_feedback': WATCH_SWITCH}
+SWITCHED = {'messenger_chats_needing_draft': WATCH_SWITCH, 'messenger_draft_feedback': WATCH_SWITCH}
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -530,9 +528,6 @@ def delete_draft(handler, caller, args):
 
 def start_draft(handler, caller, args):
     unified = _unified(handler)
-    if not unified.switches.is_on(START_SWITCH):
-        raise EngineError('feature_off', 'Starting new chats is off. The owner can turn on Messenger → Settings → '
-                          'Drafts to new contacts.', 403)
     files = _load(args.get('attachments'))  # bad attachments fail before any bridge lookup
     chat = unified.start_chat(args['network'], args['to'])
     row = handler.service.drafts.dispatch('POST', [], {'person_id': chat['chat_id'], 'identity_id': chat['channel_id'],

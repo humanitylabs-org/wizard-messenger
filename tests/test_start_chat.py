@@ -1,4 +1,4 @@
-"""Drafts to new contacts (issue 176, switch new-contact-drafts). Synthetic contacts and a recorded bridge only:
+"""Drafts to new contacts (issue 176, on for everyone). Synthetic contacts and a recorded bridge only:
 no real number, LINE or Telegram account is ever contacted, and nothing here may call a send route."""
 import json
 import unittest
@@ -12,7 +12,6 @@ from start_chat import identifier
 from unified import UnifiedInbox
 import agent_tools
 
-SWITCH = 'new-contact-drafts'
 
 
 class RecordedBridge:
@@ -87,9 +86,6 @@ class StartDraft(unittest.TestCase):
         self.key = {'Authorization': 'Bearer ' + data['result']['key']}
         self.assertEqual(self.request('POST', '/api/view/agents/' + ident, {'level': 'draft_only'}, self.owner)[0], 200)
 
-    def switch(self, on):
-        self.inbox.switches.set(SWITCH, on)
-
     def mcp(self, name, args=None, method='tools/call'):
         body = {'jsonrpc': '2.0', 'id': 1, 'method': method}
         if method == 'tools/call':
@@ -109,19 +105,12 @@ class StartDraft(unittest.TestCase):
         for network, method, path in self.bridge.routes():
             self.assertTrue(path.startswith(('/resolve_identifier/', '/search_users', '/create_dm/')), path)
 
-    def test_off_by_default_tool_not_listed_and_refused(self):
+    def test_tool_is_listed_for_everyone(self):
         names = [t['name'] for t in self.mcp(None, method='tools/list')['tools']]
-        self.assertNotIn('messenger_start_draft', names)
+        self.assertIn('messenger_start_draft', names)
         self.assertIn('messenger_create_draft', names)
-        result, error = self.mcp('messenger_start_draft', {'network': 'whatsapp', 'to': '+66920000000', 'text': 'Hi'})
-        self.assertTrue(error)
-        self.assertEqual(result['error']['code'], 'feature_off')
-        self.assertEqual(self.bridge.calls, [])
-        with self.assertRaises(EngineError):
-            self.inbox.start_chat('whatsapp', '+66920000000')
 
     def test_whatsapp_number_gets_a_new_chat_with_the_draft_and_nothing_is_sent(self):
-        self.switch(True)
         self.assertIn('messenger_start_draft', [t['name'] for t in self.mcp(None, method='tools/list')['tools']])
         seq = self.inbox.store.seq
         result, error = self.mcp('messenger_start_draft', {'network': 'whatsapp', 'to': '+66 92 000 0000', 'text': 'Hi'})
@@ -151,7 +140,6 @@ class StartDraft(unittest.TestCase):
         self.assert_nothing_sent()
 
     def test_unknown_number_is_a_clear_error_and_never_opens_a_chat(self):
-        self.switch(True)
         result, error = self.mcp('messenger_start_draft', {'network': 'whatsapp', 'to': '+66 81 111 1111', 'text': 'Hi'})
         self.assertTrue(error)
         self.assertEqual(result['error'], {'code': 'contact_not_found', 'message': "This number isn't on WhatsApp"})
@@ -161,7 +149,6 @@ class StartDraft(unittest.TestCase):
         self.assertEqual(self.chats(), [])
 
     def test_line_id_and_telegram_username(self):
-        self.switch(True)
         result, error = self.mcp('messenger_start_draft', {'network': 'line', 'to': '@PropertyScout', 'text': 'Hello'})
         self.assertFalse(error, result)
         self.assertEqual(self.bridge.routes()[:2], [('line', 'POST', '/search_users'), ('line', 'POST', '/create_dm/u0123abc')])
@@ -173,7 +160,6 @@ class StartDraft(unittest.TestCase):
         self.assert_nothing_sent()
 
     def test_disconnected_network_and_bad_input(self):
-        self.switch(True)
         self.bridge.state = 'disconnected'
         result, error = self.mcp('messenger_start_draft', {'network': 'whatsapp', 'to': '+66920000000', 'text': 'Hi'})
         self.assertEqual(result['error']['code'], 'network_not_connected')
@@ -182,7 +168,6 @@ class StartDraft(unittest.TestCase):
         self.assertEqual(self.bridge.calls, [])
 
     def test_owner_new_chat_route_and_agents_cannot_use_it(self):
-        self.switch(True)
         status, _, data = self.request('POST', '/api/unified/start-chat', {'network': 'telegram', 'to': '@rental_agent'}, self.owner)
         self.assertEqual(status, 200, data)
         person = data['result']['chat_id']
@@ -197,7 +182,6 @@ class StartDraft(unittest.TestCase):
         self.assertEqual(len(self.bridge.calls), calls)
 
     def test_existing_chat_with_messages_keeps_its_place(self):
-        self.switch(True)
         chat = self.inbox.start_chat('whatsapp', '+66920000000')
         identity = self.inbox.store.identity('whatsapp', '!dm-whatsapp:messenger.internal', 'Khun Somchai')
         self.assertEqual(identity['person_id'], chat['chat_id'])
@@ -224,12 +208,10 @@ class SenderRoutes(unittest.TestCase):
 
 
 class ToolList(unittest.TestCase):
-    def test_listed_follows_the_switch(self):
-        on = {'v': False}
-        handler = Mock(); handler.service.unified.switches.is_on = lambda sid: sid == SWITCH and on['v']
-        self.assertNotIn('messenger_start_draft', [t['name'] for t in agent_tools.listed(handler)])
-        on['v'] = True
+    def test_listed_with_every_switch_off(self):
+        handler = Mock(); handler.service.unified.switches.is_on = lambda sid: False
         self.assertIn('messenger_start_draft', [t['name'] for t in agent_tools.listed(handler)])
+        self.assertNotIn('messenger_start_draft', agent_tools.SWITCHED)
         self.assertEqual(agent_tools.ROUTES['messenger_start_draft'], ('POST', '/api/drafts'))
 
 
