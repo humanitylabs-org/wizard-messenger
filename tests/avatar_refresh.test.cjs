@@ -6,7 +6,7 @@ test('browser harness parses without starting a browser',()=>{new vm.Script(fs.r
 function fixture(){
  const document=makeDocument(),source=fs.readFileSync(require('node:path').join(__dirname,'../static/unified.js'),'utf8');
  Object.defineProperty(Element.prototype,'parentElement',{configurable:true,get(){return this.parent;}});
- const box={document,URLSearchParams,setTimeout(){},Math};
+ const box={document,URLSearchParams,setTimeout(){},Math,ticketed:url=>url}; // same-origin window: addresses unchanged (wizard-os issue 133)
  vm.createContext(box);vm.runInContext(source.slice(source.indexOf('  // Real profile pictures'),source.indexOf('  const networksOf'))+';this.picture=withPicture;this.url=pictureURL;this.cache=avatarPictures',box);
  const paint=(url,slot='list:synthetic')=>{const el=document.createElement('span');document.body.append(el);box.picture(el,url,slot);return el;};
  const loaded=el=>{const img=el.children[0];img.complete=true;img.naturalWidth=64;img.onload();return img;};

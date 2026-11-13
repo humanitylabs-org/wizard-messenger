@@ -522,9 +522,10 @@
       "path": "/api/view/session",
       "result": {
         "authenticated": true,
-        "csrf_token": "browser-session CSRF"
+        "csrf_token": "browser-session CSRF",
+        "media_ticket": "read-only media ticket of a full (not setup-only) session"
       },
-      "notes": "401 session_unlock_required for an existing account without a browser session."
+      "notes": "401 session_unlock_required for an existing account without a browser session. media_ticket (wizard-os#133, browser boundary): a window the Wizard sandboxes has an opaque origin, so its <img>/<video>/<audio> loads carry no session cookie; they add ?t=<media_ticket>. It opens only GET of /api/unified/media/<id>, /api/unified/picker/media/<id> and /api/unified/people/<id>/avatar, never with a foreign Origin, and ends with its session."
     },
     {
       "method": "POST",

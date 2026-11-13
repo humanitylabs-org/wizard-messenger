@@ -151,7 +151,7 @@
 
   const $ = id => document.getElementById(id);
   const state = {
-    csrf: null, authenticated: false, sessionLocked: false, mode: 'opening', identity: null, contacts: [], dms: [], invites: [],
+    csrf: null, mediaTicket: '', authenticated: false, sessionLocked: false, mode: 'opening', identity: null, contacts: [], dms: [], invites: [],
     group: null, sheet: null, cache: new Map(), records: new Map(), scroll: new Map(), nodes: new Map(),
     operation: null, timer: null, reconnecting: false, setupFailed: false, listSignature: '', focusBefore: null,
     initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null, chatOpening: null
@@ -263,11 +263,11 @@
       const unlockRequired = ['session_unlock_required', 'remembered_unlock_unavailable'].includes(code) || (path === 'api/view/unlock' && ['vault_unlock_failed', 'invalid_vault_password'].includes(code));
       // A trusted Wizard has no Messenger password: any lost or refused session (restart, expiry, evicted, Lock in
       // another tab) just opens a fresh one from Wizard sign-in, with "Opening" on screen. Never a dead card.
-      if ((unlockRequired || code === 'unauthorized' || code === 'csrf_invalid') && trustedWizard && state.authenticated && path !== 'api/view/session') { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
+      if ((unlockRequired || code === 'unauthorized' || code === 'csrf_invalid') && trustedWizard && state.authenticated && path !== 'api/view/session') { window.MessengerUnified?.signout(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       // Wizard holds no usable key (never remembered, or its envelope no longer opens): looping on "Opening" is a lockout.
       // Show the passphrase box once; unlocking with it remembers this Wizard again (issue 162/164).
       if (unlockRequired && trustedWizard && path === 'api/view/session' && passphraseNeeded(code)) { disconnect(true); throw new APIError(code, 401); }
-      if (unlockRequired && trustedWizard) { window.MessengerUnified?.signout(); state.csrf = null; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
+      if (unlockRequired && trustedWizard) { window.MessengerUnified?.signout(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false; recoverTrusted(); throw new APIError(code, 401); }
       disconnect(unlockRequired); throw new APIError(code, 401);
     }
     // A restarting release answers through the gateway with an empty or HTML body: say so, never surface a parser error.
@@ -305,9 +305,12 @@
     $('workspace').inert = false;
     $('no-selection').hidden = false;
   }
+  // The session's read-only media ticket (wizard-os issue 133): a window the Wizard sandboxes loads photos, videos
+  // and profile pictures with it, because those loads carry no session cookie there (unified.js ticketed()).
+  const mediaTicketOf = session => typeof session?.media_ticket === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(session.media_ticket) ? session.media_ticket : '';
   function disconnect(unlockRequired = false) {
     window.MessengerUnified?.signout();
-    cancel(); eraseView(); state.csrf = null; state.authenticated = false;
+    cancel(); eraseView(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false;
     state.sessionLocked = unlockRequired; gate(unlockRequired ? 'locked' : 'reconnect');
   }
   // On a Wizard that vouches for its owner there is no Messenger password, ever. A "locked" answer only means the
@@ -927,14 +930,14 @@
     if (state.sessionLocked) {
       const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
-      state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
+      state.csrf = session.csrf_token; state.mediaTicket = mediaTicketOf(session); state.authenticated = true; state.sessionLocked = false;
     } else {
       await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
       // Launcher tickets are setup-only; passphrase proof opens the owner view,
       // including when a phone-vault or PRF unlock calls this shared helper.
       const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
-      state.csrf = session.csrf_token; state.authenticated = true;
+      state.csrf = session.csrf_token; state.mediaTicket = mediaTicketOf(session); state.authenticated = true;
     }
     return true;
   }
@@ -1070,7 +1073,7 @@
         const r = credential.response;
         const session = await api('api/view/passkey/unlock', {method: 'POST', session: true, signal, body: {id: credential.id, clientDataJSON: b64u(r.clientDataJSON), authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature)}});
         if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false;
+        state.csrf = session.csrf_token; state.mediaTicket = mediaTicketOf(session); state.authenticated = true; state.sessionLocked = false;
         await snapshot(signal);
       } catch (error) {
         if (error.name === 'AbortError') return;
@@ -1212,7 +1215,7 @@
           session = await api('api/view/session', {session: true});
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
-        state.csrf = session.csrf_token; state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
+        state.csrf = session.csrf_token; state.mediaTicket = mediaTicketOf(session); state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
         bootTries = 0; if (state.mode === 'ready') trustedTries = 0;
       } catch (error) {
         if (error.name === 'AbortError') return;
@@ -1234,9 +1237,9 @@
   }
   let bootTries = 0, bootTimer = null;
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
-  function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.authenticated = false; }
+  function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false; }
   addEventListener('online', () => { if (state.mode === 'reconnect' || state.mode === 'opening' || bootTries) { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); } });
-  window.MessengerUnified?.mount({api, csrf: () => state.csrf, native: {open: openChat, close: () => { if (state.sheet) closeSheet(); if (state.group) leaveChat(); window.MessengerUnified?.returnNative?.(); }, newChat: () => openSheet('contact'), settings: () => openSheet('address'), address: () => { try { return state.identity ? publicAddress(state.identity) || '' : ''; } catch { return ''; } }}});
+  window.MessengerUnified?.mount({api, csrf: () => state.csrf, mediaTicket: () => state.mediaTicket, native: {open: openChat, close: () => { if (state.sheet) closeSheet(); if (state.group) leaveChat(); window.MessengerUnified?.returnNative?.(); }, newChat: () => openSheet('contact'), settings: () => openSheet('address'), address: () => { try { return state.identity ? publicAddress(state.identity) || '' : ''; } catch { return ''; } }}});
   window.MessengerUnified?.paintSaved();
   $('reconnect').onclick = () => { trustedTries = 0; bootTries = 0; clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(true); };
   refreshPasskey(); refreshPhoneVault();
