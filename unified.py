@@ -2618,7 +2618,7 @@ class UnifiedInbox:
             msgtype, content, media = self.media_content(upload, body, {} if gallery else payload)
         else:
             content = {'msgtype': 'm.text', 'body': body}
-        if gallery and identity['network'] == 'line' and self.switch_on('line-photo-groups'):
+        if gallery and identity['network'] == 'line':
             metadata = payload.get('media') if isinstance(payload.get('media'), list) else []
             return self.send_line_group(identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata, caption)
         if gallery:
@@ -2685,10 +2685,6 @@ class UnifiedInbox:
             self.drop_upload(payload.get('upload_id'))
         return {'state': 'sent', 'event_id': event, 'message': self.row(event)}
 
-    def switch_on(self, switch_id):
-        switches = getattr(self, 'switches', None)  # some tests build an inbox without __init__
-        return bool(switches and switches.is_on(switch_id))
-
     def send_caption(self, identity, client_id, body, mentions):
         """The words sent after captionless photos (issue 186), transaction <client_id>.caption."""
         txn = client_id + '.caption'
@@ -2702,7 +2698,7 @@ class UnifiedInbox:
         db.execute('UPDATE message SET client_id=COALESCE(client_id,?) WHERE id=?', (txn, event))  # sync may have stored it first
 
     def send_line_group(self, identity, gallery, upload_ids, body, mentions, reply_to, client_id, metadata, caption=None):
-        """Issue 188 (switch line-photo-groups): the LINE bridge reads no org.wizard.gallery, so only the first photo
+        """Issue 188 (on for everyone since its switch-default): the LINE bridge reads no org.wizard.gallery, so only the first photo
         of a multi-photo send reached LINE. Here each photo is its own Matrix image, sent in order and marked with
         org.wizard.line.album {id, index, count}; the patched bridge turns the marker into LINE's own GID/GSEQ/GTOTAL
         photo group (and retries a photo alone if LINE refuses the group). An older bridge still delivers every photo,

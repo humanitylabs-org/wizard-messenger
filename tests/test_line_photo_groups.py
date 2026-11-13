@@ -1,7 +1,7 @@
-"""Photos sent together to LINE (issue 188, switch line-photo-groups).
+"""Photos sent together to LINE (issue 188, on for everyone).
 
-The LINE bridge reads no org.wizard.gallery, so a multi-photo send used to reach LINE as its first photo only. With
-the switch on, each photo is its own Matrix image, sent in order and marked with org.wizard.line.album
+The LINE bridge reads no org.wizard.gallery, so a multi-photo send used to reach LINE as its first photo only. Now each
+photo is its own Matrix image, sent in order and marked with org.wizard.line.album
 {id, index, count}; the patched bridge (plumbing/line-own-read-sync.patch, photo_album.go) turns that into LINE's
 GID/GSEQ/GTOTAL photo group.
 """
@@ -41,17 +41,9 @@ class LinePhotoGroupTests(unittest.TestCase):
                                            'filename': 'photo%d.jpg' % i, 'mxc': 'mxc://test/p%d' % i, 'bytes': b'x',
                                            'size': 1, 'expires': time.time() + 900}
 
-    def switch(self, on):
-        self.inbox.switches.set('line-photo-groups', on)
-
-    def test_off_keeps_one_gallery_event(self):
-        self.inbox.send(self.pid, self.payload)
-        self.assertEqual(len(self.puts), 1)
-        self.assertIn('org.wizard.gallery', self.puts[0][1])
-        self.assertNotIn(MARKER, self.puts[0][1])
-
-    def test_on_sends_each_photo_in_order_with_line_group_marker(self):
-        self.switch(True)
+    def test_sends_each_photo_in_order_with_line_group_marker(self):
+        # Issue 188 switch-default: on for everyone, there is no switch any more.
+        self.assertNotIn('line-photo-groups', [s['id'] for s in self.inbox.switches.listing()['switches']])
         result = self.inbox.send(self.pid, self.payload)
         self.assertEqual([p.rsplit('/', 1)[1] for p, _ in self.puts],
                          ['line_group_123', 'line_group_123.p01', 'line_group_123.p02'])
@@ -71,7 +63,6 @@ class LinePhotoGroupTests(unittest.TestCase):
         self.assertFalse(self.inbox.uploads)
 
     def test_retry_repeats_nothing_and_sync_echo_adds_no_rows(self):
-        self.switch(True)
         first = self.inbox.send(self.pid, self.payload)
         for path, content in self.puts:
             self.inbox.ingest(self.line, {}, {'event_id': '$e' + path.rsplit('/', 1)[1], 'sender': self.inbox.owner,
@@ -82,14 +73,12 @@ class LinePhotoGroupTests(unittest.TestCase):
         self.assertEqual([m['id'] for m in again['messages']], [m['id'] for m in first['messages']])
 
     def test_same_send_gets_same_group_id(self):
-        self.switch(True)
         self.inbox.send(self.pid, self.payload)
         group = self.puts[0][1][MARKER]['id']
         # A partial send (box restarted mid-way) is repeated with the same transactions and the same group.
         self.puts.clear()
         other = UnifiedInbox(tempfile.mkdtemp(dir=self.tmp.name), Mock())
         other.mx, other.owner = self.inbox.mx, self.inbox.owner
-        other.switches.set('line-photo-groups', True)
         ident = other.store.identity('line', '!line-room', 'LINE friend')
         self.inbox = other
         self.stage(ident['person_id'])
@@ -97,7 +86,6 @@ class LinePhotoGroupTests(unittest.TestCase):
         self.assertEqual(self.puts[0][1][MARKER]['id'], group)
 
     def test_failed_photo_stores_nothing_until_resent(self):
-        self.switch(True)
         calls = []
 
         def flaky(path, method, content):
@@ -112,7 +100,6 @@ class LinePhotoGroupTests(unittest.TestCase):
         self.assertEqual(len(self.inbox.send(self.pid, self.payload)['messages']), 3)
 
     def test_other_networks_and_single_photos_unchanged(self):
-        self.switch(True)
         tg = self.inbox.store.identity('telegram', '!tg-room', 'Telegram friend')
         self.stage(tg['person_id'])
         self.inbox.send(tg['person_id'], dict(self.payload, client_id='telegram_group_1'))
