@@ -1,4 +1,4 @@
-// Drafts to new contacts (issue 176, switch new-contact-drafts): a chat an agent started for someone new is listed
+// Drafts to new contacts (issue 176, on for everyone, no switch): a chat an agent started for someone new is listed
 // with its waiting draft, and New chat takes a WhatsApp number / Telegram @username / LINE ID. Nothing is sent.
 // Synthetic API only; phone + desktop. PLAYWRIGHT_MODULE=... node tests/new_contact_drafts_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -12,14 +12,14 @@ const ident = (id, net, kind, label) => [{id: id + '-i', network: net, kind, lab
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, 'person', name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 (async () => {
   const browser = await chromium.launch(), summary = [];
-  for (const on of [false, true]) for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
+  for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
     const PEOPLE = [
       person('james', 'James Carter', 'whatsapp', 'On my way, 10 minutes', 2),
       person('kenji', 'Kenji Tanaka', 'line', 'See you tomorrow', 40, {unread: 1}),
     ];
     // What the box lists for a chat an agent started (messenger_start_draft): no message yet, only the draft.
-    if (on) PEOPLE.push(person('scout', 'Property Scout', 'line', '', 1, {started: true, last: {text: '', outgoing: false, sender: '', timestamp: now - min}}));
-    const DRAFTS = on ? [{id: 'd1', person_id: 'scout', identity_id: 'scout-i', state: 'draft', revision: 1, text: 'Hi, is the condo on Sukhumvit 24 still available?', attachments: [], updated: now - 30e3, created_by: {id: 'agent:a', name: 'Oscar'}}] : [];
+    PEOPLE.push(person('scout', 'Property Scout', 'line', '', 1, {started: true, last: {text: '', outgoing: false, sender: '', timestamp: now - min}}));
+    const DRAFTS = [{id: 'd1', person_id: 'scout', identity_id: 'scout-i', state: 'draft', revision: 1, text: 'Hi, is the condo on Sukhumvit 24 still available?', attachments: [], updated: now - 30e3, created_by: {id: 'agent:a', name: 'Oscar'}}];
     const NEW = person('somchai', 'Khun Somchai', 'whatsapp', '', 0, {started: true});
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: 'dark'});
     await ctx.addInitScript(() => {
@@ -36,7 +36,7 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       const bad = (status, code, message) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code, message}})});
       if (/\/send$|\/preview$/.test(p)) { box.sends.push(p); return ok({}); }
-      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'new-contact-drafts', name: 'Drafts to new contacts', on, default: false, issues: []}]})});
+      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: []})});
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
       if (p === 'api/status') return ok({state: 'ready', account_configured: true});
       if (p === 'api/identity') return ok({identity: own});
@@ -67,10 +67,10 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       if (!file.startsWith(root) || !fs.existsSync(file)) return route.fulfill({status: 404, body: ''});
       return route.fulfill({status: 200, contentType: TYPES[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file)});
     });
-    const tag = `${on ? 'on' : 'off'}-${label}`, shot = name => page.screenshot({path: path.join(out, `${name}-${tag}.png`)});
+    const tag = label, shot = name => page.screenshot({path: path.join(out, `${name}-${tag}.png`)});
     await page.goto('https://messenger.test/');
     await page.locator('.u-person', {hasText: 'James Carter'}).waitFor({timeout: 15000});
-    if (on) {
+    {
       const scout = page.locator('.u-person', {hasText: 'Property Scout'});
       await scout.locator('.u-snippet.draft').waitFor({timeout: 10000});
       await page.waitForTimeout(300);
@@ -81,11 +81,7 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
     }
     await page.locator('[aria-label="New chat"]').first().click();
     const form = page.locator('.u-start-chat');
-    if (!on) {
-      await page.waitForTimeout(600);
-      assert.equal(await form.count(), 0, 'switch off: New chat has no number field');
-      await shot('new-chat');
-    } else {
+    {
       await form.waitFor({timeout: 5000});
       assert.equal(await form.locator('select').inputValue(), 'whatsapp');
       await form.locator('input').fill('+66 81 111 1111');

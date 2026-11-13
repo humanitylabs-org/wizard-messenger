@@ -52,11 +52,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'new-contact-drafts', 'name': 'Drafts to new contacts',
-                'description': 'Agents with Draft-only access, and you with New chat, can start a chat with a WhatsApp '
-                               'number, a Telegram @username or a LINE ID. The chat waits with its draft; nothing is sent '
-                               'until you tap Send.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#176']}, {
                 'id': 'agent-drafts', 'name': 'Agent keeps drafts ready',
                 'description': 'Pick chats (chat ⋯ > Agent keeps a draft ready), or every unread chat, and your agent keeps '
                                'a reply drafted there for you to send, edit or discard. It learns from how you change its '
@@ -176,13 +171,25 @@ class SwitchStorage(unittest.TestCase):
             with self.assertRaises(UnknownSwitch):
                 store.set('drafts-first', True)
 
+    def test_a_removed_switch_is_ignored_and_cleared(self):
+        # Issue 176: new-contact-drafts is on for everyone now; a stored value from before is dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"new-contact-drafts": false, "photo-warm": true}}')
+            store = SwitchStore(path)
+            self.assertNotIn('new-contact-drafts', [s['id'] for s in store.listing()['switches']])
+            with self.assertRaises(UnknownSwitch):
+                store.set('new-contact-drafts', True)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True, 'photo-instant': True}})
+
     def test_a_damaged_file_reads_as_defaults(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-contact-drafts', 'agent-drafts', 'row-tap-menu', 'line-photo-groups'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'agent-drafts', 'row-tap-menu', 'line-photo-groups'])
 
 
 if __name__ == '__main__':

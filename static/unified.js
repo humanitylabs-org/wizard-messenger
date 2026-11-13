@@ -738,7 +738,7 @@
     return h;
   }
   const hasListPane = () => !!$('u-pane-list')?.querySelector('.u-list');
-  // Issue 176 (switch new-contact-drafts): New chat also takes a WhatsApp number, a Telegram @username or a LINE ID.
+  // Issue 176: New chat also takes a WhatsApp number, a Telegram @username or a LINE ID.
   // The box looks the contact up and opens an empty chat on the owner's side; nothing is sent until he taps Send.
   function startChatForm(done) {
     const form = node('form', 'u-start-chat'), net = node('select', 'u-start-net'), to = node('input', 'u-start-to');
@@ -766,7 +766,7 @@
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
     box.append(node('h2', '', 'New message'), search, list, wizard);
-    if (switchState.on['new-contact-drafts'] === true) box.append(startChatForm(id => openPerson(id)));
+    box.append(startChatForm(id => openPerson(id)));
     thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
     if (focus) requestAnimationFrame(() => search.focus());
     let all = null;
@@ -932,7 +932,7 @@
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
     const settled = sharing ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
     if (!sharing) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
-    if (!sharing && switchState.on['new-contact-drafts'] === true) sheet.append(startChatForm(id => { closeOverlay(); openPerson(id); }));
+    if (!sharing) sheet.append(startChatForm(id => { closeOverlay(); openPerson(id); }));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
     try {
@@ -4492,7 +4492,6 @@
   function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
   // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
   // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
-  function newContactRow() { return switchRow('new-contact-drafts', 'Drafts to new contacts', 'Drafts only in chats you already have', 'Drafts can start a chat by number or ID'); }
   // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
   function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
   // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
@@ -4646,7 +4645,7 @@
     const draftStats = node('p', 'helper u-agent-draft-stats');
     const paintStats = () => { draftStats.hidden = switchState.on['agent-drafts'] !== true || agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), newContactRow(), ...agentDraftsRow(), rowTapRow(), lineGroupsRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), ...agentDraftsRow(), rowTapRow(), lineGroupsRow());
     sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

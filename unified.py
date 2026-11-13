@@ -3334,7 +3334,7 @@ class UnifiedInbox:
         return {'ok': True}
 
     def start_chat(self, network, to):
-        """Issue 176 (switch new-contact-drafts): open an empty chat with a new contact. Nothing is sent."""
+        """Issue 176: open an empty chat with a new contact. Nothing is sent."""
         if getattr(self, 'connectors', None) is None:
             fail('unsupported_network', 'New chats need the connected networks of this Messenger', 409)
         import start_chat
