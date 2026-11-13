@@ -28,7 +28,8 @@ class SigninBrowserRecipeTests(unittest.TestCase):
 
     def test_no_dependence_on_the_shared_browser_app(self):
         manifest = (ROOT / 'wizard.md').read_text()
-        self.assertRegex(manifest, r'(?m)^uses: \[\]$')
+        uses = re.search(r'(?m)^uses: \[([^\]]*)\]', manifest).group(1)
+        self.assertNotIn('browser', [u.strip() for u in uses.split(',')])
         self.assertNotIn('http://browser:9222', (ROOT / 'browser_signin.py').read_text())
 
     def test_window_is_a_desktop_identity_and_signed_out_on_close(self):

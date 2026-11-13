@@ -56,6 +56,19 @@
   },
   "routes": [
     {
+      "method": "GET",
+      "path": "/api/view/contacts/contacts",
+      "auth": "owner cookie + allowed Origin; trusted ingress proof when enabled; all bearers refused",
+      "result": "the Contacts app's own GET /api/contacts answer, fetched by Messenger through the granted Contacts connection (WIZARD_GRANTS_FILE provider_endpoints slot:contacts|contacts, X-Wizard-Grant). For the view in a sandboxed Wizard window (browser boundary). No grant: 404 contacts_unavailable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/view/contacts/save | /api/view/contacts/me/connected",
+      "auth": "owner cookie + allowed Origin + CSRF; trusted ingress proof when enabled; all bearers refused",
+      "body": "the same JSON the view sends Contacts' POST /api/save (up to 1 MiB, photo data URL) or /api/me/connected (64 KiB)",
+      "result": "Contacts' answer unchanged; Contacts' refusal keeps its status and message; no grant: 404 contacts_unavailable; no answer: 503"
+    },
+    {
       "method": "PUT",
       "path": "/api/view/voice-original?take=<id>&duration=<ms>&mime=<reported>&size=<bytes>",
       "auth": "owner cookie + allowed Origin + CSRF; trusted ingress proof when enabled; all bearers refused",
