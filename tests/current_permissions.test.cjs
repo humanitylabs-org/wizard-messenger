@@ -19,7 +19,8 @@ async function fixture(level='no_access'){
     const responses={'api/unified/people':{people:[],seq:0},'api/unified/groups':{groups:[],seq:0},
       'api/unified/connectors':{providers:[]},'api/unified/telegram/status':{logins:[]},'api/view/authority':{required:true,ready:false},
       'api/unified/merge-suggestions':{suggestions:[]},'api/view/push':{enabled:false},'api/drafts':{drafts:[]},
-      'api/unified/directory':{people:[],groups:[]},'api/unified/labels':{labels:[],rev:0},'api/unified/catch-up/settings':{}};
+      'api/unified/directory':{people:[],groups:[]},'api/unified/labels':{labels:[],rev:0},'api/unified/catch-up/settings':{},
+      'api/unified/draft-watch':{on:true,watched:[],all_unread:false,stats:null}};
     if(path in responses)return responses[path];
     unexpected.push(path);throw Error('Unexpected current-permissions API '+path);
   };

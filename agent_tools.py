@@ -97,7 +97,7 @@ TOOLS = [
            'to': _string('Phone number (E.164, with +country code), Telegram @username, or LINE ID / @account'),
            'text': _string('The first message, saved as a draft'), 'attachments': _attachments},
           ['network', 'to', 'text']),
-    # Issue 178, behind the switch agent-drafts (listed only while it is on).
+    # Issue 178: on for everyone.
     _tool('messenger_chats_needing_draft', 'Chats where the owner asked you to keep a reply drafted (or, if he chose so, '
           'every unread chat) and someone wrote last, with no draft of yours since. For each: read it with '
           'messenger_read_thread, then save a reply with messenger_create_draft, or, when `draft` is given, rewrite that '
@@ -126,9 +126,8 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           # Reads: the same level as listing chats and drafts.
           'messenger_chats_needing_draft': ('GET', '/api/unified/people'),
           'messenger_draft_feedback': ('GET', '/api/drafts')}
-WATCH_SWITCH = 'agent-drafts'
-# Tools offered only while their switch is on.
-SWITCHED = {'messenger_chats_needing_draft': WATCH_SWITCH, 'messenger_draft_feedback': WATCH_SWITCH}
+# Tools offered only while their switch is on (tool name -> switch id). None today.
+SWITCHED = {}
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -538,15 +537,8 @@ def start_draft(handler, caller, args):
                     'sends it from Messenger, or discards it.'}
 
 
-def _watch_on(unified):
-    if not draft_watch.on(unified):
-        raise EngineError('feature_off', 'Keeping drafts ready is off. The owner can turn on Messenger → Settings → '
-                          'Agent keeps drafts ready.', 403)
-
-
 def chats_needing_draft(handler, caller, args):
     unified = _unified(handler)
-    _watch_on(unified)
     rows = handler.service.drafts.dispatch('GET', [], {}, unified, owner=False, actor=_actor(caller))['drafts']
     found, total = draft_watch.needing(unified, rows, _limit(args.get('limit'), 20, 100))
     chats = []
@@ -561,7 +553,6 @@ def chats_needing_draft(handler, caller, args):
 
 def draft_feedback(handler, caller, args):
     unified = _unified(handler)
-    _watch_on(unified)
     rows = draft_watch.feedback(unified.store)
     if args.get('chat_id'):
         rows = [r for r in rows if r.get('chat_id') == args['chat_id']]

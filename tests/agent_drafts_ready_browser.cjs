@@ -1,4 +1,4 @@
-// Agent keeps drafts ready (issue 178, switch agent-drafts): the chat header ⋯ picks a chat for the agent, Settings
+// Agent keeps drafts ready (issue 178, on for everyone, no switch): the chat header ⋯ picks a chat for the agent, Settings
 // has "Draft for every unread chat" and the sent/edited/discarded line, and closing an agent's draft tells the box
 // why (sent with its text, or discarded). Synthetic API only; phone + desktop; nothing is sent to a network here
 // except the owner's own composer send, which the fixture answers.
@@ -14,7 +14,7 @@ const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person',
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 (async () => {
   const browser = await chromium.launch(), summary = [];
-  for (const on of [false, true]) for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
+  for (const [label, viewport] of [['390', {width: 390, height: 844}], ['1280', {width: 1280, height: 860}]]) {
     const PEOPLE = [person('james', 'James Carter', 'whatsapp', 'Can you do Tuesday at 3?', 2, {unread: 1})];
     let DRAFTS = [{id: 'd1', person_id: 'james', identity_id: 'james-i', state: 'draft', revision: 1, text: 'Tuesday at 3 works for me.', attachments: [], updated: now - 30e3, created_by: {id: 'agent:a', name: 'Oscar'}, agent_text: 'Tuesday at 3 works for me.'}];
     const watch = {watched: [], all_unread: false, stats: {sent_as_drafted: 2, edited: 1, discarded: 0, total: 3}};
@@ -33,7 +33,7 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       const body = () => JSON.parse(req.postData() || '{}');
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       if (/\/send$|\/preview$/.test(p)) { box.sends.push([p, body()]); return ok({state: 'sent', message: null}); }
-      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'agent-drafts', name: 'Agent keeps drafts ready', on, default: false, issues: []}]})});
+      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: []})});
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
       if (p === 'api/status') return ok({state: 'ready', account_configured: true});
       if (p === 'api/identity') return ok({identity: own});
@@ -52,7 +52,7 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
           if ('all_unread' in b) watch.all_unread = b.all_unread;
           else watch.watched = b.on ? [...new Set([...watch.watched, b.person_id])] : watch.watched.filter(x => x !== b.person_id);
         }
-        return ok({on, ...watch});
+        return ok({on: true, ...watch});
       }
       if (p === 'api/unified/people') return ok({people: PEOPLE, seq: 5});
       if (p === 'api/unified/groups') return ok({groups: [], seq: 5});
@@ -66,19 +66,20 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       if (!file.startsWith(root) || !fs.existsSync(file)) return route.fulfill({status: 404, body: ''});
       return route.fulfill({status: 200, contentType: TYPES[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file)});
     });
-    const tag = `${on ? 'on' : 'off'}-${label}`, shot = name => page.screenshot({path: path.join(out, `${name}-${tag}.png`)});
+    const tag = label, shot = name => page.screenshot({path: path.join(out, `${name}-${tag}.png`)});
     await page.goto('https://messenger.test/');
     await page.locator('.u-person', {hasText: 'James Carter'}).waitFor({timeout: 15000});
     await page.waitForTimeout(600); // switches sync
-    // Settings: the switch row, and (on) Draft for every unread chat plus the agent's sent/edited/discarded line.
+    // Settings: no switch row; Draft for every unread chat plus the agent's sent/edited/discarded line, always.
     await page.locator('[aria-label="Settings"]').first().click();
-    await page.locator('.u-settings .u-more-agent-drafts').waitFor({timeout: 5000});
+    await page.locator('.u-settings .u-more-agent-drafts-all').waitFor({timeout: 5000});
+    assert.equal(await page.locator('.u-settings .u-more-agent-drafts').count(), 0, 'no Agent keeps drafts ready switch row');
     await page.locator('.u-settings .u-more-agent').first().waitFor({timeout: 5000});
     await page.waitForTimeout(400);
     const all = page.locator('.u-settings .u-more-agent-drafts-all'), stats = page.locator('.u-settings .u-agent-draft-stats');
-    assert.equal(await all.isVisible(), on, 'every-unread row only while the switch is on');
-    assert.equal(await stats.isVisible(), on, 'stats line only while the switch is on');
-    if (on) {
+    assert.ok(await all.isVisible(), 'every-unread row is always there');
+    assert.ok(await stats.isVisible(), 'stats line is always there');
+    {
       assert.equal(await stats.innerText(), 'Agent drafts: 2 sent as drafted · 1 edited · 0 discarded');
       await stats.scrollIntoViewIfNeeded(); await shot('settings-stats');
       await all.getByRole('radio', {name: 'On'}).click();
@@ -90,14 +91,14 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
     if (await page.locator('.u-settings').count()) await page.getByRole('button', {name: /Back|Close/}).first().click();
-    // The chat header ⋯ has the per-chat choice only while the switch is on.
+    // The chat header ⋯ always has the per-chat choice.
     await page.locator('.u-person', {hasText: 'James Carter'}).click();
     await page.locator('.u-composer textarea').waitFor({timeout: 10000});
     await page.waitForFunction(() => /Drafted by Oscar/.test(document.querySelector('.u-draft-note')?.textContent || ''), null, {timeout: 10000});
     const menu = async () => { await page.locator('[aria-label="Chat options"]').last().click(); await page.locator('.u-menu').waitFor(); return page.locator('.u-menu .u-act').allInnerTexts(); };
     let items = await menu();
-    assert.equal(items.includes('Agent keeps a draft ready'), on, JSON.stringify(items));
-    if (on) {
+    assert.ok(items.includes('Agent keeps a draft ready'), JSON.stringify(items));
+    {
       await page.locator('.u-menu .u-act', {hasText: 'Agent keeps a draft ready'}).click();
       await page.waitForFunction(() => !document.querySelector('.u-menu'));
       assert.deepEqual(box.watch.at(-1), {person_id: 'james', on: true});

@@ -37,12 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'agent-drafts', 'name': 'Agent keeps drafts ready',
-     'description': 'Pick chats (chat ⋯ > Agent keeps a draft ready), or every unread chat, and your agent keeps a reply '
-                    'drafted there for you to send, edit or discard. It learns from how you change its drafts. It '
-                    'never sends, and needs Draft-only access.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#178']},
     {'id': 'row-tap-menu', 'name': 'Tap beside a message for its menu',
      'description': "On a phone, tapping the empty space to the right of someone's message opens that message's menu "
                     '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',

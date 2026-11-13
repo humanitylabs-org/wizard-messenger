@@ -58,7 +58,7 @@ class Drafts:
         return {r.get('person_id') for r in list(self.rows.values()) if r.get('state') == 'draft'}
     @staticmethod
     def closed(unified, row, outcome, sent_text=None):
-        # Issue 178 (switch agent-drafts): the owner sent or discarded a draft; an agent's words in it are feedback.
+        # Issue 178: the owner sent or discarded a draft; an agent's words in it are feedback.
         hook = getattr(unified, 'draft_closed', None)
         if callable(hook):
             try: hook(row, outcome, sent_text)

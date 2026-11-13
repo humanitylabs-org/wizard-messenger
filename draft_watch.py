@@ -1,4 +1,4 @@
-"""Agent keeps a draft ready (issue 178, switch agent-drafts).
+"""Agent keeps a draft ready (issue 178, on for everyone).
 
 The owner picks chats (chat ⋯ > Agent keeps a draft ready) or turns on "Draft for every unread chat". The agent asks
 messenger_chats_needing_draft which of those chats wait on a reply with no fresh agent draft, and drafts there (or
@@ -13,20 +13,11 @@ import time
 
 from engine import EngineError
 
-SWITCH = 'agent-drafts'
 WATCH_KEY = 'draft_watch'
 FEEDBACK_KEY = 'draft_feedback'
 WATCH_MAX = 500
 FEEDBACK_MAX = 300
 TEXT_MAX = 4000
-
-
-def on(unified):
-    switches = getattr(unified, 'switches', None)
-    try:
-        return bool(switches and switches.is_on(SWITCH))
-    except Exception:
-        return False
 
 
 def _load(store, key, default):
@@ -59,14 +50,12 @@ def stats(store):
 
 def state(unified):
     data = settings(unified.store)
-    return {'on': on(unified), 'watched': sorted(data['watched']), 'all_unread': data['all_unread'],
+    return {'on': True, 'watched': sorted(data['watched']), 'all_unread': data['all_unread'],
             'stats': stats(unified.store)}
 
 
 def configure(unified, payload):
     """Owner only (no agent capability maps to /api/unified/draft-watch): watch one chat, or every unread chat."""
-    if not on(unified):
-        raise EngineError('feature_off', 'Turn on Settings > Agent keeps drafts ready first', 403)
     if not isinstance(payload, dict):
         raise EngineError('invalid_watch', 'Choose a chat or the every-unread option', 400)
     store = unified.store
@@ -111,8 +100,8 @@ def _title(unified, person_id):
 
 
 def closed(unified, row, outcome, sent_text=None):
-    """The owner sent or discarded a draft. Kept only while the switch is on and an agent wrote words in it."""
-    if not on(unified) or outcome not in ('sent', 'discarded'):
+    """The owner sent or discarded a draft. Kept only when an agent wrote words in it."""
+    if outcome not in ('sent', 'discarded'):
         return None
     drafted = row.get('agent_text')
     if not isinstance(drafted, str) or not drafted.strip():

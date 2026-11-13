@@ -1,4 +1,4 @@
-"""Agent keeps a draft ready (issue 178, switch agent-drafts). Synthetic chats only; nothing here may send."""
+"""Agent keeps a draft ready (issue 178, on for everyone). Synthetic chats only; nothing here may send."""
 import json
 import time
 import unittest
@@ -10,7 +10,6 @@ from unified import UnifiedInbox
 import agent_tools
 import draft_watch
 
-SWITCH = 'agent-drafts'
 NOW = lambda: int(time.time() * 1000)
 
 
@@ -67,22 +66,17 @@ class DraftWatch(unittest.TestCase):
         row = self.server.drafts.get(draft['id'])
         return self.server.drafts.dispatch('DELETE', [draft['id']], {'revision': row['revision'], **extra}, self.inbox, owner=True)
 
-    def test_off_by_default_tools_hidden_and_refused(self):
+    def test_on_for_everyone_with_no_switch(self):
+        # Issue 178 approved: no agent-drafts switch any more; the tools are listed and the owner can pick chats at once.
+        self.assertNotIn('agent-drafts', [s['id'] for s in __import__('switches').SWITCHES])
         names = [t['name'] for t in self.mcp(None, method='tools/list')['tools']]
-        self.assertNotIn('messenger_chats_needing_draft', names)
-        self.assertNotIn('messenger_draft_feedback', names)
-        for tool in ('messenger_chats_needing_draft', 'messenger_draft_feedback'):
-            result, error = self.mcp(tool)
-            self.assertTrue(error)
-            self.assertEqual(result['error']['code'], 'feature_off')
+        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback'} <= set(names))
         a = self.chat('Anna')
         status, _, data = self.watch({'person_id': a['person_id'], 'on': True})
-        self.assertEqual(status, 403, data)
-        self.assertEqual(SWITCH, [s for s in __import__('switches').SWITCHES if s['id'] == SWITCH][0]['id'])
-        self.assertFalse(self.inbox.switches.is_on(SWITCH))
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data['result']['on'], True)
 
     def test_watched_chat_needs_a_draft_until_the_agent_writes_one(self):
-        self.inbox.switches.set(SWITCH, True)
         names = [t['name'] for t in self.mcp(None, method='tools/list')['tools']]
         self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback'} <= set(names))
         a, b, c = self.chat('Anna'), self.chat('Ben'), self.chat('Cai')
@@ -118,7 +112,6 @@ class DraftWatch(unittest.TestCase):
         self.inbox.mx.assert_not_called()
 
     def test_every_unread_chat_but_never_muted_or_where_the_owner_writes(self):
-        self.inbox.switches.set(SWITCH, True)
         a, b, c = self.chat('Anna'), self.chat('Ben'), self.chat('Cai')
         for ident in (a, b, c):
             self.say(ident, 'Hi from ' + ident['person_id'])
@@ -133,7 +126,6 @@ class DraftWatch(unittest.TestCase):
         self.assertEqual(self.watch({'all_unread': 'yes'})[0], 400)
 
     def test_feedback_pairs_what_was_drafted_with_what_was_sent(self):
-        self.inbox.switches.set(SWITCH, True)
         a, b, c = self.chat('Anna'), self.chat('Ben', 'whatsapp'), self.chat('Cai')
         for ident in (a, b, c):
             self.say(ident, 'When?')
@@ -159,30 +151,23 @@ class DraftWatch(unittest.TestCase):
         self.assertEqual([r['outcome'] for r in one['feedback']], ['edited'])
         self.assertEqual(self.request('GET', '/api/unified/draft-watch', None, self.owner)[2]['result']['stats']['total'], 3)
 
-    def test_no_feedback_without_an_outcome_an_agent_or_the_switch(self):
+    def test_no_feedback_without_an_outcome_or_an_agent(self):
         a = self.chat('Anna')
         self.say(a, 'When?')
-        self.inbox.switches.set(SWITCH, True)
         mine = self.server.drafts.dispatch('POST', [], {'person_id': a['person_id'], 'identity_id': a['id'], 'text': 'Mine'},
                                            self.inbox, owner=True)['draft']
         self.owner_delete(mine, outcome='sent', sent_text='Mine')  # the owner's own draft: nothing to learn
         agent = self.mcp('messenger_create_draft', {'chat_id': a['person_id'], 'text': 'Agent'})[0]['draft']
         self.owner_delete(agent)  # an older view that does not say why
-        agent = self.mcp('messenger_create_draft', {'chat_id': a['person_id'], 'text': 'Agent'})[0]['draft']
-        self.inbox.switches.set(SWITCH, False)
-        self.owner_delete(agent, outcome='sent', sent_text='Agent')
         self.assertEqual(draft_watch.feedback(self.inbox.store), [])
 
 
 class ToolList(unittest.TestCase):
-    def test_listed_follows_each_switch(self):
-        on = set()
-        handler = Mock(); handler.service.unified.switches.is_on = lambda sid: sid in on
-        names = lambda: {t['name'] for t in agent_tools.listed(handler)}
-        self.assertFalse({'messenger_chats_needing_draft', 'messenger_draft_feedback'} & names())
-        self.assertIn('messenger_start_draft', names())  # issue 176: on for everyone
-        on.add(SWITCH)
-        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft'} <= names())
+    def test_every_tool_is_listed_with_no_switch_on(self):
+        handler = Mock(); handler.service.unified.switches.is_on = lambda sid: False
+        names = {t['name'] for t in agent_tools.listed(handler)}
+        self.assertEqual(agent_tools.SWITCHED, {})
+        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft'} <= names)
         self.assertEqual(agent_tools.ROUTES['messenger_chats_needing_draft'], ('GET', '/api/unified/people'))
         self.assertEqual(agent_tools.ROUTES['messenger_draft_feedback'], ('GET', '/api/drafts'))
 

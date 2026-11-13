@@ -2011,7 +2011,7 @@
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
       priorityAction(cur, anchor, 'right'),
       ...(cur.native ? [] : [{label: 'Labels', icon: 'tag', run: () => labelsSheet(cur)}]),
-      ...(cur.native || switchState.on['agent-drafts'] !== true ? [] : [draftWatch.watched.has(cur.id)
+      ...(cur.native ? [] : [draftWatch.watched.has(cur.id)
         ? {label: 'Stop keeping a draft ready', icon: 'sparkle', run: () => watchChat(cur, false)}
         : {label: 'Agent keeps a draft ready', icon: 'sparkle', run: () => watchChat(cur, true)}]),
     ], {side: 'right'}); };
@@ -4461,7 +4461,7 @@
   function applySwitches(data) {
     const was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
-    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); if (switchState.on['agent-drafts'] === true) loadDraftWatch(); }
+    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); }
   }
   async function syncSwitches() {
     try {
@@ -4510,7 +4510,6 @@
     catch (e) { toast(e.message || 'Couldn’t save that. Try again.', 3000); }
   }
   function agentDraftsRow() {
-    const row = switchRow('agent-drafts', 'Agent keeps drafts ready', 'Agents draft only when asked', 'Agents keep a reply drafted in the chats you pick');
     const all = node('div', 'u-more-row u-more-agent-drafts-all'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Draft for every unread chat');
     all.append(node('span', 'u-more-label', 'Draft for every unread chat'), group);
     for (const [on, label] of [['0', 'Off'], ['1', 'On']]) {
@@ -4519,15 +4518,12 @@
     }
     all.append(node('span', 'u-more-timings', 'Pick chats with ⋯ > Agent keeps a draft ready. Your agent needs Draft-only access. It never sends.'));
     const paint = () => {
-      all.hidden = switchState.on['agent-drafts'] !== true;
       for (const b of group.children) { const pick = (b.dataset.on === '1') === draftWatch.all_unread; b.setAttribute('aria-checked', String(pick)); b.classList.toggle('on', pick); }
       return all.isConnected || !all.parentNode;
     };
-    const base = switchState.paints['agent-drafts'];
-    switchState.paints['agent-drafts'] = () => { base(); paint(); };
     draftWatch.paints.push(paint);
-    if (switchState.on['agent-drafts'] === true) loadDraftWatch();
-    paint(); return [row, all];
+    loadDraftWatch();
+    paint(); return all;
   }
   function viewerPlaceholderRow() { return switchRow('viewer-placeholder', 'Photos ready in Wizard\'s viewer', 'Wizard\'s viewer loads the original', 'Wizard\'s viewer shows a ready copy first'); }
   // Issue 168: photo timings, measured in this view and on the box, summed up under the switch.
@@ -4643,9 +4639,9 @@
     const group = node('div', 'u-settings-group u-more u-more-other');
     // Issue 178: how the owner handled his agent's ready drafts, right under the agents.
     const draftStats = node('p', 'helper u-agent-draft-stats');
-    const paintStats = () => { draftStats.hidden = switchState.on['agent-drafts'] !== true || agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
+    const paintStats = () => { draftStats.hidden = agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), ...agentDraftsRow(), rowTapRow(), lineGroupsRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), lineGroupsRow());
     sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.
@@ -5038,7 +5034,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; if (options.mediaTicket) mediaTicket = options.mediaTicket; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; if (options.mediaTicket) mediaTicket = options.mediaTicket; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setTimeout(loadDraftWatch, 600); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;
