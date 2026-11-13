@@ -3341,7 +3341,7 @@ class UnifiedInbox:
         return start_chat.start(self, network, to)
 
     def draft_closed(self, row, outcome, sent_text=None):
-        """Issue 178 (switch agent-drafts): keep what the agent drafted next to what the owner sent, or that he discarded it."""
+        """Issue 178: keep what the agent drafted next to what the owner sent, or that he discarded it."""
         import draft_watch
         return draft_watch.closed(self, row, outcome, sent_text)
 
