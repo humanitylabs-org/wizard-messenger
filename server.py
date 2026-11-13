@@ -17,6 +17,7 @@ import agent_tools
 
 MAX_BODY=65536
 AGENT_MCP_MAX_BODY=36*1024*1024  # one 25 MiB file as base64 plus JSON
+CONTACTS_SAVE_MAX_BODY=1024*1024  # Add to Contacts with a photo (data URL) through contacts_link.py; Contacts' own cap
 MCP_TOOLS=[
     {'name':'messenger_status','description':'Dedicated messaging vault status; no messages, contacts or secrets','inputSchema':{'type':'object','properties':{},'additionalProperties':False}},
     {'name':'messenger_public_identity','description':'Current public messaging identity only; never private keys or message bodies','inputSchema':{'type':'object','properties':{},'additionalProperties':False}},
@@ -134,6 +135,8 @@ class Handler(BaseHTTPRequestHandler):
             try: caller=self._caller()
             except EngineError: caller=None
             if caller and caller[0]=='agent': limit=AGENT_MCP_MAX_BODY
+        elif urlsplit(self.path).path=='/api/view/contacts/save' and not self.headers.get('Authorization'):
+            limit=CONTACTS_SAVE_MAX_BODY
         if not 0 < length <= limit:
             raise EngineError('invalid_length','JSON body must be between 1 and %d bytes'%limit,413)
         self.connection.settimeout(15 if limit==MAX_BODY else 120)

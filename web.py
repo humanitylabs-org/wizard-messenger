@@ -567,6 +567,16 @@ class ViewHandler(Handler):
             with self.service.setup_lock:
                 result = configure_application(data, body)
             return 200, {'ok': True, 'result': result}
+        if path.startswith('/api/view/contacts/'):
+            # The view's link to the Contacts app in a sandboxed window (contacts_link.py, wizard-os issue 133).
+            # Owner-only: the signed-in browser session with Origin + CSRF on writes. Bearers never.
+            if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can use Contacts from Messenger',403)
+            self._authorize()
+            link=getattr(self.service,'contacts_link',None)
+            if link is None:
+                from contacts_link import ContactsLink
+                link=self.service.contacts_link=ContactsLink()
+            return 200,{'ok':True,'result':link.call(method,path[len('/api/view/contacts/'):],self._body() if method=='POST' else None)}
         if path=='/api/view/agent-access':
             # Owner-only: a browser session with CSRF, never the machine key.
             if self.headers.get('Authorization'): raise EngineError('owner_only','Only the owner can change agent access, from the Messenger view',403)

@@ -44,7 +44,8 @@ switches:
   contract: wizard.app-switches/1
   path: /api/view/switches
 provides: [messaging]
-uses: []
+# Contacts: names, Add to Contacts and My card when the Wizard sandboxes Messenger's window (contacts_link.py).
+uses: [contacts]
 needs: []
 ---
 

@@ -3979,13 +3979,25 @@
   const CONTACTS = '/contacts/';
   const contacts = {ok: null, map: new Map(), byId: new Map(), at: 0};
   const accKey = (n, v) => n + '\n' + v;
+  // Browser boundary (wizard-os issue 133): in a window the Wizard sandboxes (opaque origin, self.origin is "null") a
+  // fetch to /contacts/ leaves with Origin: null and the browser blocks Contacts' answer, so names, Add to Contacts and
+  // My card were gone. There Messenger's box makes these three calls for the page (web.py /api/view/contacts/,
+  // contacts_link.py, through the Contacts connection the App Manager grants for wizard.md uses: [contacts]).
+  // Elsewhere: the same direct calls as before.
+  const sandboxedWindow = () => { try { return self.origin === 'null'; } catch { return false; } };
+  async function contactsCall(sub, body) {
+    if (sandboxedWindow()) return api('api/view/contacts/' + sub, body === undefined ? {} : {method: 'POST', body});
+    const r = await fetch(CONTACTS + 'api/' + sub, body === undefined ? {credentials: 'same-origin'} : {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data || typeof data !== 'object') throw new Error(data?.error || (body === undefined ? 'Contacts is not available' : 'Contacts could not save this person'));
+    return data;
+  }
   async function loadContacts(force) {
     if (contacts.ok === false && !force) return;
     if (!force && Date.now() - contacts.at < 60000) return;
     contacts.at = Date.now();
     try {
-      const r = await fetch(CONTACTS + 'api/contacts', {credentials: 'same-origin'}); if (!r.ok) throw new Error();
-      const data = await r.json(); contacts.ok = true; contacts.map = new Map(); contacts.byId = new Map();
+      const data = await contactsCall('contacts'); contacts.ok = true; contacts.map = new Map(); contacts.byId = new Map();
       for (const c of data.contacts || []) { contacts.byId.set(c.id, c); for (const a of c.accounts || []) contacts.map.set(accKey(a.network, a.value), c); }
       applyContacts(); if ((!s.person || split.on) && s.ready) drawList();
       if (!sharedMine) call('qr-codes').then(shareToContacts).catch(() => {});
@@ -4008,9 +4020,7 @@
     let photo = '';
     const url = pictureURL(p.id, p.avatar);
     if (url) try { const b = await (await fetch(url)).blob(); if (b.size < 380000 && /^image\/(jpeg|png|webp)$/.test(b.type)) photo = await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); } catch { /* no photo */ }
-    const r = await fetch(CONTACTS + 'api/save', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: p.messenger_name || p.display_name, accounts, phones, ...(photo ? {photo} : {})})});
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'Contacts could not save this person');
+    const data = await contactsCall('save', {name: p.messenger_name || p.display_name, accounts, phones, ...(photo ? {photo} : {})});
     await loadContacts(true); return data;
   }
   // The owner's own codes also fill My card in Contacts, so both apps share the same QR list. Optional: no Contacts app, no-op.
@@ -4019,7 +4029,7 @@
     const accounts = (data.codes || []).filter(c => c.auto).map(c => ({network: c.network === 'messenger' ? 'wizard' : c.network === 'x' ? 'twitter' : c.network, value: c.value}))
       .filter(a => a.network !== 'phone');
     const body = JSON.stringify({name: data.name || '', accounts}); if (body === sharedMine) return; sharedMine = body;
-    try { await fetch(CONTACTS + 'api/me/connected', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body}); } catch { /* Contacts absent */ }
+    try { await contactsCall('me/connected', JSON.parse(body)); } catch { /* Contacts absent */ }
   }
   function openContacts() { if (WizardApp?.nav?.openApp?.('contacts')) return; window.open(CONTACTS, '_blank', 'noopener'); }
   function contactsRow(p) {
