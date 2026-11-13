@@ -56,15 +56,8 @@ class LinePhotoTextTests(unittest.TestCase):
         self.assertEqual([m['msgtype'] for m in stored], ['m.image', 'm.image', 'm.text'])
         self.assertFalse(self.inbox.uploads)
 
-    def test_album_with_text_switch_off(self):
-        self.stage(self.pid)
-        result = self.inbox.send(self.pid, self.album('Two from the trip'))
-        self.assert_photos_then_text(result, ['line_send_1'])
-        self.assertEqual(len(self.puts[0][1]['org.wizard.gallery']), 2)
-        self.assertTrue(all(i['body'] == i['filename'] for i in self.puts[0][1]['org.wizard.gallery']))
-
-    def test_album_with_text_switch_on(self):
-        self.inbox.switches.set('line-photo-groups', True)
+    def test_album_with_text(self):
+        # LINE photo groups are on for everyone (issue 188): one image per photo, then the words.
         self.stage(self.pid)
         result = self.inbox.send(self.pid, self.album('Two from the trip'))
         self.assert_photos_then_text(result, ['line_send_1', 'line_send_1.p01'])
@@ -91,7 +84,8 @@ class LinePhotoTextTests(unittest.TestCase):
                 self.stage(ident['person_id'])
                 result = self.inbox.send(ident['person_id'], self.album('', client_id='photos_' + network))
                 self.assertEqual(result['state'], 'sent')
-                self.assertEqual(len(self.puts), 1, 'one photo send, no text message')
+                # LINE gets one image per photo (issue 188 photo groups), the others one gallery event.
+                self.assertEqual(len(self.puts), 2 if network == 'line' else 1, 'photo sends only, no text message')
                 self.assertEqual([r['msgtype'] for r in result['messages']], ['m.image', 'm.image'])
 
     def test_other_networks_keep_the_caption_on_the_photos(self):
@@ -105,7 +99,6 @@ class LinePhotoTextTests(unittest.TestCase):
                 self.assertEqual(self.puts[0][1]['body'], 'Two from the trip')
 
     def test_text_failure_then_retry_sends_only_what_is_missing(self):
-        self.inbox.switches.set('line-photo-groups', True)
         self.stage(self.pid)
         self.fail_at = 3  # photo, photo, then the text fails
         with self.assertRaises(EngineError):
@@ -122,11 +115,10 @@ class LinePhotoTextTests(unittest.TestCase):
         self.stage(self.pid)
         first = self.inbox.send(self.pid, self.album('Two from the trip'))
         again = self.inbox.send(self.pid, self.album('Two from the trip'))
-        self.assertEqual(len(self.puts), 2, 'nothing sent twice')
+        self.assertEqual(len(self.puts), 3, 'two photos and the text, nothing sent twice')
         self.assertEqual([r['id'] for r in again['messages']], [r['id'] for r in first['messages']])
 
     def test_sync_echo_adds_no_rows(self):
-        self.inbox.switches.set('line-photo-groups', True)
         self.stage(self.pid)
         self.inbox.send(self.pid, self.album('Two from the trip'))
         for txn, content in self.puts:
