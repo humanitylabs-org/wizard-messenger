@@ -24,6 +24,9 @@ from passkey import Passkeys, PasskeyError
 # A phone that opened Messenger stays signed in for 30 days (Lock signs out at once).
 SESSION_SECONDS=30*24*3600
 
+# GET routes a sandboxed Messenger window loads straight from its <img>/<video>/<audio> (BrowserAuth.media_ticket).
+MEDIA_TICKET_ROUTES=re.compile(r'/api/unified/(?:media/[^/]+|picker/media/[^/]+|people/[^/]+/avatar)')
+
 class BrowserAuth:
     def __init__(self,path=None):
         self.lock=threading.Lock(); self.tickets={}; self.sessions={}; self.credential=None
@@ -81,6 +84,26 @@ class BrowserAuth:
             session=self.sessions.get(hashlib.sha256(token.encode()).hexdigest())
             if session is None or session['expires']-time.time()>SESSION_SECONDS/2: return False
             session['expires']=time.time()+SESSION_SECONDS; self._save(); return True
+    def media_ticket(self,session):
+        """The session's read-only media ticket (wizard-os issue 133, browser boundary). A Messenger window sandboxed
+        by the shell has an opaque origin, so its <img>/<video>/<audio> loads go straight from the window with no
+        session cookie. Those addresses carry this ticket instead. It opens only GET of media, picker previews and
+        profile pictures (MEDIA_TICKET_ROUTES), and it ends with its session (expiry, Lock)."""
+        with self.lock:
+            if session.get('setup_only'): return None
+            if not session.get('media'):
+                session['media']=secrets.token_urlsafe(32); self._save()
+            return session['media']
+    def media_session(self,ticket):
+        with self.lock:
+            self._clean()
+            if not isinstance(ticket,str) or not 32<=len(ticket)<=128: return None
+            found=None
+            for session in self.sessions.values():
+                media=session.get('media')
+                if isinstance(media,str) and hmac.compare_digest(media.encode(),ticket.encode()) and not session.get('setup_only'):
+                    found=session
+            return found
     def lookup(self,token):
         with self.lock:
             self._clean()
@@ -195,6 +218,23 @@ class ViewHandler(Handler):
         origin=self.headers.get('Origin')
         if (required and origin is None) or (origin is not None and not self._origin_allowed(origin)) or self.headers.get('Sec-Fetch-Site')=='cross-site':
             raise EngineError('origin_forbidden','This browser origin is not allowed',403)
+    def _session_result(self,session,**extra):
+        result={'authenticated':True,'csrf_token':session['csrf'],**extra}
+        ticket=self.service.auth.media_ticket(session)
+        if ticket: result['media_ticket']=ticket
+        return 200,{'ok':True,'result':result}
+    def _media_ticket(self):
+        """True for a GET of a media address that carries a live session's media ticket (?t=, see
+        BrowserAuth.media_ticket). Such a load comes from the sandboxed window: cross-site, no cookie, no Origin.
+        A real other site's Origin is still refused, and nothing but MEDIA_TICKET_ROUTES ever takes a ticket."""
+        if self.command!='GET' or self.headers.get('Authorization'): return False
+        parts=urlsplit(self.path)
+        if not MEDIA_TICKET_ROUTES.fullmatch(parts.path): return False
+        ticket=(parse_qs(parts.query).get('t') or [''])[-1]
+        if not ticket: return False
+        origin=self.headers.get('Origin')
+        if origin is not None and origin!='null' and not self._origin_allowed(origin): return False
+        return self.service.auth.media_session(ticket) is not None
     def _session_token(self):
         try:
             cookies=SimpleCookie(); cookies.load(self.headers.get('Cookie',''))
@@ -219,6 +259,7 @@ class ViewHandler(Handler):
             return super()._authorize()
         if self.service.trusted_owner.enabled:
             self._trusted_owner()
+        if self._media_ticket(): return
         self._origin(required=self.command in ['POST','DELETE','PUT','PATCH'])
         session=self._session()
         if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
@@ -319,7 +360,7 @@ class ViewHandler(Handler):
                         # Locked vault (restart or Lock): only the passphrase reopens it.
                         raise EngineError('passkey_vault_locked','Type your passphrase once: Messenger restarted or was locked.',401)
                 token,session=self.service.auth.create(); self.pending_cookie=self._cookie(token)
-                return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf'],'status':self.service.engine.status()}}
+                return self._session_result(session,status=self.service.engine.status())
             self._authorize()
             if self._session() is None: raise EngineError('owner_only','Fingerprint unlock is set up from the Messenger screen',403)
             if path=='/api/view/passkey/register-options' and method=='POST': return 200,{'ok':True,'result':keys.register_options(rp)}
@@ -586,7 +627,7 @@ class ViewHandler(Handler):
                 if body.get('remember_wizard') is True:
                     self.service.trusted_owner.remember(password,self.service.auth.credential)
             token,session=self.service.auth.create(); self.pending_cookie=self._cookie(token)
-            return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf'],'status':status}}
+            return self._session_result(session,status=status)
         if path=='/api/view/session':
             if method=='POST':
                 self._origin(required=True)
@@ -610,7 +651,7 @@ class ViewHandler(Handler):
                             # first address. No ticket is minted and nothing is created until the owner submits.
                             token,session=self.service.auth.create(owner_setup=True)
                             self.pending_cookie=self._cookie(token)
-                            return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
+                            return self._session_result(session)
                         password=self.service.trusted_owner.password(self.service.auth.credential)
                         if password is None:
                             raise EngineError('session_unlock_required','Unlock once with your existing passphrase and choose Remember this Wizard',401)
@@ -619,7 +660,7 @@ class ViewHandler(Handler):
                             self.service.engine.setup({'action':'unlock','vault_password':password})
                         token,session=self.service.auth.create()
                         self.pending_cookie=self._cookie(token)
-                    return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
+                    return self._session_result(session)
                 # Nothing to unlock before the first address exists: a setup-only session just keeps going.
                 if self.service.trusted_owner.enabled and self.service.auth.credential and self.service.engine.status().get('state')!='ready':
                     with self.service.setup_lock:
@@ -642,7 +683,7 @@ class ViewHandler(Handler):
                 if token and not self.headers.get('Authorization') and self.service.auth.renew(token):
                     self.pending_cookie=self._cookie(token)
             else: raise EngineError('not_found','No such view route',404)
-            return 200,{'ok':True,'result':{'authenticated':True,'csrf_token':session['csrf']}}
+            return self._session_result(session)
         if path=='/api/resolve-contact' and method=='POST':
             self._authorize()
             return 200,{'ok':True,'result':messenger_addresses.resolve(self._body().get('address'))}

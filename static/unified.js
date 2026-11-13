@@ -349,13 +349,20 @@
     }
     return lines;
   }
+  // wizard-os issue 133 (browser boundary): a media address with the session's media ticket first (?t=), so a
+  // trailing kind=thumb still ends it. No ticket: the address as it was.
+  function withMediaTicket(url, ticket) {
+    if (typeof ticket !== 'string' || !ticket) return url;
+    const at = url.indexOf('?'), q = 't=' + encodeURIComponent(ticket);
+    return at < 0 ? url + '?' + q : url.slice(0, at + 1) + q + '&' + url.slice(at + 1);
+  }
   // Issue 178 (switch agent-drafts): how the owner handled his agent's drafts, as one short line for Settings.
   function draftFeedbackLine(stats) {
     const n = k => (stats && Number.isInteger(stats[k]) && stats[k] > 0 ? stats[k] : 0);
     if (!n('total')) return 'No agent drafts sent or discarded yet.';
     return 'Agent drafts: ' + n('sent_as_drafted') + ' sent as drafted · ' + n('edited') + ' edited · ' + n('discarded') + ' discarded';
   }
-  if (typeof module !== 'undefined') module.exports = {draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  if (typeof module !== 'undefined') module.exports = {withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -408,7 +415,7 @@
     const el = node('span', 'u-avatar tone-' + (h % TONES) + (cls ? ' ' + cls : ''), initials); el.setAttribute('aria-hidden', 'true'); return el;
   }
   // Real profile pictures over the initials; a missing or broken picture leaves the initials showing.
-  const pictureURL = (pid, tag, who) => tag && pid && !String(pid).startsWith('private:') ? 'api/unified/people/' + encodeURIComponent(pid) + '/avatar?' + new URLSearchParams(who ? {who, v: tag} : {v: tag}) : '';
+  const pictureURL = (pid, tag, who) => tag && pid && !String(pid).startsWith('private:') ? ticketed('api/unified/people/' + encodeURIComponent(pid) + '/avatar?' + new URLSearchParams(who ? {who, v: tag} : {v: tag})) : '';
   // Pictures load only when their row is near the screen, a few at a time, so opening the Inbox is not a burst of
   // dozens of requests that a restarting gateway answers with 502s. One failed picture retries once, then initials stay.
   const AVATAR_PARALLEL = 4, avatarQueue = []; let avatarBusy = 0;
@@ -956,7 +963,13 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 32);
   const listKey = p => (p.identities || []).some(i => i.kind === 'group') ? 'groups' : 'people';
-  const mediaURL = (id, kind) => 'api/unified/media/' + encodeURIComponent(id) + (kind ? '?kind=' + kind : '');
+  // Browser boundary (wizard-os issue 133): in a window the Wizard sandboxes (opaque origin, self.origin is "null")
+  // an <img>, <video> or <audio> load goes straight from the window with no session cookie, so the box refused every
+  // photo, GIF, sticker and profile picture. Those addresses carry the session's read-only media ticket there (web.py
+  // BrowserAuth.media_ticket). It goes first, so a trailing kind=thumb still ends the address. Elsewhere: unchanged.
+  let mediaTicket = () => '';
+  const ticketed = url => { let o = ''; try { o = self.origin; } catch { o = ''; } return withMediaTicket(url, o === 'null' ? mediaTicket() : ''); };
+  const mediaURL = (id, kind) => ticketed('api/unified/media/' + encodeURIComponent(id) + (kind ? '?kind=' + kind : ''));
   // Bridges tag names with their network ("Mike (WA)"); the chat already says which network it is.
   const nameOf = sender => !sender ? '' : sender.startsWith('@') ? sender.slice(1).split(':')[0] : sender.replace(/ \((WA|Twitter|LinkedIn)\)$/, '');
   const fmtDur = ms => { const t = Math.max(0, Math.round((ms || 0) / 1000)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
@@ -3551,7 +3564,7 @@
     recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); // the reaction strip leads with the same recent picks
   }
   const pickerCache = {stickers: null, packs: Object.create(null), gifs: Object.create(null)};
-  const pickURL = (pid, full) => 'api/unified/picker/media/' + encodeURIComponent(pid) + (full ? '?kind=full' : '');
+  const pickURL = (pid, full) => ticketed('api/unified/picker/media/' + encodeURIComponent(pid) + (full ? '?kind=full' : ''));
   function picker(o) {
     const panel = node('div', 'u-picker'); panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Emoji, GIFs and stickers');
     const tabs = node('div', 'u-pick-tabs'); tabs.setAttribute('role', 'tablist');
@@ -5016,7 +5029,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; if (options.mediaTicket) mediaTicket = options.mediaTicket; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;
