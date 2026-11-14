@@ -37,6 +37,7 @@ MODELS = {
     ('de', 'en'): ('translate-de_en-1_3.argosmodel', 'becc2b0011f8249fcb89be9ecb75ba0d876b1fab93c28ee6ff0420936897d637'),
     ('en', 'de'): ('translate-en_de-1_3.argosmodel', '6cd847f0c06c9c66013e6b0932e07fd54a6d90894659c02bf6c5247b72fb25b1'),
 }
+FOLDERS = {pair: pair[0] + '_' + pair[1] for pair in MODELS}
 AGENT = 'WizardMessenger/1 (+https://github.com/humanitylabs-org/wizard-messenger)'
 NAMES = {'th': 'Thai', 'ja': 'Japanese', 'zh': 'Chinese', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'en': 'English'}
 MAX_LOADED = 2  # one language both ways; each loaded model is about 100-250 MB of memory
@@ -99,9 +100,12 @@ class Engine:
         self.loaded = {}  # pair -> (translator, tokenizer), oldest first
 
     def folder(self, pair):
-        return self.root / (pair[0] + '_' + pair[1])
+        # The folder name comes from the pinned list, never from the request.
+        return self.root / FOLDERS[pair]
 
     def ready(self, pair):
+        if pair not in FOLDERS:
+            return False
         return (self.folder(pair) / 'model' / 'model.bin').is_file() and (self.folder(pair) / 'sentencepiece.model').is_file()
 
     def download(self, pair):
