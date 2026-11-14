@@ -49,3 +49,16 @@ test('null whenever this browser cannot, so Translate falls back to the box', as
   assert.equal(await deviceTranslate('สวัสดี', 'en', fakeBrowser({fail: 'NotAllowedError'}).g), null, 'download refused');
   assert.equal(await deviceTranslate('สวัสดี', 'en', fakeBrowser({output: ' '}).g), null, 'empty result');
 });
+
+test('issue 204: with {same: true}, text already in the target language comes back as is, without a model', async () => {
+  const {g, calls} = fakeBrowser({detected: 'en'});
+  assert.deepEqual(await deviceTranslate(' See you ', 'en', g, {same: true}), {text: 'See you', source: 'en', same: true});
+  assert.equal(calls.some(c => c[0] === 'create'), false);
+  assert.equal(await deviceTranslate('See you', 'en', fakeBrowser({detected: 'en'}).g), null, 'without it: still null');
+});
+
+test('issue 204: the reply preview translates English to the chat language', async () => {
+  const {g, calls} = fakeBrowser({detected: 'en', output: 'เจอกัน'});
+  assert.deepEqual(await deviceTranslate('See you', 'th', g), {text: 'เจอกัน', source: 'en'});
+  assert.deepEqual(calls.find(c => c[0] === 'create')[1], {sourceLanguage: 'en', targetLanguage: 'th'});
+});

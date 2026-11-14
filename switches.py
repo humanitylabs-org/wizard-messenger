@@ -59,6 +59,12 @@ SWITCHES = (
                     "list's ⋯ menu.",
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#202']},
+    {'id': 'device-auto-translate', 'name': 'Auto-translate on this device',
+     'description': "In a chat set to Auto-translate, incoming messages are translated to English and your reply's "
+                    "send preview is translated by this browser's own built-in translator (Chrome on a computer), so "
+                    'the text stays on the device. Where the browser has none, Tinfoil translates as before.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#204']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
