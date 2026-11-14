@@ -42,6 +42,12 @@ SWITCHES = (
                     '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#182']},
+    {'id': 'on-device-translate', 'name': 'Translate on this device',
+     'description': "Tapping Translate under a message uses this browser's own built-in translator (Chrome on a "
+                    'computer), so the text stays on the device and no model is used. Where the browser has none, '
+                    'Translate uses Tinfoil as before.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#199']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

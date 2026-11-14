@@ -46,6 +46,8 @@ Translation stays out of the way by default. Chats with no language set show the
 
 Only Tinfoil's `https://inference.tinfoil.sh/v1/chat/completions` is called. Configure `TINFOIL_API_KEY` and `TRANSLATION_MODEL`; default `gemma4-31b` was selected from the live `/v1/models` response and tested in both directions. The locally configured `glm-5-3-flash` name was absent from that public endpoint; no other provider was substituted. This is the requested OpenAI-compatible TLS route, **not proof of client-side enclave attestation**. Translation is assistive, not guaranteed correct: review the send preview.
 
+With the Messenger switch **Translate on this device** (`on-device-translate`, off by default, issue 199) a tapped **Translate** first uses the browser's own built-in translator (Chrome's `Translator` and `LanguageDetector` APIs, on-device language packs), so that text never leaves the device and is not cached on the box. Where the browser has no built-in translator (Safari, Firefox, phones today), the language is unknown or the pack can't be fetched, Translate falls back to Tinfoil as above. Auto-translate chats and the send preview still use Tinfoil.
+
 ### Privacy and MVP limits
 
 The existing Marmot keyring remains encrypted, but the unified history mirror, Matrix/Telegram databases, cached translations and drafts are **plaintext on the box**. Protect the disk and backups. Telegram cloud chats are not end-to-end encrypted; Telegram secret chats are not supported. Text selected for translation leaves the box for Tinfoil. The browser uses the existing scoped Secure/HttpOnly session and Origin/CSRF boundary; no new unauthenticated private API or MCP message tools were added.
