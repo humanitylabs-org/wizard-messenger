@@ -53,8 +53,17 @@ SWITCHES = (
                     'ready, or Stop keeping a draft ready, without opening the chat.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#201']},
+    {'id': 'clean-settings', 'name': 'Clean Settings',
+     'description': 'Settings shows only your accounts, agent access and one Agent drafts choice. Features still being '
+                    'tested move to Try new features at the bottom; Inbox view and Suggested merges move to the chat '
+                    "list's ⋯ menu.",
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#202']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
+
+
+VOTES = ('up', 'down')
 
 
 class UnknownSwitch(KeyError):
@@ -62,34 +71,57 @@ class UnknownSwitch(KeyError):
 
 
 class SwitchStore:
-    """switches.json in Messenger's data dir: {"switches": {"<id>": true}}. Without a data dir, memory only."""
+    """switches.json in Messenger's data dir: {"switches": {"<id>": true}, "feedback": {"<id>": {"tried": true,
+    "vote": "up"}}}. Without a data dir, memory only. Feedback (issue 202, wizard-os 627) is what the owner did on Try
+    new features: turned a switch on at least once, and an optional thumbs up or down. It stays on the box."""
 
     def __init__(self, path=None):
         self.path = Path(path) if path else None
         self.lock = threading.Lock()
         self.memory = {}
+        self.memory_feedback = {}
 
-    def _read(self):
+    def _raw(self):
         if self.path is None:
-            return dict(self.memory)
+            return {'switches': dict(self.memory), 'feedback': dict(self.memory_feedback)}
         try:
             raw = json.loads(self.path.read_text())
         except (OSError, ValueError):
             return {}
-        values = raw.get('switches') if isinstance(raw, dict) else None
+        return raw if isinstance(raw, dict) else {}
+
+    def _read(self):
+        values = self._raw().get('switches')
         if not isinstance(values, dict):
             return {}
         return {k: v for k, v in values.items() if k in _KNOWN and isinstance(v, bool)}
 
-    def _write(self, values):
+    def _feedback(self):
+        values = self._raw().get('feedback')
+        if not isinstance(values, dict):
+            return {}
+        out = {}
+        for k, v in values.items():
+            if k not in _KNOWN or not isinstance(v, dict):
+                continue
+            entry = {'tried': v.get('tried') is True}
+            if v.get('vote') in VOTES:
+                entry['vote'] = v['vote']
+            out[k] = entry
+        return out
+
+    def _write(self, values, feedback=None):
+        feedback = self._feedback() if feedback is None else feedback
         if self.path is None:
             self.memory = dict(values)
+            self.memory_feedback = dict(feedback)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix='.switches-', dir=str(self.path.parent))
         try:
             with os.fdopen(fd, 'w') as f:
-                json.dump({'switches': values}, f, sort_keys=True)
+                json.dump({'switches': values, 'feedback': feedback} if feedback else {'switches': values}, f,
+                          sort_keys=True)
             os.chmod(tmp, 0o600)
             os.replace(tmp, self.path)
         except BaseException:
@@ -108,7 +140,23 @@ class SwitchStore:
         return {'contract': CONTRACT, 'switches': [
             {'id': s['id'], 'name': s['name'], 'description': s['description'],
              'on': values.get(s['id'], s['default']), 'default': s['default'], 'issues': list(s['issues'])}
-            for s in SWITCHES]}
+            for s in SWITCHES], 'feedback': self._feedback()}
+
+    def vote(self, switch_id, vote):
+        """Thumbs up or down (or None to take it back) for a switch on Try new features."""
+        if switch_id not in _KNOWN:
+            raise UnknownSwitch(switch_id)
+        if vote is not None and vote not in VOTES:
+            raise ValueError('vote')
+        with self.lock:
+            feedback = self._feedback()
+            entry = dict(feedback.get(switch_id) or {'tried': False})
+            entry.pop('vote', None)
+            if vote:
+                entry['vote'] = vote
+            feedback[switch_id] = entry
+            self._write(self._read(), feedback)
+        return self.listing()
 
     def set(self, switch_id, on):
         if switch_id not in _KNOWN:
@@ -120,5 +168,8 @@ class SwitchStore:
                 values.pop(switch_id, None)
             else:
                 values[switch_id] = on
-            self._write(values)
+            feedback = self._feedback()
+            if on:
+                feedback[switch_id] = {**feedback.get(switch_id, {}), 'tried': True}
+            self._write(values, feedback)
         return self.listing()
