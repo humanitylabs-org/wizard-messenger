@@ -1258,23 +1258,37 @@ class PeopleStore:
         return self.decorate(rows), touched | {r['person_id'] for r in rows}
 
 
-class Translator:
-    def __init__(self, store, root):
-        self.store, self.root = store, Path(root)
+private_translation_languages = ('en', 'th', 'ja', 'zh', 'es', 'fr', 'de')
 
-    def translate(self, original, language):
+
+class Preparing(str):
+    """A translation error that only means the box's own model is still downloading (issue 209): try again later."""
+
+
+class Translator:
+    def __init__(self, store, root, private=None):
+        self.store, self.root = store, Path(root)
+        # Issue 209 (switch box-translate): when on, the worker translates with its own model on the box, never Tinfoil.
+        self.private = private or (lambda: False)
+
+    def translate(self, original, language, source=None):
         if not language:
             return original, None
-        key = hashlib.sha256((os.environ.get('TRANSLATION_MODEL', 'gemma4-31b') + '\0' + language + '\0' + original).encode()).hexdigest()
+        private = bool(self.private())
+        model = 'box-argos\0' + (source or '') if private else os.environ.get('TRANSLATION_MODEL', 'gemma4-31b')
+        key = hashlib.sha256((model + '\0' + language + '\0' + original).encode()).hexdigest()
         with self.store.db() as db:
             row = db.execute('SELECT translated FROM translation WHERE cache_key=?', (key,)).fetchone()
         if row:
             return row[0], None
+        body = {'text': original, 'language': language}
+        if private:
+            body.update(engine='box', source=source if source in private_translation_languages else None)
         try:
             secret = json.loads((self.root / 'secrets.json').read_text())['translation_token']
-            result = http(os.environ.get('TRANSLATION_URL', 'http://translation:8766'), '/translate', 'POST', {'text': original, 'language': language}, secret, 60)
+            result = http(os.environ.get('TRANSLATION_URL', 'http://translation:8766'), '/translate', 'POST', body, secret, 60)
             if result.get('error'):
-                return original, result['error']
+                return original, Preparing(result['error']) if result.get('preparing') else result['error']
             translated = text(result.get('text'))
         except (EngineError, OSError, ValueError, KeyError):
             return original, 'Translation unavailable. You can send the original instead.'
@@ -1507,7 +1521,7 @@ class UnifiedInbox:
         self.root = Path(data) / 'unified'
         self.store = PeopleStore(self.root / 'people.sqlite3')
         self.engine = engine
-        self.translator = Translator(self.store, self.root)
+        self.translator = Translator(self.store, self.root, lambda: self.switch_on('box-translate'))
         self.catchup = catchup.CatchUpService(self.store, self.catchup_complete, fail, self.store.own_names)
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
@@ -2394,7 +2408,7 @@ class UnifiedInbox:
                 pending = True
                 if message['id'] not in self.tq_seen:
                     self.tq_seen.add(message['id'])
-                    self.tq.put((message['id'], message['original']))
+                    self.tq.put((message['id'], message['original'], person['language']))
             if message['msgtype'] == 'm.text' and re.match(r'\[(Photo|Video|Voice message|File|Sticker)\]', message['original']):
                 self.backfill_media(next(i for i in person['identities'] if i['id'] == message['identity_id']))
         gaps = [self.store.get('history_gap:' + i['address']) for i in person['identities']]
@@ -2418,9 +2432,17 @@ class UnifiedInbox:
         switches = getattr(self, 'switches', None)  # some tests build a bare inbox
         return bool(switches and switches.is_on(switch_id))
 
-    def translate_one(self, message_id, original):
-        translated, error = self.translator.translate(original, 'en')
+    def translate_one(self, message_id, original, source=None):
+        translated, error = self.translator.translate(original, 'en', source) if source else self.translator.translate(original, 'en')
         self.store.bump(message_id, ',translated=?,translation_error=?', (None if error else translated, error))
+        if isinstance(error, Preparing):
+            # Issue 209: the box's own model is still downloading. Show that, and try again on the next open and
+            # after a short wait, instead of keeping the error.
+            self.tq_seen.discard(message_id)
+            if getattr(self, 'worker', None) is not None and not self.stop.is_set():
+                retry = threading.Timer(30, lambda: self.tq_seen.add(message_id) or self.tq.put((message_id, original, source)))
+                retry.daemon = True
+                retry.start()
 
     def translate_pending(self):
         """Drain the background translation queue synchronously (tests)."""
@@ -2461,12 +2483,13 @@ class UnifiedInbox:
     def translate_message(self, message_id):
         """Owner tapped Translate under one incoming message: one model call, cached."""
         with self.store.db() as db:
-            row = db.execute('SELECT original, translated FROM message WHERE id=? AND outgoing=0', (message_id,)).fetchone()
+            row = db.execute('SELECT m.original, m.translated, p.language FROM message m JOIN identity i ON m.identity_id=i.id '
+                             'LEFT JOIN person p ON i.person_id=p.id WHERE m.id=? AND m.outgoing=0', (message_id,)).fetchone()
         if not row:
             fail('not_found', 'That message is no longer here', 404)
         if row['translated']:
             return {'id': message_id, 'translated': row['translated'], 'error': None}
-        translated, error = self.translator.translate(row['original'], 'en')
+        translated, error = self.translator.translate(row['original'], 'en', row['language']) if row['language'] else self.translator.translate(row['original'], 'en')
         if not error:
             with self.store.db() as db:
                 db.execute('UPDATE message SET translated=?, translation_error=NULL WHERE id=?', (translated, message_id))

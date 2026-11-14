@@ -65,6 +65,12 @@ SWITCHES = (
                     'the text stays on the device. Where the browser has none, Tinfoil translates as before.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#204']},
+    {'id': 'box-translate', 'name': 'Translate on your Wizard',
+     'description': 'Auto-translate, the send preview and Translate under a message use a translator that runs on your '
+                    'Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each language is set up '
+                    'once on first use (a download of about 70-130 MB per direction, about a minute).',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#209']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

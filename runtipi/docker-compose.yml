@@ -110,13 +110,16 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 256m
+    # 768m: the translator that runs on the box (switch box-translate, issue 209) holds one language both ways.
+    mem_limit: 768m
     pids_limit: 64
     environment:
       TINFOIL_API_KEY: ${TINFOIL_API_KEY:-}
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-gemma4-31b}
+      TRANSLATION_MODELS: /models
     volumes:
       - ${APP_DATA_DIR}/data/translation:/data:ro
+      - ${APP_DATA_DIR}/data/translation-models:/models
     depends_on:
       unified-init: {condition: service_completed_successfully}
     networks: [model-lane, model-egress]
