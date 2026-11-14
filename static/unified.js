@@ -382,7 +382,14 @@
       return typeof out === 'string' && out.trim() ? {text: out.trim(), source} : null;
     } catch { return null; }
   }
-  if (typeof module !== 'undefined') module.exports = {deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  // Issue 178/201: the one "keeps a draft ready" item, shared by the open chat's ⋯ menu and (switch list-draft-ready)
+  // the chat list's right-click / long-press menu. Native (shell) chats have no agent drafts.
+  function draftReadyItems(p, watched, watch) {
+    if (!p || p.native) return [];
+    return [watched ? {label: 'Stop keeping a draft ready', icon: 'sparkle', run: () => watch(p, false)}
+      : {label: 'Agent keeps a draft ready', icon: 'sparkle', run: () => watch(p, true)}];
+  }
+  if (typeof module !== 'undefined') module.exports = {draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1618,6 +1625,7 @@
       ...(p.native || listKey(p) === 'groups' ? [] : [{label: 'Merge with…', icon: 'merge', run: () => mergePicker(p)}]),
       ...(contacts.ok && !p.native && listKey(p) !== 'groups' && !p.contact && p.accounts?.length ? [{label: 'Add to Contacts', icon: 'compose', run: () => action(async () => { const r = await saveToContacts(p); if (r) { toast('Added to Contacts'); drawList(); } })}] : []),
       ...(p.native || !p.last ? [] : [p.unread ? {label: 'Mark as read', icon: 'check', run: () => setUnread(p, false)} : {label: 'Mark as unread', icon: 'unread', run: () => setUnread(p, true)}]),
+      ...(switchState.on['list-draft-ready'] === true ? draftReadyItems(p, draftWatch.watched.has(p.id), watchChat) : []),
     ]);
   }
   // Unread again stays on this Messenger only; opening the chat reads it as usual.
@@ -2033,9 +2041,7 @@
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
       priorityAction(cur, anchor, 'right'),
       ...(cur.native ? [] : [{label: 'Labels', icon: 'tag', run: () => labelsSheet(cur)}]),
-      ...(cur.native ? [] : [draftWatch.watched.has(cur.id)
-        ? {label: 'Stop keeping a draft ready', icon: 'sparkle', run: () => watchChat(cur, false)}
-        : {label: 'Agent keeps a draft ready', icon: 'sparkle', run: () => watchChat(cur, true)}]),
+      ...draftReadyItems(cur, draftWatch.watched.has(cur.id), watchChat),
     ], {side: 'right'}); };
     if (p.id) { // Catch me up: next to the chat options, never replaces them
       const head = root.querySelector('.u-thread-head'), more = head?.querySelector('[aria-label="Chat options"]'), cu = iconButton('sparkle', 'Catch me up', () => catchUp(id), 'u-catchup-btn');
@@ -4520,6 +4526,7 @@
   // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
   // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
   // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
+  function listDraftReadyRow() { return switchRow('list-draft-ready', 'Draft ready from the chat list', 'Only in the open chat’s ⋯ menu', 'Also when you hold or right-click a chat'); }
   function deviceTranslateRow() { return switchRow('on-device-translate', 'Translate on this device', 'Translate uses Tinfoil', 'Translate runs in this browser when it can'); }
   function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
   // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
@@ -4668,7 +4675,7 @@
     const draftStats = node('p', 'helper u-agent-draft-stats');
     const paintStats = () => { draftStats.hidden = agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), deviceTranslateRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), deviceTranslateRow(), listDraftReadyRow());
     sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.

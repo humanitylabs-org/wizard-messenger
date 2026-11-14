@@ -61,7 +61,11 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': "Tapping Translate under a message uses this browser's own built-in translator (Chrome on "
                                'a computer), so the text stays on the device and no model is used. Where the browser has '
                                'none, Translate uses Tinfoil as before.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#199']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#199']}, {
+                'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
+                'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent '
+                               'keeps a draft ready, or Stop keeping a draft ready, without opening the chat.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}])
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -211,7 +215,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready'])
 
 
 if __name__ == '__main__':

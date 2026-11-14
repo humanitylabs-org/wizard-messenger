@@ -48,6 +48,8 @@ Only Tinfoil's `https://inference.tinfoil.sh/v1/chat/completions` is called. Con
 
 With the Messenger switch **Translate on this device** (`on-device-translate`, off by default, issue 199) a tapped **Translate** first uses the browser's own built-in translator (Chrome's `Translator` and `LanguageDetector` APIs, on-device language packs), so that text never leaves the device and is not cached on the box. Where the browser has no built-in translator (Safari, Firefox, phones today), the language is unknown or the pack can't be fetched, Translate falls back to Tinfoil as above. Auto-translate chats and the send preview still use Tinfoil.
 
+With the Messenger switch **Draft ready from the chat list** (`list-draft-ready`, off by default, issue 201), holding a chat in the list (or right-clicking it on a computer) also offers **Agent keeps a draft ready** / **Stop keeping a draft ready**, the same item as the open chat's ⋯ menu, for people and groups, without opening the chat.
+
 ### Privacy and MVP limits
 
 The existing Marmot keyring remains encrypted, but the unified history mirror, Matrix/Telegram databases, cached translations and drafts are **plaintext on the box**. Protect the disk and backups. Telegram cloud chats are not end-to-end encrypted; Telegram secret chats are not supported. Text selected for translation leaves the box for Tinfoil. The browser uses the existing scoped Secure/HttpOnly session and Origin/CSRF boundary; no new unauthenticated private API or MCP message tools were added.
