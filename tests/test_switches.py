@@ -70,7 +70,13 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Settings shows only your accounts, agent access and one Agent drafts choice. Features '
                                'still being tested move to Try new features at the bottom; Inbox view and Suggested '
                                "merges move to the chat list's ⋯ menu.",
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#202']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#202']}, {
+                'id': 'device-auto-translate', 'name': 'Auto-translate on this device',
+                'description': "In a chat set to Auto-translate, incoming messages are translated to English and your "
+                               "reply's send preview is translated by this browser's own built-in translator (Chrome on "
+                               'a computer), so the text stays on the device. Where the browser has none, Tinfoil '
+                               'translates as before.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#204']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -253,7 +259,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate'])
 
 
 if __name__ == '__main__':

@@ -8,9 +8,9 @@
     if (state.low || state.seg === 'medium') return {...state, low: false, seg: 'all', handled: true}; // Low/Medium folder → All
     return {...state, handled: false}; // Shared WizardApp owns the root guard.
   }
-  async function fetchOlder(t, id, call) {
+  async function fetchOlder(t, id, call, extra = '') {
     if (!t.has_more || !t.next_cursor) return false;
-    const r = await call('people/' + encodeURIComponent(id) + '?limit=60&cursor=' + encodeURIComponent(t.next_cursor));
+    const r = await call('people/' + encodeURIComponent(id) + '?limit=60&cursor=' + encodeURIComponent(t.next_cursor) + extra);
     const known = new Set(t.messages.map(m => m.id));
     t.messages = [...r.messages.filter(m => !known.has(m.id)), ...t.messages];
     t.has_more = r.has_more; t.next_cursor = r.next_cursor;
@@ -365,7 +365,9 @@
   // Issue 199: Translate on this device with the browser's own built-in translator (Chrome's Translator and
   // LanguageDetector APIs), so the text never leaves the device and no model server is used. Resolves null when this
   // browser can't (no API, unknown or same language, no language pack), so the caller falls back to the box.
-  async function deviceTranslate(text, target, g) {
+  // Issue 204: opts.same keeps text already in the target language as {text, source, same: true}, so an auto-translate
+  // chat can show it as is instead of asking the box.
+  async function deviceTranslate(text, target, g, opts) {
     const T = g?.Translator, D = g?.LanguageDetector;
     if (!text || !text.trim() || typeof T?.create !== 'function' || typeof D?.create !== 'function') return null;
     try {
@@ -373,6 +375,7 @@
       const best = (await detector.detect(text))?.[0];
       detector.destroy?.();
       const source = String(best?.detectedLanguage || '').toLowerCase().split('-')[0];
+      if (source && source === target && opts?.same) return {text: text.trim(), source, same: true};
       if (!source || source === 'und' || source === target) return null;
       const pair = {sourceLanguage: source, targetLanguage: target};
       if (typeof T.availability === 'function' && await T.availability(pair) === 'unavailable') return null;
@@ -402,6 +405,30 @@
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
   const onDevice = new Map(); // message id -> {original, text}: translated on this device (issue 199), never sent to the box
   const deviceText = m => { const t = onDevice.get(m.id); return t && t.original === m.original ? t.text : null; };
+  // Issue 204 (switch device-auto-translate): auto-translate chats translate on this device when the browser has a
+  // built-in translator. The box is told (?translate=device) so it queues nothing for Tinfoil; a message the device
+  // can't translate goes to the box's one-message route instead.
+  const deviceAuto = () => switchState.on['device-auto-translate'] === true && typeof globalThis.Translator?.create === 'function' && typeof globalThis.LanguageDetector?.create === 'function';
+  const deviceQuery = () => (deviceAuto() ? '&translate=device' : '');
+  const autoTried = new Set();
+  let autoChain = Promise.resolve();
+  function autoTranslate(id) {
+    const t = store.threads[id];
+    if (!t || !deviceAuto() || !reviewedOf(t.person)) return;
+    for (const m of t.messages) {
+      if (m.outgoing || m.deleted || m.pending || !m.id || m.translated || !m.original?.trim() || m.msgtype === 'm.location' || deviceText(m) || autoTried.has(m.id + '\n' + m.original)) continue;
+      autoTried.add(m.id + '\n' + m.original);
+      autoChain = autoChain.then(async () => {
+        const local = await deviceTranslate(m.original, 'en', globalThis, {same: true});
+        if (local) onDevice.set(m.id, {original: m.original, text: local.text});
+        else {
+          const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}).catch(() => null);
+          if (r?.translated) m.translated = r.translated; else if (r?.error) m.translation_error = r.error;
+        }
+        if (view.id === id) paintThread();
+      }).catch(() => {});
+    }
+  }
   const node = (tag, cls, content) => { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) el.textContent = content; return el; };
   const button = (label, fn, cls = 'secondary') => { const el = node('button', cls, label); el.type = 'button'; el.onclick = fn; return el; };
   // Line icons are built as SVG nodes: no markup strings reach the DOM.
@@ -1824,7 +1851,9 @@
     else view.scroll.append(skeleton(6, 'bubbles'));
     if (!s.ready) { if (cached) landUnread(id); return; }
     try {
-      const r = await call('people/' + id + '?limit=60');
+      // A browser with a built-in translator reads the switches first, so the box hears ?translate=device on the very first open.
+      if (!switchState.shown && typeof globalThis.Translator?.create === 'function') await syncSwitches();
+      const r = await call('people/' + id + '?limit=60' + deviceQuery());
       store.threads[id] = {person: r.person, messages: r.messages.map(m => pendingReactions(id, m)), has_more: r.has_more, next_cursor: r.next_cursor, warning: r.history_warning};
       store.typing[id] = r.typing || [];
       if (!store.seq) { store.seq = r.seq || 0; feed(); }
@@ -1864,7 +1893,7 @@
     if (!u || u.settled || view.id !== id || !t) return;
     let first = firstUnread(t, u);
     for (let i = 0; first === undefined && i < UNREAD_PAGES; i++) {
-      try { if (!await fetchOlder(t, id, call)) break; } catch { break; }
+      try { if (!await fetchOlder(t, id, call, deviceQuery())) break; } catch { break; }
       if (view.id !== id || view.unread !== u || store.threads[id] !== t) return;
       first = firstUnread(t, u);
     }
@@ -2117,6 +2146,7 @@
   function paintThread(toBottom = false, hold = false) {
     const t = store.threads[view.id], scroll = view.scroll; if (!t || !scroll) return;
     const follow = !hold && (toBottom || nearBottom()), p = t.person, auto = reviewedOf(p), multi = networksOf(p).length > 1, group = (p.identities || []).some(i => i.kind === 'group') || new Set(t.messages.filter(m => !m.outgoing && m.sender).map(m => m.sender)).size > 1;
+    if (auto) autoTranslate(view.id);
     const kids = [node('div', 'u-spacer')];
     if (t.has_more) kids.push(node('p', 'u-older', 'Loading earlier messages…'));
     let day = '';
@@ -2134,7 +2164,7 @@
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single';
       const read = m.outgoing && p.peer_read_ts >= m.timestamp;
       const key = m.client_id || m.id;
-      const sig = JSON.stringify([group && !m.outgoing ? p.faces?.[nameOf(m.sender)] : 0, m.id, m.original, m.translated, m.transcript, m.translation_error, m.edited, m.deleted, m.mentions, m.mentioned, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, m.links?.length, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
+      const sig = JSON.stringify([group && !m.outgoing ? p.faces?.[nameOf(m.sender)] : 0, m.id, m.original, m.translated, auto && !m.outgoing ? deviceText(m) : 0, m.transcript, m.translation_error, m.edited, m.deleted, m.mentions, m.mentioned, m.reactions, m.pending, m.failed, pos, read, shown[m.id], m.reply?.text, m.links?.length, auto, multi, group, m.photos?.map(p => [p.id, p.deleted, p.media, p.local, p.pending])]);
       let el = els.get(key);
       if (!el || el.dataset.sig !== sig) { el = bubble(m, pos, {auto, multi, group, read, faces: p.faces}); el.dataset.sig = sig; els.set(key, el); }
       kids.push(el);
@@ -2313,9 +2343,11 @@
     }
     if (!story && !m.deleted && m.original && m.msgtype !== 'm.location') {
       if (ctx.auto || m.outgoing) {
-        b.append(richText('u-text', m.translated || m.original, m.translated && m.translated !== m.original ? null : m));
-        if (m.translated && m.translated !== m.original) b.append(node('p', 'u-original', m.original));
-        if (m.translation_error) b.append(node('p', 'u-original error', m.translation_error));
+        const local = ctx.auto && !m.outgoing && !m.translated ? deviceText(m) : null, shownText = m.translated || local;
+        b.append(richText('u-text', shownText || m.original, shownText && shownText !== m.original ? null : m));
+        if (shownText && shownText !== m.original) b.append(node('p', 'u-original', m.original));
+        if (local && local !== m.original) b.append(node('p', 'u-original u-on-device', 'Translated on this device'));
+        if (m.translation_error && !local) b.append(node('p', 'u-original error', m.translation_error));
       } else {
         const local = shown[m.id] === 'translated' && deviceText(m), translated = local || (shown[m.id] === 'translated' && m.translated);
         b.append(richText('u-text', translated || m.original, translated ? null : m));
@@ -4011,7 +4043,10 @@
   }
   function reviewSend(id, p, text, identity_id) {
     action(async () => {
-      const preview = await call('people/' + id + '/preview', {text, identity_id});
+      // Issue 204: with device-auto-translate on and a built-in translator, this browser translates the reply and the
+      // box binds that text to the preview; otherwise (or if it can't) the box asks Tinfoil as before.
+      const local = deviceAuto() && reviewedOf(p) ? await deviceTranslate(text, p.language, globalThis) : null;
+      const preview = await call('people/' + id + '/preview', local ? {text, identity_id, translated: local.text, on_device: true} : {text, identity_id});
       if (s.person !== id) return;
       const sheet = overlay('Review before sending');
       sheet.append(node('p', 'helper', netLabel(p.identities.find(i => i.id === preview.identity_id).network) + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));

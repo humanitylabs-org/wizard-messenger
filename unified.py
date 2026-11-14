@@ -2359,7 +2359,7 @@ class UnifiedInbox:
             self.store.put(watermark_key, str(newest))
 
     # ---------- reading ----------
-    def timeline(self, person_id, before=None, limit=2000):
+    def timeline(self, person_id, before=None, limit=2000, device=False):
         person = self.store.person(person_id)
         try:
             person['faces'] = self.store.faces(person_id)
@@ -2381,9 +2381,15 @@ class UnifiedInbox:
         has_more = len(messages) > limit
         messages = messages[-limit:]
         pending = False
+        # Issue 204: a view whose browser translates on the device (switch device-auto-translate) asks with
+        # ?translate=device, so nothing goes to Tinfoil in the background for it; what the device can't do it sends
+        # back one message at a time through messages/<id>/translate. Every other view keeps the box queue.
+        on_device = device and self.switch_on('device-auto-translate')
         for message in messages:
             if not message['outgoing'] and not person['language']:
                 message.update(translation_error=None)
+            if on_device:
+                continue
             if not message['outgoing'] and person['language'] and not message['translated'] and not message['deleted'] and message['original'].strip():
                 pending = True
                 if message['id'] not in self.tq_seen:
@@ -2407,6 +2413,10 @@ class UnifiedInbox:
         if not isinstance(out, str) or not out.strip():
             raise ValueError('empty')
         return out
+
+    def switch_on(self, switch_id):
+        switches = getattr(self, 'switches', None)  # some tests build a bare inbox
+        return bool(switches and switches.is_on(switch_id))
 
     def translate_one(self, message_id, original):
         translated, error = self.translator.translate(original, 'en')
@@ -2469,7 +2479,13 @@ class UnifiedInbox:
         if not any(i['id'] == identity_id for i in person['identities']):
             fail('invalid_identity', 'Choose this person’s channel')
         original = text(payload.get('text'))
-        translated, error = self.translator.translate(original, person['language']) if person['language'] and person['language'] != 'en' else (original, None)
+        local = payload.get('translated') if payload.get('on_device') is True and self.switch_on('device-auto-translate') else None
+        if isinstance(local, str) and local.strip() and person['language'] and person['language'] != 'en':
+            # Issue 204: this browser translated the text itself. It is bound to this preview exactly like a Tinfoil
+            # result (the mention check below still applies), and nothing is sent to Tinfoil.
+            translated, error = text(local), None
+        else:
+            translated, error = self.translator.translate(original, person['language']) if person['language'] and person['language'] != 'en' else (original, None)
         identity = next(i for i in person['identities'] if i['id'] == identity_id)
         members = self.store.members(identity)
         if {m['id'] for m in find_mentions(original, members)} != {m['id'] for m in find_mentions(translated or '', members)}:
@@ -3468,7 +3484,7 @@ class UnifiedInbox:
                         limit = max(1, min(int(q('limit', '2000')), 2000))
                     except ValueError:
                         fail('invalid_cursor', 'Invalid message query')
-                    return self.timeline(person_id, before, limit)
+                    return self.timeline(person_id, before, limit, device=q('translate') == 'device')
                 if method == 'POST':
                     return self.store.update(person_id, payload)
             if len(suffix) == 3 and method == 'GET' and suffix[2] == 'avatar':
