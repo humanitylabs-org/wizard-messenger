@@ -362,7 +362,27 @@
     if (!n('total')) return 'No agent drafts sent or discarded yet.';
     return 'Agent drafts: ' + n('sent_as_drafted') + ' sent as drafted · ' + n('edited') + ' edited · ' + n('discarded') + ' discarded';
   }
-  if (typeof module !== 'undefined') module.exports = {withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  // Issue 199: Translate on this device with the browser's own built-in translator (Chrome's Translator and
+  // LanguageDetector APIs), so the text never leaves the device and no model server is used. Resolves null when this
+  // browser can't (no API, unknown or same language, no language pack), so the caller falls back to the box.
+  async function deviceTranslate(text, target, g) {
+    const T = g?.Translator, D = g?.LanguageDetector;
+    if (!text || !text.trim() || typeof T?.create !== 'function' || typeof D?.create !== 'function') return null;
+    try {
+      const detector = await D.create();
+      const best = (await detector.detect(text))?.[0];
+      detector.destroy?.();
+      const source = String(best?.detectedLanguage || '').toLowerCase().split('-')[0];
+      if (!source || source === 'und' || source === target) return null;
+      const pair = {sourceLanguage: source, targetLanguage: target};
+      if (typeof T.availability === 'function' && await T.availability(pair) === 'unavailable') return null;
+      const translator = await T.create(pair);
+      const out = await translator.translate(text);
+      translator.destroy?.();
+      return typeof out === 'string' && out.trim() ? {text: out.trim(), source} : null;
+    } catch { return null; }
+  }
+  if (typeof module !== 'undefined') module.exports = {deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -373,6 +393,8 @@
   // A letter outside the Latin script (Thai, Cyrillic, CJK…) offers Translate; English never does.
   const foreignScript = t => /(?![\p{Script=Latin}])\p{L}/u.test(t || '');
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
+  const onDevice = new Map(); // message id -> {original, text}: translated on this device (issue 199), never sent to the box
+  const deviceText = m => { const t = onDevice.get(m.id); return t && t.original === m.original ? t.text : null; };
   const node = (tag, cls, content) => { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) el.textContent = content; return el; };
   const button = (label, fn, cls = 'secondary') => { const el = node('button', cls, label); el.type = 'button'; el.onclick = fn; return el; };
   // Line icons are built as SVG nodes: no markup strings reach the DOM.
@@ -2269,8 +2291,9 @@
         if (m.translated && m.translated !== m.original) b.append(node('p', 'u-original', m.original));
         if (m.translation_error) b.append(node('p', 'u-original error', m.translation_error));
       } else {
-        const translated = shown[m.id] === 'translated' && m.translated;
-        b.append(richText('u-text', translated ? m.translated : m.original, translated ? null : m));
+        const local = shown[m.id] === 'translated' && deviceText(m), translated = local || (shown[m.id] === 'translated' && m.translated);
+        b.append(richText('u-text', translated || m.original, translated ? null : m));
+        if (local) b.append(node('p', 'u-original u-on-device', 'Translated on this device'));
         if (foreignScript(m.original)) b.append(button(translated ? 'Show original' : 'Translate', () => translate(m), 'u-translate link'));
       }
     }
@@ -2541,7 +2564,11 @@
   function jumpTo(id) { const post = albumPosts(store.threads[view.id]?.messages || []).find(m => m.id === id || m.photos?.some(p => p.id === id)); const el = view.scroll?.querySelector('[data-id="' + CSS.escape(post?.id || id) + '"]'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
   function translate(m) {
     action(async () => {
-      if (shown[m.id] !== 'translated' && !m.translated) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
+      if (shown[m.id] !== 'translated' && !m.translated && !deviceText(m)) {
+        const local = switchState.on['on-device-translate'] === true ? await deviceTranslate(m.original, 'en', globalThis) : null;
+        if (local) onDevice.set(m.id, {original: m.original, text: local.text});
+      }
+      if (shown[m.id] !== 'translated' && !m.translated && !deviceText(m)) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
       shown[m.id] = shown[m.id] === 'translated' ? 'original' : 'translated'; paintThread();
     });
   }
@@ -2657,7 +2684,7 @@
     const item = (label, ic, fn, cls = '') => { const it = button('', () => { closeOverlay(); fn(); }, 'u-act ' + cls); it.setAttribute('role', 'menuitem'); it.append(icon(ic), node('span', '', label)); list.append(it); };
     if (!m.deleted) item('Forward to Wizard', 'forward', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
-    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(m.translated && shown[m.id] === 'translated' ? m.translated : m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
+    if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(shown[m.id] === 'translated' && (deviceText(m) || m.translated) || m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
     if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { if (m.msgtype === 'm.file' && !m.photos) return saveFile(m); for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     if (opts.selectText && m.original && !m.deleted) item('Select text', 'textsel', opts.selectText);
@@ -4493,6 +4520,7 @@
   // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
   // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
   // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
+  function deviceTranslateRow() { return switchRow('on-device-translate', 'Translate on this device', 'Translate uses Tinfoil', 'Translate runs in this browser when it can'); }
   function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
   // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
@@ -4640,7 +4668,7 @@
     const draftStats = node('p', 'helper u-agent-draft-stats');
     const paintStats = () => { draftStats.hidden = agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow());
+    group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), deviceTranslateRow());
     sheet.append(head, agents, draftStats, group);
     catchUpSettings(sheet);
     // Each part stays away while it has nothing to show.
