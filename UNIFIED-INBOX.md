@@ -118,6 +118,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.43 (Translate on your Wizard, off by default)
+
+Store recipe: pins the image built from main `6966f9c`. Ships #212 (Translate on your Wizard, `box-translate`, Refs #209: auto-translate, the send preview and Translate under a message use a translator that runs on the box itself (Argos models on CTranslate2, downloaded once per language on first use into `data/translation-models`), so no text goes to Tinfoil on any phone or browser). The translation worker's memory limit goes from 256m to 768m. The new switch is off until the owner turns it on from the Tracker.
+
 ## 0.2.0-unified.16.42 (Auto-translate on this device, off by default)
 
 Store recipe: pins the image built from main `93c39b1`. Ships #210 (Auto-translate on this device, `device-auto-translate`, Refs #204: in an auto-translate chat, a browser with a built-in translator translates incoming messages to English and the reply's send preview itself, so nothing goes to Tinfoil; other browsers use Tinfoil as before). The new switch is off until the owner turns it on from the Tracker.
