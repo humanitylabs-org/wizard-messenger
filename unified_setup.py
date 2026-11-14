@@ -20,7 +20,7 @@ def setup(root):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
-    for name in ('matrix', 'telegram', 'unified', 'translation'):
+    for name in ('matrix', 'telegram', 'unified', 'translation', 'translation-models'):
         (root / name).mkdir(mode=0o700, exist_ok=True)
         os.chmod(root / name, 0o700)
     private = root / 'unified' / 'secrets.json'

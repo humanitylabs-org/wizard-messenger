@@ -76,7 +76,13 @@ class SwitchEndpoint(unittest.TestCase):
                                "reply's send preview is translated by this browser's own built-in translator (Chrome on "
                                'a computer), so the text stays on the device. Where the browser has none, Tinfoil '
                                'translates as before.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#204']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#204']}, {
+                'id': 'box-translate', 'name': 'Translate on your Wizard',
+                'description': 'Auto-translate, the send preview and Translate under a message use a translator that '
+                               'runs on your Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each '
+                               'language is set up once on first use (a download of about 70-130 MB per direction, about '
+                               'a minute).',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#209']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -259,7 +265,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate'])
 
 
 if __name__ == '__main__':

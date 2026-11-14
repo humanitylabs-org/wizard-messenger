@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from urllib.request import Request, urlopen
 import catchup
+import private_translation
 
 LANGUAGES = {'en': 'English', 'th': 'Thai', 'ja': 'Japanese', 'zh': 'Chinese', 'es': 'Spanish', 'fr': 'French', 'de': 'German'}
 
@@ -81,6 +82,11 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
             if body.get('language') not in LANGUAGES or not isinstance(body.get('text'), str) or not 0 < len(body['text']) <= 16384:
                 return self.reply(400, {'error': 'Invalid translation input'})
+            if body.get('engine') == 'box':
+                # Issue 209 (switch box-translate): the model runs here on the box; this path never calls Tinfoil.
+                if body.get('source') is not None and body.get('source') not in LANGUAGES:
+                    return self.reply(400, {'error': 'Invalid translation input'})
+                return self.reply(200, private_translation.translate(body['text'], body['language'], body.get('source')))
             return self.reply(200, translate(body['text'], body['language']))
         except Exception:
             self.reply(400, {'error': 'Invalid translation request'})
