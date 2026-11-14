@@ -709,7 +709,7 @@ html[data-color-scheme=light] { --sheet-solid: #f6f6f8; }
 .u-row-caret { margin-left: auto; color: var(--ink-3); font-size: 18px; transition: transform 120ms; }
 /* More (Miguel, 31 Oct): one plain list under the accounts; Advanced holds the rarely used rest. No boxes inside boxes. */
 .u-more > * { border-top: 0; }
-.u-sheet > h3.u-more-head { margin: 18px 0 8px; } /* same rhythm as Connected / Add an account above */
+.u-sheet > h3.u-more-head, .u-try > h3.u-more-head { margin: 18px 0 8px; } /* same rhythm as Connected / Add an account above */
 .u-more > :not([hidden]) ~ :not([hidden]), .u-more-agents > * + * { border-top: 1px solid var(--line); }
 .u-more [hidden] { display: none !important; }
 .u-more-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 14px; margin: 0; border-radius: 0; background: none; color: var(--ink); text-align: left; font: inherit; }
@@ -901,7 +901,7 @@ html[data-split][data-private-view] #chat-back { display: none !important; }
 
 /* Settings 15.7 (Miguel): flat account icons. Every account is the brand mark on its own (no tile behind it, no card
    around it), the name under it and, when connected, a small green dot. "Soon" networks are the same, dimmed. */
-.u-settings h3.c-add-title, .u-sheet > h3.u-more-head { text-transform: none; letter-spacing: 0; font-size: 0.875rem; color: var(--ink-2); }
+.u-settings h3.c-add-title, .u-sheet > h3.u-more-head, .u-try > h3.u-more-head { text-transform: none; letter-spacing: 0; font-size: 0.875rem; color: var(--ink-2); }
 .c-add-grid { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 14px 4px; align-items: start; }
 .c-mark.has-icon { background: none; box-shadow: none !important; border-radius: 0; }
 .c-mark.has-icon .brand-icon { width: 100%; height: 100%; }
@@ -928,7 +928,7 @@ html[data-split][data-private-view] #chat-back { display: none !important; }
 /* Agent access: the agent's name and its picker on one line. */
 .u-more-agents > .u-more-agent { display: flex; align-items: center; gap: 12px; padding: 4px 14px; }
 .u-more-agents > .u-more-agent .u-agent-name { flex: 1; }
-.u-settings-group.u-more-other { margin-top: 10px; }
+.u-settings-group.u-more-other, .u-settings-group.u-more-drafts { margin-top: 10px; }
 .u-sheet > h3.u-more-head[hidden], .u-settings-group.u-more[hidden] { display: none; }
 .c-manage-who { margin: 2px 0 4px; }
 .u-settings .c-back { display: block; margin: 10px auto 0; }
@@ -1164,3 +1164,17 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-more-photo-prefetch .u-view-choice { grid-template-columns: repeat(3, 1fr); flex-basis: 20rem; }
 .u-more-photo-prefetch .u-view-btn { padding: 0 10px; white-space: nowrap; }
 .u-view-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Issue 202 (clean-settings): the one Agent drafts choice, and Try new features at the very bottom of Settings. */
+.u-more-agent-drafts-pick, .u-try-row { justify-content: space-between; flex-wrap: wrap; }
+.u-more-agent-drafts-pick .u-more-label, .u-try-row .u-more-label { flex: 1 1 8rem; min-width: 0; }
+.u-more-agent-drafts-pick .u-view-choice { grid-template-columns: repeat(2, auto); flex: 0 0 auto; }
+.u-more-agent-drafts-pick .u-view-btn { padding: 0 .625rem; white-space: nowrap; }
+.u-try { margin-top: 1.5rem; }
+.u-try[hidden] { display: none; }
+.u-try-note { margin: 0 .875rem .5rem; }
+.u-try-about { flex: 1 1 12rem; }
+.u-try-votes { display: inline-flex; gap: .25rem; margin-left: auto; }
+.u-try-vote { color: var(--ink-3); }
+.u-try-vote.on { color: var(--accent); }
+.u-cu-model { display: flex; flex-direction: column; gap: .375rem; margin-top: 1rem; font-size: .8125rem; color: var(--ink-2); }
+.u-cu-model[hidden] { display: none; }

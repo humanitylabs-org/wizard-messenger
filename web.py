@@ -440,7 +440,7 @@ class ViewHandler(Handler):
         except EngineError as e:
             self.close_connection=True
             return e.status,{'ok':False,'error':e.message,'code':e.code}
-    def _switches(self,method):
+    def _switches(self,method,feedback=False):
         """Messenger's feature switches for the box owner (wizard.app-switches/1): the Tracker's Try it toggle and
         Settings both use this. Owner session only (never a bearer or the gateway grant). A write needs the box's own
         Origin and the X-Wizard-Switch header, which a cross-site page cannot send without a CORS preflight we never
@@ -459,7 +459,7 @@ class ViewHandler(Handler):
                 session=self._session()
                 if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
                 if session.get('setup_only'): raise EngineError('owner_unlock_required','Finish setup or unlock with your passphrase first',403)
-            if method=='GET': return 200,self.service.switches.listing()
+            if method=='GET' and not feedback: return 200,self.service.switches.listing()
             if method!='POST': raise EngineError('method_not_allowed','Use GET or POST',405)
             if self.headers.get('X-Wizard-Switch')!='1':
                 raise EngineError('switch_header_required','Send X-Wizard-Switch: 1',403)
@@ -467,6 +467,12 @@ class ViewHandler(Handler):
                 raise EngineError('invalid_input','Send JSON {"id": ..., "on": true|false}',400)
             try: body=self._body()
             except EngineError as e: raise EngineError('invalid_input',e.message,400) from None
+            if feedback:
+                # Issue 202: thumbs up / down on Try new features ({"id": ..., "vote": "up"|"down"|null}).
+                if not isinstance(body,dict) or not isinstance(body.get('id'),str) or 'vote' not in body or set(body)-{'id','vote'} or body['vote'] not in ('up','down',None):
+                    raise EngineError('invalid_input','Send JSON {"id": ..., "vote": "up"|"down"|null}',400)
+                try: return 200,self.service.switches.vote(body['id'],body['vote'])
+                except UnknownSwitch: raise EngineError('unknown_switch','No such switch',404) from None
             if not isinstance(body,dict) or not isinstance(body.get('id'),str) or not isinstance(body.get('on'),bool) or set(body)-{'id','on'}:
                 raise EngineError('invalid_input','Send JSON {"id": ..., "on": true|false}',400)
             try: return 200,self.service.switches.set(body['id'],body['on'])
@@ -480,6 +486,8 @@ class ViewHandler(Handler):
         path=urlsplit(self.path).path
         if path in ('/api/switches','/api/view/switches'):
             return self._switches(method)
+        if path=='/api/view/switches/feedback':
+            return self._switches(method,feedback=True)
         if self.service.remote_required or bool(self.service.remote_authority.endpoint):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)

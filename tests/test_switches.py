@@ -65,7 +65,31 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
                 'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent '
                                'keeps a draft ready, or Stop keeping a draft ready, without opening the chat.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}, {
+                'id': 'clean-settings', 'name': 'Clean Settings',
+                'description': 'Settings shows only your accounts, agent access and one Agent drafts choice. Features '
+                               'still being tested move to Try new features at the bottom; Inbox view and Suggested '
+                               "merges move to the chat list's ⋯ menu.",
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#202']}])
+            self.assertEqual(body['feedback'], {})
+
+    def test_thumbs_up_or_down_stays_on_the_box(self):
+        # Issue 202: Try new features records a thumbs up / down per switch, and that the owner turned it on.
+        h = {**self.owner(), **WRITE}
+        status, _, body = self.request('POST', '/api/view/switches/feedback', {'id': 'photo-warm', 'vote': 'up'}, h)
+        self.assertEqual(status, 200)
+        self.assertEqual(body['feedback'], {'photo-warm': {'tried': False, 'vote': 'up'}})
+        self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, h)
+        self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': False}, h)
+        status, _, body = self.request('POST', '/api/view/switches/feedback', {'id': 'photo-warm', 'vote': None}, h)
+        self.assertEqual(body['feedback'], {'photo-warm': {'tried': True}})
+        self.assertEqual(self.request('GET', '/api/switches', headers=self.owner())[2]['feedback'], {'photo-warm': {'tried': True}})
+        for bad in ({'id': 'photo-warm', 'vote': 'meh'}, {'id': 'photo-warm'}, {'id': 'photo-warm', 'vote': 'up', 'on': True}):
+            self.assertEqual(self.request('POST', '/api/view/switches/feedback', bad, h)[0], 400, bad)
+        self.assertEqual(self.request('POST', '/api/view/switches/feedback', {'id': 'nope', 'vote': 'up'}, h)[0], 404)
+        self.assertEqual(self.request('POST', '/api/view/switches/feedback', {'id': 'photo-warm', 'vote': 'up'}, self.owner())[0], 403)
+        self.assertEqual(self.request('POST', '/api/view/switches/feedback', {'id': 'photo-warm', 'vote': 'up'}, {'Origin': ORIGIN, **WRITE})[0], 401)
+        self.assertEqual(self.request('GET', '/api/view/switches/feedback', headers=self.owner())[0], 405)
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -153,11 +177,12 @@ class SwitchStorage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             SwitchStore(path).set('photo-warm', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True}})
+            # Issue 202: turning a switch on also records that the owner tried it (Try new features feedback).
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True}, 'feedback': {'photo-warm': {'tried': True}}})
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertTrue(SwitchStore(path).is_on('photo-warm'))
             SwitchStore(path).set('photo-warm', False)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {}})
+            self.assertEqual(json.loads(path.read_text()), {'switches': {}, 'feedback': {'photo-warm': {'tried': True}}})
 
     def test_drafts_at_top_is_no_longer_a_switch(self):
         # Issue 150: Drafts at top was approved, so it is always on and leaves the list; a box that stored it on or
@@ -181,7 +206,7 @@ class SwitchStorage(unittest.TestCase):
             with self.assertRaises(UnknownSwitch):
                 store.set('new-contact-drafts', True)
             store.set('photo-instant', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True, 'photo-instant': True}})
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
 
     def test_agent_drafts_is_gone_and_its_stored_value_cleared(self):
         # Issue 178: agent-drafts is on for everyone now; a stored value from before is dropped on the next write.
@@ -194,7 +219,7 @@ class SwitchStorage(unittest.TestCase):
             with self.assertRaises(UnknownSwitch):
                 store.set('agent-drafts', True)
             store.set('photo-instant', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True, 'photo-instant': True}})
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
 
     def test_line_photo_groups_is_gone_and_its_stored_value_cleared(self):
         # Issue 188: LINE photo groups are on for everyone now; a stored value from before is dropped on the next write.
@@ -207,7 +232,20 @@ class SwitchStorage(unittest.TestCase):
             with self.assertRaises(UnknownSwitch):
                 store.set('line-photo-groups', True)
             store.set('photo-instant', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-warm': True, 'photo-instant': True}})
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+
+    def test_feedback_survives_switch_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            store = SwitchStore(path)
+            store.vote('clean-settings', 'down')
+            store.set('clean-settings', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'clean-settings': True},
+                                                            'feedback': {'clean-settings': {'tried': True, 'vote': 'down'}}})
+            store.set('clean-settings', False)
+            self.assertEqual(SwitchStore(path).listing()['feedback'], {'clean-settings': {'tried': True, 'vote': 'down'}})
+            with self.assertRaises(UnknownSwitch):
+                store.vote('gone', 'up')
 
     def test_a_damaged_file_reads_as_defaults(self):
         with tempfile.TemporaryDirectory() as d:
@@ -215,7 +253,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings'])
 
 
 if __name__ == '__main__':
