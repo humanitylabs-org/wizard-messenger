@@ -48,6 +48,11 @@ SWITCHES = (
                     'Translate uses Tinfoil as before.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#199']},
+    {'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
+     'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent keeps a draft '
+                    'ready, or Stop keeping a draft ready, without opening the chat.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#201']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
