@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-74b052343811692959c9471e109fea10bdce97cf@sha256:65a7e32c2f8b89a7b193b78e1dbf94483a742cf54a5d9138983ca423f7d2199f}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-563fdecbf5d9e58592ca0aa635c5ce8ed667acb0@sha256:9e63621d4d2d4611bdd399415d089839280e2853d8d53157e659eaa3cae90a4d}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-74b052343811692959c9471e109fea10bdce97cf@sha256:65a7e32c2f8b89a7b193b78e1dbf94483a742cf54a5d9138983ca423f7d2199f}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-563fdecbf5d9e58592ca0aa635c5ce8ed667acb0@sha256:9e63621d4d2d4611bdd399415d089839280e2853d8d53157e659eaa3cae90a4d}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -104,7 +104,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-74b052343811692959c9471e109fea10bdce97cf@sha256:65a7e32c2f8b89a7b193b78e1dbf94483a742cf54a5d9138983ca423f7d2199f}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-563fdecbf5d9e58592ca0aa635c5ce8ed667acb0@sha256:9e63621d4d2d4611bdd399415d089839280e2853d8d53157e659eaa3cae90a4d}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -130,7 +130,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-74b052343811692959c9471e109fea10bdce97cf@sha256:65a7e32c2f8b89a7b193b78e1dbf94483a742cf54a5d9138983ca423f7d2199f}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-563fdecbf5d9e58592ca0aa635c5ce8ed667acb0@sha256:9e63621d4d2d4611bdd399415d089839280e2853d8d53157e659eaa3cae90a4d}
     user: 0:0
     entrypoint:
     - python3
