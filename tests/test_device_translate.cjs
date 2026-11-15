@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {deviceTranslate} = require('../static/unified.js');
-// Issue 199: with "Translate on this device" on, Translate uses the browser's own built-in translator (Chrome's
+// Issue 199: Translate uses the browser's own built-in translator (Chrome's
 // Translator and LanguageDetector APIs) and never the box's model; null means "this browser can't", so the view falls
 // back to the box.
 

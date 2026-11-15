@@ -1,7 +1,7 @@
-// Issue 199: with "Translate on this device" on, tapping Translate under a Thai message uses the browser's built-in
-// translator (stubbed here as Chrome's Translator/LanguageDetector) and the box's translate route is never called;
-// the bubble says "Translated on this device" and Show original goes back. Without a built-in translator it falls
-// back to the box (Tinfoil) as before, and with the switch off the box is used even when the browser has one.
+// Issue 199: tapping Translate under a Thai message uses the browser's built-in translator (stubbed here as Chrome's
+// Translator/LanguageDetector) and the box's translate route is never called; the bubble says "Translated on this
+// device" and Show original goes back. Without a built-in translator it falls back to the box (Tinfoil) as before.
+// The switch was approved and removed: this is always on, also when a box still lists an old stored value.
 // Synthetic API only, no container and no shell: PLAYWRIGHT_MODULE=... node tests/device_translate_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -13,7 +13,7 @@ const now = Date.now(), min = 60e3;
 const person = {id: 'ann', display_name: 'Ann Lee', identities: [{id: 'ann-i', network: 'line', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'สวัสดี', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
 const MESSAGES = [{id: '$thai', identity_id: 'ann-i', network: 'line', sender: 'Ann Lee', outgoing: false, original: 'สวัสดีครับ เจอกันพรุ่งนี้', msgtype: 'm.text', timestamp: now - min, timeline_order: 1, reactions: []}];
 
-async function run(browser, {on, builtIn}) {
+async function run(browser, {stale, builtIn}) {
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: 'dark'});
   await ctx.addInitScript(builtIn => {
     const noop = () => {};
@@ -33,7 +33,7 @@ async function run(browser, {on, builtIn}) {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
     if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
-    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'on-device-translate', on}]})});
+    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: stale ? [{id: 'on-device-translate', on: false}] : []})});
     if (p === 'api/status') return ok({state: 'ready', account_configured: true});
     if (p === 'api/identity') return ok({identity});
     if (p === 'api/contacts') return ok({contacts: []});
@@ -56,7 +56,7 @@ async function run(browser, {on, builtIn}) {
   await row.getByRole('button', {name: 'Translate'}).click();
   await row.getByRole('button', {name: 'Show original'}).waitFor({timeout: 5000});
   const text = (await row.locator('.u-text').textContent()).trim(), note = await row.locator('.u-on-device').count();
-  const tag = (on ? 'on' : 'off') + (builtIn ? '-builtin' : '-none');
+  const tag = (stale ? 'stale-off' : 'on') + (builtIn ? '-builtin' : '-none');
   await page.screenshot({path: path.join(out, tag + '.png')});
   await row.getByRole('button', {name: 'Show original'}).click();
   await row.getByRole('button', {name: 'Translate'}).waitFor({timeout: 5000});
@@ -70,21 +70,21 @@ async function run(browser, {on, builtIn}) {
 (async () => {
   const browser = await chromium.launch();
   try {
-    const local = await run(browser, {on: true, builtIn: true});
+    const local = await run(browser, {builtIn: true});
     assert.equal(local.text, 'Hello, see you tomorrow', 'translated in the browser');
     assert.equal(local.note, 1, 'says it was translated on this device');
     assert.deepEqual(local.boxCalls, [], 'the box translate route (Tinfoil) is never called');
     assert.deepEqual(local.deviceCalls, [['detect', 'สวัสดีครับ เจอกันพรุ่งนี้'], ['create', 'th>en']]);
     assert.equal(local.back, 'สวัสดีครับ เจอกันพรุ่งนี้', 'Show original goes back');
-    const fallback = await run(browser, {on: true, builtIn: false});
+    const fallback = await run(browser, {builtIn: false});
     assert.equal(fallback.text, 'Hello (Tinfoil)', 'no built-in translator: the box translates as before');
     assert.equal(fallback.note, 0);
     assert.equal(fallback.boxCalls.length, 1);
-    const off = await run(browser, {on: false, builtIn: true});
-    assert.equal(off.text, 'Hello (Tinfoil)', 'switch off: the box translates even when the browser could');
-    assert.deepEqual(off.deviceCalls, [], 'switch off: the built-in translator is not touched');
-    assert.equal(off.note, 0);
-    console.log(JSON.stringify({local, fallback, off}));
+    const stale = await run(browser, {stale: true, builtIn: true});
+    assert.equal(stale.text, 'Hello, see you tomorrow', 'an old stored off value no longer matters');
+    assert.deepEqual(stale.boxCalls, []);
+    assert.equal(stale.note, 1);
+    console.log(JSON.stringify({local, fallback, stale}));
     console.log('device translate browser: ok');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
