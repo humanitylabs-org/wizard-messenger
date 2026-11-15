@@ -10,3 +10,4 @@ pyOpenSSL
 pywebpush
 uvicorn
 Pillow
+pypdf
