@@ -60,11 +60,6 @@ SWITCHES = (
                     'once on first use (a download of about 70-130 MB per direction, about a minute).',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#209']},
-    {'id': 'kit-try-features', 'name': 'Standard Try new features',
-     'description': 'Try new features at the bottom of Settings uses the one shared Wizard section (the same in every '
-                    'app): On/Off and thumbs up / down for each feature being tested.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#217']},
     {'id': 'agent-wake', 'name': 'Drafts without a schedule',
      'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents with '
                     'Draft-only access) to write the draft, so no agent needs a schedule. The wake carries only which '

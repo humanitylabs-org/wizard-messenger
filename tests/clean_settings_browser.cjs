@@ -1,6 +1,6 @@
 // Clean Settings (issue 202, on for everyone since its switch was removed): Settings shows only Accounts, Agent access
 // (with its drafts line) and one Agent drafts choice, then Try new features at the very bottom (one row per box
-// switch: name, what it does, Off / On, thumbs up / down). Inbox view and Suggested merges are in the list's own ⋯
+// switch: name, what it does, Off / On, thumbs up / down; the shared kit section since issue 217). Inbox view and Suggested merges are in the list's own ⋯
 // menu. Also with no switches listing at all (an older box), Settings stays clean. Synthetic API only; phone + desktop.
 // PLAYWRIGHT_MODULE=... node tests/clean_settings_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -21,7 +21,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
     const PEOPLE = [person('james', 'James Carter', 'whatsapp', 'Can you do Tuesday at 3?', 2, {unread: 1})];
     const watch = {watched: [], all_unread: false, stats: {sent_as_drafted: 2, edited: 1, discarded: 0, total: 3}};
     const box = {watch: [], flips: [], votes: [], on: {}, feedback: {}};
-    const listing = () => ({contract: 'wizard.app-switches/1', switches: SW.map(([id, name, description]) => ({id, name, description, on: box.on[id] === true, default: false, issues: ['humanitylabs-org/wizard-messenger#202']})), feedback: box.feedback});
+    const listing = () => ({contract: 'wizard.app-switches/1', switches: SW.map(([id, name, description]) => ({id, name, description, on: box.on[id] === true, default: false, issues: ['humanitylabs-org/wizard-messenger#202'], tried: box.feedback[id]?.tried === true, vote: box.feedback[id]?.vote || null})), feedback: box.feedback});
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: 'dark'});
     await ctx.addInitScript(() => {
       const noop = () => {};
@@ -38,11 +38,11 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       const json = data => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(data)});
       if (p === 'api/view/switches') {
         if (!listed) return route.fulfill({status: 404, contentType: 'application/json', body: '{"error":"not_found"}'});
-        if (req.method() === 'POST') { const b = body(); box.flips.push(b); box.on[b.id] = b.on; if (b.on) box.feedback[b.id] = {...box.feedback[b.id], tried: true}; }
-        return json(listing());
-      }
-      if (p === 'api/view/switches/feedback') {
-        const b = body(); box.votes.push(b); const e = {tried: false, ...box.feedback[b.id]}; delete e.vote; if (b.vote) e.vote = b.vote; box.feedback[b.id] = e;
+        if (req.method() === 'POST') {
+          const b = body();
+          if ('vote' in b) { box.votes.push(b); const e = {tried: false, ...box.feedback[b.id]}; delete e.vote; if (b.vote) e.vote = b.vote; box.feedback[b.id] = e; }
+          else { box.flips.push(b); box.on[b.id] = b.on; if (b.on) box.feedback[b.id] = {...box.feedback[b.id], tried: true}; }
+        }
         return json(listing());
       }
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
@@ -89,7 +89,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
         // An older box with no switches listing: the same clean Settings, no old rows, no Try new features.
         const rows = await sheet.evaluate(el => [...el.querySelectorAll('.u-more-row')].filter(r => r.offsetParent).map(r => r.querySelector('.u-more-label, .u-agent-name')?.textContent));
         assert.deepEqual(rows, ['Oscar', 'Agent drafts'], 'Settings rows: ' + JSON.stringify(rows));
-        assert.equal(await sheet.locator('.u-try:not([hidden])').count(), 0, 'no Try new features without switches');
+        assert.equal(await sheet.locator('.u-try-kit:not([hidden])').count(), 0, 'no Try new features without switches');
         assert.equal(await sheet.locator('.u-cu-settings, .u-more-view, .u-more-photo-warm').count(), 0, 'no old Settings rows');
         await shot('settings', true);
         await page.keyboard.press('Escape'); await page.waitForTimeout(400);
@@ -101,11 +101,11 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       const order = await sheet.evaluate(el => [...el.children].filter(c => !c.hidden && getComputedStyle(c).display !== 'none').map(c => c.className || c.tagName));
       const at = cls => order.findIndex(c => String(c).includes(cls));
       assert.ok(at('u-connected-networks') >= 0 && at('u-connected-networks') < at('u-more-agents'), JSON.stringify(order));
-      assert.ok(at('u-more-agents') < at('u-agent-draft-stats') && at('u-agent-draft-stats') < at('u-more-drafts') && at('u-more-drafts') < at('u-try'), JSON.stringify(order));
-      assert.equal(at('u-try'), order.length - 1, 'Try new features is the last part: ' + JSON.stringify(order));
+      assert.ok(at('u-more-agents') < at('u-agent-draft-stats') && at('u-agent-draft-stats') < at('u-more-drafts') && at('u-more-drafts') < at('u-try-kit'), JSON.stringify(order));
+      assert.equal(at('u-try-kit'), order.length - 1, 'Try new features is the last part: ' + JSON.stringify(order));
       assert.equal(await sheet.locator('.u-cu-settings').count(), 0, 'Catch me up settings left Settings');
       // Outside Try new features: no switch row, no Inbox view, no timings, no merges.
-      const outside = await sheet.evaluate(el => [...el.querySelectorAll('.u-more-row')].filter(r => !r.closest('.u-try') && r.offsetParent).map(r => r.querySelector('.u-more-label, .u-agent-name')?.textContent));
+      const outside = await sheet.evaluate(el => [...el.querySelectorAll('.u-more-row')].filter(r => !r.closest('.u-try-kit') && r.offsetParent).map(r => r.querySelector('.u-more-label, .u-agent-name')?.textContent));
       assert.deepEqual(outside, ['Oscar', 'Agent drafts'], 'Settings rows: ' + JSON.stringify(outside));
       assert.match(await sheet.locator('.u-agent-draft-stats').innerText(), /2 sent as drafted · 1 edited · 0 discarded/);
       const pick = sheet.locator('.u-more-agent-drafts-pick');
@@ -116,24 +116,25 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       await until(async () => await pick.locator('[aria-checked="true"]').innerText() === 'Every unread chat');
       assert.deepEqual(box.watch.at(-1), {all_unread: true});
       // Try new features: the note and one row per switch.
-      const tryBox = sheet.locator('.u-try');
-      assert.match(await tryBox.locator('.u-try-note').innerText(), /^Features still being tested\. Approved ones become part of the app; the rest go away\. Thumbs up the ones you like\.$/);
-      assert.deepEqual(await tryBox.locator('.u-try-row .u-more-label').allInnerTexts(), SW.map(x => x[1]));
-      assert.equal(await tryBox.locator('.u-more-timings:not(.u-try-about)').count(), 0, 'no timing numbers');
-      const warm = tryBox.locator('.u-try-row[data-switch="photo-warm"]');
+      const tryBox = sheet.locator('.u-try-kit');
+      await tryBox.locator('.wz-try-row').first().waitFor({timeout: 8000});
+      assert.match(await tryBox.locator('.wz-try-note').innerText(), /^Features still being tested\. Approved ones become part of the app; the rest go away\. Thumbs up the ones you like\.$/);
+      assert.deepEqual(await tryBox.locator('.wz-try-row .wz-main b').allInnerTexts(), SW.map(x => x[1]));
+      assert.equal(await tryBox.locator('.u-more-timings').count(), 0, 'no timing numbers');
+      const warm = tryBox.locator('[data-try-id="photo-warm"]');
       assert.match(await warm.innerText(), /fetches incoming photos/);
-      await warm.getByRole('radio', {name: 'On'}).click();
-      await until(async () => await warm.locator('[data-on="1"]').getAttribute('aria-checked') === 'true');
+      await warm.getByRole('switch').click();
+      await until(async () => await warm.getByRole('switch').getAttribute('aria-checked') === 'true');
       assert.deepEqual(box.flips.at(-1), {id: 'photo-warm', on: true});
-      await warm.getByRole('button', {name: 'I like Photos ready on arrival'}).click();
-      await until(async () => await warm.locator('[data-vote="up"]').getAttribute('aria-pressed') === 'true');
+      await warm.getByRole('button', {name: 'Thumbs up for Photos ready on arrival'}).click();
+      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Photos ready on arrival'}).getAttribute('aria-pressed') === 'true');
       assert.deepEqual(box.votes.at(-1), {id: 'photo-warm', vote: 'up'});
       assert.deepEqual(box.feedback['photo-warm'], {tried: true, vote: 'up'});
       // With Draft ready from the chat list on, the hint says right-click / hold.
-      await tryBox.locator('.u-try-row[data-switch="list-draft-ready"]').getByRole('radio', {name: 'On'}).click();
+      await tryBox.locator('[data-try-id="list-draft-ready"]').getByRole('switch').click();
       await until(async () => /Drafts at the top of a chat, or by holding a chat/.test(await pick.innerText()));
-      const ldr = tryBox.locator('.u-try-row[data-switch="list-draft-ready"]');
-      assert.equal(await ldr.locator('[data-on="1"]').getAttribute('aria-checked'), 'true');
+      const ldr = tryBox.locator('[data-try-id="list-draft-ready"]');
+      assert.equal(await ldr.getByRole('switch').getAttribute('aria-checked'), 'true');
       const fits = await pick.locator('.u-view-btn').evaluateAll(bs => bs.every(b => b.scrollWidth <= b.clientWidth));
       assert.ok(fits, 'Agent drafts choices are not cut off');
       await page.mouse.move(1, 1); await page.locator('body').evaluate(() => document.activeElement?.blur());

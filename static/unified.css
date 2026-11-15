@@ -712,7 +712,7 @@ html[data-color-scheme=light] { --sheet-solid: #f6f6f8; }
 .u-row-caret { margin-left: auto; color: var(--ink-3); font-size: 18px; transition: transform 120ms; }
 /* More (Miguel, 31 Oct): one plain list under the accounts; Advanced holds the rarely used rest. No boxes inside boxes. */
 .u-more > * { border-top: 0; }
-.u-sheet > h3.u-more-head, .u-try > h3.u-more-head { margin: 18px 0 8px; } /* same rhythm as Connected / Add an account above */
+.u-sheet > h3.u-more-head { margin: 18px 0 8px; } /* same rhythm as Connected / Add an account above */
 .u-more > :not([hidden]) ~ :not([hidden]), .u-more-agents > * + * { border-top: 1px solid var(--line); }
 .u-more [hidden] { display: none !important; }
 .u-more-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 14px; margin: 0; border-radius: 0; background: none; color: var(--ink); text-align: left; font: inherit; }
@@ -904,7 +904,7 @@ html[data-split][data-private-view] #chat-back { display: none !important; }
 
 /* Settings 15.7 (Miguel): flat account icons. Every account is the brand mark on its own (no tile behind it, no card
    around it), the name under it and, when connected, a small green dot. "Soon" networks are the same, dimmed. */
-.u-settings h3.c-add-title, .u-sheet > h3.u-more-head, .u-try > h3.u-more-head { text-transform: none; letter-spacing: 0; font-size: 0.875rem; color: var(--ink-2); }
+.u-settings h3.c-add-title, .u-sheet > h3.u-more-head { text-transform: none; letter-spacing: 0; font-size: 0.875rem; color: var(--ink-2); }
 .c-add-grid { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 14px 4px; align-items: start; }
 .c-mark.has-icon { background: none; box-shadow: none !important; border-radius: 0; }
 .c-mark.has-icon .brand-icon { width: 100%; height: 100%; }
@@ -1167,19 +1167,12 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-view-btn { min-height: 44px; min-width: 44px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2, var(--ink)); font: inherit; font-weight: 600; cursor: pointer; }
 .u-view-btn.on { background: var(--accent); color: var(--on-accent); }
 .u-view-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* Issue 202: the one Agent drafts choice, and Try new features at the very bottom of Settings. */
-.u-more-agent-drafts-pick, .u-try-row { justify-content: space-between; flex-wrap: wrap; }
-.u-more-agent-drafts-pick .u-more-label, .u-try-row .u-more-label { flex: 1 1 8rem; min-width: 0; }
+/* Issue 202: the one Agent drafts choice. */
+.u-more-agent-drafts-pick { justify-content: space-between; flex-wrap: wrap; }
+.u-more-agent-drafts-pick .u-more-label { flex: 1 1 8rem; min-width: 0; }
 .u-more-agent-drafts-pick .u-view-choice { grid-template-columns: repeat(2, auto); flex: 0 0 auto; }
 .u-more-agent-drafts-pick .u-view-btn { padding: 0 .625rem; white-space: nowrap; }
-.u-try { margin-top: 1.5rem; }
-.u-try[hidden] { display: none; }
-.u-try-note { margin: 0 .875rem .5rem; }
-.u-try-about { flex: 1 1 12rem; }
-.u-try-votes { display: inline-flex; gap: .25rem; margin-left: auto; }
-.u-try-vote { color: var(--ink-3); }
-.u-try-vote.on { color: var(--accent); }
-/* Issue 217 (switch kit-try-features): Messenger has no kit ui.css, so the shared section's kit classes get Settings' look here. */
+/* Issue 217: Try new features at the very bottom of Settings is the shared kit section. Messenger has no kit ui.css, so the shared section's kit classes get Settings' look here. */
 .u-try-kit { --fill: var(--raised); --r-pill: 999rem; --danger: var(--err); --wz-text-sm: .8125rem; margin-top: 1.5rem; }
 .u-try-kit[hidden] { display: none; }
 .u-try-kit .wz-sec-h { margin: 0 0 .5rem; font-size: .875rem; font-weight: 600; color: var(--ink-2); }
