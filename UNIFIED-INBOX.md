@@ -118,6 +118,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.46 (a discarded agent draft stays discarded)
+
+Store recipe: pins the image built from main `7693978`. Ships #222 (Refs #220): in a chat where the agent keeps a draft ready, discarding its draft (or sending it) now counts as the owner's answer, so the agent no longer drafts the same chat again at its next check. It drafts there again only after a new incoming message. Bug fix, no switch.
+
 ## 0.2.0-unified.16.45 (standard Try new features section, off by default)
 
 Store recipe: pins the image built from main `563fdec`. Ships #218 (Refs #217): with the new switch `kit-try-features` on, Messenger's Settings ends with the shared Wizard "Try new features" section (the wizard-os kit component, `static/wizard-try-features.js`): one row per feature switch with On/Off and thumbs up / down, kept on the box. Each switch in the `wizard.app-switches/1` listing now also carries `tried` and `vote`, and the switches path takes `{id, vote}`. Off: Settings is unchanged.
