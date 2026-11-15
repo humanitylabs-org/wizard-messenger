@@ -72,6 +72,12 @@ SWITCHES = (
                     'as a draft attachment. Only agents you gave Read-only or higher.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#245']},
+    {'id': 'transcript-paragraphs', 'name': 'Transcripts in paragraphs',
+     'description': 'Transcribe on a voice note gives the text paragraph breaks, punctuation and capitals, through '
+                    'Tinfoil. The words stay exactly as spoken; if anything would change them, the plain transcript '
+                    'is saved instead. Transcripts already saved stay as they are.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#248']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
