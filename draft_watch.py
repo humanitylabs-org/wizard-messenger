@@ -124,7 +124,7 @@ def closed(unified, row, outcome, sent_text=None):
 def needing(unified, drafts, limit=20):
     """Watched chats (and, with every-unread on, unread chats that are not muted or low priority) whose newest message
     is from someone else and which have no agent draft written since that message. A chat where the owner is writing
-    his own draft is left alone."""
+    his own draft, or has sent or discarded an agent draft since that message, is left alone."""
     store = unified.store
     data = settings(store)
     waiting = {}
@@ -134,6 +134,13 @@ def needing(unified, drafts, limit=20):
         old = waiting.get(d.get('person_id'))
         if old is None or (d.get('updated') or 0) > (old.get('updated') or 0):
             waiting[d.get('person_id')] = d
+    # Issue 220: a sent or discarded agent draft is the owner's answer. A discarded draft is deleted, so without this the
+    # chat looked unanswered again and the agent drafted the same reply over and over.
+    answered = {}
+    for r in feedback(store):
+        chat, at = r.get('chat_id'), r.get('at')
+        if isinstance(chat, str) and isinstance(at, (int, float)) and at > answered.get(chat, 0):
+            answered[chat] = at
     out = []
     for p in store.people('person') + store.people('group'):
         watched = p['id'] in data['watched']
@@ -142,6 +149,8 @@ def needing(unified, drafts, limit=20):
             continue
         last = p.get('last') or {}
         if not last or last.get('outgoing') or p.get('started'):
+            continue
+        if p['id'] in answered and answered[p['id']] >= (last.get('timestamp') or 0):
             continue
         draft = waiting.get(p['id'])
         if draft:
