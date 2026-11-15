@@ -49,6 +49,8 @@ services:
       matrix: {condition: service_healthy}
       connector-init: {condition: service_completed_successfully}
     networks: [matrix-lane, model-lane, relay-egress, signin-lane]
+    # Issue 223 (switch agent-wake): the owner's agent can name its event inbox on this Wizard as host.docker.internal.
+    extra_hosts: ["host.docker.internal:host-gateway"]
     # Loopback-only host port for the Wizard gateway, as in 0.1.x.
     ports:
       - 127.0.0.1:${APP_PORT}:8765

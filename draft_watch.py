@@ -50,8 +50,14 @@ def stats(store):
 
 def state(unified):
     data = settings(unified.store)
-    return {'on': True, 'watched': sorted(data['watched']), 'all_unread': data['all_unread'],
-            'stats': stats(unified.store)}
+    out = {'on': True, 'watched': sorted(data['watched']), 'all_unread': data['all_unread'],
+           'stats': stats(unified.store)}
+    switch_on = getattr(unified, 'switch_on', None)
+    if callable(switch_on) and switch_on('agent-wake'):
+        # Issue 223: chats where the last wake found no agent to wake (the view shows "Drafts paused").
+        import draft_wake
+        out['paused'] = draft_wake.paused(unified)
+    return out
 
 
 def configure(unified, payload):

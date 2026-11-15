@@ -3620,6 +3620,7 @@
     };
     Object.assign(view, {draft, grow, paintBar, paintRecording, paintRecordingTick, stageFiles});
     form.append(bar, via, channel, mediaPicker.panel, row, notice); grow(); paintBar(); paintRecording();
+    if (switchState.on['agent-wake'] === true) form.prepend(draftsPausedLine(id));
     // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
     const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.saving || prev?.busy;
     prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia}, prev?.id === id ? flushing : null);
@@ -4591,16 +4592,28 @@
   // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
   // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).
-  const draftWatch = {watched: new Set(), all_unread: false, stats: null, paints: []};
+  const draftWatch = {watched: new Set(), all_unread: false, stats: null, paused: {}, paints: []};
   function paintDraftWatch() { draftWatch.paints = draftWatch.paints.filter(p => p()); }
   async function loadDraftWatch() {
-    try { const r = await call('draft-watch'); Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null}); paintDraftWatch(); }
+    try { const r = await call('draft-watch'); Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null, paused: r.paused || {}}); paintDraftWatch(); }
     catch { /* an older box: no draft watch */ }
   }
-  function applyDraftWatch(r) { Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null}); paintDraftWatch(); }
+  function applyDraftWatch(r) { Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null, paused: r.paused || {}}); paintDraftWatch(); }
   async function watchChat(p, on) {
     try { applyDraftWatch(await call('draft-watch', {person_id: p.id, on})); toast(on ? 'Your agent keeps a draft ready here. It never sends.' : 'No more ready drafts here'); }
     catch (e) { toast(e.message || 'Couldn’t save that. Try again.', 3000); }
+  }
+  // Issue 223 (switch agent-wake): Messenger wakes the owner's agent when this chat needs a draft. When the last wake
+  // found no agent to wake, one quiet line above the composer says so, until a wake gets through again.
+  function draftsPausedLine(id) {
+    const line = node('p', 'u-drafts-paused'); line.setAttribute('role', 'status'); line.hidden = true;
+    const paint = () => {
+      const why = draftWatch.paused?.[id];
+      line.hidden = !why; line.textContent = why ? 'Drafts paused: ' + why : '';
+      return line.isConnected || !line.parentNode;
+    };
+    draftWatch.paints.push(paint); paint(); loadDraftWatch();
+    return line;
   }
   function agentDraftsRow() {
     const all = node('div', 'u-more-row u-more-agent-drafts-all'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Draft for every unread chat');

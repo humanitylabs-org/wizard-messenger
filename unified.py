@@ -1617,6 +1617,9 @@ class UnifiedInbox:
     def close(self):
         self.stop.set()
         self.notify()
+        waker = getattr(self, 'waker', None)
+        if waker is not None:
+            waker.close()
         if self.worker:
             self.worker.join(timeout=2)
 
@@ -1910,6 +1913,8 @@ class UnifiedInbox:
         self.warm_photo(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
         if live:
             self.photo_arrived(identity['network'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
+            if not outgoing:
+                self.draft_wake_incoming(identity.get('person_id'))
 
     WARM_DAYS = 3
     EDIT_TEXT = ('m.text', 'm.notice', 'm.emote')
@@ -3379,6 +3384,20 @@ class UnifiedInbox:
         """Issue 178: keep what the agent drafted next to what the owner sent, or that he discarded it."""
         import draft_watch
         return draft_watch.closed(self, row, outcome, sent_text)
+
+    def draft_wake_incoming(self, person_id):
+        """Issue 223 (switch agent-wake): a live message from someone else; wake the owner's agent if this chat
+        keeps a draft ready. Nothing happens while the switch is off."""
+        if not self.switch_on('agent-wake'):
+            return
+        waker = getattr(self, 'waker', None)
+        if waker is None:
+            import draft_wake
+            waker = self.__dict__.setdefault('waker', draft_wake.Waker(self))
+        try:
+            waker.incoming(person_id)
+        except Exception:
+            pass  # never let a wake stall the room's sync
 
     def drafts_changed(self, person_id):
         """A draft was created or closed: a started chat (no messages) shows or leaves the list with it."""
