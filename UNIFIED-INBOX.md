@@ -118,6 +118,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.49 (No stuck pending copy after sending a file with a caption)
+
+Store recipe: pins the image built from main `a34a68a`. Ships #230 (Refs #228): a file sent with a caption (for example a PDF in a WhatsApp chat) shows as the file and the text, both sent, with no third copy stuck on the pending clock. The send's answer now also clears its pending bubble when live sync showed the sent message first. Bug fix, no switch.
+
 ## 0.2.0-unified.16.48 (Messenger wakes your agent for drafts, behind a switch)
 
 Store recipe: pins the image built from main `3d57d16`. Ships #227 (Refs #223), switch `agent-wake` (off by default): when someone writes in a chat with drafts on, Messenger waits about 20 s and wakes the owner's agents that have Draft-only access and asked to be woken (MCP tool `messenger_wake_me`, a signed Hermes webhook event with only the chat id), so no agent needs a schedule. A chat where no agent could be woken shows "Drafts paused". The messenger service also gets `host.docker.internal` so an agent can name its event inbox on the Wizard.
