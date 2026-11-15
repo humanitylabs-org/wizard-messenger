@@ -13,6 +13,7 @@ import test_web as fixtures
 from agent_keys import AgentKeys, LEVELS
 from drafts import Drafts
 from unified import UnifiedInbox
+from switches import SwitchStore
 import agent_tools
 
 # Every provider write an agent could attempt: send, retry, edit, delete, react, plus
@@ -419,6 +420,78 @@ class AgentKeyHTTP(unittest.TestCase):
             txt, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$txt'}, self.keys['read_only'])
             self.assertFalse(error, txt); self.assertEqual(images, []); self.assertEqual(txt['text'], 'hello notes')
         self.assertEqual(len(seen), 1)  # the PDF is never downloaded
+
+    @staticmethod
+    def _pdf(text):
+        """A one-page PDF with `text` in Helvetica, offsets computed so any reader takes it."""
+        stream = ('BT /F1 12 Tf 72 720 Td (' + text + ') Tj ET').encode()
+        objs = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+                b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+                b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+                b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
+        out, offsets = b'%PDF-1.4\n', []
+        for i, body in enumerate(objs, 1):
+            offsets.append(len(out)); out += str(i).encode() + b' 0 obj\n' + body + b'\nendobj\n'
+        xref = len(out)
+        out += b'xref\n0 6\n0000000000 65535 f \n' + b''.join(b'%010d 00000 n \n' % o for o in offsets)
+        return out + b'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n' + str(xref).encode() + b'\n%%EOF\n'
+
+    @staticmethod
+    def _docx(paragraphs):
+        import zipfile
+        buf = io.BytesIO()
+        body = ''.join('<w:p><w:r><w:t xml:space="preserve">' + p + '</w:t></w:r></w:p>' for p in paragraphs)
+        with zipfile.ZipFile(buf, 'w') as z:
+            z.writestr('[Content_Types].xml', '<Types/>')
+            z.writestr('word/document.xml', '<w:document xmlns:w="w"><w:body>' + body + '</w:body></w:document>')
+        return buf.getvalue()
+
+    def test_get_attachment_documents_come_back_as_file_and_text_with_the_switch(self):
+        # Issue 245: a lease agreement on LINE. Off: details only (as before). On: the file itself plus its text.
+        import agent_tools
+        pdf = self._pdf('Lease: 1 Dec 2026 to 31 May 2027, deposit 20000 THB')
+        docx = self._docx(['Rental form', 'Name: &lt;fill in&gt;'])
+        self.inbox.store.add_message('$lease', self.alice, '@alice', False, '', 1700000005000, msgtype='m.file',
+                                     media={'mxc': 'mxc://hs.local/lease1', 'mime': 'application/pdf', 'size': len(pdf), 'filename': 'lease.pdf'})
+        self.inbox.store.add_message('$form', self.alice, '@alice', False, '', 1700000006000, msgtype='m.file',
+                                     media={'mxc': 'mxc://hs.local/form1', 'mime': agent_tools.DOCX_MIME, 'size': len(docx), 'filename': 'form.docx'})
+        self.inbox.store.add_message('$big', self.alice, '@alice', False, '', 1700000007000, msgtype='m.file',
+                                     media={'mxc': 'mxc://hs.local/big1', 'mime': 'application/pdf', 'size': 11 * 1024 * 1024, 'filename': 'big.pdf'})
+        fake, seen = self._homeserver({'/download/hs.local/lease1': pdf, '/download/hs.local/form1': docx})
+        ask = lambda mid: self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': mid}, self.keys['read_only'])
+        with fake:
+            off, error, extra = ask('$lease')
+            self.assertFalse(error, off); self.assertEqual(extra, []); self.assertEqual(off['content'], 'not_returned')
+            self.assertEqual(seen, [])  # switch off: nothing is downloaded
+            self.inbox.switches = SwitchStore()
+            self.inbox.switches.set('agent-documents', True)
+            data, error, extra = ask('$lease')
+            self.assertFalse(error, data)
+            self.assertNotIn('content', data)
+            self.assertEqual(data['returned'], {'mime': 'application/pdf', 'bytes': len(pdf), 'as': 'file'})
+            self.assertIn('deposit 20000 THB', data['text'])
+            self.assertEqual(len(extra), 1); res = extra[0]['resource']
+            self.assertEqual(extra[0]['type'], 'resource')
+            self.assertEqual((res['uri'], res['mimeType']), ('messenger://attachment/%24lease/lease.pdf', 'application/pdf'))
+            self.assertEqual(base64.b64decode(res['blob']), pdf)
+            data, error, extra = ask('$form')
+            self.assertFalse(error, data)
+            self.assertEqual(data['text'], 'Rental form\nName: <fill in>')
+            self.assertEqual(base64.b64decode(extra[0]['resource']['blob']), docx)
+            data, error, extra = ask('$big')  # over 10 MB: details only, never downloaded
+            self.assertFalse(error, data); self.assertEqual(extra, []); self.assertEqual(data['content'], 'not_returned')
+            self.assertIn('10 MB', data['reason'])
+        self.assertEqual(len(seen), 2)
+
+    def test_document_text_survives_bad_files(self):
+        import agent_tools
+        self.assertEqual(agent_tools.document_text(b'%PDF-1.4 garbage', 'application/pdf', 'x.pdf'), ('', False))
+        self.assertEqual(agent_tools.document_text(b'not a zip', agent_tools.DOCX_MIME, 'x.docx'), ('', False))
+        self.assertEqual(agent_tools.document_text(b'PK..', 'application/zip', 'x.zip'), ('', False))
+        text, cut = agent_tools.document_text(self._pdf('A' * 50), 'application/pdf', 'a.pdf')
+        self.assertEqual((text, cut), ('A' * 50, False))
+        with patch('agent_tools.DOC_TEXT_MAX', 10):
+            self.assertEqual(agent_tools.document_text(self._pdf('B' * 50), 'application/pdf', 'b.pdf'), ('B' * 10, True))
 
 if __name__ == '__main__':
     unittest.main()
