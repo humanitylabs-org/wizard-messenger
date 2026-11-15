@@ -1176,5 +1176,19 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-try-votes { display: inline-flex; gap: .25rem; margin-left: auto; }
 .u-try-vote { color: var(--ink-3); }
 .u-try-vote.on { color: var(--accent); }
+/* Issue 217 (switch kit-try-features): Messenger has no kit ui.css, so the shared section's kit classes get Settings' look here. */
+.u-try-kit { --fill: var(--raised); --r-pill: 999rem; --danger: var(--err); --wz-text-sm: .8125rem; margin-top: 1.5rem; }
+.u-try-kit[hidden] { display: none; }
+.u-try-kit .wz-sec-h { margin: 0 0 .5rem; font-size: .875rem; font-weight: 600; color: var(--ink-2); }
+.u-try-kit .wz-list { list-style: none; margin: 0; padding: 0; border-radius: .875rem; background: var(--surface); overflow: hidden; }
+.u-try-kit .wz-row { display: flex; align-items: center; gap: .75rem; min-height: 3.25rem; padding: .5rem .875rem; }
+.u-try-kit .wz-row + .wz-row { border-top: 1px solid var(--line); }
+.u-try-kit .wz-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .125rem; }
+.u-try-kit .wz-main b { font-size: .9375rem; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.u-try-kit .wz-main small { font-size: .8125rem; color: var(--ink-3); }
+.u-try-kit .wz-try-note { padding: 0 0 .5rem; }
+/* Messenger's own button base (44px minimum, padding) would turn the kit's pill switch into a circle. */
+.u-try-kit .wz-try-toggle, .u-try-kit .wz-try-vote { min-width: 0; min-height: 0; padding: 0; }
+.u-try-kit .wz-try-toggle[aria-checked="true"] { background-color: var(--accent); }
 .u-cu-model { display: flex; flex-direction: column; gap: .375rem; margin-top: 1rem; font-size: .8125rem; color: var(--ink-2); }
 .u-cu-model[hidden] { display: none; }

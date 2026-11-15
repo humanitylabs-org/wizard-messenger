@@ -31,6 +31,8 @@ class SwitchEndpoint(unittest.TestCase):
             status, _, body = self.request('GET', path, headers=self.owner())
             self.assertEqual(status, 200)
             self.assertEqual(body['contract'], CONTRACT)
+            # Issue 217: every switch carries the optional feedback fields (tried, vote; null = no vote).
+            self.assertTrue(all(sw.pop('tried') is False and sw.pop('vote') is None for sw in body['switches']))
             self.assertEqual(body['switches'], [{
                 'id': 'photo-warm', 'name': 'Photos ready on arrival',
                 'description': 'The box fetches incoming photos, stickers, GIFs and videos as they arrive, so they open at once.',
@@ -82,7 +84,11 @@ class SwitchEndpoint(unittest.TestCase):
                                'runs on your Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each '
                                'language is set up once on first use (a download of about 70-130 MB per direction, about '
                                'a minute).',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#209']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#209']}, {
+                'id': 'kit-try-features', 'name': 'Standard Try new features',
+                'description': 'Try new features at the bottom of Settings uses the one shared Wizard section (the same '
+                               'in every app): On/Off and thumbs up / down for each feature being tested.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#217']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -102,6 +108,24 @@ class SwitchEndpoint(unittest.TestCase):
         self.assertEqual(self.request('POST', '/api/view/switches/feedback', {'id': 'photo-warm', 'vote': 'up'}, self.owner())[0], 403)
         self.assertEqual(self.request('POST', '/api/view/switches/feedback', {'id': 'photo-warm', 'vote': 'up'}, {'Origin': ORIGIN, **WRITE})[0], 401)
         self.assertEqual(self.request('GET', '/api/view/switches/feedback', headers=self.owner())[0], 405)
+
+    def test_shared_section_votes_on_the_switches_path(self):
+        # Issue 217 (wizard-os docs/APP_SWITCHES.md): the shared Try new features section posts {"id", "vote"} to the
+        # switches path itself and reads `tried` / `vote` on each switch.
+        h = {**self.owner(), **WRITE}
+        for path in ('/api/view/switches', '/api/switches'):
+            status, _, body = self.request('POST', path, {'id': 'photo-warm', 'vote': 'down'}, h)
+            self.assertEqual(status, 200)
+            warm = body['switches'][0]
+            self.assertEqual((warm['id'], warm['vote'], warm['tried'], warm['on']), ('photo-warm', 'down', False, False))
+        self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'on': True}, h)
+        status, _, body = self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'vote': None}, h)
+        self.assertEqual((body['switches'][0]['vote'], body['switches'][0]['tried']), (None, True))
+        self.assertEqual(body['feedback'], {'photo-warm': {'tried': True}})
+        for bad in ({'id': 'photo-warm', 'vote': 'meh'}, {'id': 'photo-warm', 'vote': 'up', 'on': True}):
+            self.assertEqual(self.request('POST', '/api/view/switches', bad, h)[0], 400, bad)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'nope', 'vote': 'up'}, h)[0], 404)
+        self.assertEqual(self.request('POST', '/api/view/switches', {'id': 'photo-warm', 'vote': 'up'}, self.owner())[0], 403)
 
     def test_owner_flips_it_and_every_reader_sees_it(self):
         h = {**self.owner(), **WRITE}
@@ -265,7 +289,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate', 'kit-try-features'])
 
 
 if __name__ == '__main__':
