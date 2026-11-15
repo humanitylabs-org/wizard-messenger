@@ -2654,7 +2654,7 @@
   function translate(m) {
     action(async () => {
       if (shown[m.id] !== 'translated' && !m.translated && !deviceText(m)) {
-        const local = switchState.on['on-device-translate'] === true ? await deviceTranslate(m.original, 'en', globalThis) : null;
+        const local = await deviceTranslate(m.original, 'en', globalThis); // issue 199: always tried first, Tinfoil only as fallback
         if (local) onDevice.set(m.id, {original: m.original, text: local.text});
       }
       if (shown[m.id] !== 'translated' && !m.translated && !deviceText(m)) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
@@ -4618,7 +4618,6 @@
   // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
   // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
   function listDraftReadyRow() { return switchRow('list-draft-ready', 'Draft ready from the chat list', 'Only in the open chat’s ⋯ menu', 'Also when you hold or right-click a chat'); }
-  function deviceTranslateRow() { return switchRow('on-device-translate', 'Translate on this device', 'Translate uses Tinfoil', 'Translate runs in this browser when it can'); }
   function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
   // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
@@ -4898,7 +4897,7 @@
       group.append(agentDraftsChoice());
       sheet.append(head, agents, draftStats, group, kit ? kitTryFeatures() : tryFeatures());
     } else {
-      group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), deviceTranslateRow(), listDraftReadyRow());
+      group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), listDraftReadyRow());
       sheet.append(head, agents, draftStats, group);
       catchUpSettings(sheet);
       // Issue 217: the standard section always ends Settings, also before Clean Settings is on.

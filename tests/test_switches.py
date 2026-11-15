@@ -59,11 +59,6 @@ class SwitchEndpoint(unittest.TestCase):
                                "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
                                'still opens it.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}, {
-                'id': 'on-device-translate', 'name': 'Translate on this device',
-                'description': "Tapping Translate under a message uses this browser's own built-in translator (Chrome on "
-                               'a computer), so the text stays on the device and no model is used. Where the browser has '
-                               'none, Translate uses Tinfoil as before.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#199']}, {
                 'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
                 'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent '
                                'keeps a draft ready, or Stop keeping a draft ready, without opening the chat. An open '
@@ -277,6 +272,23 @@ class SwitchStorage(unittest.TestCase):
             store.set('photo-instant', True)
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
 
+    def test_on_device_translate_is_gone_and_its_stored_value_cleared(self):
+        # Issue 199: Translate on this device is on for everyone now; a stored value from before is dropped on the next
+        # write, and its Try new features feedback no longer shows.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"on-device-translate": false, "photo-warm": true}, '
+                            '"feedback": {"on-device-translate": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('on-device-translate', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('on-device-translate', store.listing().get('feedback', {}))
+            self.assertFalse(store.is_on('on-device-translate'))
+            with self.assertRaises(UnknownSwitch):
+                store.set('on-device-translate', True)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('on-device-translate', json.loads(path.read_text()).get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
@@ -296,7 +308,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate', 'kit-try-features', 'agent-wake'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate', 'kit-try-features', 'agent-wake'])
 
 
 if __name__ == '__main__':
