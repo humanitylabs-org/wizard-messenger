@@ -4684,6 +4684,23 @@
     switchState.paints['try-features'] = paint;
     paint(); return box;
   }
+  // Issue 217 (switch kit-try-features, wizard-os 627): the one shared Wizard section instead of Messenger's own.
+  // static/wizard-try-features.js is the kit's try-features.js, copied as is (hash-locked in wizard-os
+  // style/style-policy.json). It reads and posts the same box switches (votes too), so a flip or a thumb there
+  // updates the rest of Messenger at once, and a flip from the Tracker shows up on the next switch poll.
+  function kitTryFeatures() {
+    const kit = globalThis.WzTryFeatures;
+    if (typeof kit?.mount !== 'function') return tryFeatures();
+    const box = node('section', 'u-try-kit');
+    // The section's re-read on visible stops once this Settings sheet is gone, so reopening Settings adds no listeners.
+    const doc = {head: document.head, getElementById: id => document.getElementById(id), createElement: tag => document.createElement(tag),
+      get visibilityState() { return document.visibilityState; },
+      addEventListener: (type, fn) => document.addEventListener(type, function once(e) { if (!box.isConnected) { document.removeEventListener(type, once); return; } fn(e); })};
+    const handle = kit.mount(box, {path: 'api/view/switches', document: doc, onChange: listing => applySwitches(listing)});
+    // Runs only when a switch changed (repaintSwitches), e.g. from the Tracker; a stale sheet's section is left alone.
+    switchState.paints['try-kit'] = () => { if (box.isConnected) handle.reload(); };
+    return box;
+  }
   // Issue 202 (switch clean-settings): the inbox list's own ⋯ menu holds what acts on the list.
   async function inboxMenu(anchor) {
     const [merges, push] = await Promise.all([call('merge-suggestions').then(r => (r.suggestions || []).length).catch(() => 0), api('api/view/push').then(r => r?.enabled === true).catch(() => false)]);
@@ -4809,7 +4826,7 @@
   // Notifications, where offered) move to the list's ⋯ menu, the summary model to Catch me up, and photo timings
   // stay on the box's status route.
   function moreSettings(sheet) {
-    const clean = switchState.on['clean-settings'] === true;
+    const clean = switchState.on['clean-settings'] === true, kit = switchState.on['kit-try-features'] === true;
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more ' + (clean ? 'u-more-drafts' : 'u-more-other'));
     // Issue 178: how the owner handled his agent's ready drafts, right under the agents.
@@ -4818,11 +4835,13 @@
     draftWatch.paints.push(paintStats);
     if (clean) {
       group.append(agentDraftsChoice());
-      sheet.append(head, agents, draftStats, group, tryFeatures());
+      sheet.append(head, agents, draftStats, group, kit ? kitTryFeatures() : tryFeatures());
     } else {
       group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), deviceTranslateRow(), listDraftReadyRow());
       sheet.append(head, agents, draftStats, group);
       catchUpSettings(sheet);
+      // Issue 217: the standard section always ends Settings, also before Clean Settings is on.
+      if (kit) sheet.append(kitTryFeatures());
     }
     // Each part stays away while it has nothing to show.
     const sync = () => {

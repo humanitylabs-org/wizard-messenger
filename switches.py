@@ -71,6 +71,11 @@ SWITCHES = (
                     'once on first use (a download of about 70-130 MB per direction, about a minute).',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#209']},
+    {'id': 'kit-try-features', 'name': 'Standard Try new features',
+     'description': 'Try new features at the bottom of Settings uses the one shared Wizard section (the same in every '
+                    'app): On/Off and thumbs up / down for each feature being tested.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#217']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
@@ -148,11 +153,15 @@ class SwitchStore:
         return self._read().get(switch_id, default)
 
     def listing(self):
-        values = self._read()
+        # Issue 217 (wizard-os docs/APP_SWITCHES.md, optional feedback fields): each switch also carries `tried` and
+        # `vote` (null = no vote), so the shared Try new features section shows thumbs. The top-level `feedback` map
+        # stays for Messenger's own section.
+        values, feedback = self._read(), self._feedback()
         return {'contract': CONTRACT, 'switches': [
             {'id': s['id'], 'name': s['name'], 'description': s['description'],
-             'on': values.get(s['id'], s['default']), 'default': s['default'], 'issues': list(s['issues'])}
-            for s in SWITCHES], 'feedback': self._feedback()}
+             'on': values.get(s['id'], s['default']), 'default': s['default'], 'issues': list(s['issues']),
+             'tried': feedback.get(s['id'], {}).get('tried') is True, 'vote': feedback.get(s['id'], {}).get('vote')}
+            for s in SWITCHES], 'feedback': feedback}
 
     def vote(self, switch_id, vote):
         """Thumbs up or down (or None to take it back) for a switch on Try new features."""

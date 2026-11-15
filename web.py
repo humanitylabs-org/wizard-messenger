@@ -476,6 +476,9 @@ class ViewHandler(Handler):
                 raise EngineError('invalid_input','Send JSON {"id": ..., "on": true|false}',400)
             try: body=self._body()
             except EngineError as e: raise EngineError('invalid_input',e.message,400) from None
+            # Issue 217: the shared Try new features section posts a vote to the switches path itself
+            # ({"id": ..., "vote": ...}, wizard-os docs/APP_SWITCHES.md); /feedback stays for Messenger's own section.
+            if isinstance(body,dict) and 'vote' in body and 'on' not in body: feedback=True
             if feedback:
                 # Issue 202: thumbs up / down on Try new features ({"id": ..., "vote": "up"|"down"|null}).
                 if not isinstance(body,dict) or not isinstance(body.get('id'),str) or 'vote' not in body or set(body)-{'id','vote'} or body['vote'] not in ('up','down',None):
