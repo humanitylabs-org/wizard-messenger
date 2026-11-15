@@ -319,6 +319,60 @@ class UnifiedTests(unittest.TestCase):
         self.assertIsNone(self.inbox.store.message('$voice')['transcript'])
         with self.assertRaises(EngineError): self.inbox.dispatch('POST', path, {'text': 'resurrect'})
 
+    def test_transcript_paragraphs_formats_once_and_keeps_words(self):
+        # Issue 248 (switch transcript-paragraphs): paragraphs and punctuation added, words unchanged, cached.
+        raw = 'hey its me so about saturday i can come at five then on sunday we could go hiking what do you think'
+        formatted = "Hey, it's me. So about Saturday, I can come at five.\n\nThen on Sunday we could go hiking.  What do you think?"
+        calls = []
+        def complete(model, system, user):
+            calls.append((model, user))
+            return formatted
+        self.inbox.transcript_complete = complete
+        self.inbox.store.add_message('$v1', self.a, 'alice', False, '', 100, msgtype='m.audio', media={'voice': True})
+        path = '/api/unified/messages/%24v1/transcript'
+        # Off: the raw text is saved, no model call.
+        self.inbox.store.add_message('$v0', self.a, 'alice', False, '', 99, msgtype='m.audio', media={'voice': True})
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/messages/%24v0/transcript', {'text': raw})['text'], raw)
+        self.assertEqual(calls, [])
+        self.inbox.switches.set('transcript-paragraphs', True)
+        saved = self.inbox.dispatch('POST', path, {'text': '  ' + raw + ' '})['text']
+        self.assertEqual(saved, "Hey, it's me. So about Saturday, I can come at five.\n\nThen on Sunday we could go hiking. What do you think?")
+        self.assertEqual(calls, [('glm-5-3', raw)])
+        # A retry (or a second voice note with the same words) uses the cached result, never a second call.
+        self.inbox.store.add_message('$v2', self.a, 'alice', False, '', 101, msgtype='m.audio', media={'voice': True})
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/messages/%24v2/transcript', {'text': raw})['text'], saved)
+        # An already saved transcript never calls the model again.
+        self.inbox.dispatch('POST', path, {'text': 'other words entirely'})
+        self.assertEqual(len(calls), 1)
+
+    def test_transcript_paragraphs_falls_back_to_raw(self):
+        # Issue 248: a failing, rewording or dropping formatter saves the raw transcript and never blocks.
+        self.inbox.switches.set('transcript-paragraphs', True)
+        raw = 'ok see you at the station at seven'
+        outcomes = [EngineError('upstream_unavailable', 'down', 503), 'Okay, see you at the station at seven.',
+                    'See you at the station.', 'OK, see you at the train station at seven.', '']
+        for n, outcome in enumerate(outcomes):
+            def complete(model, system, user, outcome=outcome):
+                if isinstance(outcome, Exception): raise outcome
+                return outcome
+            self.inbox.transcript_complete = complete
+            ident = '$f%d' % n
+            self.inbox.store.add_message(ident, self.a, 'alice', False, '', 200 + n, msgtype='m.audio', media={'voice': True})
+            self.assertEqual(self.inbox.dispatch('POST', '/api/unified/messages/' + ident + '/transcript', {'text': raw})['text'], raw, outcome)
+        with self.inbox.store.db() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM translation').fetchone()[0], 0)
+        # The real worker route without a secret is a failure too: raw is saved.
+        del self.inbox.transcript_complete
+        self.inbox.store.add_message('$f9', self.a, 'alice', False, '', 300, msgtype='m.audio', media={'voice': True})
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/messages/%24f9/transcript', {'text': raw})['text'], raw)
+
+    def test_transcript_formatted_compares_only_letters_and_digits(self):
+        from unified import transcript_formatted
+        self.assertEqual(transcript_formatted('a b c', '```\nA, b.\n\n\nC!\n```'), 'A, b.\n\nC!')
+        self.assertEqual(transcript_formatted('sawasdee krub', 'Sawasdee, krub.'), 'Sawasdee, krub.')
+        self.assertIsNone(transcript_formatted('two cats', 'Two dogs.'))
+        self.assertIsNone(transcript_formatted('two cats', None))
+
     def test_transcript_rejects_missing_non_audio_empty_and_oversized(self):
         self.inbox.store.add_message('$text', self.a, 'alice', False, 'hello', 100)
         self.inbox.store.add_message('$voice', self.a, 'alice', False, '', 101, msgtype='m.audio', media={'voice': True})
