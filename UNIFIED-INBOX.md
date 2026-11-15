@@ -118,6 +118,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.55 (Standard Try new features is on for everyone)
+
+Store recipe: pins the image built from main `2386a9e`. Ships #243 (Refs #217): the approved switch **Standard Try new features** (`kit-try-features`) is removed, so Try new features at the bottom of Settings is always the shared Wizard section (On/Off and thumbs up / down per feature, kept on the box). Messenger's own older section is gone and a stored value is ignored.
+
 ## 0.2.0-unified.16.54 (Clean Settings is on for everyone)
 
 Store recipe: pins the image built from main `27f2e44`. Ships #241 (Refs #202): the approved switch **Clean Settings** (`clean-settings`) is removed, so Settings is always Accounts, Agent access (with the drafts line), the one Agent drafts choice, then Try new features at the bottom. Inbox view and Suggested merges are always in the chat list's ⋯ menu and the Catch me up model is under the summary. The old Settings rows are gone and a stored value is ignored.
