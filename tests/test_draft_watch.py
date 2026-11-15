@@ -111,6 +111,31 @@ class DraftWatch(unittest.TestCase):
         self.assertEqual(self.needing()['chats'], [])
         self.inbox.mx.assert_not_called()
 
+    def test_a_discarded_or_sent_draft_is_the_owners_answer(self):
+        # Issue 220: X > Discard deletes the draft, and the chat used to come straight back to the agent.
+        a, b = self.chat('Anna', 'line'), self.chat('Ben', 'line')
+        self.say(a, 'Dinner tonight?')
+        self.say(b, 'Call me?')
+        for ident in (a, b):
+            self.assertEqual(self.watch({'person_id': ident['person_id'], 'on': True})[0], 200)
+        self.assertEqual(sorted(x['id'] for x in self.needing()['chats']), sorted([a['person_id'], b['person_id']]))
+        drafted = {}
+        for ident in (a, b):
+            drafted[ident['person_id']] = self.mcp('messenger_create_draft', {'chat_id': ident['person_id'], 'text': 'Sure!'})[0]['draft']
+        self.owner_delete(drafted[a['person_id']], outcome='discarded')
+        self.owner_delete(drafted[b['person_id']], outcome='sent', sent_text='Sure!')
+        self.assertEqual(self.needing()['chats'], [])
+        self.assertEqual(self.needing()['chats'], [])  # and at every later check
+        # Only a new incoming message after the discard makes the chat need a draft again.
+        time.sleep(0.01)
+        self.say(a, 'Or tomorrow?', at=NOW() + 1000)
+        out = self.needing()
+        self.assertEqual([x['id'] for x in out['chats']], [a['person_id']])
+        self.assertNotIn('draft', out['chats'][0])
+        # The owner writing his own message is an answer too.
+        self.say(a, 'Tomorrow is good', outgoing=True, at=NOW() + 2000)
+        self.assertEqual(self.needing()['chats'], [])
+
     def test_every_unread_chat_but_never_muted_or_where_the_owner_writes(self):
         a, b, c = self.chat('Anna'), self.chat('Ben'), self.chat('Cai')
         for ident in (a, b, c):
