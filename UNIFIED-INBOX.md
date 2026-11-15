@@ -118,6 +118,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.53 (Translate on this device is on for everyone)
+
+Store recipe: pins the image built from main `2c2fd1f`. Ships #239 (Refs #199): the approved switch **Translate on this device** (`on-device-translate`) is removed, so a tapped Translate always uses the browser's own built-in translator first and Tinfoil only where the browser has none. Its Settings row is gone and a stored value is ignored.
+
 ## 0.2.0-unified.16.52 (Drafts toggle at the top of an open chat)
 
 Store recipe: pins the image built from main `8d3c31c`. Ships #237 (Refs #201): with the switch **Draft ready from the chat list** (`list-draft-ready`) on, an open chat shows a one-tap **Drafts** pill next to Catch me up (filled dot = your agent keeps a draft ready there), and the chat's ⋯ menu drops the old item. The chat list's hold / right-click item stays. Switch off, nothing changes.
