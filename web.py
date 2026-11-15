@@ -151,6 +151,15 @@ def gateway_origins(origins):
     return sorted(o for o in origins or () if re.fullmatch(r'https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?', o))
 
 
+def first_setup_needs_link(service):
+    """True where only a setup link may start the first setup: a box whose operator provisions owner enrollment
+    links (MESSENGER_PROVISION_OWNER_ENROLLMENT=1, or one is waiting), or a remote-authority box. Everywhere else a
+    fresh install opens straight into creating the address (issue 214), also without the platform owner proof."""
+    if os.environ.get('MESSENGER_PROVISION_OWNER_ENROLLMENT') == '1': return True
+    if getattr(service,'remote_required',False) or getattr(service.remote_authority,'endpoint',None): return True
+    return service.auth.path is not None and (service.auth.path.parent/'owner-enrollment.json').exists()
+
+
 class ViewServer(MessengerServer):
     def __init__(self,address,engine,token,origins):
         super().__init__(address,engine,token,origins)
@@ -691,7 +700,19 @@ class ViewHandler(Handler):
                     if self.service.auth.credential:
                         raise EngineError('session_unlock_required','Enter your passphrase to open Messenger',401)
                     if not self.service.engine.status().get('account_configured',False):
-                        # First open from the Wizard launcher: only the owner's setup link can start setup.
+                        if not first_setup_needs_link(self.service):
+                            # A fresh install on a Wizard without the platform owner proof (issue 214): nothing
+                            # exists yet, so there is nothing to protect but the first address itself. Give the
+                            # same setup-only session a setup link would; the passphrase chosen there (proved
+                            # under setup_lock, first one wins) guards everything after it.
+                            self._origin()
+                            with self.service.setup_lock:
+                                if self.service.auth.credential or self.service.engine.status().get('account_configured',False):
+                                    raise EngineError('session_unlock_required','Enter your passphrase to open Messenger',401)
+                                token,session=self.service.auth.create(owner_setup=True)
+                                self.pending_cookie=self._cookie(token)
+                            return self._session_result(session)
+                        # An operator chose setup links (MESSENGER_PROVISION_OWNER_ENROLLMENT): only that link starts setup.
                         raise EngineError('setup_link_required','Ask your Wizard for your Messenger setup link',401)
                 self._authorize()
                 session=self._session()

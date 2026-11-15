@@ -223,8 +223,42 @@ class ViewBoundary(unittest.TestCase):
         s,_,d=self.request('POST','/mcp',{'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'messenger_send','arguments':{}}})
         self.assertEqual(s,200); self.assertIn('error',d)
         self.assertEqual(self.request('GET','/api/dms')[0],401)
-    def test_first_open_without_setup_link_says_so_and_grants_nothing(self):
-        s,h,d=self.request('GET','/api/view/session')
+    def test_first_open_without_owner_proof_opens_setup_not_a_setup_link(self):
+        # Issue 214: a fresh install on a Wizard with no platform owner proof used to ask for a setup link nothing
+        # could produce. It now gets a setup-only session that can create the first address and nothing else.
+        s,h,d=self.request('GET','/api/view/session',headers={'Origin':ORIGIN})
+        self.assertEqual(s,200,d); self.assertIn('HttpOnly',h['Set-Cookie'])
+        owner={'Cookie':h['Set-Cookie'].split(';')[0],'Origin':ORIGIN,'X-Messenger-CSRF':d['result']['csrf_token']}
+        self.assertNotIn('media_ticket',d['result'])
+        self.assertEqual(self.request('GET','/api/dms',headers=owner)[0],403)
+        self.assertEqual(self.request('GET','/api/status',headers=owner)[0],200)
+        password='fresh-install-fixture-passphrase'
+        self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':password},owner)[0],200)
+        self.server.auth.verify_password(password)
+        # The setup cookie never becomes an owner session, and the next browser must use the passphrase.
+        self.assertEqual(self.request('GET','/api/dms',headers=owner)[0],403)
+        s,_,d=self.request('GET','/api/view/session',headers={'Origin':ORIGIN})
+        self.assertEqual((s,d['error']['code']),(401,'session_unlock_required'))
+        s,_,d=self.request('POST','/api/view/unlock',{'vault_password':password},{'Origin':ORIGIN})
+        self.assertEqual(s,200); self.assertIn('csrf_token',d['result'])
+    def test_first_setup_session_is_never_given_to_a_bearer_or_another_site(self):
+        s,h,_=self.request('GET','/api/view/session',headers={'Authorization':'Bearer '+TOKEN})
+        self.assertNotIn('Set-Cookie',h)
+        s,h,d=self.request('GET','/api/view/session',headers={'Origin':'https://evil.example'})
+        self.assertEqual(s,403); self.assertNotIn('Set-Cookie',h)
+        s,h,d=self.request('GET','/api/view/session',headers={'Sec-Fetch-Site':'cross-site'})
+        self.assertEqual(s,403); self.assertNotIn('Set-Cookie',h)
+    def test_second_first_setup_cannot_replace_the_first_address(self):
+        a=self.request('GET','/api/view/session',headers={'Origin':ORIGIN})
+        b=self.request('GET','/api/view/session',headers={'Origin':ORIGIN})
+        first={'Cookie':a[1]['Set-Cookie'].split(';')[0],'Origin':ORIGIN,'X-Messenger-CSRF':a[2]['result']['csrf_token']}
+        second={'Cookie':b[1]['Set-Cookie'].split(';')[0],'Origin':ORIGIN,'X-Messenger-CSRF':b[2]['result']['csrf_token']}
+        self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':'first-owner-passphrase-1'},first)[0],200)
+        self.assertEqual(self.request('POST','/api/setup',{'action':'create','vault_password':'second-guess-passphrase'},second)[0],403)
+        self.server.auth.verify_password('first-owner-passphrase-1')
+    def test_operator_setup_links_still_require_the_link(self):
+        with patch.dict(os.environ,{'MESSENGER_PROVISION_OWNER_ENROLLMENT':'1'}):
+            s,h,d=self.request('GET','/api/view/session')
         self.assertEqual(s,401); self.assertEqual(d['error']['code'],'setup_link_required'); self.assertNotIn('Set-Cookie',h)
         self.assertEqual(self.request('GET','/api/identity')[0],401)
     def test_existing_account_can_sign_in_without_install_ticket(self):

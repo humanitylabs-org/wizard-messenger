@@ -8,7 +8,7 @@ Messenger is listed in the [official public Wizard App Index](https://apps.aiwiz
 
 Messenger is a user-facing app and belongs under **Apps** in Store. Agent apps have no user interface; `type: service` describes Messenger's backend packaging, not its Store section. Searching **Messenger** also finds it; being installed does not hide its card. Do not switch an existing installation's release merely to find or open it.
 
-- **First open:** ask your Wizard for your Messenger setup link, then choose a passphrase (16+ characters). It encrypts your private Messenger chats. After the server restarts you type it once.
+- **First open:** Messenger opens straight into Create address. On a Wizard without passphrase-free owner access you choose a passphrase (16+ characters). It encrypts your private Messenger chats. After the server restarts you type it once.
 - **Fingerprint unlock:** in Messenger → your address → *Unlock with fingerprint next time*. Your phone stays signed in for 30 days; *Lock Messenger* signs out at once.
 - **Telegram (optional):** create your own Telegram app ID and hash at https://my.telegram.org → *API development tools*, enter them in the app's settings in Wizard, then *Connect Telegram* inside Messenger. Messages, reads and history sync both ways. Telegram cloud chats are not end-to-end encrypted, and the bridged history is stored on your box.
 - **Translation (optional):** add a Tinfoil API key in the app settings.
