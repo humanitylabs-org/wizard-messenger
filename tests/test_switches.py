@@ -88,7 +88,13 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'kit-try-features', 'name': 'Standard Try new features',
                 'description': 'Try new features at the bottom of Settings uses the one shared Wizard section (the same '
                                'in every app): On/Off and thumbs up / down for each feature being tested.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#217']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#217']}, {
+                'id': 'agent-wake', 'name': 'Drafts without a schedule',
+                'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents '
+                               'with Draft-only access) to write the draft, so no agent needs a schedule. The wake '
+                               'carries only which chat, never the words. If no agent can be woken, the chat says '
+                               'Drafts paused.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#223']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -289,7 +295,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate', 'kit-try-features'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'on-device-translate', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate', 'kit-try-features', 'agent-wake'])
 
 
 if __name__ == '__main__':

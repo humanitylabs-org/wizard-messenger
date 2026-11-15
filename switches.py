@@ -76,6 +76,12 @@ SWITCHES = (
                     'app): On/Off and thumbs up / down for each feature being tested.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#217']},
+    {'id': 'agent-wake', 'name': 'Drafts without a schedule',
+     'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents with '
+                    'Draft-only access) to write the draft, so no agent needs a schedule. The wake carries only which '
+                    'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#223']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
