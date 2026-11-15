@@ -48,12 +48,6 @@ SWITCHES = (
                     'toggle at the top, next to Catch me up.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#201']},
-    {'id': 'clean-settings', 'name': 'Clean Settings',
-     'description': 'Settings shows only your accounts, agent access and one Agent drafts choice. Features still being '
-                    'tested move to Try new features at the bottom; Inbox view and Suggested merges move to the chat '
-                    "list's ⋯ menu.",
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#202']},
     {'id': 'device-auto-translate', 'name': 'Auto-translate on this device',
      'description': "In a chat set to Auto-translate, incoming messages are translated to English and your reply's "
                     "send preview is translated by this browser's own built-in translator (Chrome on a computer), so "

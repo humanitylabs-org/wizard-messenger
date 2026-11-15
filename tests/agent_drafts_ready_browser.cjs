@@ -1,5 +1,5 @@
 // Agent keeps drafts ready (issue 178, on for everyone, no switch): the chat header ⋯ picks a chat for the agent, Settings
-// has "Draft for every unread chat" and the sent/edited/discarded line, and closing an agent's draft tells the box
+// has the Agent drafts choice (Chats I pick / Every unread chat) and the sent/edited/discarded line, and closing an agent's draft tells the box
 // why (sent with its text, or discarded). Synthetic API only; phone + desktop; nothing is sent to a network here
 // except the owner's own composer send, which the fixture answers.
 // PLAYWRIGHT_MODULE=... node tests/agent_drafts_ready_browser.cjs [outdir]
@@ -70,20 +70,20 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
     await page.goto('https://messenger.test/');
     await page.locator('.u-person', {hasText: 'James Carter'}).waitFor({timeout: 15000});
     await page.waitForTimeout(600); // switches sync
-    // Settings: no switch row; Draft for every unread chat plus the agent's sent/edited/discarded line, always.
+    // Settings: no switch row; the Agent drafts choice (issue 202) plus the agent's sent/edited/discarded line, always.
     await page.locator('[aria-label="Settings"]').first().click();
-    await page.locator('.u-settings .u-more-agent-drafts-all').waitFor({timeout: 5000});
+    await page.locator('.u-settings .u-more-agent-drafts-pick').waitFor({timeout: 5000});
     assert.equal(await page.locator('.u-settings .u-more-agent-drafts').count(), 0, 'no Agent keeps drafts ready switch row');
     await page.locator('.u-settings .u-more-agent').first().waitFor({timeout: 5000});
     await page.waitForTimeout(400);
-    const all = page.locator('.u-settings .u-more-agent-drafts-all'), stats = page.locator('.u-settings .u-agent-draft-stats');
+    const all = page.locator('.u-settings .u-more-agent-drafts-pick'), stats = page.locator('.u-settings .u-agent-draft-stats');
     assert.ok(await all.isVisible(), 'every-unread row is always there');
     assert.ok(await stats.isVisible(), 'stats line is always there');
     {
       assert.equal(await stats.innerText(), 'Agent drafts: 2 sent as drafted · 1 edited · 0 discarded');
       await stats.scrollIntoViewIfNeeded(); await shot('settings-stats');
-      await all.getByRole('radio', {name: 'On'}).click();
-      await page.waitForFunction(() => document.querySelector('.u-more-agent-drafts-all [data-on="1"]')?.getAttribute('aria-checked') === 'true');
+      await all.getByRole('radio', {name: 'Every unread chat'}).click();
+      await page.waitForFunction(() => document.querySelector('.u-more-agent-drafts-pick [data-on="1"]')?.getAttribute('aria-checked') === 'true');
       assert.deepEqual(box.watch, [{all_unread: true}]);
       await page.mouse.move(0, 0); await page.waitForTimeout(500);
     }

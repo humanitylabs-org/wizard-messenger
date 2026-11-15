@@ -328,27 +328,6 @@
     };
     return {add, tap, flush, pending: () => batch.length};
   }
-  // The Settings lines for photo timings: the view's stages against their targets (thumbnail under 300 ms, tap to
-  // picture under 150 ms, no black frames), then per network what the box saw: bridge hand-over, arrival to ready on
-  // the box, and the originals' size. label(network) names a network.
-  function timingSummary(timings, label = x => x) {
-    const t = timings || {}, ms = v => Math.round(v) + ' ms', lines = [];
-    const stage = (key, name, target) => { const x = t[key]; if (x?.n) lines.push(name + ' ' + ms(x.p50) + ' (p90 ' + ms(x.p90 ?? x.p50) + ', target under ' + target + ' ms, ' + x.n + ' measured)'); };
-    stage('photo_thumb', 'Thumbnail', 300);
-    stage('photo_tap', 'Tap to picture', 150);
-    if (t.photo_sharp?.n) lines.push('Tap to sharp copy ' + ms(t.photo_sharp.p50) + ' (p90 ' + ms(t.photo_sharp.p90 ?? t.photo_sharp.p50) + ')');
-    if (t.photo_wizard?.n) lines.push('Tap to Wizard\'s viewer ' + ms(t.photo_wizard.p50) + ' (p90 ' + ms(t.photo_wizard.p90 ?? t.photo_wizard.p50) + ', ' + t.photo_wizard.n + ' opened)');
-    if (t.photo_black?.n) lines.push('Black first frames ' + Math.round(t.photo_black.sum ?? 0) + ' of ' + t.photo_black.n + ' opened (target 0)');
-    const nets = [...new Set(Object.keys(t).filter(k => /^photo_(handover|ready|kb)\./.test(k)).map(k => k.slice(k.indexOf('.') + 1)))].sort();
-    for (const net of nets) {
-      const parts = [], h = t['photo_handover.' + net], r = t['photo_ready.' + net], kb = t['photo_kb.' + net];
-      if (h?.n) parts.push('hand-over ' + ms(h.p50));
-      if (r?.n) parts.push('ready on the box ' + ms(r.p50));
-      if (kb?.n) parts.push('originals ' + Math.round(kb.p50) + ' KB');
-      if (parts.length) lines.push(label(net) + ': ' + parts.join(', ') + ' (p50)');
-    }
-    return lines;
-  }
   // wizard-os issue 133 (browser boundary): a media address with the session's media ticket first (?t=), so a
   // trailing kind=thumb still ends it. No ticket: the address as it was.
   function withMediaTicket(url, ticket) {
@@ -427,7 +406,7 @@
     }
     return out.filter(x => x.names.length);
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -974,8 +953,8 @@
       // On a phone-width window these controls sit at the bottom, in thumb reach (unified.css @container messenger).
       const actions = node('div', 'u-head-actions');
       const find = iconButton('search', 'Search', () => { s.search = ''; renderList(); }); find.dataset.wzKey = '/'; find.dataset.wzKeyLabel = 'Search chats';
-      // Issue 202 (switch clean-settings): Inbox view and Suggested merges live in the list's own ⋯ menu.
-      const more = iconButton('more', 'Inbox options', () => inboxMenu(more), 'u-inbox-more'); more.hidden = switchState.on['clean-settings'] !== true;
+      // Issue 202: Inbox view and Suggested merges live in the list's own ⋯ menu.
+      const more = iconButton('more', 'Inbox options', () => inboxMenu(more), 'u-inbox-more');
       more.setAttribute('aria-haspopup', 'menu');
       actions.append(iconButton('qr', 'My QR codes', () => myCodes()), find, more, iconButton('settings', 'Settings', () => accounts(), 'u-settings-btn'));
       head.append(node('h1', '', title), actions);
@@ -1977,7 +1956,7 @@
     function ask() {
       body.replaceChildren();
       body.append(node('p', 'u-cu-lead', 'Catch me up reads this chat’s messages with Tinfoil, a private AI service, and writes a short summary.'),
-        node('p', 'helper', 'It does not let any agent read, draft or send anything. You can turn it off for this chat any time in the chat’s info' + (switchState.on['clean-settings'] === true ? '.' : ' or in Settings.')));
+        node('p', 'helper', 'It does not let any agent read, draft or send anything. You can turn it off for this chat any time in the chat’s info.'));
       const choose = (mode, label, cls) => body.append(button(label, () => pick(mode), 'wide ' + cls));
       choose('once', 'Just this once', 'primary'); choose('day', 'This chat for 24 hours', 'u-cu-choice'); choose('always', 'This chat always', 'u-cu-choice');
       body.querySelector('button')?.focus();
@@ -2036,7 +2015,7 @@
       if (c.parts > 1) body.append(node('p', 'helper u-cu-parts', 'Too long to read at once, so it was read in ' + c.parts + ' parts and merged. Nothing was left out.'));
       body.append(node('p', 'helper', 'Written privately by ' + (CU_MODELS[c.model] || c.model) + ' on Tinfoil · ' + when(c.created * 1000)));
       body.append(button('Refresh', () => (st.grant ? go() : ask()), 'u-cu-refresh wide'));
-      if (switchState.on['clean-settings'] === true) body.append(cuModelPicker());
+      body.append(cuModelPicker());
     }
     // Paint first, reconcile after: the sheet is up this frame; the status arrives behind it.
     body.append(node('p', 'helper', 'Checking…'));
@@ -2062,7 +2041,7 @@
     call(cuPath(p.id)).then(st => { if (box.isConnected) paint(st); }).catch(() => {});
     return box;
   }
-  // Issue 202 (switch clean-settings): the summary model is picked where summaries are made, under the summary;
+  // Issue 202: the summary model is picked where summaries are made, under the summary;
   // each chat's permission stays in that chat's info sheet (catchUpInfo).
   function cuModelPicker() {
     const label = node('label', 'u-cu-model', 'Summary model'); label.hidden = true;
@@ -2075,26 +2054,6 @@
       label.append(pick); label.hidden = false;
     }).catch(() => {});
     return label;
-  }
-  // Settings: the summary model and every standing permission.
-  function catchUpSettings(sheet) {
-    const box = node('section', 'u-cu-settings'); box.hidden = true; sheet.append(box);
-    const paint = st => {
-      box.hidden = false; box.replaceChildren(node('h3', '', 'Catch me up'));
-      const pickModel = node('select'); pickModel.setAttribute('aria-label', 'Summary model');
-      for (const m of st.models) { const o = node('option', '', (CU_MODELS[m] || m) + (m === st.default ? ' (recommended)' : '')); o.value = m; pickModel.append(o); }
-      pickModel.value = st.model;
-      pickModel.onchange = () => action(async () => { paint({...st, ...(await call('catch-up/settings', {model: pickModel.value}))}); });
-      const label = node('label', '', 'Summary model'); label.append(pickModel); box.append(label, node('p', 'helper', 'Both run privately on Tinfoil. Only these models can be used.'));
-      box.append(node('h3', '', 'Chats allowed to be summarized'));
-      if (!st.grants.length) box.append(node('p', 'helper', 'None. Catch me up asks first in each chat.'));
-      for (const g of st.grants) {
-        const row = node('div', 'u-cu-grant'); row.append(node('span', '', g.name + ' · ' + (g.mode === 'always' ? 'always' : 'until ' + new Date(g.until).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'}))));
-        row.append(button('Turn off', () => action(async () => { await call(cuPath(g.person_id, '/revoke'), {clear: false}); paint({...st, grants: st.grants.filter(x => x.person_id !== g.person_id)}); }), 'u-cu-off'));
-        box.append(row);
-      }
-    };
-    call('catch-up/settings').then(st => { if (box.isConnected) paint(st); }).catch(() => {});
   }
   function reviewedOf(p) { return !!p.language && p.language !== 'en'; }
   function subtitle(p) {
@@ -4552,16 +4511,6 @@
     try { localStorage.setItem(VIEW_KEY, view); } catch { /* this visit only */ }
     $('messenger')?.classList.toggle('u-compact', view === 'compact'); drawList();
   }
-  function inboxViewRow() {
-    const row = node('div', 'u-more-row u-more-view'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Inbox view');
-    row.append(node('span', 'u-more-label', 'Inbox view'), group);
-    const paint = () => { for (const b of group.children) { const on = b.dataset.view === inboxView(); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
-    for (const [id, label, hint] of VIEWS) {
-      const b = button(label, () => { setInboxView(id); paint(); }, 'u-view-btn'); b.dataset.view = id; b.title = hint;
-      b.setAttribute('role', 'radio'); group.append(b);
-    }
-    paint(); return row;
-  }
   // Feature switches live on the box for the owner (api/view/switches, wizard.app-switches/1, issue 150), so the
   // Tracker's Try it toggle, Settings and every device agree. Drafts at top (issue 133) was approved and is always on
   // now (drawList passes draftsFirst: true); the old per-device key it left behind is dropped once.
@@ -4569,7 +4518,6 @@
   const SWITCH_POLL_MS = 5000;
   const switchState = {on: {}, paints: {}, list: [], feedback: {}};
   const repaintSwitches = () => { for (const paint of Object.values(switchState.paints)) paint(); };
-  switchState.paints['inbox-options'] = () => { for (const b of document.querySelectorAll('.u-inbox-more')) b.hidden = switchState.on['clean-settings'] !== true; };
   try { localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
   async function switchCall(body) {
     const headers = {Accept: 'application/json'};
@@ -4595,31 +4543,9 @@
   async function setSwitch(id, on) {
     const before = switchState.on[id] === true;
     switchState.on[id] = on; repaintSwitches(); drawList();
-    try { applySwitches(await switchCall({id, on})); }
+    try { applySwitches(await switchCall({id, on})); if (id === 'photo-prefetch' && on) prefetchSoon(); }
     catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
-  // One Off/On row per box switch. Settings is rebuilt on open, so the newest row of each switch keeps the painter.
-  function switchRow(id, name, offHint, onHint) {
-    const row = node('div', 'u-more-row u-more-' + id), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', name);
-    row.append(node('span', 'u-more-label', name), group);
-    const paint = () => { for (const b of group.children) { const on = (b.dataset.on === '1') === (switchState.on[id] === true); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
-    for (const [on, label, hint] of [['0', 'Off', offHint], ['1', 'On', onHint]]) {
-      const b = button(label, () => setSwitch(id, on === '1'), 'u-view-btn');
-      b.dataset.on = on; b.title = hint; b.setAttribute('role', 'radio'); group.append(b);
-    }
-    switchState.paints[id] = paint;
-    paint(); return row;
-  }
-  // Issue 162: the box fetches incoming photos as they arrive.
-  function photoWarmRow() { return switchRow('photo-warm', 'Photos ready on arrival', 'Photos load when you open them', 'Incoming photos are fetched as they arrive'); }
-  // Issue 164: a tapped photo opens from its thumbnail and sharpens to the box's screen-size copy.
-  function photoInstantRow() { return switchRow('photo-instant', 'Photos open instantly', 'A tapped photo loads the original', 'A tapped photo shows at once and sharpens'); }
-  // Issue 170: photos opened in Wizard's shared viewer carry a placeholder (viewerItems).
-  // Issue 176: agents (messenger_start_draft) and New chat can start a chat with someone new; nothing is sent.
-  // Issue 182: a tap on the empty space beside someone's message opens its menu (messageGestures rowTap).
-  function listDraftReadyRow() { return switchRow('list-draft-ready', 'Draft ready from the chat list', 'Only in the open chat’s ⋯ menu', 'Also when you hold or right-click a chat'); }
-  function rowTapRow() { return switchRow('row-tap-menu', 'Tap beside a message for its menu', 'Hold a message for its menu', 'A tap beside someone\'s message opens its menu'); }
-  // Issue 188: photos sent together to a LINE chat go one by one with LINE's photo-group marker (box side).
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
   // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).
   const draftWatch = {watched: new Set(), all_unread: false, stats: null, paused: {}, paints: []};
@@ -4662,24 +4588,8 @@
     draftWatch.paints.push(paint); paint(); loadDraftWatch();
     return line;
   }
-  function agentDraftsRow() {
-    const all = node('div', 'u-more-row u-more-agent-drafts-all'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Draft for every unread chat');
-    all.append(node('span', 'u-more-label', 'Draft for every unread chat'), group);
-    for (const [on, label] of [['0', 'Off'], ['1', 'On']]) {
-      const b = button(label, () => action(async () => applyDraftWatch(await call('draft-watch', {all_unread: on === '1'}))), 'u-view-btn');
-      b.dataset.on = on; b.setAttribute('role', 'radio'); group.append(b);
-    }
-    all.append(node('span', 'u-more-timings', 'Pick chats with ⋯ > Agent keeps a draft ready. Your agent needs Draft-only access. It never sends.'));
-    const paint = () => {
-      for (const b of group.children) { const pick = (b.dataset.on === '1') === draftWatch.all_unread; b.setAttribute('aria-checked', String(pick)); b.classList.toggle('on', pick); }
-      return all.isConnected || !all.parentNode;
-    };
-    draftWatch.paints.push(paint);
-    loadDraftWatch();
-    paint(); return all;
-  }
-  // Issue 202 (switch clean-settings): one Agent drafts choice, Chats I pick or Every unread chat (the same box
-  // setting as Draft for every unread chat). Chats are picked from a chat's menu.
+  // Issue 202: one Agent drafts choice, Chats I pick or Every unread chat (the box's all_unread draft-watch setting).
+  // Chats are picked from a chat's menu.
   function agentDraftsChoice() {
     const row = node('div', 'u-more-row u-more-agent-drafts-pick'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', 'Agent drafts');
     row.append(node('span', 'u-more-label', 'Agent drafts'), group);
@@ -4698,7 +4608,7 @@
     loadDraftWatch();
     paint(); return row;
   }
-  // Issue 202 (switch clean-settings, wizard-os 627): features still being tested sit in one standard section at the
+  // Issue 202 (wizard-os 627): features still being tested sit in one standard section at the
   // very bottom of Settings, never as ordinary rows. One row per box switch (wizard.app-switches/1): name, what it does,
   // Off / On and an optional thumbs up / down that stays on the box (api/view/switches/feedback). Hidden with none.
   const TRY_NOTE = 'Features still being tested. Approved ones become part of the app; the rest go away. Thumbs up the ones you like.';
@@ -4761,7 +4671,7 @@
     switchState.paints['try-kit'] = () => { if (box.isConnected) handle.reload(); };
     return box;
   }
-  // Issue 202 (switch clean-settings): the inbox list's own ⋯ menu holds what acts on the list.
+  // Issue 202: the inbox list's own ⋯ menu holds what acts on the list.
   async function inboxMenu(anchor) {
     const [merges, push] = await Promise.all([call('merge-suggestions').then(r => (r.suggestions || []).length).catch(() => 0), api('api/view/push').then(r => r?.enabled === true).catch(() => false)]);
     const shown = inboxView();
@@ -4772,8 +4682,7 @@
       ...(push ? [{label: 'Notifications', icon: 'bell', run: () => { const sheet = overlay('Notifications'); sheet.classList.add('u-settings'); notificationSettings(sheet, api); }}] : []),
     ], {cls: 'u-inbox-menu', flip: true, side: 'right'});
   }
-  function viewerPlaceholderRow() { return switchRow('viewer-placeholder', 'Photos ready in Wizard\'s viewer', 'Wizard\'s viewer loads the original', 'Wizard\'s viewer shows a ready copy first'); }
-  // Issue 168: photo timings, measured in this view and on the box, summed up under the switch.
+  // Issue 168: photo timings, measured in this view and on the box while the switch is on (read at api/unified/status).
   const photoClock = photoTimings({
     post: samples => call('photos/timings', {samples}),
     later: (fn, ms) => setTimeout(fn, ms),
@@ -4787,22 +4696,6 @@
       watch.observe({type: 'resource'}); return watch;
     } catch { return null; } // no PerformanceObserver: thumbnails are not timed
   })();
-  function photoTimingsRow() {
-    const row = switchRow('photo-timings', 'Photo timings', 'Photo load times are not measured', 'Photo load times are measured and shown here');
-    const sum = node('div', 'u-more-timings'); row.append(sum);
-    const paint = () => {
-      sum.replaceChildren(); sum.hidden = switchState.on['photo-timings'] !== true;
-      if (sum.hidden) return;
-      sum.append(node('span', '', 'Measuring…'));
-      call('status').then(r => {
-        const lines = timingSummary(r?.timings, netLabel);
-        sum.replaceChildren(...(lines.length ? lines : ['No photos measured yet. Open a few chats with photos.']).map(x => node('span', '', x)));
-      }).catch(() => sum.replaceChildren(node('span', '', 'Timings are not available right now.')));
-    };
-    const base = switchState.paints['photo-timings'];
-    switchState.paints['photo-timings'] = () => { base(); paint(); };
-    paint(); return row;
-  }
   // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher). The switch lives
   // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
@@ -4854,55 +4747,26 @@
     if (prefetchMode() === 'off') return;
     for (const [pid, rows] of Object.entries(messages || {})) photoCache.add(prefetchPlan([{id: pid}], () => rows, mediaURL), true);
   }
-  function photoPrefetchRow() {
-    const id = 'photo-prefetch', name = 'Background photo download';
-    const row = node('div', 'u-more-row u-more-' + id), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', name);
-    row.append(node('span', 'u-more-label', name), group);
-    const paint = () => { const mode = prefetchMode(); for (const b of group.children) { const on = b.dataset.mode === mode; b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); } };
-    const choose = async mode => {
-      if (mode !== 'off') { try { localStorage.setItem(PREFETCH_MODE_KEY, mode); } catch { /* no storage: Wi-Fi only */ } }
-      const on = mode !== 'off';
-      if ((switchState.on[id] === true) !== on) await setSwitch(id, on); else paint();
-      if (on) prefetchSoon();
-    };
-    for (const [mode, label, hint] of [['off', 'Off', 'Photos load when you open them'], ['wifi', 'Wi-Fi only', 'Recent photos download on Wi-Fi'], ['always', 'Always', 'Recent photos download on any network']]) {
-      const b = button(label, () => choose(mode), 'u-view-btn');
-      b.dataset.mode = mode; b.title = hint; b.setAttribute('role', 'radio'); group.append(b);
-    }
-    switchState.paints[id] = paint;
-    paint(); return row;
-  }
   // A quiet list row that opens another page.
   function moreLink(label, fn, cls = '') {
     const row = button('', fn, 'u-more-row u-more-link' + (cls ? ' ' + cls : ''));
     row.append(node('span', 'u-more-label', label), node('span', 'u-more-value'), node('span', 'u-row-caret', '›'));
     return row;
   }
-  // Miguel: under the accounts, "Agent access" lists the Wizard's agents (one picker each). Suggested merges and
-  // Notifications follow in their own short list, only when there are any. Drafts live in their chats; Advanced is
-  // hidden (#advanced).
-  // Issue 202 (switch clean-settings, Miguel 14 Nov 2026): only Accounts, then Agent access (with the drafts line), then
-  // the one Agent drafts choice; Try new features at the very bottom. Inbox view and Suggested merges (and
-  // Notifications, where offered) move to the list's ⋯ menu, the summary model to Catch me up, and photo timings
-  // stay on the box's status route.
+  // Issue 202 (Miguel 14 Nov 2026): Settings is only Accounts, then Agent access (with the drafts line), then the one
+  // Agent drafts choice; Try new features at the very bottom. Inbox view and Suggested merges (and Notifications, where
+  // offered) are in the list's ⋯ menu, the summary model in Catch me up, and photo timings stay on the box's status
+  // route. Advanced is hidden (#advanced).
   function moreSettings(sheet) {
-    const clean = switchState.on['clean-settings'] === true, kit = switchState.on['kit-try-features'] === true;
+    const kit = switchState.on['kit-try-features'] === true;
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
-    const group = node('div', 'u-settings-group u-more ' + (clean ? 'u-more-drafts' : 'u-more-other'));
+    const group = node('div', 'u-settings-group u-more u-more-drafts');
     // Issue 178: how the owner handled his agent's ready drafts, right under the agents.
     const draftStats = node('p', 'helper u-agent-draft-stats');
     const paintStats = () => { draftStats.hidden = agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
-    if (clean) {
-      group.append(agentDraftsChoice());
-      sheet.append(head, agents, draftStats, group, kit ? kitTryFeatures() : tryFeatures());
-    } else {
-      group.append(inboxViewRow(), photoWarmRow(), photoInstantRow(), viewerPlaceholderRow(), photoPrefetchRow(), photoTimingsRow(), agentDraftsRow(), rowTapRow(), listDraftReadyRow());
-      sheet.append(head, agents, draftStats, group);
-      catchUpSettings(sheet);
-      // Issue 217: the standard section always ends Settings, also before Clean Settings is on.
-      if (kit) sheet.append(kitTryFeatures());
-    }
+    group.append(agentDraftsChoice());
+    sheet.append(head, agents, draftStats, group, kit ? kitTryFeatures() : tryFeatures());
     // Each part stays away while it has nothing to show.
     const sync = () => {
       head.hidden = agents.hidden = !agents.children.length;
@@ -4919,13 +4783,6 @@
       sync();
     };
     api('api/view/agents').then(st => { if (agents.isConnected) { paintAgents(st); paintStats(); } }).catch(e => error(e));
-    if (clean) { sync(); return; }
-    // Saved drafts stay in their chats (above the composer); Settings has no list of them.
-    const merges = moreLink('Suggested merges', () => mergeSuggestions(), 'u-settings-row'); merges.hidden = true; group.append(merges);
-    call('merge-suggestions').then(r => { const n = (r.suggestions || []).length; if (!n || !sheet.isConnected) return; merges.hidden = false; sync(); merges.querySelector('.u-more-value').textContent = String(n); merges.setAttribute('aria-label', 'Suggested merges, ' + n); }).catch(() => {});
-    // Notifications show only where this Wizard offers them: one row that turns them on or off.
-    const notify = node('div', 'u-more-row u-more-notify'); notify.hidden = true; group.append(notify);
-    notificationSettings(notify, api).then(() => { if (notify.querySelector('button')) { notify.hidden = false; sync(); } });
     sync();
     // Advanced has no row: support opens it with #advanced (see openFromHash).
   }

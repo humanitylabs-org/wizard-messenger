@@ -1,7 +1,7 @@
 // Standard Try new features (issue 217, switch kit-try-features, wizard-os 627): with the switch on, Settings ends with
 // the shared Wizard section (static/wizard-try-features.js): title, note, one row per box switch with On/Off and
 // thumbs. Flips and votes go to api/view/switches and reach the rest of Messenger at once; a flip made elsewhere (the
-// Tracker) shows up on the next switch poll. Also with Clean Settings off. Switch off: Messenger's own section.
+// Tracker) shows up on the next switch poll. Switch off: Messenger's own section.
 // PLAYWRIGHT_MODULE=... node tests/try_features_kit_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -14,13 +14,13 @@ const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming photos as they arrive.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
-  ['list-draft-ready', 'Draft ready from the chat list', 'Holding a chat also offers Agent keeps a draft ready.'], ['clean-settings', 'Clean Settings', 'Settings shows only accounts, agents and one drafts choice.'], ['kit-try-features', 'Standard Try new features', 'The one shared Wizard section.']];
+  ['list-draft-ready', 'Draft ready from the chat list', 'Holding a chat also offers Agent keeps a draft ready.'], ['kit-try-features', 'Standard Try new features', 'The one shared Wizard section.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
-  for (const [label, viewport, clean, kit] of [['390', {width: 390, height: 844}, true, true], ['1280', {width: 1280, height: 860}, true, true], ['1280-classic', {width: 1280, height: 860}, false, true], ['390-off', {width: 390, height: 844}, true, false]]) {
+  for (const [label, viewport, kit] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['390-off', {width: 390, height: 844}, false]]) {
     const PEOPLE = [person('james', 'James Carter', 'whatsapp', 'Can you do Tuesday at 3?', 2, {unread: 1})];
     const watch = {watched: [], all_unread: false, stats: {sent_as_drafted: 2, edited: 1, discarded: 0, total: 3}};
-    const box = {watch: [], flips: [], votes: [], on: {'clean-settings': clean, 'kit-try-features': kit}, feedback: {}};
+    const box = {watch: [], flips: [], votes: [], on: {'kit-try-features': kit}, feedback: {}};
     const listing = () => ({contract: 'wizard.app-switches/1', switches: SW.map(([id, name, description]) => ({id, name, description, on: box.on[id] === true, default: false, issues: ['humanitylabs-org/wizard-messenger#202'], tried: box.feedback[id]?.tried === true, vote: box.feedback[id]?.vote || null})), feedback: box.feedback});
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: 'dark'});
     await ctx.addInitScript(() => {
@@ -109,14 +109,10 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       await warm.getByRole('button', {name: 'Thumbs up for Photos ready on arrival'}).click();
       await until(async () => box.votes.at(-1)?.vote === null);
       assert.deepEqual(box.feedback['photo-warm'], {tried: true});
-      if (clean) {
-        // A flip in the shared section reaches the rest of Messenger at once (the Agent drafts hint).
-        const pick = sheet.locator('.u-more-agent-drafts-pick');
-        await kitBox.locator('[data-try-id="list-draft-ready"]').getByRole('switch').click();
-        await until(async () => /Drafts at the top of a chat, or by holding a chat/.test(await pick.innerText()));
-      } else {
-        assert.ok(await sheet.locator('.u-more-photo-warm').count(), 'Clean Settings off: the older rows stay above');
-      }
+      // A flip in the shared section reaches the rest of Messenger at once (the Agent drafts hint).
+      const pick = sheet.locator('.u-more-agent-drafts-pick');
+      await kitBox.locator('[data-try-id="list-draft-ready"]').getByRole('switch').click();
+      await until(async () => /Drafts at the top of a chat, or by holding a chat/.test(await pick.innerText()));
       // Flipped from the Tracker: the section follows on the next switch poll.
       box.on['photo-timings'] = true;
       await until(async () => await kitBox.locator('[data-try-id="photo-timings"]').getByRole('switch').getAttribute('aria-checked') === 'true', 12000);

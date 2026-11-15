@@ -101,7 +101,7 @@ const SKINS = {
     assert.match(await marco().locator('.u-snippet').innerText(), /^Draft: Here is the PDF$/, 'the draft line shows its first line');
     await shot('inbox');
     await page.locator('[aria-label="Settings"]').first().click();
-    await page.locator('.u-sheet .u-more-view').waitFor();
+    await page.locator('.u-sheet .u-more-agent-drafts-pick').waitFor();
     assert.equal(await page.locator('.u-sheet .u-more-drafts-first').count(), 0, 'no Drafts at top row in Settings');
     await page.waitForTimeout(150); await shot('settings');
     await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);

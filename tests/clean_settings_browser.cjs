@@ -1,7 +1,7 @@
-// Clean Settings (issue 202, switch clean-settings): with the switch on, Settings shows only Accounts, Agent access
+// Clean Settings (issue 202, on for everyone since its switch was removed): Settings shows only Accounts, Agent access
 // (with its drafts line) and one Agent drafts choice, then Try new features at the very bottom (one row per box
-// switch: name, what it does, Off / On, thumbs up / down). Inbox view and Suggested merges move to the list's own ⋯
-// menu. Switch off, Settings is as before. Synthetic API only; phone + desktop.
+// switch: name, what it does, Off / On, thumbs up / down). Inbox view and Suggested merges are in the list's own ⋯
+// menu. Also with no switches listing at all (an older box), Settings stays clean. Synthetic API only; phone + desktop.
 // PLAYWRIGHT_MODULE=... node tests/clean_settings_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -14,13 +14,13 @@ const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming photos as they arrive.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
-  ['list-draft-ready', 'Draft ready from the chat list', 'Holding a chat also offers Agent keeps a draft ready.'], ['clean-settings', 'Clean Settings', 'Settings shows only accounts, agents and one drafts choice.']];
+  ['list-draft-ready', 'Draft ready from the chat list', 'Holding a chat also offers Agent keeps a draft ready.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
-  for (const [label, viewport, clean] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['1280-off', {width: 1280, height: 860}, false]]) {
+  for (const [label, viewport, listed] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['1280-noswitches', {width: 1280, height: 860}, false]]) {
     const PEOPLE = [person('james', 'James Carter', 'whatsapp', 'Can you do Tuesday at 3?', 2, {unread: 1})];
     const watch = {watched: [], all_unread: false, stats: {sent_as_drafted: 2, edited: 1, discarded: 0, total: 3}};
-    const box = {watch: [], flips: [], votes: [], on: {'clean-settings': clean}, feedback: {}};
+    const box = {watch: [], flips: [], votes: [], on: {}, feedback: {}};
     const listing = () => ({contract: 'wizard.app-switches/1', switches: SW.map(([id, name, description]) => ({id, name, description, on: box.on[id] === true, default: false, issues: ['humanitylabs-org/wizard-messenger#202']})), feedback: box.feedback});
     const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, colorScheme: 'dark'});
     await ctx.addInitScript(() => {
@@ -37,6 +37,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       const json = data => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(data)});
       if (p === 'api/view/switches') {
+        if (!listed) return route.fulfill({status: 404, contentType: 'application/json', body: '{"error":"not_found"}'});
         if (req.method() === 'POST') { const b = body(); box.flips.push(b); box.on[b.id] = b.on; if (b.on) box.feedback[b.id] = {...box.feedback[b.id], tried: true}; }
         return json(listing());
       }
@@ -81,16 +82,21 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       await page.waitForTimeout(500);
     };
     const sheet = page.locator('.u-sheet');
-    if (!clean) {
-      assert.equal(await inboxMore.isVisible(), false, 'switch off: no inbox ⋯');
-      await openSettings();
-      assert.equal(await sheet.locator('.u-more-view').count(), 1, 'switch off: Inbox view row still in Settings');
-      assert.equal(await sheet.locator('.u-try').count(), 0, 'switch off: no Try new features');
-      assert.ok(await sheet.locator('.u-more-photo-warm').count(), 'switch off: switch rows as before');
-      await shot('settings-off', true);
-    } else {
+    {
       assert.equal(await inboxMore.isVisible(), true, 'inbox ⋯ shows');
       await openSettings();
+      if (!listed) {
+        // An older box with no switches listing: the same clean Settings, no old rows, no Try new features.
+        const rows = await sheet.evaluate(el => [...el.querySelectorAll('.u-more-row')].filter(r => r.offsetParent).map(r => r.querySelector('.u-more-label, .u-agent-name')?.textContent));
+        assert.deepEqual(rows, ['Oscar', 'Agent drafts'], 'Settings rows: ' + JSON.stringify(rows));
+        assert.equal(await sheet.locator('.u-try:not([hidden])').count(), 0, 'no Try new features without switches');
+        assert.equal(await sheet.locator('.u-cu-settings, .u-more-view, .u-more-photo-warm').count(), 0, 'no old Settings rows');
+        await shot('settings', true);
+        await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+        if (await sheet.count()) { await page.getByRole('button', {name: 'Back'}).first().click().catch(() => {}); await page.waitForTimeout(400); }
+        await inboxMore.click(); await page.locator('.u-menu.u-inbox-menu').waitFor({timeout: 5000});
+        assert.deepEqual(await page.locator('.u-menu .u-act').allInnerTexts(), ['Chats', 'Compact', 'Suggested merges (2)']);
+      } else {
       // Order: accounts, Agent access, the drafts line, the one drafts choice, then Try new features last.
       const order = await sheet.evaluate(el => [...el.children].filter(c => !c.hidden && getComputedStyle(c).display !== 'none').map(c => c.className || c.tagName));
       const at = cls => order.findIndex(c => String(c).includes(cls));
@@ -150,6 +156,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       assert.equal(await page.locator('.u-menu .u-act.checked').innerText(), 'Compact');
       await page.locator('.u-menu .u-act', {hasText: 'Chats'}).click();
       await page.waitForFunction(() => !document.getElementById('messenger').classList.contains('u-compact'));
+      }
     }
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(`${tag}: ok`);

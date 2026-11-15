@@ -1,4 +1,4 @@
-// Inbox view (James, 6 Nov 2026): Settings > Inbox view, Chats (default: last message, group sender, time, unread badge) or Compact.
+// Inbox view (James, 6 Nov 2026; in the list header ⋯ since issue 202): Inbox view, Chats (default: last message, group sender, time, unread badge) or Compact.
 // Also dumps the row structure so the Chats rows can be diffed against the 15.15.1 build: STATIC_ROOT=<15.15.1 static dir> node tests/inbox_view_browser.cjs <outdir>.
 // Synthetic API only; phone + desktop x two skins. node tests/inbox_view_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -95,19 +95,15 @@ const SKINS = {
     assert.equal(await page.locator('.u-person', {hasText: 'Kenji'}).locator('.u-badge').innerText(), '1', 'unread badge');
     assert.ok(await page.locator('.u-person time.u-when').count() >= 5, 'time on every row');
     for (const r of sig) assert.ok(r.h >= 56, 'Chats rows are full rows (' + r.name + ' ' + r.h + 'px)');
-    // Settings > Inbox view: two choices, saves at once, 44px targets.
-    await page.locator('[aria-label="Settings"]').first().click();
-    const view = page.locator('.u-sheet .u-more-view'); await view.waitFor();
-    assert.equal(await view.getByRole('radio', {name: 'Chats'}).getAttribute('aria-checked'), 'true');
-    assert.equal(await view.getByRole('radio', {name: 'Compact'}).getAttribute('aria-checked'), 'false');
-    await tall(view.getByRole('radio'), 'Inbox view');
-    await page.waitForTimeout(450); await shot('settings-chats');
-    await view.getByRole('radio', {name: 'Compact'}).click();
-    assert.equal(await view.getByRole('radio', {name: 'Compact'}).getAttribute('aria-checked'), 'true', 'tap registers at once');
+    // List header ⋯ > Inbox view: two choices, saves at once, 44px targets.
+    const more = page.locator('.u-inbox-more').first();
+    await more.click(); const menu = page.locator('.u-menu.u-inbox-menu'); await menu.waitFor();
+    assert.equal(await menu.locator('.u-act.checked').innerText(), 'Chats');
+    await tall(menu.locator('.u-act'), 'Inbox view');
+    await page.waitForTimeout(250); await shot('menu-chats');
+    await menu.locator('.u-act', {hasText: 'Compact'}).click();
     assert.equal(await page.evaluate(() => localStorage.getItem('messenger.inboxView')), 'compact', 'saved at once');
-    await page.waitForTimeout(450); await shot('settings-compact');
-    await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);
-    assert.equal(await page.locator('.u-sheet').count(), 0, 'outside tap closes Settings');
+    await page.waitForTimeout(450);
     assert.equal(await page.locator('#messenger.u-compact').count(), 1);
     assert.equal(await page.locator('.u-person .u-snippet').count(), 0, 'Compact has no last-message line');
     const compact = await rowSig(); for (const r of compact) assert.ok(r.h >= 44 && r.h < sig.find(x => x.name === r.name).h, 'Compact rows are denser but still tappable (' + r.name + ' ' + r.h + ')');
@@ -115,9 +111,8 @@ const SKINS = {
     await shot('compact');
     await page.reload(); await page.locator('.u-person', {hasText: 'James Carter'}).waitFor();
     assert.equal(await page.locator('.u-person .u-snippet').count(), 0, 'Compact is remembered');
-    await page.locator('[aria-label="Settings"]').first().click();
-    await page.locator('.u-sheet .u-more-view').getByRole('radio', {name: 'Chats'}).click();
-    await page.mouse.click(viewport.width - 4, 4); await page.waitForTimeout(550);
+    await page.locator('.u-inbox-more').first().click();
+    await page.locator('.u-menu.u-inbox-menu .u-act', {hasText: 'Chats'}).click(); await page.waitForTimeout(550);
     assert.equal(await page.locator('.u-person .u-snippet').count(), 5, 'back to Chats');
     assert.deepEqual((await rowSig()).map(r => r.kids), sig.map(r => r.kids), 'Chats rows are the same rows after a round trip');
     assert.deepEqual(errors, [], 'no page errors');

@@ -85,13 +85,6 @@ async function run(browser, on, label, viewport, mobile) {
     result.timed = posted.filter(x => x.name === 'photo_wizard');
     assert.equal(result.timed.length, 1, 'the hand-over is timed once: ' + JSON.stringify(posted));
     assert.ok(result.timed[0].ms < 150, 'a warm cache hands over within 150 ms');
-    if (mobile) await page.getByRole('button', {name: 'Back'}).first().click();
-    await page.locator('#u-filters').waitFor({timeout: 15000});
-    await page.locator('.u-settings-btn').first().click({timeout: 15000});
-    const row = page.locator('.u-more-viewer-placeholder');
-    await row.scrollIntoViewIfNeeded();
-    result.row = (await row.innerText()).split('\n');
-    await page.screenshot({path: path.join(out, `settings-${label}.png`)});
   }
   assert.deepEqual(errors, [], 'no page errors');
   await ctx.close();
