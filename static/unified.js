@@ -466,8 +466,6 @@
     lowpri: ['M3 4h18v4H3z', 'M5 8v11h14V8', 'M10 12h4'], unread: ['M21 12a9 9 0 1 1-6-8.5', 'M19 7a2 2 0 1 0 0-.01'], inbox: ['M3 13h5l2 3h4l2-3h5', 'M5.5 5h13L21 13v6H3v-6z'],
     smile: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M8.5 14.5s1.3 2 3.5 2 3.5-2 3.5-2', 'M9 9.5v.01', 'M15 9.5v.01'],
     tag: ['M3 12V4h8l10 10-8 8z', 'M7.5 8.5v.01'],
-    thumbup: ['M7 10v11H3V10z', 'M7 10l4-7a2 2 0 0 1 3 2l-1 5h6a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 17.6 21H7'],
-    thumbdown: ['M17 14V3h4v11z', 'M17 14l-4 7a2 2 0 0 1-3-2l1-5H5a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 6.4 3H17'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -4516,7 +4514,7 @@
   // now (drawList passes draftsFirst: true); the old per-device key it left behind is dropped once.
   const DRAFTS_FIRST_KEY = 'messenger.draftsFirst';
   const SWITCH_POLL_MS = 5000;
-  const switchState = {on: {}, paints: {}, list: [], feedback: {}};
+  const switchState = {on: {}, paints: {}};
   const repaintSwitches = () => { for (const paint of Object.values(switchState.paints)) paint(); };
   try { localStorage.removeItem(DRAFTS_FIRST_KEY); } catch { /* no storage */ }
   async function switchCall(body) {
@@ -4530,9 +4528,6 @@
   function applySwitches(data) {
     const was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
-    const shown = JSON.stringify([data.switches.map(x => [x.id, x.name, x.description]), data.feedback || {}]), listed = shown !== switchState.shown;
-    Object.assign(switchState, {list: data.switches, feedback: data.feedback || {}, shown});
-    if (listed) switchState.paints['try-features']?.();
     if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); }
   }
   async function syncSwitches() {
@@ -4608,60 +4603,15 @@
     loadDraftWatch();
     paint(); return row;
   }
-  // Issue 202 (wizard-os 627): features still being tested sit in one standard section at the
-  // very bottom of Settings, never as ordinary rows. One row per box switch (wizard.app-switches/1): name, what it does,
-  // Off / On and an optional thumbs up / down that stays on the box (api/view/switches/feedback). Hidden with none.
-  const TRY_NOTE = 'Features still being tested. Approved ones become part of the app; the rest go away. Thumbs up the ones you like.';
-  async function voteSwitch(id, vote) {
-    const r = await fetch('api/view/switches/feedback', {method: 'POST', credentials: 'same-origin', cache: 'no-store',
-      headers: {Accept: 'application/json', 'Content-Type': 'application/json', 'X-Wizard-Switch': '1', 'X-Messenger-CSRF': csrf()}, body: JSON.stringify({id, vote})});
-    const data = await r.json().catch(() => null);
-    if (!r.ok || !Array.isArray(data?.switches)) { toast('Couldn’t save that. Try again.'); return; }
-    applySwitches(data);
-  }
-  function tryRow(sw) {
-    const row = node('div', 'u-more-row u-try-row'), group = node('div', 'u-view-choice'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', sw.name);
-    row.dataset.switch = sw.id;
-    row.append(node('span', 'u-more-label', sw.name), group);
-    for (const [on, label] of [['0', 'Off'], ['1', 'On']]) {
-      const b = button(label, () => setSwitch(sw.id, on === '1'), 'u-view-btn');
-      b.dataset.on = on; b.setAttribute('role', 'radio'); group.append(b);
-    }
-    const votes = node('span', 'u-try-votes');
-    for (const [vote, name, label] of [['up', 'thumbup', 'I like '], ['down', 'thumbdown', 'I don’t like ']]) {
-      const b = iconButton(name, label + sw.name, () => voteSwitch(sw.id, switchState.feedback[sw.id]?.vote === vote ? null : vote), 'u-try-vote');
-      b.dataset.vote = vote; votes.append(b);
-    }
-    row.append(node('span', 'u-more-timings u-try-about', sw.description || ''), votes);
-    const paint = () => {
-      for (const b of group.children) { const on = (b.dataset.on === '1') === (switchState.on[sw.id] === true); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); }
-      for (const b of votes.children) { const mine = switchState.feedback[sw.id]?.vote === b.dataset.vote; b.setAttribute('aria-pressed', String(mine)); b.classList.toggle('on', mine); }
-    };
-    paint(); return {row, paint};
-  }
-  function tryFeatures() {
-    const box = node('section', 'u-try'); box.hidden = true;
-    const list = node('div', 'u-settings-group u-more u-try-list');
-    box.append(node('h3', 'u-more-head', 'Try new features'), node('p', 'helper u-try-note', TRY_NOTE), list);
-    let rows = [], ids = '';
-    const paint = () => {
-      if (!box.isConnected && box.parentNode) return;
-      const now = JSON.stringify(switchState.list.map(x => [x.id, x.name, x.description]));
-      if (now !== ids) { ids = now; rows = switchState.list.map(tryRow); list.replaceChildren(...rows.map(r => r.row)); }
-      for (const r of rows) r.paint();
-      box.hidden = !rows.length;
-    };
-    switchState.paints['try-features'] = paint;
-    paint(); return box;
-  }
-  // Issue 217 (switch kit-try-features, wizard-os 627): the one shared Wizard section instead of Messenger's own.
+  // Issue 217 (wizard-os 627): features still being tested sit in the one shared Wizard section at the very bottom of
+  // Settings (hidden with no switches), never as ordinary rows.
   // static/wizard-try-features.js is the kit's try-features.js, copied as is (hash-locked in wizard-os
   // style/style-policy.json). It reads and posts the same box switches (votes too), so a flip or a thumb there
   // updates the rest of Messenger at once, and a flip from the Tracker shows up on the next switch poll.
   function kitTryFeatures() {
     const kit = globalThis.WzTryFeatures;
-    if (typeof kit?.mount !== 'function') return tryFeatures();
     const box = node('section', 'u-try-kit');
+    if (typeof kit?.mount !== 'function') { box.hidden = true; return box; } // kit file missing: no section
     // The section's re-read on visible stops once this Settings sheet is gone, so reopening Settings adds no listeners.
     const doc = {head: document.head, getElementById: id => document.getElementById(id), createElement: tag => document.createElement(tag),
       get visibilityState() { return document.visibilityState; },
@@ -4758,7 +4708,6 @@
   // offered) are in the list's ⋯ menu, the summary model in Catch me up, and photo timings stay on the box's status
   // route. Advanced is hidden (#advanced).
   function moreSettings(sheet) {
-    const kit = switchState.on['kit-try-features'] === true;
     const head = node('h3', 'u-more-head', 'Agent access'), agents = node('div', 'u-settings-group u-more u-more-agents');
     const group = node('div', 'u-settings-group u-more u-more-drafts');
     // Issue 178: how the owner handled his agent's ready drafts, right under the agents.
@@ -4766,7 +4715,7 @@
     const paintStats = () => { draftStats.hidden = agents.hidden; draftStats.textContent = draftFeedbackLine(draftWatch.stats); return draftStats.isConnected || !draftStats.parentNode; };
     draftWatch.paints.push(paintStats);
     group.append(agentDraftsChoice());
-    sheet.append(head, agents, draftStats, group, kit ? kitTryFeatures() : tryFeatures());
+    sheet.append(head, agents, draftStats, group, kitTryFeatures());
     // Each part stays away while it has nothing to show.
     const sync = () => {
       head.hidden = agents.hidden = !agents.children.length;

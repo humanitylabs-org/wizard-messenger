@@ -80,25 +80,24 @@ async function run(browser, {label, on, network, viewport, phone}) {
     assert.deepEqual(kept, []);
   }
   if (label === 'phone-wifi-off') {
-    // Settings > Try new features (issue 202): turning the switch on starts the background download on this phone
+    // Settings > Try new features (issue 202, the shared kit section since issue 217): turning the switch on starts the background download on this phone
     // (on Wi-Fi, the default mode); Off stops it.
     await page.locator('[aria-label="Settings"]').first().click();
-    const row = page.locator('.u-settings .u-try-row[data-switch="photo-prefetch"]');
+    const row = page.locator('.u-settings [data-try-id="photo-prefetch"]');
     await row.waitFor({timeout: 5000});
-    const choices = () => row.locator('[role="radio"]').evaluateAll(bs => bs.map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '*' : '')));
-    assert.deepEqual(await choices(), ['Off*', 'On']);
+    assert.equal(await row.getByRole('switch').getAttribute('aria-checked'), 'false');
     await row.screenshot({path: path.join(out, `${label}-settings-row.png`)});
     media.length = 0;
-    await row.getByRole('radio', {name: 'On'}).click();
+    await row.getByRole('switch').click();
     await page.waitForTimeout(300);
     assert.equal(switches['photo-prefetch'], true, 'the box switch is on');
     await page.waitForTimeout(5000);
     assert.ok(media.includes('$bob0:thumb') && media.includes('$bob0:view'), 'downloads start once it is on: ' + media);
-    await row.getByRole('radio', {name: 'Off'}).click();
+    await row.getByRole('switch').click();
     await page.waitForTimeout(300);
     assert.equal(switches['photo-prefetch'], false, 'Off turns the box switch off');
     await page.screenshot({path: path.join(out, `${label}-settings.png`)});
-    result.settings = await choices();
+    result.settings = await row.getByRole('switch').getAttribute('aria-checked');
     await page.keyboard.press('Escape');
     await page.locator('#u-overlay .u-sheet').waitFor({state: 'detached', timeout: 5000});
   }

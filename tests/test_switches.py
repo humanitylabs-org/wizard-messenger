@@ -76,10 +76,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'language is set up once on first use (a download of about 70-130 MB per direction, about '
                                'a minute).',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#209']}, {
-                'id': 'kit-try-features', 'name': 'Standard Try new features',
-                'description': 'Try new features at the bottom of Settings uses the one shared Wizard section (the same '
-                               'in every app): On/Off and thumbs up / down for each feature being tested.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#217']}, {
                 'id': 'agent-wake', 'name': 'Drafts without a schedule',
                 'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents '
                                'with Draft-only access) to write the draft, so no agent needs a schedule. The wake '
@@ -320,7 +316,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'device-auto-translate', 'box-translate', 'kit-try-features', 'agent-wake'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'device-auto-translate', 'box-translate', 'agent-wake'])
 
 
 if __name__ == '__main__':
