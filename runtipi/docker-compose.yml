@@ -34,6 +34,8 @@ services:
       MESSENGER_COOKIE_SECURE: "1"
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
+      # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
+      MESSENGER_VERSION: "0.2.0-unified.16.50"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
