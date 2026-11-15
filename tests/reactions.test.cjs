@@ -7,7 +7,7 @@ function fixture(rows) {
   const store = {threads: {a: {messages: structuredClone(rows)}, b: {messages: []}}};
   const view = {id: 'a'}, s = {person: 'a'}, requests = [], errors = [], paints = [];
   const call = (path, body) => new Promise((resolve, reject) => requests.push({path, body, resolve, reject}));
-  const code = section('  function albumPosts(', '  function nearBottom(') + section('  function mergeMessages(', '  function apply(') + section(src.includes('  const reactionEdits') ? '  const reactionEdits' : '  async function react(', '  async function del(');
+  const code = section('  function albumPosts(', '  function nearBottom(') + (src.includes('  function mergeRows(') ? section('  function mergeRows(', '  if (typeof module') : '') + section('  function mergeMessages(', '  function apply(') + section(src.includes('  const reactionEdits') ? '  const reactionEdits' : '  async function react(', '  async function del(');
   const build = new Function('store', 'view', 's', 'call', 'error', 'record', 'let recent = []; const paintThread = () => record(albumPosts(store.threads[view.id].messages));' + code + '; return {react, albumPosts, mergeMessages};');
   const api = build(store, view, s, call, e => errors.push(e.message), p => paints.push(structuredClone(p)));
   return {...api, store, view, s, requests, errors, paints, post: () => api.albumPosts(store.threads.a.messages)[0]};
