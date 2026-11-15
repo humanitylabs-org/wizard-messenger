@@ -50,7 +50,8 @@ SWITCHES = (
      'issues': ['humanitylabs-org/wizard-messenger#199']},
     {'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
      'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent keeps a draft '
-                    'ready, or Stop keeping a draft ready, without opening the chat.',
+                    'ready, or Stop keeping a draft ready, without opening the chat. An open chat shows a Drafts '
+                    'toggle at the top, next to Catch me up.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#201']},
     {'id': 'clean-settings', 'name': 'Clean Settings',

@@ -113,7 +113,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
         // A flip in the shared section reaches the rest of Messenger at once (the Agent drafts hint).
         const pick = sheet.locator('.u-more-agent-drafts-pick');
         await kitBox.locator('[data-try-id="list-draft-ready"]').getByRole('switch').click();
-        await until(async () => /right-clicking or holding a chat/.test(await pick.innerText()));
+        await until(async () => /Drafts at the top of a chat, or by holding a chat/.test(await pick.innerText()));
       } else {
         assert.ok(await sheet.locator('.u-more-photo-warm').count(), 'Clean Settings off: the older rows stay above');
       }

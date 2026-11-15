@@ -2117,11 +2117,13 @@
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
       priorityAction(cur, anchor, 'right'),
       ...(cur.native ? [] : [{label: 'Labels', icon: 'tag', run: () => labelsSheet(cur)}]),
-      ...draftReadyItems(cur, draftWatch.watched.has(cur.id), watchChat),
+      // Issue 201 (switch list-draft-ready): the header's Drafts toggle replaces this item.
+      ...(switchState.on['list-draft-ready'] === true ? [] : draftReadyItems(cur, draftWatch.watched.has(cur.id), watchChat)),
     ], {side: 'right'}); };
     if (p.id) { // Catch me up: next to the chat options, never replaces them
       const head = root.querySelector('.u-thread-head'), more = head?.querySelector('[aria-label="Chat options"]'), cu = iconButton('sparkle', 'Catch me up', () => catchUp(id), 'u-catchup-btn');
       if (more) head.insertBefore(cu, more); else head?.append(cu);
+      if (!p.native) head?.insertBefore(draftToggle(id, p), cu);
     }
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
@@ -4628,6 +4630,23 @@
     catch { /* an older box: no draft watch */ }
   }
   function applyDraftWatch(r) { Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null, paused: r.paused || {}}); paintDraftWatch(); }
+  // Issue 201 (switch list-draft-ready): a one-tap Drafts toggle in the open chat's header, next to Catch me up. It
+  // shows at a glance whether the agent keeps a draft ready in this chat; hidden while the switch is off.
+  function draftToggle(id, p) {
+    const who = () => store.threads[id]?.person || p;
+    const b = button('', () => watchChat(who(), !draftWatch.watched.has(who().id)), 'u-draft-toggle');
+    b.append(node('span', 'u-draft-dot'), node('span', 'u-draft-word', 'Drafts'));
+    b.setAttribute('aria-label', 'Agent keeps a draft ready');
+    const paint = () => {
+      const on = draftWatch.watched.has(who().id);
+      b.hidden = switchState.on['list-draft-ready'] !== true;
+      b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on);
+      b.title = on ? 'Your agent keeps a draft ready here. Tap to stop.' : 'Tap so your agent keeps a draft ready here.';
+      return b.isConnected || !b.parentNode;
+    };
+    draftWatch.paints.push(paint); switchState.paints['header-drafts'] = paint;
+    paint(); return b;
+  }
   async function watchChat(p, on) {
     try { applyDraftWatch(await call('draft-watch', {person_id: p.id, on})); toast(on ? 'Your agent keeps a draft ready here. It never sends.' : 'No more ready drafts here'); }
     catch (e) { toast(e.message || 'Couldn’t save that. Try again.', 3000); }
@@ -4673,7 +4692,7 @@
     row.append(hint);
     const paint = () => {
       for (const b of group.children) { const pick = (b.dataset.on === '1') === draftWatch.all_unread; b.setAttribute('aria-checked', String(pick)); b.classList.toggle('on', pick); }
-      hint.textContent = switchState.on['list-draft-ready'] === true ? 'Pick chats by right-clicking or holding a chat.' : 'Pick chats with a chat’s ⋯ > Agent keeps a draft ready.';
+      hint.textContent = switchState.on['list-draft-ready'] === true ? 'Pick chats with Drafts at the top of a chat, or by holding a chat in the list.' : 'Pick chats with a chat’s ⋯ > Agent keeps a draft ready.';
       return row.isConnected || !row.parentNode;
     };
     draftWatch.paints.push(paint); switchState.paints['drafts-choice'] = paint;

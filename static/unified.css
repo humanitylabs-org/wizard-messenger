@@ -1132,6 +1132,12 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 
 /* Catch me up (6 Nov 2026): opaque sheet, --wz-* tokens with the standalone fallbacks, 44px+ targets. */
 .u-catchup-btn svg { stroke: currentColor; }
+/* Drafts toggle in the chat header (issue 201, switch list-draft-ready): a pill that shows on/off at a glance. */
+.u-draft-toggle { display: inline-flex; align-items: center; gap: .375rem; flex: 0 0 auto; min-height: 44px; min-width: 44px; padding: 0 .625rem; border-radius: 22px; border: 1px solid var(--wz-border, var(--line)); background: transparent; color: var(--wz-text-muted, var(--ink-3)); font-size: .8125rem; font-weight: 600; }
+.u-draft-toggle[hidden] { display: none; }
+.u-draft-toggle .u-draft-dot { width: .5rem; height: .5rem; border-radius: 50%; border: 1.5px solid currentColor; }
+.u-draft-toggle.on { color: var(--wz-accent, var(--accent)); border-color: color-mix(in srgb, var(--wz-accent, var(--accent)) 55%, transparent); background: color-mix(in srgb, var(--wz-accent, var(--accent)) 14%, transparent); }
+.u-draft-toggle.on .u-draft-dot { background: currentColor; }
 .u-unread-catchup { display: flex; justify-content: center; margin: -.125rem 0 .5rem; overflow-anchor: none; }
 .u-unread-catchup-btn { min-height: 44px; padding: 0 18px; font-size: .8125rem; font-weight: 600; color: var(--wz-accent, var(--accent)); border: 1px solid color-mix(in srgb, var(--wz-accent, var(--accent)) 55%, transparent); border-radius: 22px; background: var(--wz-surface, var(--panel-solid)); }
 .u-catchup .u-cu-lead { font-size: .9375rem; line-height: 1.5; margin: 6px 0; color: var(--wz-text, var(--ink)); }
