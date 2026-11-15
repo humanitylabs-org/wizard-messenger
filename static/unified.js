@@ -4250,7 +4250,7 @@
   }
   function editPerson(p) {
     const sheet = overlay(p.identities.every(i => i.kind === 'person') ? 'Contact' : 'Group'); const form = node('form');
-    const hero = node('div', 'u-hero'); hero.append(avatar(p.display_name, 'large'), node('strong', '', p.display_name), node('span', '', networksOf(p).map(netLabel).join(' · '))); sheet.append(hero);
+    const hero = node('div', 'u-hero'); hero.append(withPicture(avatar(p.display_name, 'large'), pictureURL(p.id, p.avatar), 'contact:' + p.id), node('strong', '', p.display_name), node('span', '', networksOf(p).map(netLabel).join(' · '))); sheet.append(hero);
     const name = node('input'); name.value = p.display_name; name.maxLength = 160;
     const nameLabel = node('label', '', 'Name'); nameLabel.append(name);
     const lang = node('select'); for (const [value, label] of [['','Off'],['th','Thai'],['en','English'],['ja','Japanese'],['zh','Chinese'],['es','Spanish'],['fr','French'],['de','German']]) { const o = node('option', '', label); o.value = value; lang.append(o); } lang.value = p.language;
