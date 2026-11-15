@@ -31,6 +31,8 @@ from switches import SwitchStore
 from readiness.search import SearchStore
 import catchup
 import history_cursor
+import tinfoil_link
+import translation as translation_worker
 from group_features import MENTION_NETWORKS, MXID, member_labels, find_mentions, mention_content, incoming_mentions
 from typing import NoReturn
 
@@ -1296,8 +1298,10 @@ class Preparing(str):
 
 
 class Translator:
-    def __init__(self, store, root, private=None):
+    def __init__(self, store, root, private=None, link=None):
         self.store, self.root = store, Path(root)
+        # Issue 251: the Wizard Tinfoil app, used when the worker has no install-form TINFOIL_API_KEY.
+        self.link = link
         # Issue 209 (switch box-translate): when on, the worker translates with its own model on the box, never Tinfoil.
         self.private = private or (lambda: False)
 
@@ -1317,14 +1321,32 @@ class Translator:
         try:
             secret = json.loads((self.root / 'secrets.json').read_text())['translation_token']
             result = http(os.environ.get('TRANSLATION_URL', 'http://translation:8766'), '/translate', 'POST', body, secret, 60)
-            if result.get('error'):
+            if result.get('error') and result.get('unconfigured') and not private:
+                translated = self.via_app(original, language)
+            elif result.get('error'):
                 return original, Preparing(result['error']) if result.get('preparing') else result['error']
-            translated = text(result.get('text'))
+            else:
+                translated = text(result.get('text'))
+        except tinfoil_link.NotLinked:
+            return original, tinfoil_link.NOT_CONNECTED
         except (EngineError, OSError, ValueError, KeyError):
             return original, 'Translation unavailable. You can send the original instead.'
         with self.store.db() as db:
             db.execute('INSERT OR REPLACE INTO translation VALUES (?,?)', (key, translated))
         return translated, None
+
+    def via_app(self, original, language):
+        """Issue 251: one translation through the Wizard Tinfoil app's box gateway (raises NotLinked without a link)."""
+        if self.link is None:
+            raise tinfoil_link.NotLinked()
+        try:
+            out = self.link.chat(translation_worker.translation_payload(original, language), 60)
+        except tinfoil_link.NotLinked:
+            raise
+        except Exception:
+            # No upstream text, headers, submitted text or token in logs or API errors.
+            raise ValueError('Tinfoil translation failed') from None
+        return text(out.strip())
 
 
 MEDIA_LABELS = {'m.image': 'Photo', 'm.video': 'Video', 'm.audio': 'Voice message', 'm.file': 'File', 'm.location': 'Location'}
@@ -1551,7 +1573,8 @@ class UnifiedInbox:
         self.root = Path(data) / 'unified'
         self.store = PeopleStore(self.root / 'people.sqlite3')
         self.engine = engine
-        self.translator = Translator(self.store, self.root, lambda: self.switch_on('box-translate'))
+        self.tinfoil = tinfoil_link.TinfoilLink(self.root)
+        self.translator = Translator(self.store, self.root, lambda: self.switch_on('box-translate'), self.tinfoil)
         self.catchup = catchup.CatchUpService(self.store, self.catchup_complete, fail, self.store.own_names)
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
@@ -2458,10 +2481,38 @@ class UnifiedInbox:
         """One Catch me up model call through the private worker that holds the Tinfoil key. Nothing else is reachable."""
         secret = json.loads((self.root / 'secrets.json').read_text())['translation_token']
         result = http(os.environ.get('TRANSLATION_URL', 'http://translation:8766'), '/complete', 'POST', {'model': model, 'system': system, 'user': user}, secret, 185)
-        out = result.get('text')
+        out = self.complete_via_app(result, model, system, user, 185)
         if not isinstance(out, str) or not out.strip():
             raise ValueError('empty')
         return out
+
+    def complete_via_app(self, result, model, system, user, timeout):
+        """The worker's answer, or (issue 251) the Wizard Tinfoil app's when the worker has no install-form key."""
+        if not (result.get('error') and result.get('unconfigured')):
+            return result.get('text')
+        link = getattr(self, 'tinfoil', None)  # some tests build a bare inbox
+        if link is None:
+            return None
+        try:
+            return link.chat(catchup.tinfoil_payload(model, system, user), timeout, *catchup.MODELS)
+        except tinfoil_link.NotLinked:
+            return None
+
+    def tinfoil_state(self):
+        return getattr(self, 'tinfoil', None).state() if getattr(self, 'tinfoil', None) else {'linked': False, 'removed': False}
+
+    def link_tinfoil(self, payload):
+        """Owner session only: keep the Messenger-only token the owner's page just got from the Tinfoil app."""
+        payload = payload if isinstance(payload, dict) else {}
+        try:
+            state = self.tinfoil.link(payload.get('token'), payload.get('models'), payload.get('recommended'))
+        except ValueError:
+            fail('invalid_tinfoil_link', 'That Tinfoil link is not valid. Try again.')
+        except Exception:
+            fail('tinfoil_unavailable', 'Could not reach the Tinfoil app. Try again.', 502)
+        # Auto-translated chats that failed for want of Tinfoil are queued again on their next open.
+        self.tq_seen.clear()
+        return state
 
     def save_transcript(self, message_id, payload):
         """Issue 248 (switch transcript-paragraphs): before the first transcript of a voice note is saved, one Tinfoil
@@ -2500,7 +2551,7 @@ class UnifiedInbox:
         """One formatting call through the private worker that holds the Tinfoil key (the Catch me up route)."""
         secret = json.loads((self.root / 'secrets.json').read_text())['translation_token']
         result = http(os.environ.get('TRANSLATION_URL', 'http://translation:8766'), '/complete', 'POST', {'model': model, 'system': system, 'user': user}, secret, 90)
-        out = result.get('text')
+        out = self.complete_via_app(result, model, system, user, 90)
         if not isinstance(out, str) or not out.strip():
             raise ValueError('empty')
         return out
@@ -2570,7 +2621,8 @@ class UnifiedInbox:
         if not error:
             with self.store.db() as db:
                 db.execute('UPDATE message SET translated=?, translation_error=NULL WHERE id=?', (translated, message_id))
-        return {'id': message_id, 'translated': None if error else translated, 'error': error}
+        return {'id': message_id, 'translated': None if error else translated, 'error': error,
+                **({'tinfoil': 'not_connected'} if error == tinfoil_link.NOT_CONNECTED else {})}
 
     # ---------- sending ----------
     def preview(self, person_id, payload):
@@ -2593,7 +2645,8 @@ class UnifiedInbox:
         preview_id = secrets.token_hex(16)
         with self.store.db() as db:
             db.execute('INSERT INTO preview(id,person_id,identity_id,original,translated,error,expires) VALUES (?,?,?,?,?,?,?)', (preview_id, person_id, identity_id, original, translated, error, int(time.time()) + 900))
-        return {'id': preview_id, 'original': original, 'translated': translated, 'error': error, 'identity_id': identity_id, 'language': person['language']}
+        return {'id': preview_id, 'original': original, 'translated': translated, 'error': error, 'identity_id': identity_id, 'language': person['language'],
+                **({'tinfoil': 'not_connected'} if error == tinfoil_link.NOT_CONNECTED else {})}
 
     def confirm(self, person_id, payload):
         with self.lock:
@@ -3587,6 +3640,9 @@ class UnifiedInbox:
                 return {'job': self.catchup.start(pid, since if type(since) is int else None)}
             if suffix[3:] == ['grant'] and method == 'POST': return self.catchup.grant(pid, payload.get('mode'))
             if suffix[3:] == ['revoke'] and method == 'POST': return self.catchup.revoke(pid, payload.get('clear') is True)
+        # Issue 251, owner session only (no agent capability maps here): Messenger's link to the Wizard Tinfoil app.
+        if suffix == ['tinfoil'] and method == 'GET': return self.tinfoil_state()
+        if suffix == ['tinfoil'] and method == 'POST': return self.link_tinfoil(payload)
         if suffix == ['catch-up', 'settings'] and method == 'GET': return self.catchup.settings()
         if suffix == ['catch-up', 'settings'] and method == 'POST': return self.catchup.set_model(payload.get('model'))
         if len(suffix) >= 2 and suffix[0] == 'people':

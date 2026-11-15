@@ -45,7 +45,8 @@ switches:
   path: /api/view/switches
 provides: [messaging]
 # Contacts: names, Add to Contacts and My card when the Wizard sandboxes Messenger's window (contacts_link.py).
-uses: [contacts]
+# Tinfoil: Translate, Catch me up and transcripts use the connected Tinfoil app's box gateway (tinfoil_link.py).
+uses: [contacts, tinfoil-api-key]
 needs: []
 ---
 
