@@ -118,6 +118,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.56 (Agents read documents, switch off)
+
+Store recipe: pins the image built from main `19c7a48`. Ships #246 (Refs #245): new switch **Agents read documents** (`agent-documents`, off by default). While it is on, `messenger_get_attachment` returns a received PDF, Word file or other document up to 10 MB as the file itself (an MCP embedded resource) plus the text of PDFs and .docx files, so an agent can read a contract and attach a filled copy to a draft. The image adds `python3-pypdf`.
+
 ## 0.2.0-unified.16.55 (Standard Try new features is on for everyone)
 
 Store recipe: pins the image built from main `2386a9e`. Ships #243 (Refs #217): the approved switch **Standard Try new features** (`kit-try-features`) is removed, so Try new features at the bottom of Settings is always the shared Wizard section (On/Off and thumbs up / down per feature, kept on the box). Messenger's own older section is gone and a stored value is ignored.
