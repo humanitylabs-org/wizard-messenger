@@ -23,6 +23,19 @@ MCP_TOOLS=[
     {'name':'messenger_public_identity','description':'Current public messaging identity only; never private keys or message bodies','inputSchema':{'type':'object','properties':{},'additionalProperties':False}},
 ]
 
+def app_version():
+    """The installed Messenger version (issue 234). The release sets it in runtipi/docker-compose.yml
+    (MESSENGER_VERSION) next to config.json and wizard.md, because the image is built before the release
+    that pins it and so can't carry the version itself. Without it (dev checkout) read wizard.md."""
+    found=os.environ.get('MESSENGER_VERSION','').strip()
+    if found: return found
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'wizard.md'),encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('version:'): return line.split(':',1)[1].strip()
+    except OSError: pass
+    return 'dev'
+
 class MessengerServer(ThreadingHTTPServer):
     daemon_threads=True
     def __init__(self, address, engine, token, origins):
@@ -150,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get('jsonrpc') != '2.0':
             return 400,{'jsonrpc':'2.0','id':request_id,'error':{'code':-32600,'message':'Invalid request'}}
         if method == 'initialize':
-            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':'0.2.0-unified.16.35'}}
+            result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'wizard-messenger','version':app_version()}}
         elif method == 'notifications/initialized':
             return 200,{'jsonrpc':'2.0','id':request_id,'result':{}}
         elif method == 'tools/list': result={'tools':MCP_TOOLS+(agent_tools.listed(self) if agent_tools.offered(self) else [])}
@@ -175,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
             from remote_authority import remote_required_gate
             remote_required_gate(method, path)
         if method=='GET' and path=='/healthz':
-            return 200,{'ok':True,'service':'wizard-messenger','version':'0.2.0-unified.16.35'}
+            return 200,{'ok':True,'service':'wizard-messenger','version':app_version()}
         self._authorize()
         engine=self.service.engine
         if path=='/mcp' and method=='POST': return self._mcp(self._body())
