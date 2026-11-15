@@ -392,7 +392,26 @@
     return [watched ? {label: 'Stop keeping a draft ready', icon: 'sparkle', run: () => watch(p, false)}
       : {label: 'Agent keeps a draft ready', icon: 'sparkle', run: () => watch(p, true)}];
   }
-  if (typeof module !== 'undefined') module.exports = {draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  // Merge server rows into a thread's message list (issue 228). A row replaces the entry with its id or its client id
+  // (the send's pending bubble). Live sync can deliver an outgoing row before the send answers (a file plus its
+  // caption takes two sends), so the list may already hold the synced row AND the pending bubble: the row replaces
+  // the first and every other match leaves, or the pending copy stays on its clock forever.
+  function mergeRows(messages, rows, hasMore) {
+    const oldest = messages.find(m => !m.pending)?.timestamp ?? 0;
+    for (const m of rows) {
+      const same = x => x.id === m.id || (m.client_id && x.client_id === m.client_id);
+      const i = messages.findIndex(same);
+      if (i >= 0) {
+        const local = messages.filter(same).map(x => x.local).find(Boolean);
+        messages[i] = m; if (local) m.local = local;
+        for (let j = messages.length - 1; j > i; j--) if (same(messages[j])) messages.splice(j, 1);
+      } else if (!hasMore || m.timestamp >= oldest) messages.push(m);
+    }
+    // Telegram parts share second-resolution timestamps; random Matrix IDs must not reorder/split albums.
+    messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
+    return messages;
+  }
+  if (typeof module !== 'undefined') module.exports = {mergeRows, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1131,15 +1150,7 @@
   }
   function mergeMessages(pid, rows) {
     const t = store.threads[pid]; if (!t) return;
-    const oldest = t.messages.find(m => !m.pending)?.timestamp ?? 0;
-    for (const incoming of rows) {
-      const m = pendingReactions(pid, incoming);
-      const i = t.messages.findIndex(x => x.id === m.id || (m.client_id && x.client_id === m.client_id));
-      if (i >= 0) { const local = t.messages[i].local; t.messages[i] = m; if (local) m.local = local; }
-      else if (!t.has_more || m.timestamp >= oldest) t.messages.push(m);
-    }
-    // Telegram parts share second-resolution timestamps; random Matrix IDs must not reorder/split albums.
-    t.messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
+    mergeRows(t.messages, rows.map(incoming => pendingReactions(pid, incoming)), t.has_more);
   }
   function apply(r) {
     if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = Object.create(null); if (s.person) { openPerson(s.person); if (split.on) renderList(); } else renderList(); return; } // desktop: the list beside the chat reloads too
