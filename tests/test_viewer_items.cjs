@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {viewerItems, timingSummary} = require('../static/unified.js');
+const {viewerItems} = require('../static/unified.js');
 // Issue 170: with "Photos ready in Wizard's viewer" on, each still photo handed to Wizard's shared viewer carries a
 // placeholder (the view copy this phone already has, else the thumbnail), while url stays the original.
 const url = (id, kind) => 'api/unified/media/' + encodeURIComponent(id) + (kind ? '?kind=' + kind : '');
@@ -30,9 +30,4 @@ test('on: a view copy this phone already downloaded wins over the thumbnail', ()
   assert.equal(items[0].placeholder, url('$a', 'thumb'));
   assert.equal(items[1].placeholder, 'blob:http://x/view-b');
   assert.equal(items[1].url, url('$b'));
-});
-
-test('Settings shows tap to Wizard\'s viewer next to the other timings', () => {
-  const lines = timingSummary({photo_wizard: {n: 4, p50: 12, p90: 40}});
-  assert.deepEqual(lines, ["Tap to Wizard's viewer 12 ms (p90 40 ms, 4 opened)"]);
 });

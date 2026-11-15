@@ -77,15 +77,7 @@ async function run(browser, timings, instant, label, viewport, mobile) {
       assert.equal(names.filter(x => x === 'photo_sharp').length, OPENS, 'each sharp copy is timed');
       assert.equal(result.samples.photo_black.sum, 0, 'thumbnail first: no black first frame');
     } else assert.ok(!names.includes('photo_sharp'));
-    if (mobile) await page.getByRole('button', {name: 'Back'}).first().click(); // back to the list, where Settings is
-    await page.locator('#u-filters').waitFor({timeout: 15000});
-    await page.locator('.u-settings-btn').first().click({timeout: 15000});
-    const sum = page.locator('.u-more-photo-timings .u-more-timings');
-    await page.waitForFunction(() => /Tap to picture/.test(document.querySelector('.u-more-photo-timings .u-more-timings')?.innerText || ''), null, {timeout: 5000});
-    result.settings = (await sum.innerText()).split('\n');
-    assert.ok(result.settings.some(x => x.startsWith('Telegram: hand-over 2100 ms')), 'per network: ' + result.settings);
-    await page.locator('.u-more-photo-timings').scrollIntoViewIfNeeded();
-    await page.screenshot({path: path.join(out, `settings-${instant ? 'instant' : 'original'}-${label}.png`)});
+    // Issue 202: the numbers are read at the box's api/unified/status, not shown in Settings.
   }
   assert.deepEqual(errors, [], 'no page errors');
   await ctx.close();

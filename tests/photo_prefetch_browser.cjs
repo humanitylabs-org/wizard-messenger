@@ -80,23 +80,22 @@ async function run(browser, {label, on, network, viewport, phone}) {
     assert.deepEqual(kept, []);
   }
   if (label === 'phone-wifi-off') {
-    // Settings > Background photo download: Off, Wi-Fi only, Always. Picking Wi-Fi only turns the box switch on, and the
-    // phone (on Wi-Fi) starts downloading in the background.
+    // Settings > Try new features (issue 202): turning the switch on starts the background download on this phone
+    // (on Wi-Fi, the default mode); Off stops it.
     await page.locator('[aria-label="Settings"]').first().click();
-    const row = page.locator('.u-settings .u-more-photo-prefetch');
+    const row = page.locator('.u-settings .u-try-row[data-switch="photo-prefetch"]');
     await row.waitFor({timeout: 5000});
     const choices = () => row.locator('[role="radio"]').evaluateAll(bs => bs.map(b => b.textContent + (b.getAttribute('aria-checked') === 'true' ? '*' : '')));
-    assert.deepEqual(await choices(), ['Off*', 'Wi-Fi only', 'Always']);
+    assert.deepEqual(await choices(), ['Off*', 'On']);
     await row.screenshot({path: path.join(out, `${label}-settings-row.png`)});
     media.length = 0;
-    await row.getByRole('radio', {name: 'Wi-Fi only'}).click();
+    await row.getByRole('radio', {name: 'On'}).click();
+    await page.waitForTimeout(300);
     assert.equal(switches['photo-prefetch'], true, 'the box switch is on');
-    assert.deepEqual(await choices(), ['Off', 'Wi-Fi only*', 'Always']);
     await page.waitForTimeout(5000);
     assert.ok(media.includes('$bob0:thumb') && media.includes('$bob0:view'), 'downloads start once it is on: ' + media);
-    await row.getByRole('radio', {name: 'Always'}).click();
-    assert.equal(await page.evaluate(() => localStorage.getItem('messenger.photoPrefetch')), 'always', 'Always is kept on this device');
     await row.getByRole('radio', {name: 'Off'}).click();
+    await page.waitForTimeout(300);
     assert.equal(switches['photo-prefetch'], false, 'Off turns the box switch off');
     await page.screenshot({path: path.join(out, `${label}-settings.png`)});
     result.settings = await choices();

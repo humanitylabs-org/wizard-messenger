@@ -1,6 +1,6 @@
 """Agent keeps a draft ready (issue 178, on for everyone).
 
-The owner picks chats (chat ⋯ > Agent keeps a draft ready) or turns on "Draft for every unread chat". The agent asks
+The owner picks chats (chat ⋯ > Agent keeps a draft ready) or picks "Every unread chat" (Settings > Agent drafts). The agent asks
 messenger_chats_needing_draft which of those chats wait on a reply with no fresh agent draft, and drafts there (or
 updates the draft that is already waiting). Nothing is ever sent by the agent.
 

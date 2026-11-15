@@ -64,11 +64,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'keeps a draft ready, or Stop keeping a draft ready, without opening the chat. An open '
                                'chat shows a Drafts toggle at the top, next to Catch me up.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}, {
-                'id': 'clean-settings', 'name': 'Clean Settings',
-                'description': 'Settings shows only your accounts, agent access and one Agent drafts choice. Features '
-                               'still being tested move to Try new features at the bottom; Inbox view and Suggested '
-                               "merges move to the chat list's ⋯ menu.",
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#202']}, {
                 'id': 'device-auto-translate', 'name': 'Auto-translate on this device',
                 'description': "In a chat set to Auto-translate, incoming messages are translated to English and your "
                                "reply's send preview is translated by this browser's own built-in translator (Chrome on "
@@ -289,16 +284,33 @@ class SwitchStorage(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
             self.assertNotIn('on-device-translate', json.loads(path.read_text()).get('feedback', {}))
 
+    def test_clean_settings_is_gone_and_its_stored_value_cleared(self):
+        # Issue 202: Clean Settings is how Settings looks for everyone now; a stored value from before is dropped on the
+        # next write, and its Try new features feedback no longer shows.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"clean-settings": true, "photo-warm": true}, '
+                            '"feedback": {"clean-settings": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('clean-settings', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('clean-settings', store.listing().get('feedback', {}))
+            self.assertFalse(store.is_on('clean-settings'))
+            with self.assertRaises(UnknownSwitch):
+                store.set('clean-settings', True)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('clean-settings', json.loads(path.read_text()).get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             store = SwitchStore(path)
-            store.vote('clean-settings', 'down')
-            store.set('clean-settings', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'clean-settings': True},
-                                                            'feedback': {'clean-settings': {'tried': True, 'vote': 'down'}}})
-            store.set('clean-settings', False)
-            self.assertEqual(SwitchStore(path).listing()['feedback'], {'clean-settings': {'tried': True, 'vote': 'down'}})
+            store.vote('row-tap-menu', 'down')
+            store.set('row-tap-menu', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'row-tap-menu': True},
+                                                            'feedback': {'row-tap-menu': {'tried': True, 'vote': 'down'}}})
+            store.set('row-tap-menu', False)
+            self.assertEqual(SwitchStore(path).listing()['feedback'], {'row-tap-menu': {'tried': True, 'vote': 'down'}})
             with self.assertRaises(UnknownSwitch):
                 store.vote('gone', 'up')
 
@@ -308,7 +320,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'clean-settings', 'device-auto-translate', 'box-translate', 'kit-try-features', 'agent-wake'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'device-auto-translate', 'box-translate', 'kit-try-features', 'agent-wake'])
 
 
 if __name__ == '__main__':

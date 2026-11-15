@@ -1,6 +1,6 @@
 // Catch me up in the real app UI (stage: tests/catchup_stage.py, synthetic chats, fake summarizer).
 // Checks: title-bar button, three-choice permission sheet, summary bullets that jump to their message, divider button,
-// Back closes one layer, outside tap closes, targets >= 44px, opaque sheet, chat-info turn-off, Settings list,
+// Back closes one layer, outside tap closes, targets >= 44px, opaque sheet, chat-info turn-off, the summary model under the summary,
 // 1000-message chat says "in K parts". SHOTS=<dir> writes sheet screenshots on four skins, phone + desktop.
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -109,17 +109,11 @@ async function dividerAndBig(browser, viewport) {
   const foot = await page.locator('.u-cu-foot').textContent();
   assert.match(foot, /Summarized 1000 messages in \d+ parts\./, tag + ' ' + foot);
   if (SHOTS) await page.screenshot({path: path.join(SHOTS, `catchup-1000-dark-${tag}.png`)});
+  // Issue 202: the summary model is picked under the summary (Settings has no Catch me up part).
+  await page.locator('.u-cu-model:not([hidden]) select').waitFor({timeout: 8000});
+  assert.equal(await page.locator('.u-cu-model select option').count(), 2);
+  assert.equal(await page.locator('.u-cu-model select').inputValue(), 'glm-5-3');
   await tap(t, page.locator('#u-overlay [aria-label="Close"]'));
-  // Settings lists the standing grants.
-  const settings = page.locator('[aria-label="Settings"], .u-header [aria-label="Settings"]').first();
-  if (await settings.count()) {
-    if (t.phone) await page.locator('.u-back').first().click(); else await page.keyboard.press('Escape');
-    await page.waitForTimeout(400); await tap(t, settings); await page.locator('.u-cu-settings:not([hidden])').waitFor({timeout: 8000});
-    const rows = await page.locator('.u-cu-grant').allTextContents();
-    assert.ok(rows.some(r => /Bram/.test(r)) && rows.some(r => /Big/.test(r)), tag + ' Settings lists standing grants: ' + rows);
-    assert.equal(await page.locator('.u-cu-settings select option').count(), 2);
-    assert.equal(await page.locator('.u-cu-settings select').inputValue(), 'glm-5-3');
-  }
   assert.deepEqual(t.errors, [], tag + ' page errors');
   await t.ctx.close();
 }
