@@ -411,7 +411,23 @@
     messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
     return messages;
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
+  // wizard-ux issue 1276: what the WizardOS Android app needs to clear a network app's own tray notification (LINE's,
+  // WhatsApp's...) for a chat read here: the network and the names that app shows for it. The shell hands it on only
+  // while the owner's switch (Clear chat notifications) is on; otherwise the call does nothing.
+  function chatReadNotices(p) {
+    const out = [];
+    for (const i of p?.identities || []) {
+      if (!i?.network || i.network === 'private' || i.network === 'messenger') continue;
+      let n = out.find(x => x.network === i.network);
+      if (!n) { if (out.length >= 3) continue; out.push(n = {network: i.network, names: []}); }
+      for (const name of [i.label, p.display_name]) {
+        const v = typeof name === 'string' ? name.trim() : '';
+        if (v && v.length <= 200 && !n.names.includes(v) && n.names.length < 8) n.names.push(v);
+      }
+    }
+    return out.filter(x => x.names.length);
+  }
+  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, timingSummary};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2244,6 +2260,8 @@
     if (row) row.unread = 0;
     unreadById[view.id] = 0; syncBadge(); if (split.on && s.tab !== 'messenger') drawList();
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
+    // A test slice of markRead may not carry chatReadNotices.
+    if (typeof chatReadNotices === 'function') for (const x of chatReadNotices(t.person)) { try { window.WizardApp?.notifications?.chatRead?.(x)?.catch?.(() => {}); } catch {} }
   }
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
   // Bubble text, built as nodes (never innerHTML): @mention chips, links, and the light formatting the networks
