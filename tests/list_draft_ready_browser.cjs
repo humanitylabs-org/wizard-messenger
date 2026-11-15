@@ -1,6 +1,6 @@
 // Draft ready from the chat list (issue 201, switch list-draft-ready): holding a chat row (phone) or right-clicking it
-// (desktop) offers "Agent keeps a draft ready" / "Stop keeping a draft ready" without opening the chat. Switch off,
-// the row menu is as before; the open chat's ⋯ menu has the item either way. Synthetic API only; phone + desktop.
+// (desktop) offers "Agent keeps a draft ready" / "Stop keeping a draft ready" without opening the chat, and the open
+// chat's header has a one-tap Drafts toggle instead of the ⋯ item. Switch off, both menus are as before. Synthetic API only; phone + desktop.
 // PLAYWRIGHT_MODULE=... node tests/list_draft_ready_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -104,13 +104,33 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       assert.deepEqual(box.watch.at(-1), {person_id: 'james', on: false});
       assert.deepEqual(watch.watched, []);
     }
-    // The open chat's ⋯ menu keeps the item, switch on or off.
+    // The open chat: switch on, a one-tap Drafts toggle sits in the header next to Catch me up and the ⋯ menu drops
+    // the item; switch off, no toggle and the ⋯ menu keeps it.
     // (After a CDP touch hold the first synthetic click can be eaten by swallowRelease, so tap again if needed.)
     for (let i = 0; i < 3 && !(await page.locator('.u-composer textarea').count()); i++) { await row.click(); await page.waitForTimeout(1500); }
     await page.locator('.u-composer textarea').waitFor({timeout: 10000});
+    const toggle = page.locator('.u-thread-head .u-draft-toggle').last();
+    if (!on) assert.equal(await toggle.isVisible(), false, 'switch off: no header toggle');
+    else {
+      await toggle.waitFor({state: 'visible', timeout: 5000});
+      const order = await page.locator('.u-thread-head').last().evaluate(h => [...h.children].map(c => c.getAttribute('aria-label') || '').filter(Boolean));
+      const at = order.indexOf('Agent keeps a draft ready');
+      assert.ok(at >= 0 && order[at + 1] === 'Catch me up' && order[at + 2] === 'Chat options', JSON.stringify(order));
+      assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+      assert.equal((await toggle.innerText()).trim(), 'Drafts');
+      await shot('header-off');
+      await toggle.click();
+      await page.waitForFunction(() => [...document.querySelectorAll('.u-thread-head .u-draft-toggle')].some(b => b.getAttribute('aria-pressed') === 'true'), null, {timeout: 5000});
+      assert.deepEqual(box.watch.at(-1), {person_id: 'james', on: true});
+      await shot('header-on');
+      await toggle.click();
+      await page.waitForFunction(() => [...document.querySelectorAll('.u-thread-head .u-draft-toggle')].every(b => b.getAttribute('aria-pressed') === 'false'), null, {timeout: 5000});
+      assert.deepEqual(box.watch.at(-1), {person_id: 'james', on: false});
+    }
     await page.locator('[aria-label="Chat options"]').last().click(); await page.locator('.u-menu').waitFor();
     items = await page.locator('.u-menu .u-act').allInnerTexts();
-    assert.ok(items.includes('Agent keeps a draft ready'), JSON.stringify(items));
+    if (on) assert.ok(!items.some(t => /draft ready/.test(t)), 'switch on: the header toggle replaces the ⋯ item ' + JSON.stringify(items));
+    else assert.ok(items.includes('Agent keeps a draft ready'), JSON.stringify(items));
     await closeMenu();
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(`${tag}: ok`);

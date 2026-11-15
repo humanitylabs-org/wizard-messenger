@@ -125,7 +125,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       assert.deepEqual(box.feedback['photo-warm'], {tried: true, vote: 'up'});
       // With Draft ready from the chat list on, the hint says right-click / hold.
       await tryBox.locator('.u-try-row[data-switch="list-draft-ready"]').getByRole('radio', {name: 'On'}).click();
-      await until(async () => /right-clicking or holding a chat/.test(await pick.innerText()));
+      await until(async () => /Drafts at the top of a chat, or by holding a chat/.test(await pick.innerText()));
       const ldr = tryBox.locator('.u-try-row[data-switch="list-draft-ready"]');
       assert.equal(await ldr.locator('[data-on="1"]').getAttribute('aria-checked'), 'true');
       const fits = await pick.locator('.u-view-btn').evaluateAll(bs => bs.every(b => b.scrollWidth <= b.clientWidth));
