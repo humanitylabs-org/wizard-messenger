@@ -83,6 +83,19 @@ class PermissionsHTTP(HTTPFixture):
             self.assertEqual(status, 200, (path, data))
         self.assertEqual(unified.dispatch.call_count, len(routes))
 
+    def test_tinfoil_link_route_is_owner_only_machine_key_gets_403_in_every_mode(self):
+        # Issue 251: only the owner's own page links Messenger to the Tinfoil app; no key ever reads or sets it.
+        unified = Mock(); unified.dispatch.return_value = {'linked': False}; self.server.unified = unified
+        for mode in MODES:
+            self.policy(mode)
+            for method in ('GET', 'POST'):
+                with self.subTest(mode=mode, method=method):
+                    status, _, data = self.request(method, '/api/unified/tinfoil', {} if method != 'GET' else None, self.bearer)
+                    self.assertEqual(status, 403, data)
+        unified.dispatch.assert_not_called()
+        status, _, _ = self.request('GET', '/api/unified/tinfoil', None, self.owner_headers())
+        self.assertEqual(status, 200)
+
     def test_catch_me_up_routes_are_owner_only_machine_key_gets_403_in_every_mode(self):
         # The grant covers only the app's own Tinfoil summarizer: no agent, key or machine caller reaches these.
         unified = Mock(); unified.dispatch.return_value = {'ok': True}; self.server.unified = unified

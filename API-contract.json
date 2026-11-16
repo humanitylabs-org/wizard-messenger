@@ -712,6 +712,23 @@
     },
     {
       "method": "GET",
+      "path": "/api/unified/tinfoil",
+      "auth": true,
+      "result": "owner session only: {linked, removed}; Messenger's link to the Wizard Tinfoil app (issue 251)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/unified/tinfoil",
+      "auth": true,
+      "result": "owner session only: keeps the Messenger-only token the owner's page got from the Tinfoil app (POST /wizard-tinfoil/api/app-tokens), after checking it lists models; returns {linked, removed}",
+      "body": {
+        "token": "box token from the Tinfoil app",
+        "models": "optional model ids",
+        "recommended": "optional model ids"
+      }
+    },
+    {
+      "method": "GET",
       "path": "/api/unified/catch-up/settings",
       "auth": true,
       "result": "owner session only: {model, models:[glm-5-3, deepseek-v4-1-flash], default, grants:[{person_id,name,mode,until}]}"

@@ -436,7 +436,7 @@
         const local = await deviceTranslate(m.original, 'en', globalThis, {same: true});
         if (local) onDevice.set(m.id, {original: m.original, text: local.text});
         else {
-          const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}).catch(() => null);
+          const r = await withTinfoil(() => call('messages/' + encodeURIComponent(m.id) + '/translate', {}), false).catch(() => null);
           if (r?.translated) m.translated = r.translated; else if (r?.error) m.translation_error = r.error;
         }
         if (view.id === id) paintThread();
@@ -563,7 +563,35 @@
   // Two panes side by side (desktop split) each carry a notice line: errors go to the sheet if one is open,
   // else to the pane the owner is working in.
   const errorBox = () => $('u-overlay')?.querySelector('#u-error') || (split.on ? (s.person ? $('u-pane-thread') : $('u-pane-list'))?.querySelector('#u-error') : null) || $('u-error');
-  const error = e => { const el = errorBox(); if (el) el.textContent = e.message || 'Request failed. Please try again.'; };
+  const error = e => { const el = errorBox(); if (el) { el.textContent = e.message || 'Request failed. Please try again.'; if (e.tinfoil) el.append(' ', tinfoilOpen()); } };
+  // Issue 251: Translate, auto-translate, the send preview and Catch me up fall back to the Wizard Tinfoil app. Like
+  // Search's AI overviews, this owner page asks Tinfoil (sibling app, same origin) for a Messenger-only token and hands
+  // it to the box (api/unified/tinfoil); the Tinfoil key never leaves the Tinfoil app. A window the Wizard sandboxes
+  // can't reach Tinfoil, and a token removed on the Tinfoil page is only replaced after the owner taps Translate again.
+  const TINFOIL = new URL('../wizard-tinfoil/', location.href).pathname;
+  let tinfoilLinking = null;
+  function linkTinfoil(force) {
+    if (tinfoilLinking && !force) return tinfoilLinking;
+    tinfoilLinking = (async () => {
+      const state = await call('tinfoil');
+      if (state?.linked) return true;
+      if (!state || (state.removed && !force) || sandboxedWindow()) return false;
+      const conn = await fetch(TINFOIL + 'api/connection', {credentials: 'same-origin', cache: 'no-store'}).then(r => r.ok ? r.json() : null);
+      if (!conn || !(conn.status === 'connected' || conn.credentialStored)) return false;
+      const grant = await fetch(TINFOIL + 'api/app-tokens', {method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: {'Content-Type': 'application/json', 'X-Wizard-Request': '1'}, body: JSON.stringify({app: 'messenger'})}).then(r => r.ok ? r.json() : null);
+      if (!grant?.token) return false;
+      return !!(await call('tinfoil', {token: grant.token, models: grant.models, recommended: grant.recommended}))?.linked;
+    })().catch(() => false);
+    return tinfoilLinking;
+  }
+  // A box answer that says Tinfoil isn't connected: link the Tinfoil app once and ask again.
+  async function withTinfoil(ask, force = true) {
+    const r = await ask();
+    return r?.tinfoil === 'not_connected' && await linkTinfoil(force) ? ask() : r;
+  }
+  const tinfoilProblem = r => Object.assign(new Error(r.error), {tinfoil: r.tinfoil === 'not_connected'});
+  function tinfoilOpen() { const a = node('a', 'u-tinfoil-open', 'Open Tinfoil'); a.href = TINFOIL; a.target = '_top'; return a; }
   // Release a "Saving" hold taken mid-action as soon as the action ends, or it would block Wizard reloads until the next hold() call.
   async function action(fn) { if (s.busy) return; s.busy = true; try { await fn(); } catch (e) { error(e); } finally { s.busy = false; hold(); } }
   // Hold off a Wizard update reload only for work a reload would really lose: a send still going out or a recording.
@@ -2614,7 +2642,7 @@
         const local = await deviceTranslate(m.original, 'en', globalThis); // issue 199: always tried first, Tinfoil only as fallback
         if (local) onDevice.set(m.id, {original: m.original, text: local.text});
       }
-      if (shown[m.id] !== 'translated' && !m.translated && !deviceText(m)) { const r = await call('messages/' + encodeURIComponent(m.id) + '/translate', {}); if (r.error) throw new Error(r.error); m.translated = r.translated; }
+      if (shown[m.id] !== 'translated' && !m.translated && !deviceText(m)) { const r = await withTinfoil(() => call('messages/' + encodeURIComponent(m.id) + '/translate', {})); if (r.error) throw tinfoilProblem(r); m.translated = r.translated; }
       shown[m.id] = shown[m.id] === 'translated' ? 'original' : 'translated'; paintThread();
     });
   }
@@ -4035,11 +4063,11 @@
       // Issue 204: with device-auto-translate on and a built-in translator, this browser translates the reply and the
       // box binds that text to the preview; otherwise (or if it can't) the box asks Tinfoil as before.
       const local = deviceAuto() && reviewedOf(p) ? await deviceTranslate(text, p.language, globalThis) : null;
-      const preview = await call('people/' + id + '/preview', local ? {text, identity_id, translated: local.text, on_device: true} : {text, identity_id});
+      const preview = await withTinfoil(() => call('people/' + id + '/preview', local ? {text, identity_id, translated: local.text, on_device: true} : {text, identity_id}));
       if (s.person !== id) return;
       const sheet = overlay('Review before sending');
       sheet.append(node('p', 'helper', netLabel(p.identities.find(i => i.id === preview.identity_id).network) + ' → ' + p.display_name), node('p', 'u-preview', preview.translated), node('p', 'u-original', preview.original));
-      if (preview.error) sheet.append(node('p', 'error', preview.error));
+      if (preview.error) { const why = node('p', 'error', preview.error); if (preview.tinfoil === 'not_connected') why.append(' ', tinfoilOpen()); sheet.append(why); }
       const reply = view.reply;
       const confirmSend = original => action(async () => {
         const r = await call('people/' + id + '/send', {preview_id: preview.id, send_original: original, reply_to: reply?.id || null, client_id: 'w' + uid()});
@@ -5100,7 +5128,7 @@
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
     // Compatibility hook; adapter rows normally supply private unread to the one Inbox badge.
     setNativeUnread(n) { n = Math.max(0, n | 0); if (n !== nativeUnread) { nativeUnread = n; syncBadge(); } },
-    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; if (options.mediaTicket) mediaTicket = options.mediaTicket; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setTimeout(loadDraftWatch, 600); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
+    mount(options) { rawApi = options.api; api = watchBusy(options.api); startPrefetch(); native = options.native; if (options.csrf) csrf = options.csrf; if (options.mediaTicket) mediaTicket = options.mediaTicket; s.drafts = loadDrafts(); saveDrafts(); s.draftIndex = {}; setTimeout(refreshDraftIndex, 1500); setInterval(refreshDraftIndex, 20000); setTimeout(syncSwitches, 300); setTimeout(loadDraftWatch, 600); setTimeout(() => linkTinfoil(false), 2500); setInterval(() => { if (!document.hidden) syncSwitches(); }, SWITCH_POLL_MS); document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshDraftIndex(); syncSwitches(); view.sd?.check?.(false); } }); for (const el of $('inbox-tabs').querySelectorAll('[data-tab]')) el.onclick = () => (el.getAttribute('aria-selected') === 'true' && !s.person && s.search == null && !s.overlay) ? null : switchTab(el.dataset.tab); listenForShares(); },
     // Cached chats are restored only after ready account status, never over enrollment/unlock.
     paintSaved() {
       if (!s.ready || !restore()) return false;
