@@ -120,6 +120,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.58 (Translate uses the Wizard Tinfoil app)
+
+Store recipe: pins the image built from main `bd8abe4`. Ships #252 (Refs #251), a bug fix, on for everyone: without an install-form `TINFOIL_API_KEY`, Translate, auto-translate, the send preview, Catch me up and transcript formatting now go through the connected Wizard Tinfoil app (a Messenger-only box token the owner's page gets from Tinfoil, kept 0600 in `unified/tinfoil-link.json`), instead of answering "Tinfoil not configured". With Tinfoil not connected the notice says so and offers Open Tinfoil. `wizard.md` now `uses: [contacts, tinfoil-api-key]`.
+
 ## 0.2.0-unified.16.57 (Transcripts in paragraphs, switch off)
 
 Store recipe: pins the image built from main `a5f7674`. Ships #249 (Refs #248): new switch **Transcripts in paragraphs** (`transcript-paragraphs`, off by default). While it is on, Transcribe on a voice note sends the raw transcript through one Tinfoil formatting call (the private worker's Catch me up route) that adds paragraph breaks, punctuation and capitals. The result is kept only if its words are exactly the raw transcript's; otherwise, or on any error, the raw transcript is saved. A success is cached, so Retry never calls the model twice. Transcripts already saved stay as they are.
