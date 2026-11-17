@@ -3487,7 +3487,7 @@
       let got; try { got = r.session?.getInfo?.()?.durationMs; } catch { got = null; }
       if (typeof got !== 'number') return;
       const wall = now - r.started;
-      if (wall - got > 3000) { r.stallShown = true; voiceNotice('The microphone stopped reaching Wizard ' + fmtDur(got) + ' in.' + captureCause(r) + ' Keep Wizard in front while you record.'); }
+      if (wall - got > 3000) { r.stallShown = true; r.liveNotice = 'The microphone stopped reaching Wizard ' + fmtDur(got) + ' in.' + captureCause(r) + ' Keep Wizard in front while you record.'; voiceNotice(r.liveNotice); }
     }
     function captureCause(r) {
       if ((r.hiddenMs || 0) > 2000) return ' Wizard was out of sight for ' + fmtDur(r.hiddenMs) + '.';
@@ -3535,7 +3535,10 @@
       if (!recoverOnly && own && !liveOwnTap) { recoverVoice(); return; }
       const r = {phase: recoverOnly ? 'recording' : 'starting', person: id, levels: [], started: own?.startedAt || Date.now(), cancelled: false};
       view.recording = r; view.voiceNotice = ''; hold();
-      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); r.offWarn?.(); if (view.recording === r) view.recording = null; view.paintRecording?.(); hold(); };
+      // A notice about the take being recorded (a storage warning saying Send or Discard still works, a stalled mic)
+      // ends with that take: once the recording panel closes it would sit under an idle composer (issue 262).
+      const liveNotice = message => { r.liveNotice = message; voiceNotice(message); };
+      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); r.offWarn?.(); if (view.recording === r) view.recording = null; if (r.liveNotice && view.voiceNotice === r.liveNotice) view.voiceNotice = ''; view.paintRecording?.(); hold(); };
       // An abandoned start may settle long after a newer recording began: it never paints a notice again.
       const failed = e => { if (!r.abandoned) voiceNotice(e?.message || 'Could not start recording. Try again.'); };
       const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
@@ -3595,8 +3598,8 @@
           r.phase = 'recording';
           const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
           let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
-          r.offWarn = r.session.onWarn?.(message => { if (!r.abandoned) voiceNotice(message); });
-          if (info?.warning) voiceNotice(info.warning);
+          r.offWarn = r.session.onWarn?.(message => { if (!r.abandoned) liveNotice(message); });
+          if (info?.warning) liveNotice(info.warning);
           r.tick = setInterval(() => {
             if (r.phase !== 'recording') return;
             const level = Math.round(Math.min(1, last * 1.6) * 1024); r.levels.push(level);
