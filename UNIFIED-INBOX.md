@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.63 (Voice note storage warning no longer sticks)
+
+Store recipe: pins the image built from main `bf28e62`. Ships #263 (Refs humanitylabs-org/wizard-messenger#262): a warning about the voice note being recorded (on-device saving failed, microphone stalled) now goes away when that recording is sent or discarded, instead of staying under the empty message box.
+
 ## 0.2.0-unified.16.62 (Try new features shows in Settings)
 
 Store recipe: pins the image built from main `9ba03e7`. Ships #259 (Refs humanitylabs-org/wizard-os#627): the box now serves `wizard-try-features.js`, so the standard Try new features section at the bottom of Settings loads instead of staying hidden (the file used to get a 401 JSON answer from the API).
