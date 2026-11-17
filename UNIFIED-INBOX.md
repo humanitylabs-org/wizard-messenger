@@ -120,6 +120,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.59 (Auto-translate on this device is on for everyone)
+
+Store recipe: pins the image built from main `8a0c831`. Ships #254 (Refs #204): the approved switch **Auto-translate on this device** (`device-auto-translate`) is removed, so in an auto-translate chat a browser with a built-in translator (Chrome on a computer) always translates incoming messages and the reply's send preview itself, and Tinfoil only translates what the browser can't or where it has none (Safari, Firefox, phones). A stored value for the old switch is dropped.
+
 ## 0.2.0-unified.16.58 (Translate uses the Wizard Tinfoil app)
 
 Store recipe: pins the image built from main `bd8abe4`. Ships #252 (Refs #251), a bug fix, on for everyone: without an install-form `TINFOIL_API_KEY`, Translate, auto-translate, the send preview, Catch me up and transcript formatting now go through the connected Wizard Tinfoil app (a Messenger-only box token the owner's page gets from Tinfoil, kept 0600 in `unified/tinfoil-link.json`), instead of answering "Tinfoil not configured". With Tinfoil not connected the notice says so and offers Open Tinfoil. `wizard.md` now `uses: [contacts, tinfoil-api-key]`.
