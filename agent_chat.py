@@ -9,7 +9,7 @@ One pinned chat with the owner's own agent, kept on the box (people store kv `ag
   A tap answers that item; the agent carries it out and collapses the item to its result (messenger_agent_chat_done).
 - Urgent ping: one line (with an optional link), only for something time-sensitive. It makes the chat unread and
   counts on Messenger's badge.
-- Report: a longer write-up. Reports stay out of the chat itself and show under its Reports button.
+- Report: a longer write-up. Reports stay out of the chat itself and show in their own Reports chat next to it.
 - Photos and voice notes (issue 266): a note can be a photo or a voice note. The file stays on the box (data dir
   `unified/agent-chat/`, dropped with its entry) and the agent fetches it with messenger_agent_chat_attachment.
 - Wake (issue 266): a note, a Sweep tap or a button answer wakes every agent that asked with
@@ -200,7 +200,11 @@ def state(unified):
     reports = [e for e in entries if e.get('kind') == 'report']
     return {'entries': entries[-SHOWN:], 'unread': len(unread), 'urgent': any(e['kind'] == 'ping' for e in unread),
             'reports_unread': sum(1 for e in reports if e['at'] > data['reports_read_at']),
-            'sweep_open': _open_sweep(data) is not None, 'read_at': data['read_at']}
+            'sweep_open': _open_sweep(data) is not None, 'read_at': data['read_at'],
+            # Is anyone listening (Miguel on issue 265: "how exactly do I use this?"): woken = an agent asked to be
+            # woken here; checked = an agent has ever ticked a note or posted.
+            'agent': {'woken': bool(_wake_load(unified.store)['subs']),
+                      'checked': any(e.get('seen') or e.get('by') == 'agent' for e in entries)}}
 
 
 def note(unified, payload):

@@ -162,7 +162,7 @@ TOOLS = [
           '"buttons": [{"label": "Yes", "value": "yes"}, ...]} (up to 20 items, 4 buttons; labels up to 24 characters); '
           'with nothing to ask, give no items. kind `ping`: ONE line (up to 200 characters, optional `link`), only when '
           'something is time-sensitive; it makes the chat unread. kind `report`: a longer write-up (stats, weekly '
-          'summaries); it goes under Reports, not into the chat. There is no reply kind: notes never get a text answer. '
+          'summaries); it goes to his own Reports chat, not into the Agent chat. There is no reply kind: notes never get a text answer. '
           'Needs Draft-only or higher.',
           {'kind': {'type': 'string', 'enum': ['sweep', 'ping', 'report'], 'description': 'sweep, ping or report'},
            'text': _string('ping: the one line; report: the write-up; sweep: an optional line above the list'),

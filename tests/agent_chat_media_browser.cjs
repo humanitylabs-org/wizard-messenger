@@ -85,12 +85,12 @@ async function run(browser, label, viewport) {
     return route.fulfill({status: 200, contentType: TYPES[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file)});
   });
   await page.goto('https://messenger.test/');
-  await page.locator('.u-agent-row').waitFor({timeout: 20000});
+  await page.locator('.u-agent-row[data-mode="chat"]').waitFor({timeout: 20000});
   const shot = name => page.screenshot({path: path.join(out, `${label}-${name}.png`)});
   const result = {label};
-  await page.locator('.u-agent-row').click();
-  const sheet = page.locator('.u-sheet.u-agent-chat');
-  await sheet.waitFor({timeout: 5000});
+  await page.locator('.u-agent-row[data-mode="chat"]').click();
+  const sheet = page.locator('#unified-inbox');
+  await sheet.locator('.u-thread-head.u-agent-head').waitFor({timeout: 5000});
   assert.equal(await sheet.getByRole('button', {name: 'Add a photo or voice note'}).count(), 1, label + ': Add is in the composer');
   // A photo note.
   await sheet.locator('input.u-ac-file').setInputFiles({name: 'receipt.png', mimeType: 'image/png', buffer: PNG});
@@ -121,10 +121,10 @@ async function run(browser, label, viewport) {
   fake.ack('n1'); fake.ack('n2');
   await page.waitForFunction(() => document.querySelectorAll('.u-ac-row.out .u-ac-tick').length === 2, null, {timeout: 9000});
   await shot('2-media-notes');
-  await page.getByRole('button', {name: 'Close'}).first().click();
-  await sheet.waitFor({state: 'detached', timeout: 5000});
-  result.snippet = await page.locator('.u-agent-row .u-snippet').textContent().catch(() => null);
-  if (result.snippet !== null) assert.equal(result.snippet, 'You: Voice note');
+  await page.getByRole('button', {name: label === 'phone' ? 'Back' : 'Close chat'}).click();
+  await page.locator('.u-agent-head').waitFor({state: 'detached', timeout: 5000});
+  result.snippet = await page.locator('.u-agent-row[data-mode="chat"] .u-snippet').textContent().catch(() => null);
+  assert.equal(result.snippet, 'You: Voice note');
   assert.deepEqual(errors, [], label + ' page errors');
   await ctx.close();
   return result;

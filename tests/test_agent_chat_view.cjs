@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {agentChatRows, agentChatSnippet} = require('../static/unified.js');
+const {agentChatRows, agentChatSnippet, agentReportSnippet} = require('../static/unified.js');
 // Issue 265 (switch agent-chat): what the owner's Agent chat shows, from the box's state (agent_chat.state).
 
 const state = {unread: 1, urgent: false, entries: [
@@ -32,11 +32,15 @@ test('a sweep item is open, answered (still changeable), locked once picked up, 
   assert.equal(items[3].result, 'Cancelled Thursday');
 });
 
-test('Reports shows only reports, newest first', () => {
-  const rows = agentChatRows({entries: [...state.entries, {id: 'p9', kind: 'report', by: 'agent', text: 'Later', at: 9000}]}, 'reports');
-  assert.deepEqual(rows.map(r => r.id), ['p9', 'p3']);
-  assert.equal(rows[1].who, 'Oscar');
-  assert.equal(rows[0].who, 'Your agent');
+test('the Reports chat shows only reports, oldest first like any chat, and its row names the newest', () => {
+  const all = {entries: [...state.entries, {id: 'p9', kind: 'report', by: 'agent', text: 'Later\nmore', at: 9000}]};
+  const rows = agentChatRows(all, 'reports');
+  assert.deepEqual(rows.map(r => r.id), ['p3', 'p9']);
+  assert.equal(rows[0].who, 'Oscar');
+  assert.equal(rows[1].who, 'Your agent');
+  assert.deepEqual(agentReportSnippet(all), {text: 'Later', at: 9000, urgent: false});
+  assert.equal(agentReportSnippet({entries: state.entries.slice(0, 2)}), null);
+  assert.equal(agentReportSnippet(null), null);
 });
 
 test('the pinned row says what is newest', () => {
