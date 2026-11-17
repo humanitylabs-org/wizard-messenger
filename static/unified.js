@@ -444,7 +444,20 @@
     const last = agentChatRows(state, 'reports').at(-1);
     return last ? {text: last.text.split('\n')[0], at: last.at, urgent: false} : null;
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet};
+  // Issue 273: a voice note's archive and upload each get a deadline, so one stalled request on a phone turns the bubble
+  // into Retry instead of keeping it (and every later message to that person) on the clock. Sized for a long take on a
+  // slow phone link: one minute, plus a second per 64 KB moved, plus half the take's length for converting it.
+  const VOICE_STEP_MIN_MS = 60000, VOICE_STEP_MAX_MS = 600000;
+  function voiceDeadline(bytes = 0, durationMs = 0) {
+    return Math.min(VOICE_STEP_MAX_MS, VOICE_STEP_MIN_MS + Math.ceil(Math.max(0, bytes) / 65536) * 1000 + Math.max(0, durationMs) / 2);
+  }
+  // Runs work(signal) and rejects with `message` (code 'voice_timeout') once ms pass; the signal aborts its fetches.
+  function withDeadline(work, ms, message, timers = globalThis) {
+    const ctl = new AbortController(); let timer;
+    const late = new Promise((_, no) => { timer = timers.setTimeout(() => { const e = new Error(message); e.code = 'voice_timeout'; no(e); ctl.abort(); }, ms); });
+    return Promise.race([Promise.resolve().then(() => work(ctl.signal)), late]).finally(() => timers.clearTimeout(timer));
+  }
+  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -3992,23 +4005,23 @@
       toast(outcome === 'shared' ? 'Recording shared. The unsent note is still kept.' : outcome === 'cancelled' ? 'Save cancelled. Recording kept.' : 'File sharing unavailable. Recording kept.');
     } catch (_) { toast('Could not save recording. Recording kept.'); }
   }
-  async function archiveVoiceOriginal(voice) {
+  async function archiveVoiceOriginal(voice, signal) {
     const blob = voice.blob;
     const query = new URLSearchParams({take: voice.take || 'unsent', duration: String(voice.duration || 0), mime: blob.type || '', size: String(blob.size)});
-    const response = await fetch('api/view/voice-original?' + query, {method: 'PUT', credentials: 'same-origin', cache: 'no-store', headers: {'Content-Type': 'application/octet-stream', 'X-Messenger-CSRF': csrf()}, body: blob});
+    const response = await fetch('api/view/voice-original?' + query, {method: 'PUT', credentials: 'same-origin', cache: 'no-store', signal, headers: {'Content-Type': 'application/octet-stream', 'X-Messenger-CSRF': csrf()}, body: blob});
     let env = {}; try { env = await response.json(); } catch (_) { /* keep original on every failure */ }
     if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Original recording not saved. Use Save recording.');
-    const proof = await fetch('api/view/voice-original/' + encodeURIComponent(env.result.id), {credentials: 'same-origin', cache: 'no-store'});
+    const proof = await fetch('api/view/voice-original/' + encodeURIComponent(env.result.id), {credentials: 'same-origin', cache: 'no-store', signal});
     if (!proof.ok) throw new Error('Original recording readback failed. Use Save recording.');
     const original = new Uint8Array(await blob.arrayBuffer()), saved = new Uint8Array(await proof.arrayBuffer());
     if (original.length !== saved.length || original.some((v, i) => v !== saved[i])) throw new Error('Original recording readback differs. Use Save recording.');
     // Custody is diagnostic only: do not ack, clear the bubble, or infer delivery.
     return env.result;
   }
-  async function upload(id, kind, blob, name = '') {
+  async function upload(id, kind, blob, name = '', signal) {
     // Telegram takes voice notes only as Ogg Opus. Retries convert again from the kept original.
     if (kind === 'voice') blob = await toOggOpus(blob);
-    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind + (name ? '&name=' + encodeURIComponent(name) : ''), {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+    const response = await fetch('api/unified/people/' + encodeURIComponent(id) + '/upload?kind=' + kind + (name ? '&name=' + encodeURIComponent(name) : ''), {method: 'PUT', credentials: 'same-origin', cache: 'no-store', signal,
       headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
     let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
     if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Upload failed. Tap to retry.');
@@ -4040,7 +4053,13 @@
         }
         if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
         if (job.file) upload_id = (await upload(id, 'file', job.file.blob, job.file.name)).upload_id;
-        if (job.voice) { await archiveVoiceOriginal(job.voice); upload_id = (await upload(id, 'voice', job.voice.blob)).upload_id; media = {duration: job.voice.duration, waveform: job.voice.waveform}; }
+        if (job.voice) {
+          // Bounded steps (issue 273): a stall shows Retry and frees the chat's queue for the next message.
+          const v = job.voice, size = v.blob.size || 0;
+          await withDeadline(signal => archiveVoiceOriginal(v, signal), voiceDeadline(2 * size), 'Voice note did not save in time. Tap to retry.');
+          upload_id = (await withDeadline(signal => upload(id, 'voice', v.blob, '', signal), voiceDeadline(size, v.duration), 'Voice note upload stalled. Tap to retry.')).upload_id;
+          media = {duration: v.duration, waveform: v.waveform};
+        }
         const r = await call('people/' + id + '/send', job.pick ? {pick: job.pick.id, client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null}
           : {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
         if (r.message) mergeMessages(id, r.messages || [r.message]);
