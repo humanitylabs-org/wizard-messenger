@@ -54,12 +54,6 @@ SWITCHES = (
                     'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#223']},
-    {'id': 'agent-documents', 'name': 'Agents read documents',
-     'description': 'Your agent can open PDFs, Word files and other documents people send you (up to 10 MB), not only '
-                    'photos: it gets the file itself and its text, so it can check a contract or prepare a filled copy '
-                    'as a draft attachment. Only agents you gave Read-only or higher.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#245']},
     {'id': 'transcript-paragraphs', 'name': 'Transcripts in paragraphs',
      'description': 'Transcribe on a voice note gives the text paragraph breaks, punctuation and capitals, through '
                     'Tinfoil. The words stay exactly as spoken; if anything would change them, the plain transcript '
