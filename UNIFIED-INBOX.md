@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.65 (Agent chat: photo and voice notes, and waking the agent, behind a switch)
+
+Store recipe: pins the image built from main `d63864e`. Ships #269 (Refs humanitylabs-org/wizard-messenger#266), off by default behind the same switch `agent-chat`: the Agent chat takes a photo or a voice note as a note (kept on the box; Wizard's transcript is kept when there is one), and agents fetch it with `messenger_agent_chat_attachment`. An agent that calls `messenger_agent_chat_wake_me` is woken within seconds of a note, a Sweep tap or a button answer (a signed event with counts only, never words), so it needs no schedule.
+
 ## 0.2.0-unified.16.64 (Agent chat, behind a switch)
 
 Store recipe: pins the image built from main `9779ba8`. Ships #267 (Refs humanitylabs-org/wizard-messenger#265), off by default behind switch `agent-chat`: a pinned Agent chat on top of Chats. Notes there are notes to self (the agent ticks them, never replies), Sweep asks the agent for one list of what needs the owner with one-tap answers, an urgent ping is one line that counts on the badge, and longer write-ups sit under Reports. Agents use the new `messenger_agent_chat_*` MCP tools while the switch is on.
