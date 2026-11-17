@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {agentChatRows, agentChatSnippet, agentReportSnippet} = require('../static/unified.js');
+const {agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread} = require('../static/unified.js');
 // Issue 265 (switch agent-chat): what the owner's Agent chat shows, from the box's state (agent_chat.state).
 
 const state = {unread: 1, urgent: false, entries: [
@@ -63,4 +63,45 @@ test('issue 266: a photo or voice note shows as media, and the row says what it 
   assert.equal(rows[1].ticked, true);
   assert.equal(agentChatSnippet({entries: media.entries.slice(0, 1)}).text, 'You: Photo');
   assert.equal(agentChatSnippet({entries: media.entries.slice(0, 2)}).text, 'You: Voice note');
+});
+
+// Issue 276 (switch reports-notifications): every notification also shows in Reports, read-only, by time.
+const items = [
+  {id: 'b', title: 'Morning Report', message: 'Three things today', time: 1700000300, link: '/morning-report/', read: false},
+  {id: 'a', title: 'Sniper scan done', message: '', details: '2 new matches', time: 1700000100, link: 'https://sniper.example/r/1', read: true},
+  {id: 'c', title: '', message: 'Backup finished', time: 1700000200, link: 'javascript:alert(1)'},
+  {id: 'd', title: 'No time', time: 0}, null, 'x', {title: 'no id', time: 5},
+];
+
+test('notifications become read-only Reports rows: title, text, link, oldest first', () => {
+  const rows = notificationReports(items, 'https://box.example');
+  assert.deepEqual(rows.map(r => r.id), ['notification:a', 'notification:c', 'notification:b']);
+  assert.deepEqual(rows.map(r => r.at), [1700000100000, 1700000200000, 1700000300000]);
+  assert.equal(rows[0].text, 'Sniper scan done\n2 new matches');
+  assert.equal(rows[1].text, 'Notification\nBackup finished');
+  assert.equal(rows[2].text, 'Morning Report\nThree things today');
+  assert.deepEqual(rows.map(r => r.link), ['https://sniper.example/r/1', null, 'https://box.example/morning-report/']);
+  assert.ok(rows.every(r => r.side === 'in' && r.kind === 'notification' && r.who === 'Notifications'));
+  assert.equal(notificationReports(items, '')[2].link, null);
+  assert.equal(notificationReports([{id: 'p', title: 'x', time: 1, link: '//evil.example/'}], 'https://box.example')[0].link, null);
+  assert.deepEqual(notificationReports(null), []);
+});
+
+test('Reports mixes reports and notifications by time, and its row names the newest', () => {
+  const st = {entries: [{id: 'p3', kind: 'report', by: 'agent', text: 'Weekly\nstats', at: 1700000150000}]};
+  const notes = notificationReports(items, 'https://box.example');
+  assert.deepEqual(agentChatRows(st, 'reports', notes).map(r => r.id), ['notification:a', 'p3', 'notification:c', 'notification:b']);
+  assert.deepEqual(agentReportSnippet(st, notes), {text: 'Morning Report', at: 1700000300000, urgent: false});
+  assert.deepEqual(agentChatRows(st, 'reports').map(r => r.id), ['p3']);
+  // The Agent chat never shows them.
+  assert.deepEqual(agentChatRows(st, 'chat', notes), []);
+  assert.deepEqual(agentReportSnippet(null, notes).text, 'Morning Report');
+});
+
+test('the Reports count adds notifications newer than its read mark that are still unread in Notifications', () => {
+  const notes = notificationReports(items, 'https://box.example');
+  assert.equal(reportsUnread({reports_unread: 1, reports_read_at: 0}, notes), 1);
+  assert.equal(reportsUnread({reports_unread: 1, reports_read_at: 1700000000000}, notes), 3);
+  assert.equal(reportsUnread({reports_unread: 0, reports_read_at: 1700000250000}, notes), 1);
+  assert.equal(reportsUnread(null, notes), 0);
 });
