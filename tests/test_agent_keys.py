@@ -409,17 +409,17 @@ class AgentKeyHTTP(unittest.TestCase):
 
     def test_get_attachment_non_image_returns_details_and_small_text(self):
         self.inbox.store.add_message('$pdf', self.alice, '@alice', False, '', 1700000005000, msgtype='m.file',
-                                     media={'mxc': 'mxc://hs.local/pdf1', 'mime': 'application/pdf', 'size': 900000, 'filename': 'lease.pdf'})
+                                     media={'mxc': 'mxc://hs.local/pdf1', 'mime': 'application/pdf', 'size': 11 * 1024 * 1024, 'filename': 'lease.pdf'})
         self.inbox.store.add_message('$txt', self.alice, '@alice', False, '', 1700000006000, msgtype='m.file',
                                      media={'mxc': 'mxc://hs.local/txt1', 'mime': 'text/plain', 'size': 11, 'filename': 'notes.txt'})
         fake, seen = self._homeserver({'/download/hs.local/txt1': b'hello notes'})
         with fake:
             pdf, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$pdf'}, self.keys['read_only'])
             self.assertFalse(error, pdf); self.assertEqual(images, [])
-            self.assertEqual((pdf['kind'], pdf['name'], pdf['size'], pdf['content']), ('file', 'lease.pdf', 900000, 'not_returned'))
+            self.assertEqual((pdf['kind'], pdf['name'], pdf['size'], pdf['content']), ('file', 'lease.pdf', 11 * 1024 * 1024, 'not_returned'))
             txt, error, images = self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': '$txt'}, self.keys['read_only'])
             self.assertFalse(error, txt); self.assertEqual(images, []); self.assertEqual(txt['text'], 'hello notes')
-        self.assertEqual(len(seen), 1)  # the PDF is never downloaded
+        self.assertEqual(len(seen), 1)  # the PDF over 10 MB is never downloaded
 
     @staticmethod
     def _pdf(text):
@@ -446,8 +446,8 @@ class AgentKeyHTTP(unittest.TestCase):
             z.writestr('word/document.xml', '<w:document xmlns:w="w"><w:body>' + body + '</w:body></w:document>')
         return buf.getvalue()
 
-    def test_get_attachment_documents_come_back_as_file_and_text_with_the_switch(self):
-        # Issue 245: a lease agreement on LINE. Off: details only (as before). On: the file itself plus its text.
+    def test_get_attachment_documents_come_back_as_file_and_text(self):
+        # Issue 245: a lease agreement on LINE comes back as the file itself plus its text, always (switch removed).
         import agent_tools
         pdf = self._pdf('Lease: 1 Dec 2026 to 31 May 2027, deposit 20000 THB')
         docx = self._docx(['Rental form', 'Name: &lt;fill in&gt;'])
@@ -458,13 +458,10 @@ class AgentKeyHTTP(unittest.TestCase):
         self.inbox.store.add_message('$big', self.alice, '@alice', False, '', 1700000007000, msgtype='m.file',
                                      media={'mxc': 'mxc://hs.local/big1', 'mime': 'application/pdf', 'size': 11 * 1024 * 1024, 'filename': 'big.pdf'})
         fake, seen = self._homeserver({'/download/hs.local/lease1': pdf, '/download/hs.local/form1': docx})
+        self.inbox.switches = SwitchStore()
+        self.inbox.switches.memory['agent-documents'] = False  # a value stored before the switch was removed
         ask = lambda mid: self._mcp_raw({'chat_id': self.alice['person_id'], 'message_id': mid}, self.keys['read_only'])
         with fake:
-            off, error, extra = ask('$lease')
-            self.assertFalse(error, off); self.assertEqual(extra, []); self.assertEqual(off['content'], 'not_returned')
-            self.assertEqual(seen, [])  # switch off: nothing is downloaded
-            self.inbox.switches = SwitchStore()
-            self.inbox.switches.set('agent-documents', True)
             data, error, extra = ask('$lease')
             self.assertFalse(error, data)
             self.assertNotIn('content', data)

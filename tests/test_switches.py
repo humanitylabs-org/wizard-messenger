@@ -70,11 +70,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'carries only which chat, never the words. If no agent can be woken, the chat says '
                                'Drafts paused.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#223']}, {
-                'id': 'agent-documents', 'name': 'Agents read documents',
-                'description': 'Your agent can open PDFs, Word files and other documents people send you (up to 10 MB), '
-                               'not only photos: it gets the file itself and its text, so it can check a contract or '
-                               'prepare a filled copy as a draft attachment. Only agents you gave Read-only or higher.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#245']}, {
                 'id': 'transcript-paragraphs', 'name': 'Transcripts in paragraphs',
                 'description': 'Transcribe on a voice note gives the text paragraph breaks, punctuation and capitals, '
                                'through Tinfoil. The words stay exactly as spoken; if anything would change them, the '
@@ -235,6 +230,22 @@ class SwitchStorage(unittest.TestCase):
             store.set('photo-instant', True)
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
 
+    def test_agent_documents_is_gone_and_its_stored_value_cleared(self):
+        # Issue 245: agent-documents is on for everyone now; a stored value and its feedback are dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"agent-documents": true, "photo-warm": true}, '
+                            '"feedback": {"agent-documents": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('agent-documents', [s['id'] for s in store.listing()['switches']])
+            self.assertFalse(store.is_on('agent-documents'))
+            with self.assertRaises(UnknownSwitch):
+                store.set('agent-documents', False)
+            store.set('photo-instant', True)
+            raw = json.loads(path.read_text())
+            self.assertEqual(raw['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('agent-documents', raw['feedback'])
+
     def test_agent_drafts_is_gone_and_its_stored_value_cleared(self):
         # Issue 178: agent-drafts is on for everyone now; a stored value from before is dropped on the next write.
         with tempfile.TemporaryDirectory() as d:
@@ -331,7 +342,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'agent-documents', 'transcript-paragraphs'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs'])
 
 
 if __name__ == '__main__':
