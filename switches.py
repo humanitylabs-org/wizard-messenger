@@ -48,12 +48,6 @@ SWITCHES = (
                     'toggle at the top, next to Catch me up.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#201']},
-    {'id': 'device-auto-translate', 'name': 'Auto-translate on this device',
-     'description': "In a chat set to Auto-translate, incoming messages are translated to English and your reply's "
-                    "send preview is translated by this browser's own built-in translator (Chrome on a computer), so "
-                    'the text stays on the device. Where the browser has none, Tinfoil translates as before.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#204']},
     {'id': 'box-translate', 'name': 'Translate on your Wizard',
      'description': 'Auto-translate, the send preview and Translate under a message use a translator that runs on your '
                     'Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each language is set up '

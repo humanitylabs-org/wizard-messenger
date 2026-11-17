@@ -1,9 +1,9 @@
-// Issue 204: with "Auto-translate on this device" (switch device-auto-translate) on, an auto-translate chat (Thai)
+// Issue 204 (on for everyone, the switch device-auto-translate is gone): an auto-translate chat (Thai)
 // shows incoming messages in English translated by the browser's built-in translator (stubbed here as Chrome's
 // Translator/LanguageDetector), the box is asked with ?translate=device so it queues nothing for Tinfoil, and the
 // reply's send preview carries this browser's Thai translation (on_device). A message the device can't read falls back
-// to the box's one-message translate route. With no built-in translator, or the switch off, nothing changes: the box
-// (Tinfoil) translates. Synthetic API only, no container and no shell:
+// to the box's one-message translate route. A stale stored `device-auto-translate: off` changes nothing. With no
+// built-in translator the box (Tinfoil) translates. Synthetic API only, no container and no shell:
 // PLAYWRIGHT_MODULE=... node tests/device_auto_translate_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -17,7 +17,7 @@ const msg = (id, original, t) => ({id, identity_id: 'ann-i', network: 'line', se
 const MESSAGES = [msg('$thai', 'สวัสดีครับ เจอกันพรุ่งนี้', 3), msg('$odd', '¿¿??', 2), msg('$en', 'ok see you', 1)];
 const DEVICE = {'สวัสดีครับ เจอกันพรุ่งนี้': ['th', 'Hello, see you tomorrow'], '¿¿??': ['und', null], 'ok see you': ['en', null], 'See you at noon': ['en', 'เจอกันตอนเที่ยง']};
 
-async function run(browser, {on, builtIn, tag}) {
+async function run(browser, {stale, builtIn, tag}) {
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: 'dark'});
   await ctx.addInitScript(([builtIn, DEVICE]) => {
     const noop = () => {};
@@ -39,7 +39,7 @@ async function run(browser, {on, builtIn, tag}) {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
     if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
-    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'device-auto-translate', on}]})});
+    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: stale ? [{id: 'device-auto-translate', on: false}] : []})});
     if (p === 'api/status') return ok({state: 'ready', account_configured: true});
     if (p === 'api/identity') return ok({identity});
     if (p === 'api/contacts') return ok({contacts: []});
@@ -86,7 +86,8 @@ async function run(browser, {on, builtIn, tag}) {
 (async () => {
   const browser = await chromium.launch();
   try {
-    const local = await run(browser, {on: true, builtIn: true, tag: 'on-builtin'});
+    for (const stale of [false, true]) {
+    const local = await run(browser, {stale, builtIn: true, tag: stale ? 'stale-off-builtin' : 'builtin'});
     assert.deepEqual(local.box.timeline, ['device'], 'the box is told this view translates on the device');
     assert.deepEqual(local.shown.thai, {text: 'Hello, see you tomorrow', note: 1}, 'incoming Thai shows in English, translated here');
     assert.deepEqual(local.shown.en, {text: 'ok see you', note: 0}, 'English stays as is, with no model call');
@@ -95,7 +96,9 @@ async function run(browser, {on, builtIn, tag}) {
     assert.deepEqual(local.box.previews, [{text: 'See you at noon', identity_id: 'ann-i', translated: 'เจอกันตอนเที่ยง', on_device: true}]);
     assert.equal(local.preview, 'เจอกันตอนเที่ยง', 'the send preview is this browser\'s translation');
     assert.ok(local.deviceCalls.some(c => c[1] === 'en>th'));
-    for (const [name, opts] of [['none', {on: true, builtIn: false}], ['off', {on: false, builtIn: true}]]) {
+    if (!stale) console.log(JSON.stringify(local));
+    }
+    for (const [name, opts] of [['none', {stale: false, builtIn: false}]]) {
       const r = await run(browser, {...opts, tag: name});
       assert.deepEqual(r.box.timeline, [null], name + ': the box queue translates as before');
       assert.deepEqual(r.shown.thai, {text: 'สวัสดีครับ เจอกันพรุ่งนี้ (Tinfoil)', note: 0}, name);
@@ -103,7 +106,6 @@ async function run(browser, {on, builtIn, tag}) {
       assert.deepEqual(r.box.previews, [{text: 'See you at noon', identity_id: 'ann-i'}], name + ': the preview goes to Tinfoil');
       assert.deepEqual(r.deviceCalls, [], name + ': the built-in translator is not touched');
     }
-    console.log(JSON.stringify(local));
     console.log('device auto-translate browser: ok');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

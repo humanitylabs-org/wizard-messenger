@@ -64,12 +64,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'keeps a draft ready, or Stop keeping a draft ready, without opening the chat. An open '
                                'chat shows a Drafts toggle at the top, next to Catch me up.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}, {
-                'id': 'device-auto-translate', 'name': 'Auto-translate on this device',
-                'description': "In a chat set to Auto-translate, incoming messages are translated to English and your "
-                               "reply's send preview is translated by this browser's own built-in translator (Chrome on "
-                               'a computer), so the text stays on the device. Where the browser has none, Tinfoil '
-                               'translates as before.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#204']}, {
                 'id': 'box-translate', 'name': 'Translate on your Wizard',
                 'description': 'Auto-translate, the send preview and Translate under a message use a translator that '
                                'runs on your Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each '
@@ -290,6 +284,23 @@ class SwitchStorage(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
             self.assertNotIn('on-device-translate', json.loads(path.read_text()).get('feedback', {}))
 
+    def test_device_auto_translate_is_gone_and_its_stored_value_cleared(self):
+        # Issue 204: Auto-translate on this device is on for everyone now; a stored value from before is dropped on the next
+        # write, and its Try new features feedback no longer shows.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"device-auto-translate": false, "photo-warm": true}, '
+                            '"feedback": {"device-auto-translate": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('device-auto-translate', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('device-auto-translate', store.listing().get('feedback', {}))
+            self.assertFalse(store.is_on('device-auto-translate'))
+            with self.assertRaises(UnknownSwitch):
+                store.set('device-auto-translate', True)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('device-auto-translate', json.loads(path.read_text()).get('feedback', {}))
+
     def test_clean_settings_is_gone_and_its_stored_value_cleared(self):
         # Issue 202: Clean Settings is how Settings looks for everyone now; a stored value from before is dropped on the
         # next write, and its Try new features feedback no longer shows.
@@ -326,7 +337,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'device-auto-translate', 'box-translate', 'agent-wake', 'agent-documents', 'transcript-paragraphs'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'box-translate', 'agent-wake', 'agent-documents', 'transcript-paragraphs'])
 
 
 if __name__ == '__main__':

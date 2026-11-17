@@ -481,20 +481,16 @@ class UnifiedTests(unittest.TestCase):
             self.assertEqual(request.call_count, 1)
 
     def test_device_auto_translate_queues_nothing_for_that_view(self):
-        # Issue 204: with device-auto-translate on, a view that translates on the device (?translate=device) gets no
-        # background Tinfoil queue; switch off, or a view without a built-in translator, keeps the queue.
+        # Issue 204 (on for everyone): a view that translates on the device (?translate=device) gets no background
+        # Tinfoil queue; a view without a built-in translator keeps the queue.
         self.inbox.translator.translate = Mock(return_value=('Hello', None))
         self.inbox.store.update(self.a['person_id'], {'language': 'th'})
         self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10)
-        self.inbox.timeline(self.a['person_id'], device=True)  # switch still off: the box queue runs as before
-        self.inbox.translate_pending()
-        self.assertEqual(self.inbox.translator.translate.call_count, 1)
         self.inbox.store.add_message('$thai2', self.a, 'alice', False, 'ขอบคุณ', 11)
-        self.inbox.switches.set('device-auto-translate', True)
         first = self.inbox.dispatch('GET', '/api/unified/people/' + self.a['person_id'], {}, {'translate': ['device']})
         self.assertFalse(first['translating'])
         self.inbox.translate_pending()
-        self.assertEqual(self.inbox.translator.translate.call_count, 1)
+        self.assertEqual(self.inbox.translator.translate.call_count, 0)
         self.assertIsNone(first['messages'][-1]['translated'])
         other = self.inbox.timeline(self.a['person_id'])  # e.g. a phone with no built-in translator
         self.assertTrue(other['translating'])
@@ -546,16 +542,14 @@ class UnifiedTests(unittest.TestCase):
         message = self.inbox.store.messages(self.a['person_id'])[0]
         self.assertEqual((message['translated'], message['translation_error']), ('Hello', None))
 
-    def test_device_translated_preview_skips_tinfoil_only_with_the_switch(self):
-        # Issue 204: the send preview binds this browser's translation; without the switch the box translates.
+    def test_device_translated_preview_skips_tinfoil(self):
+        # Issue 204 (on for everyone): the send preview binds this browser's translation; a body without on_device is
+        # translated by the box.
         self.inbox.store.update(self.a['person_id'], {'language': 'th'})
         self.inbox.translator.translate = Mock(return_value=('สวัสดี (Tinfoil)', None))
         body = {'text': 'Hello', 'translated': 'สวัสดี', 'on_device': True}
-        off = self.inbox.preview(self.a['person_id'], dict(body))
-        self.assertEqual((off['translated'], self.inbox.translator.translate.call_count), ('สวัสดี (Tinfoil)', 1))
-        self.inbox.switches.set('device-auto-translate', True)
         on = self.inbox.dispatch('POST', '/api/unified/people/' + self.a['person_id'] + '/preview', dict(body))
-        self.assertEqual((on['translated'], on['error'], self.inbox.translator.translate.call_count), ('สวัสดี', None, 1))
+        self.assertEqual((on['translated'], on['error'], self.inbox.translator.translate.call_count), ('สวัสดี', None, 0))
         self.assertEqual(self.inbox.preview(self.a['person_id'], {'text': 'Hello', 'translated': 'x'})['translated'], 'สวัสดี (Tinfoil)')
         self.inbox.mx = Mock(return_value={'event_id': '$out'})
         self.inbox.confirm(self.a['person_id'], {'preview_id': on['id']})
