@@ -419,10 +419,10 @@
   const shown = {}; // message id -> 'translated' | 'original' for on-tap translation
   const onDevice = new Map(); // message id -> {original, text}: translated on this device (issue 199), never sent to the box
   const deviceText = m => { const t = onDevice.get(m.id); return t && t.original === m.original ? t.text : null; };
-  // Issue 204 (switch device-auto-translate): auto-translate chats translate on this device when the browser has a
+  // Issue 204 (on for everyone): auto-translate chats translate on this device when the browser has a
   // built-in translator. The box is told (?translate=device) so it queues nothing for Tinfoil; a message the device
   // can't translate goes to the box's one-message route instead.
-  const deviceAuto = () => switchState.on['device-auto-translate'] === true && typeof globalThis.Translator?.create === 'function' && typeof globalThis.LanguageDetector?.create === 'function';
+  const deviceAuto = () => typeof globalThis.Translator?.create === 'function' && typeof globalThis.LanguageDetector?.create === 'function';
   const deviceQuery = () => (deviceAuto() ? '&translate=device' : '');
   const autoTried = new Set();
   let autoChain = Promise.resolve();
@@ -4060,7 +4060,7 @@
   }
   function reviewSend(id, p, text, identity_id) {
     action(async () => {
-      // Issue 204: with device-auto-translate on and a built-in translator, this browser translates the reply and the
+      // Issue 204: with a built-in translator, this browser translates the reply and the
       // box binds that text to the preview; otherwise (or if it can't) the box asks Tinfoil as before.
       const local = deviceAuto() && reviewedOf(p) ? await deviceTranslate(text, p.language, globalThis) : null;
       const preview = await withTinfoil(() => call('people/' + id + '/preview', local ? {text, identity_id, translated: local.text, on_device: true} : {text, identity_id}));

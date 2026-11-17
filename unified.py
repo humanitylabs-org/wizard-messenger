@@ -2453,10 +2453,10 @@ class UnifiedInbox:
         has_more = len(messages) > limit
         messages = messages[-limit:]
         pending = False
-        # Issue 204: a view whose browser translates on the device (switch device-auto-translate) asks with
+        # Issue 204: a view whose browser translates on the device asks with
         # ?translate=device, so nothing goes to Tinfoil in the background for it; what the device can't do it sends
         # back one message at a time through messages/<id>/translate. Every other view keeps the box queue.
-        on_device = device and self.switch_on('device-auto-translate')
+        on_device = bool(device)
         for message in messages:
             if not message['outgoing'] and not person['language']:
                 message.update(translation_error=None)
@@ -2631,7 +2631,7 @@ class UnifiedInbox:
         if not any(i['id'] == identity_id for i in person['identities']):
             fail('invalid_identity', 'Choose this person’s channel')
         original = text(payload.get('text'))
-        local = payload.get('translated') if payload.get('on_device') is True and self.switch_on('device-auto-translate') else None
+        local = payload.get('translated') if payload.get('on_device') is True else None
         if isinstance(local, str) and local.strip() and person['language'] and person['language'] != 'en':
             # Issue 204: this browser translated the text itself. It is bound to this preview exactly like a Tinfoil
             # result (the mention check below still applies), and nothing is sent to Tinfoil.
