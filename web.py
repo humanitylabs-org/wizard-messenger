@@ -787,7 +787,7 @@ class ViewHandler(Handler):
             if self.service.push is None:
                 return self._reply(404, {'ok': False})
             return self._headers(200, self.service.push.script(), 'application/javascript; charset=utf-8')
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:

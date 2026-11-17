@@ -1,3 +1,4 @@
+import re
 import http.client
 import json
 import os
@@ -174,6 +175,16 @@ class ViewBoundary(unittest.TestCase):
         s,h,b=self.request('GET','/')
         self.assertEqual(s,200); self.assertNotIn(TOKEN.encode(),b); self.assertNotIn('Set-Cookie',h)
         self.assertIn("frame-ancestors 'self'",h['Content-Security-Policy'])
+    def test_every_local_file_the_page_loads_is_served(self):
+        # wizard-os issue 627: index.html loaded wizard-try-features.js, but the static allow-list had no entry for it,
+        # so it fell through to the API (401 JSON) and Try new features never showed.
+        page=(Path(__file__).resolve().parent.parent/'static'/'index.html').read_text()
+        names=[n for n in re.findall(r'(?:src|href)="([^"/:][^":]*)"',page)]
+        self.assertIn('wizard-try-features.js',names)
+        for name in names: (self.server.static_root/name).write_text('ok')
+        for name in names:
+            s,h,_=self.request('GET','/'+name)
+            self.assertEqual(s,200,name); self.assertFalse(h['Content-Type'].startswith('application/json'),name)
     def test_session_cannot_be_created_without_ticket(self):
         for body in [{},{'ticket':None},{'ticket':''},{'ticket':'unknown'}]:
             self.assertEqual(self.request('POST','/api/view/session',body,{'Origin':ORIGIN})[0],401)
