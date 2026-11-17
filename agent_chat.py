@@ -33,6 +33,9 @@ from urllib.parse import urlsplit
 from engine import EngineError
 
 SWITCH = 'agent-chat'
+# Issue 276: the Reports chat also lists every notification (read by the owner's view from the Notifications app).
+# With only that switch on, the view still needs the Reports chat's read mark, so those two routes answer too.
+REPORTS_SWITCH = 'reports-notifications'
 KEY = 'agent_chat'
 MAX_ENTRIES = 400
 SHOWN = 200
@@ -200,6 +203,7 @@ def state(unified):
     reports = [e for e in entries if e.get('kind') == 'report']
     return {'entries': entries[-SHOWN:], 'unread': len(unread), 'urgent': any(e['kind'] == 'ping' for e in unread),
             'reports_unread': sum(1 for e in reports if e['at'] > data['reports_read_at']),
+            'reports_read_at': data['reports_read_at'],
             'sweep_open': _open_sweep(data) is not None, 'read_at': data['read_at'],
             # Is anyone listening (Miguel on issue 265: "how exactly do I use this?"): woken = an agent asked to be
             # woken here; checked = an agent has ever ticked a note or posted.
@@ -340,7 +344,11 @@ def read(unified, payload=None):
 
 def dispatch(unified, method, suffix, payload, query=None, raw=None):
     if not unified.switch_on(SWITCH):
-        _bad('feature_off', 'The agent chat is not switched on in this Messenger', 409)
+        reports_only = unified.switch_on(REPORTS_SWITCH) and (
+            (suffix == [] and method == 'GET') or (suffix == ['read'] and method == 'POST'
+                                                   and (payload or {}).get('reports') is True))
+        if not reports_only:
+            _bad('feature_off', 'The agent chat is not switched on in this Messenger', 409)
     if suffix == [] and method == 'GET':
         return state(unified)
     if suffix == [] and method == 'POST':

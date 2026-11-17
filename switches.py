@@ -68,6 +68,12 @@ SWITCHES = (
                     'or an answer.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#265', 'humanitylabs-org/wizard-messenger#266']},
+    {'id': 'reports-notifications', 'name': 'Notifications in Reports',
+     'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the Morning '
+                    'Report, app alerts) also shows as a message in the pinned Reports chat, newest at the bottom, '
+                    'with its title, text and link. Notifications keeps working as before; Reports stays read-only.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#276']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

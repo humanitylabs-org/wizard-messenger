@@ -409,10 +409,14 @@
   // Issue 265 (switch agent-chat): what the owner's Agent chat shows. 'chat' leaves reports out (they have their own
   // Reports chat); 'reports' shows only reports, oldest first like any chat. A sweep item is open (buttons), answered (the pick
   // shows; it can still change until the agent picks it up) or done (collapsed to the agent's result).
-  function agentChatRows(state, mode = 'chat') {
+  function agentChatRows(state, mode = 'chat', notices = []) {
     const entries = Array.isArray(state?.entries) ? state.entries.filter(e => e && typeof e === 'object') : [];
     const who = e => (typeof e.agent === 'string' && e.agent) || 'Your agent';
-    if (mode === 'reports') return entries.filter(e => e.kind === 'report').map(e => ({id: e.id, kind: 'report', side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e)}));
+    if (mode === 'reports') {
+      const reports = entries.filter(e => e.kind === 'report').map(e => ({id: e.id, kind: 'report', side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e)}));
+      // Issue 276: copies of the owner's notifications sit among the reports, by time (a stable sort keeps ties in order).
+      return Array.isArray(notices) && notices.length ? [...reports, ...notices].sort((a, b) => a.at - b.at) : reports;
+    }
     return entries.filter(e => e.kind !== 'report').map(e => {
       if (e.by === 'owner') {
         // Issue 266: a note can be a photo or a voice note (the file stays on the box).
@@ -439,10 +443,34 @@
         : last.text.split('\n')[0];
     return {text, at: last.at, urgent: !!(state?.urgent)};
   }
-  // The Reports row's last line: the newest report's title.
-  function agentReportSnippet(state) {
-    const last = agentChatRows(state, 'reports').at(-1);
+  // The Reports row's last line: the newest report's (or, issue 276, notification's) title.
+  function agentReportSnippet(state, notices = []) {
+    const last = agentChatRows(state, 'reports', notices).at(-1);
     return last ? {text: last.text.split('\n')[0], at: last.at, urgent: false} : null;
+  }
+  // Issue 276 (switch reports-notifications): the Notifications app's items (GET /notifications/api/items, the list the
+  // shell's bell reads) as read-only Reports rows: title on the first line, then the text, then its link. `time` is in
+  // seconds there. A link is kept only if it is http(s) or a path on this box (resolved against `origin`).
+  function notificationReports(items, origin = '') {
+    const out = [];
+    for (const i of Array.isArray(items) ? items : []) {
+      if (!i || typeof i !== 'object' || (typeof i.id !== 'string' && typeof i.id !== 'number') || i.id === '') continue;
+      const t = Number(i.time); if (!(t > 0)) continue;
+      const title = String(i.title || '').trim().split('\n')[0].slice(0, 300) || 'Notification';
+      const body = String(i.message || i.details || '').trim().slice(0, 8000);
+      let link = null; const raw = typeof i.link === 'string' ? i.link.trim() : '';
+      if (/^https?:\/\/[^\s]+$/i.test(raw)) link = raw;
+      else if (/^\/(?!\/)[^\s]*$/.test(raw) && /^https?:\/\//.test(origin)) link = origin.replace(/\/$/, '') + raw;
+      out.push({id: 'notification:' + i.id, kind: 'notification', side: 'in', text: body ? title + '\n' + body : title, link,
+        at: t < 1e12 ? Math.round(t * 1000) : t, who: 'Notifications', read: !!i.read});
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }
+  // The Reports row's count: new reports, plus notifications that came after Reports was last opened and are still
+  // unread in Notifications. Until Reports was opened once, older notifications don't count (no 99+ on day one).
+  function reportsUnread(state, notices = []) {
+    const readAt = Number(state?.reports_read_at) || 0;
+    return (Number(state?.reports_unread) || 0) + (readAt > 0 ? (Array.isArray(notices) ? notices : []).filter(n => n.at > readAt && !n.read).length : 0);
   }
   // Issue 273: a voice note's archive and upload each get a deadline, so one stalled request on a phone turns the bubble
   // into Retry instead of keeping it (and every later message to that person) on the clock. Sized for a long take on a
@@ -457,7 +485,7 @@
     const late = new Promise((_, no) => { timer = timers.setTimeout(() => { const e = new Error(message); e.code = 'voice_timeout'; no(e); ctl.abort(); }, ms); });
     return Promise.race([Promise.resolve().then(() => work(ctl.signal)), late]).finally(() => timers.clearTimeout(timer));
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, voiceDeadline, withDeadline};
+  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1622,7 +1650,7 @@
     const keep = list.dataset.keepTop ? +list.dataset.keepTop : list.scrollTop;
     list.replaceChildren(frag);
     // Issue 265 (switch agent-chat): the Agent chat is pinned on top of All, with no search or filter narrowing it.
-    if (agentChatOn() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
+    if (reportsOn() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
     if (list.dataset.keepTop && shown.length) delete list.dataset.keepTop;
     if (keep && list.scrollTop !== keep) list.scrollTop = keep;
   }
@@ -4620,7 +4648,8 @@
     try {
       applySwitches(await switchCall());
     } catch { /* not signed in yet or an older box: keep what we have, try again on the next poll */ }
-    if (agentChatOn()) loadAgentChat();
+    if (reportsOn()) loadAgentChat();
+    loadNotices();
   }
   async function setSwitch(id, on) {
     const before = switchState.on[id] === true;
@@ -4638,12 +4667,38 @@
   function agentMode(id) { return id === AGENT_IDS.chat ? 'chat' : id === AGENT_IDS.reports ? 'reports' : null; }
   const agentChat = {state: null, mode: 'chat', root: null, key: '', loading: null};
   function agentChatOn() { return switchState.on['agent-chat'] === true; }
+  // Issue 276 (switch reports-notifications): Reports also lists a copy of every notification, so either switch shows it.
+  function noticesOn() { return switchState.on['reports-notifications'] === true; }
+  function reportsOn() { return agentChatOn() || noticesOn(); }
+  function agentModeOn(mode) { return mode === 'reports' ? reportsOn() : mode === 'chat' && agentChatOn(); }
+  // Read straight from the Notifications app on this box, like the shell's bell (same origin, the owner's session). It
+  // is a copy: nothing here marks, archives or changes anything in Notifications. At most every 15 s, at once on open.
+  const NOTIFICATIONS = new URL('../notifications/', location.href).pathname;
+  const notices = {list: [], at: 0, loading: null};
+  function loadNotices(force = false) {
+    if (!noticesOn()) { if (notices.list.length) { notices.list = []; notices.at = 0; paintAgentRow(); paintAgentThread(); } return Promise.resolve(); }
+    if (notices.loading) return notices.loading;
+    if (!force && Date.now() - notices.at < 15000) return Promise.resolve();
+    notices.at = Date.now();
+    notices.loading = fetch(NOTIFICATIONS + 'api/items?view=all&limit=200', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d || !Array.isArray(d.items) || !noticesOn()) return;
+        const list = notificationReports(d.items, location.origin);
+        if (JSON.stringify(list) === JSON.stringify(notices.list)) return;
+        notices.list = list; paintAgentRow(); paintAgentThread();
+      })
+      .catch(() => { /* no Notifications app, or it is restarting: Reports keeps what it had */ })
+      .finally(() => { notices.loading = null; });
+    return notices.loading;
+  }
+  const shownNotices = () => noticesOn() ? notices.list : [];
   function applyAgentChat(state) {
     if (!state || !Array.isArray(state.entries)) return;
     agentChat.state = state; paintAgentRow(); paintAgentThread(); syncBadge();
   }
   function loadAgentChat() {
-    if (!agentChatOn()) { if (agentChat.state) { agentChat.state = null; paintAgentRow(); syncBadge(); } return Promise.resolve(); }
+    if (!reportsOn()) { if (agentChat.state) { agentChat.state = null; paintAgentRow(); syncBadge(); } return Promise.resolve(); }
     if (agentChat.loading) return agentChat.loading;
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
@@ -4656,14 +4711,20 @@
   }
   switchState.paints['agent-chat'] = () => {
     loadAgentChat();
-    if (!agentChatOn()) { agentChat.state = null; leaveAgentChat(); }
+    if (!reportsOn()) agentChat.state = null;
+    if (agentMode(s.person) && !agentModeOn(agentMode(s.person))) leaveAgentChat();
     if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList();
   };
-  function agentRows() { return [agentRow('chat'), agentRow('reports')]; }
+  switchState.paints['reports-notifications'] = () => {
+    loadNotices(true);
+    paintAgentThread();
+    switchState.paints['agent-chat']();
+  };
+  function agentRows() { return [agentChatOn() && agentRow('chat'), reportsOn() && agentRow('reports')].filter(Boolean); }
   function agentRow(mode) {
     const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];
-    const unread = (reports ? st?.reports_unread : st?.unread) || 0, urgent = !reports && !!st?.urgent, compact = !previewsOn();
-    const last = reports ? agentReportSnippet(st) : agentChatSnippet(st), name = reports ? 'Reports' : 'Agent';
+    const unread = (reports ? reportsUnread(st, shownNotices()) : st?.unread) || 0, urgent = !reports && !!st?.urgent, compact = !previewsOn();
+    const last = reports ? agentReportSnippet(st, shownNotices()) : agentChatSnippet(st), name = reports ? 'Reports' : 'Agent';
     const card = button('', () => openAgentChat(mode), 'u-person u-agent-row' + (unread ? ' unread' : '') + (urgent ? ' urgent' : ''));
     card.dataset.pid = id; card.dataset.mode = mode;
     if (split.on && s.person === id) { card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
@@ -4675,7 +4736,7 @@
     if (compact) { if (badge) top.append(badge); info.append(top); card.append(agentFace(mode, true), info); return card; }
     const bottom = node('span', 'u-chat-bottom');
     bottom.append(node('span', 'u-snippet' + (last?.urgent ? ' u-agent-urgent' : ''), last ? last.text
-      : reports ? 'Longer write-ups from your agent' : 'Notes to your agent. It never replies, it ticks.'));
+      : reports ? reportsSub() : 'Notes to your agent. It never replies, it ticks.'));
     if (badge) bottom.append(badge);
     info.append(top, bottom); card.append(agentFace(mode, false), info); return card;
   }
@@ -4685,7 +4746,8 @@
   }
   function paintAgentRow() {
     for (const old of document.querySelectorAll('.u-list > .u-agent-row')) {
-      if (agentChatOn()) old.replaceWith(agentRow(old.dataset.mode === 'reports' ? 'reports' : 'chat')); else old.remove();
+      const mode = old.dataset.mode === 'reports' ? 'reports' : 'chat';
+      if (agentModeOn(mode)) old.replaceWith(agentRow(mode)); else old.remove();
     }
   }
   async function agentAct(path, body) {
@@ -4693,8 +4755,11 @@
   }
   function markAgentRead() {
     const st = agentChat.state, mode = agentMode(s.person); if (!st || document.hidden || !mode) return;
-    if (mode === 'reports' ? st.reports_unread : st.unread) agentAct('/read', mode === 'reports' ? {reports: true} : {});
+    // Issue 276: a notification newer than the read mark (or the first open, with no mark yet) also marks Reports read.
+    const reportsNew = () => reportsUnread(st, shownNotices()) || (!(st.reports_read_at > 0) && shownNotices().length);
+    if (mode === 'reports' ? reportsNew() : st.unread) agentAct('/read', mode === 'reports' ? {reports: true} : {});
   }
+  function reportsSub() { return noticesOn() ? 'Reports and notifications' : 'Longer write-ups from your agent'; }
   // What the header says about the agent: is anyone listening here, and how fast.
   function agentStatus(st) {
     const a = st?.agent;
@@ -4702,7 +4767,7 @@
     return a.woken ? 'Your agent hears about each note within seconds' : a.checked ? 'Your agent checks here on its own schedule' : 'Your agent hasn’t checked here yet';
   }
   function openAgentChat(mode = 'chat') {
-    if (!agentChatOn()) { leaveAgentChat(); return; }
+    if (!agentModeOn(mode)) { leaveAgentChat(); return; }
     const id = AGENT_IDS[mode] || AGENT_IDS.chat;
     view.selection?.clear(); view.selection = null;
     if (s.overlay) closeOverlay();
@@ -4716,21 +4781,22 @@
     buildAgentThread();
     if (fromList) slideIn();
     paintAgentThread(true); loadAgentChat().then(markAgentRead);
+    if (agentChat.mode === 'reports') loadNotices(true).then(markAgentRead);
     if (agentChat.mode === 'chat' && !matchMedia('(hover: none)').matches) requestAnimationFrame(() => view.draft?.focus());
   }
   function buildAgentThread() {
     const reports = agentChat.mode === 'reports';
-    const root = threadBase(reports ? 'Reports' : 'Agent', reports ? 'Longer write-ups from your agent' : agentStatus(agentChat.state), null, null, '');
+    const root = threadBase(reports ? 'Reports' : 'Agent', reports ? reportsSub() : agentStatus(agentChat.state), null, null, '');
     const head = root.querySelector('.u-thread-head'); head.classList.add('u-agent-head'); // root is #unified-inbox itself on a phone
     head.querySelector('.u-av-wrap')?.replaceChildren(agentFace(agentChat.mode, true));
     view.sub = root.querySelector('.u-who-text span');
     const scroll = node('div', 'u-timeline u-ac-log'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
-    scroll.setAttribute('aria-label', reports ? 'Reports from your agent' : 'Agent chat');
+    scroll.setAttribute('aria-label', reports ? (noticesOn() ? 'Reports and notifications' : 'Reports from your agent') : 'Agent chat');
     scroll.onscroll = () => { if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80) markAgentRead(); };
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll); root.append(wrap);
     Object.assign(view, {root, scroll, pill: null, id: s.person, draft: null});
     agentChat.root = root;
-    if (reports) { const foot = node('p', 'u-ac-readonly', 'Only your agent writes here.'); root.append(foot); return; }
+    if (reports) { const foot = node('p', 'u-ac-readonly', noticesOn() ? 'Read-only: your agent’s reports and a copy of your notifications.' : 'Only your agent writes here.'); root.append(foot); return; }
     // Telegram-bot style: the chat's own buttons sit above the composer, no typed commands.
     const form = node('form', 'u-composer u-ac-compose');
     const bar = node('div', 'u-ac-bar');
@@ -4873,6 +4939,7 @@
     const box = node('section', 'u-ac-intro'); box.setAttribute('aria-label', 'How this chat works');
     if (reports) {
       box.append(node('h3', '', 'Reports'), node('p', '', 'Your agent’s longer write-ups land here: weekly summaries, stats, research. They stay out of the Agent chat so your notes stay short.'));
+      if (noticesOn()) box.append(node('p', '', 'Every notification also shows here as a copy, newest at the bottom. Notifications keeps them as before; anything that needs an answer comes to the Agent chat.'));
       return box;
     }
     const list = node('ol');
@@ -4888,11 +4955,11 @@
     const root = agentChat.root, mode = agentMode(s.person);
     if (!root?.isConnected || mode !== agentChat.mode) { agentChat.root = null; return; }
     const st = agentChat.state, reports = mode === 'reports', scroll = root.querySelector('.u-ac-log');
-    if (view.sub) view.sub.textContent = reports ? 'Longer write-ups from your agent' : agentStatus(st);
-    const key = JSON.stringify([mode, st?.entries, st?.sweep_open, st?.agent, !!st]);
+    if (view.sub) view.sub.textContent = reports ? reportsSub() : agentStatus(st);
+    const key = JSON.stringify([mode, st?.entries, st?.sweep_open, st?.agent, !!st, reports && shownNotices()]);
     if (!toBottom && key === agentChat.key) return; agentChat.key = key;
     const near = toBottom || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80, top = scroll.scrollTop;
-    const rows = agentChatRows(st, mode), kids = [node('div', 'u-spacer'), agentIntro(reports, st)];
+    const rows = agentChatRows(st, mode, reports ? shownNotices() : []), kids = [node('div', 'u-spacer'), agentIntro(reports, st)];
     if (!st) kids.push(node('p', 'u-empty', 'Loading…'));
     const side = r => r.side;
     let day = '';
@@ -4903,7 +4970,7 @@
       const jp = prev && dayLabel(prev.at) === day && side(prev) === side(r) && r.at - prev.at < 3e5;
       const jn = next && dayLabel(next.at) === day && side(next) === side(r) && next.at - r.at < 3e5;
       const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single', out = r.side === 'out';
-      const row = node('div', 'u-row u-ac-row ' + (out ? 'outgoing out' : 'incoming in') + ' pos-' + pos + (r.urgent ? ' urgent' : '') + (r.kind === 'report' ? ' report' : ''));
+      const row = node('div', 'u-row u-ac-row ' + (out ? 'outgoing out' : 'incoming in') + ' pos-' + pos + (r.urgent ? ' urgent' : '') + (r.kind === 'report' || r.kind === 'notification' ? ' report' : '') + (r.kind === 'notification' ? ' u-ac-notice' : ''));
       row.dataset.id = r.id; row.dataset.direction = out ? 'out' : 'in';
       const b = node('article', 'u-message u-ac-msg' + (out ? ' outgoing' : ''));
       if (out) {
@@ -4912,7 +4979,7 @@
         else if (r.text || !r.media) b.append(agentText('u-text u-ac-text', r.text));
       } else {
         if (r.urgent) b.append(node('span', 'u-ac-tag', 'Urgent'));
-        if (r.kind === 'report') { const [first, ...rest] = r.text.split('\n'); b.append(node('h3', 'u-ac-title', first)); if (rest.join('\n').trim()) b.append(agentText('u-text u-ac-text', rest.join('\n').trim())); }
+        if (r.kind === 'report' || r.kind === 'notification') { const [first, ...rest] = r.text.split('\n'); b.append(node('h3', 'u-ac-title', first)); if (rest.join('\n').trim()) b.append(agentText('u-text u-ac-text', rest.join('\n').trim())); }
         else if (r.text) b.append(agentText('u-text u-ac-text', r.text));
         else if (r.kind === 'sweep' && !r.items?.length) b.append(agentText('u-text u-ac-text', 'Nothing needs you right now.'));
         if (r.items?.length) { const ol = node('ol', 'u-ac-items'); for (const i of r.items) ol.append(agentItem(r, i)); b.append(ol); }

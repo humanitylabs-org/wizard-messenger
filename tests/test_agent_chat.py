@@ -182,6 +182,26 @@ class AgentChat(unittest.TestCase):
         state = self.ok('POST', '/read', {'reports': True})
         self.assertEqual(state['reports_unread'], 0)
 
+    def test_reports_notifications_alone_opens_only_the_reports_read_mark(self):
+        # Issue 276: with only the Notifications in Reports switch on, the view reads the state (for the Reports
+        # chat's read mark) and marks Reports read; notes, sweeps and the Agent chat's own read stay off.
+        self.inbox.switches.set('reports-notifications', True)
+        state = self.ok('GET')
+        self.assertEqual(state['reports_read_at'], 0)
+        state = self.ok('POST', '/read', {'reports': True})
+        self.assertGreater(state['reports_read_at'], 0)
+        for method, path, body in (('POST', '', {'text': 'a note'}), ('POST', '/sweep', {}), ('POST', '/read', {})):
+            status, data = self.owner_call(method, path, body)
+            self.assertEqual(status, 409, (path, data))
+            self.assertEqual(data['error']['code'], 'feature_off')
+        names = {t['name'] for t in self.mcp(None, method='tools/list')['tools']}
+        self.assertFalse(set(TOOLS) & names)
+        # An agent key still can't use the owner's routes.
+        status, data = self.owner_call('GET', '', headers={'Origin': fixtures.ORIGIN, **self.key})
+        self.assertNotEqual(status, 200, data)
+        self.inbox.switches.set('reports-notifications', False)
+        self.assertEqual(self.owner_call('GET', '')[0], 409)
+
     def test_owner_only_and_levels(self):
         self.on()
         # An agent key can never use the owner's routes.
