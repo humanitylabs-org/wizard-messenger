@@ -60,6 +60,12 @@ SWITCHES = (
                     'is saved instead. Transcripts already saved stay as they are.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#248']},
+    {'id': 'agent-chat', 'name': 'Agent chat',
+     'description': 'A pinned Agent chat at the top of Chats. What you write there is a note to your agent: it never '
+                    'replies, it ticks the note once picked up and works on it. Sweep asks for one list of what needs '
+                    'you, with one-tap answers; urgent things come as one line, and longer write-ups go to Reports.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#265']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

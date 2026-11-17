@@ -124,6 +124,36 @@ TOOLS = [
            'secret': _string('The secret of that subscription (16..256 characters)'),
            'check': {'type': 'boolean', 'description': 'Only report the current wake'},
            'off': {'type': 'boolean', 'description': 'Stop waking me'}}),
+    # Issue 265: the owner's agent chat, offered only while the agent-chat switch is on.
+    _tool('messenger_agent_chat_inbox', 'The owner\'s Agent chat in Messenger: what is waiting for you there. `notes` are '
+          'notes to self the owner dropped (text and links): never reply to them with a message; mark each one picked up '
+          'with messenger_agent_chat_ack (the owner sees a check) and then act on it in the background. '
+          '`sweep_requests`: the owner tapped Sweep; answer with ONE messenger_agent_chat_post kind sweep listing only what '
+          'needs the owner since `since`. `answers`: the owner tapped a button on a sweep item; ack it, carry it out, then '
+          'messenger_agent_chat_done. Check it on your schedule. Needs Read-only or higher.'),
+    _tool('messenger_agent_chat_ack', 'Mark notes (id) and button answers (id, e.g. "p12/3") from '
+          'messenger_agent_chat_inbox as picked up: the owner sees a check, and they leave the inbox. Never reply with '
+          'text. Needs Draft-only or higher.',
+          {'ids': {'type': 'array', 'maxItems': 100, 'description': 'Note or answer ids', 'items': {'type': 'string'}}},
+          ['ids']),
+    _tool('messenger_agent_chat_post', 'Post in the owner\'s Agent chat. kind `sweep`: only as the answer to an open '
+          'sweep request: `items` is a numbered list of only what needs the owner, each {"text", "recommendation", '
+          '"buttons": [{"label": "Yes", "value": "yes"}, ...]} (up to 20 items, 4 buttons; labels up to 24 characters); '
+          'with nothing to ask, give no items. kind `ping`: ONE line (up to 200 characters, optional `link`), only when '
+          'something is time-sensitive; it makes the chat unread. kind `report`: a longer write-up (stats, weekly '
+          'summaries); it goes under Reports, not into the chat. There is no reply kind: notes never get a text answer. '
+          'Needs Draft-only or higher.',
+          {'kind': {'type': 'string', 'enum': ['sweep', 'ping', 'report'], 'description': 'sweep, ping or report'},
+           'text': _string('ping: the one line; report: the write-up; sweep: an optional line above the list'),
+           'link': _string('Optional http(s) link (ping or report)'),
+           'items': {'type': 'array', 'maxItems': 20, 'description': 'sweep only: the numbered items',
+                     'items': {'type': 'object'}}},
+          ['kind']),
+    _tool('messenger_agent_chat_done', 'Collapse one sweep item to its result once you carried out the owner\'s answer '
+          '(or handled it otherwise), e.g. "Replied to Buddy". Needs Draft-only or higher.',
+          {'post_id': _string('The sweep post id'), 'item': _int('The item number (1-based)'),
+           'result': _string('One short line: what you did')},
+          ['post_id', 'item', 'result']),
 ]
 NAMES = {t['name'] for t in TOOLS}
 # Tool -> the HTTP route it is equivalent to, so one policy table governs both surfaces.
@@ -142,9 +172,17 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           'messenger_chats_needing_draft': ('GET', '/api/unified/people'),
           'messenger_draft_feedback': ('GET', '/api/drafts'),
           # Same level as saving a draft: a wake only ever leads to a draft.
-          'messenger_wake_me': ('POST', '/api/drafts')}
+          'messenger_wake_me': ('POST', '/api/drafts'),
+          # Issue 265: reading the agent chat is a read; ticking, posting there and closing items are Draft-only
+          # (the owner's own chat with his agent, never a message to anyone else).
+          'messenger_agent_chat_inbox': ('GET', '/api/drafts'),
+          'messenger_agent_chat_ack': ('POST', '/api/drafts'),
+          'messenger_agent_chat_post': ('POST', '/api/drafts'),
+          'messenger_agent_chat_done': ('POST', '/api/drafts')}
 # Tools offered only while their switch is on (tool name -> switch id).
-SWITCHED = {'messenger_wake_me': 'agent-wake'}
+SWITCHED = {'messenger_wake_me': 'agent-wake', 'messenger_agent_chat_inbox': 'agent-chat',
+            'messenger_agent_chat_ack': 'agent-chat', 'messenger_agent_chat_post': 'agent-chat',
+            'messenger_agent_chat_done': 'agent-chat'}
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -682,6 +720,38 @@ def wake_me(handler, caller, args):
     return draft_wake.register(unified, agent, args.get('url'), args.get('secret'), off=args.get('off') is True)
 
 
+def _agent_chat(handler, caller):
+    import agent_chat
+    unified = _unified(handler)
+    if not unified.switch_on(agent_chat.SWITCH):
+        raise EngineError('feature_off', 'The agent chat is not switched on in this Messenger', 409)
+    who = caller[1].get('name') if caller[0] == 'agent' else None
+    return agent_chat, unified, who or 'Your agent'
+
+
+def agent_chat_inbox(handler, caller, args):
+    agent_chat, unified, _ = _agent_chat(handler, caller)
+    out = agent_chat.inbox(unified)
+    out['note'] = ('These are the owner\'s own notes and taps. Never answer a note with a message: ack it, then act. '
+                   'Answer a sweep request with one sweep post.')
+    return out
+
+
+def agent_chat_ack(handler, caller, args):
+    agent_chat, unified, who = _agent_chat(handler, caller)
+    return agent_chat.ack(unified, who, args['ids'])
+
+
+def agent_chat_post(handler, caller, args):
+    agent_chat, unified, who = _agent_chat(handler, caller)
+    return agent_chat.post(unified, who, args['kind'], args.get('text'), args.get('link'), args.get('items'))
+
+
+def agent_chat_done(handler, caller, args):
+    agent_chat, unified, _ = _agent_chat(handler, caller)
+    return agent_chat.done(unified, args['post_id'], args['item'], args['result'])
+
+
 def listed(handler):
     """The tools this Messenger offers now: a switched tool only while its switch is on."""
     unified = getattr(handler.service, 'unified', None)
@@ -702,7 +772,9 @@ BODIES = {'messenger_list_chats': list_chats, 'messenger_read_thread': read_thre
           'messenger_attach_to_draft': attach_to_draft, 'messenger_remove_draft_attachment': remove_draft_attachment,
           'messenger_start_draft': start_draft,
           'messenger_chats_needing_draft': chats_needing_draft, 'messenger_draft_feedback': draft_feedback,
-          'messenger_wake_me': wake_me}
+          'messenger_wake_me': wake_me,
+          'messenger_agent_chat_inbox': agent_chat_inbox, 'messenger_agent_chat_ack': agent_chat_ack,
+          'messenger_agent_chat_post': agent_chat_post, 'messenger_agent_chat_done': agent_chat_done}
 
 
 def _result(data, error=False):
