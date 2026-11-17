@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.64 (Agent chat, behind a switch)
+
+Store recipe: pins the image built from main `9779ba8`. Ships #267 (Refs humanitylabs-org/wizard-messenger#265), off by default behind switch `agent-chat`: a pinned Agent chat on top of Chats. Notes there are notes to self (the agent ticks them, never replies), Sweep asks the agent for one list of what needs the owner with one-tap answers, an urgent ping is one line that counts on the badge, and longer write-ups sit under Reports. Agents use the new `messenger_agent_chat_*` MCP tools while the switch is on.
+
 ## 0.2.0-unified.16.63 (Voice note storage warning no longer sticks)
 
 Store recipe: pins the image built from main `bf28e62`. Ships #263 (Refs humanitylabs-org/wizard-messenger#262): a warning about the voice note being recorded (on-device saving failed, microphone stalled) now goes away when that recording is sent or discarded, instead of staying under the empty message box.
