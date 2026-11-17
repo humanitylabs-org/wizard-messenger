@@ -472,6 +472,60 @@
     const readAt = Number(state?.reports_read_at) || 0;
     return (Number(state?.reports_unread) || 0) + (readAt > 0 ? (Array.isArray(notices) ? notices : []).filter(n => n.at > readAt && !n.read).length : 0);
   }
+  // Issue 277 (switch agent-chat-name): which of the owner's agents the pinned Agent chat is with. `levels` is Messenger's
+  // own Settings > Agents list (api/view/agents `wizard_agents`: id, label, level, main, last_used); `agents` is the
+  // Agent Service's list (GET /wizard/v1/agents: id, label, privacy, appearance.hue, is_default, hidden), the one the
+  // Wizard shows its agents from. The agent with Draft-only access wins (the main one, else the one used last); with
+  // none, the only agent, else the main agent. Returns {id, name, hue, private} or null (no agent known: "Agent").
+  function agentIdentity(levels, agents) {
+    const svc = (Array.isArray(agents) ? agents : []).filter(a => a && typeof a === 'object' && typeof a.id === 'string' && a.id && !a.hidden);
+    const mine = (Array.isArray(levels) ? levels : []).filter(a => a && typeof a === 'object' && typeof a.id === 'string' && a.id);
+    const main = svc.find(a => a.is_default) || svc.find(a => a.id === 'hermes') || null;
+    const drafters = mine.filter(a => a.level === 'draft_only');
+    let pick = drafters.find(a => a.main) || [...drafters].sort((a, b) => (Number(b.last_used) || 0) - (Number(a.last_used) || 0))[0] || null;
+    let id = pick?.id || (svc.length === 1 ? svc[0].id : main?.id || (svc.length ? null : mine.length === 1 ? mine[0].id : null));
+    if (!id) return null;
+    // Messenger calls the main agent 'hermes'; the Agent Service may name its default agent otherwise.
+    const a = svc.find(x => x.id === id) || ((pick?.main || id === 'hermes') ? main : null);
+    pick = pick || mine.find(x => x.id === id) || null;
+    const clean = v => typeof v === 'string' ? v.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+    const name = clean(a?.label) || (pick && clean(pick.label) !== 'Your Wizard agent' && clean(pick.label) !== pick.id ? clean(pick.label) : '');
+    if (!name) return null;
+    return {id: a?.id || id, name, hue: a ? agentHue(a, svc) : 265, private: a?.privacy === 'private'};
+  }
+  // The agent's colour as the Wizard paints it (wizard-ux core/agents.js hue + distinctHues): its chosen hue, else a
+  // stable one from its id; then each agent in order (main first) steps 47° round the wheel while within 28° of a taken one.
+  function agentHue(agent, list = [agent]) {
+    const own = a => {
+      let h = Number(a?.appearance?.hue);
+      if (!Number.isFinite(h)) h = a?.privacy === 'private' ? 160 : !a || a.is_default ? 265
+        : Array.from(String(a.id || a.label || 'agent')).reduce((n, c) => (n * 31 + c.codePointAt(0)) % 360, 0);
+      return ((Math.round(h) % 360) + 360) % 360;
+    };
+    const gap = (x, y) => { const d = Math.abs(x - y) % 360; return Math.min(d, 360 - d); };
+    const taken = [];
+    for (const a of [...list].sort((x, y) => (y.is_default ? 1 : 0) - (x.is_default ? 1 : 0))) {
+      let h = own(a);
+      for (let i = 0; i < 24 && taken.some(t => gap(t, h) < 28); i++) h = (h + 47) % 360;
+      taken.push(h); if (a === agent || a.id === agent?.id) return h;
+    }
+    return own(agent);
+  }
+  // The Wizard's agent ink (HSL hue, 72% saturation, 62% lightness) as an OKLCH value, so the view sets a computed
+  // colour from data without a literal colour in its styles: [lightness 0-1, chroma, hue in degrees].
+  function agentInk(hue) {
+    const h = ((Number(hue) % 360) + 360) % 360, s = 0.72, l = 0.62, k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l), f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+    const lin = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    const [r, g, b] = [f(0), f(8), f(4)].map(lin);
+    const L = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const M = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const S = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    const ok = [0.2104542553 * L + 0.7936177850 * M - 0.0040720468 * S, 1.9779984951 * L - 2.4285922050 * M + 0.4505937099 * S,
+      0.0259040371 * L + 0.7827717662 * M - 0.8086757660 * S];
+    const deg = (Math.atan2(ok[2], ok[1]) * 180 / Math.PI + 360) % 360;
+    return [Math.round(ok[0] * 1e4) / 1e4, Math.round(Math.hypot(ok[1], ok[2]) * 1e4) / 1e4, Math.round(deg * 100) / 100];
+  }
   // Issue 273: a voice note's archive and upload each get a deadline, so one stalled request on a phone turns the bubble
   // into Retry instead of keeping it (and every later message to that person) on the clock. Sized for a long take on a
   // slow phone link: one minute, plus a second per 64 KB moved, plus half the take's length for converting it.
@@ -485,7 +539,7 @@
     const late = new Promise((_, no) => { timer = timers.setTimeout(() => { const e = new Error(message); e.code = 'voice_timeout'; no(e); ctl.abort(); }, ms); });
     return Promise.race([Promise.resolve().then(() => work(ctl.signal)), late]).finally(() => timers.clearTimeout(timer));
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, voiceDeadline, withDeadline};
+  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -4671,6 +4725,38 @@
   function noticesOn() { return switchState.on['reports-notifications'] === true; }
   function reportsOn() { return agentChatOn() || noticesOn(); }
   function agentModeOn(mode) { return mode === 'reports' ? reportsOn() : mode === 'chat' && agentChatOn(); }
+  // Issue 277 (switch agent-chat-name): the Agent chat carries the agent's own name and sigil, as the Wizard shows it
+  // (the agent with Draft-only access in Settings > Agents). Re-read at most once a minute, at once on open.
+  const agentWho = {who: null, at: 0, loading: null};
+  function agentNameOn() { return switchState.on['agent-chat-name'] === true; }
+  const agentName = () => (agentNameOn() && agentWho.who?.name) || 'Agent';
+  function loadAgentWho(force = false) {
+    if (!agentNameOn() || !agentChatOn()) { if (agentWho.who) { agentWho.who = null; agentWho.at = 0; paintAgentWho(); } return Promise.resolve(); }
+    if (agentWho.loading) return agentWho.loading;
+    if (!force && Date.now() - agentWho.at < 60000) return Promise.resolve();
+    agentWho.at = Date.now();
+    const service = fetch('/wizard/v1/agents', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
+      .then(r => r.ok ? r.json() : null).catch(() => null);
+    agentWho.loading = Promise.all([api('api/view/agents').catch(() => null), service])
+      .then(([mine, svc]) => {
+        if (!agentNameOn()) return;
+        const who = agentIdentity(mine?.wizard_agents, svc?.agents);
+        if (JSON.stringify(who) === JSON.stringify(agentWho.who)) return;
+        agentWho.who = who; paintAgentWho();
+      })
+      .finally(() => { agentWho.loading = null; });
+    return agentWho.loading;
+  }
+  // Repaint the pinned row and an open Agent chat's header (title, face, labels) without touching the composer.
+  function paintAgentWho() {
+    paintAgentRow();
+    const root = agentChat.root; if (!root?.isConnected || agentMode(s.person) !== 'chat') return;
+    const head = root.querySelector('.u-agent-head'); if (!head) return;
+    const title = head.querySelector('.u-who-text strong'); if (title) title.textContent = agentName();
+    head.querySelector('.u-av-wrap')?.replaceChildren(agentFace('chat', true));
+    root.querySelector('.u-ac-log')?.setAttribute('aria-label', agentChatLabel());
+  }
+  const agentChatLabel = () => agentNameOn() && agentWho.who ? 'Chat with ' + agentWho.who.name : 'Agent chat';
   // Read straight from the Notifications app on this box, like the shell's bell (same origin, the owner's session). It
   // is a copy: nothing here marks, archives or changes anything in Notifications. At most every 15 s, at once on open.
   const NOTIFICATIONS = new URL('../notifications/', location.href).pathname;
@@ -4700,6 +4786,7 @@
   function loadAgentChat() {
     if (!reportsOn()) { if (agentChat.state) { agentChat.state = null; paintAgentRow(); syncBadge(); } return Promise.resolve(); }
     if (agentChat.loading) return agentChat.loading;
+    loadAgentWho();
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
@@ -4715,6 +4802,7 @@
     if (agentMode(s.person) && !agentModeOn(agentMode(s.person))) leaveAgentChat();
     if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList();
   };
+  switchState.paints['agent-chat-name'] = () => { loadAgentWho(true); paintAgentWho(); };
   switchState.paints['reports-notifications'] = () => {
     loadNotices(true);
     paintAgentThread();
@@ -4724,11 +4812,11 @@
   function agentRow(mode) {
     const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];
     const unread = (reports ? reportsUnread(st, shownNotices()) : st?.unread) || 0, urgent = !reports && !!st?.urgent, compact = !previewsOn();
-    const last = reports ? agentReportSnippet(st, shownNotices()) : agentChatSnippet(st), name = reports ? 'Reports' : 'Agent';
+    const last = reports ? agentReportSnippet(st, shownNotices()) : agentChatSnippet(st), name = reports ? 'Reports' : agentName();
     const card = button('', () => openAgentChat(mode), 'u-person u-agent-row' + (unread ? ' unread' : '') + (urgent ? ' urgent' : ''));
     card.dataset.pid = id; card.dataset.mode = mode;
     if (split.on && s.person === id) { card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
-    card.setAttribute('aria-label', (reports ? 'Reports from your agent' : 'Agent chat') + (unread ? ', ' + unread + ' new' : '') + (urgent ? ', urgent' : ''));
+    card.setAttribute('aria-label', (reports ? 'Reports from your agent' : agentChatLabel()) + (unread ? ', ' + unread + ' new' : '') + (urgent ? ', urgent' : ''));
     const info = node('span', 'u-person-info'), top = node('span', 'u-chat-top');
     top.append(node('strong', '', name));
     if (last?.at) top.append(node('time', 'u-when', when(last.at)));
@@ -4741,6 +4829,14 @@
     info.append(top, bottom); card.append(agentFace(mode, false), info); return card;
   }
   function agentFace(mode, small) {
+    const who = mode === 'chat' && agentNameOn() ? agentWho.who : null;
+    if (who) {
+      // The Wizard's agent sigil: its hat mark (the private hat for a private agent) in the agent's own colour.
+      const own = node('span', 'u-avatar u-agent-av u-agent-own' + (who.private ? ' private' : '') + (small ? ' small' : ''));
+      const [l, c, h] = agentInk(who.hue);
+      own.style.setProperty('--ag-l', String(l)); own.style.setProperty('--ag-c', String(c)); own.style.setProperty('--ag-h', String(h));
+      own.dataset.agent = who.id; own.append(node('i', 'u-agent-hat')); own.setAttribute('aria-hidden', 'true'); return own;
+    }
     const face = node('span', 'u-avatar u-agent-av' + (mode === 'reports' ? ' reports' : '') + (small ? ' small' : ''));
     face.append(icon(mode === 'reports' ? 'compose' : 'sparkle')); face.setAttribute('aria-hidden', 'true'); return face;
   }
@@ -4781,17 +4877,18 @@
     buildAgentThread();
     if (fromList) slideIn();
     paintAgentThread(true); loadAgentChat().then(markAgentRead);
+    if (agentChat.mode === 'chat') loadAgentWho(true);
     if (agentChat.mode === 'reports') loadNotices(true).then(markAgentRead);
     if (agentChat.mode === 'chat' && !matchMedia('(hover: none)').matches) requestAnimationFrame(() => view.draft?.focus());
   }
   function buildAgentThread() {
     const reports = agentChat.mode === 'reports';
-    const root = threadBase(reports ? 'Reports' : 'Agent', reports ? reportsSub() : agentStatus(agentChat.state), null, null, '');
+    const root = threadBase(reports ? 'Reports' : agentName(), reports ? reportsSub() : agentStatus(agentChat.state), null, null, '');
     const head = root.querySelector('.u-thread-head'); head.classList.add('u-agent-head'); // root is #unified-inbox itself on a phone
     head.querySelector('.u-av-wrap')?.replaceChildren(agentFace(agentChat.mode, true));
     view.sub = root.querySelector('.u-who-text span');
     const scroll = node('div', 'u-timeline u-ac-log'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
-    scroll.setAttribute('aria-label', reports ? (noticesOn() ? 'Reports and notifications' : 'Reports from your agent') : 'Agent chat');
+    scroll.setAttribute('aria-label', reports ? (noticesOn() ? 'Reports and notifications' : 'Reports from your agent') : agentChatLabel());
     scroll.onscroll = () => { if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80) markAgentRead(); };
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll); root.append(wrap);
     Object.assign(view, {root, scroll, pill: null, id: s.person, draft: null});
