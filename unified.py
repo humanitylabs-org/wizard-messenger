@@ -32,7 +32,6 @@ from readiness.search import SearchStore
 import catchup
 import history_cursor
 import tinfoil_link
-import translation as translation_worker
 from group_features import MENTION_NETWORKS, MXID, member_labels, find_mentions, mention_content, incoming_mentions
 from typing import NoReturn
 
@@ -1298,55 +1297,33 @@ class Preparing(str):
 
 
 class Translator:
-    def __init__(self, store, root, private=None, link=None):
+    """Issue 209 (on for everyone): every box translation runs on the worker's own model on the box, never Tinfoil."""
+
+    def __init__(self, store, root):
         self.store, self.root = store, Path(root)
-        # Issue 251: the Wizard Tinfoil app, used when the worker has no install-form TINFOIL_API_KEY.
-        self.link = link
-        # Issue 209 (switch box-translate): when on, the worker translates with its own model on the box, never Tinfoil.
-        self.private = private or (lambda: False)
 
     def translate(self, original, language, source=None):
         if not language:
             return original, None
-        private = bool(self.private())
-        model = 'box-argos\0' + (source or '') if private else os.environ.get('TRANSLATION_MODEL', 'gemma4-31b')
+        model = 'box-argos\0' + (source or '')
         key = hashlib.sha256((model + '\0' + language + '\0' + original).encode()).hexdigest()
         with self.store.db() as db:
             row = db.execute('SELECT translated FROM translation WHERE cache_key=?', (key,)).fetchone()
         if row:
             return row[0], None
-        body = {'text': original, 'language': language}
-        if private:
-            body.update(engine='box', source=source if source in private_translation_languages else None)
+        body = {'text': original, 'language': language, 'engine': 'box',
+                'source': source if source in private_translation_languages else None}
         try:
             secret = json.loads((self.root / 'secrets.json').read_text())['translation_token']
             result = http(os.environ.get('TRANSLATION_URL', 'http://translation:8766'), '/translate', 'POST', body, secret, 60)
-            if result.get('error') and result.get('unconfigured') and not private:
-                translated = self.via_app(original, language)
-            elif result.get('error'):
+            if result.get('error'):
                 return original, Preparing(result['error']) if result.get('preparing') else result['error']
-            else:
-                translated = text(result.get('text'))
-        except tinfoil_link.NotLinked:
-            return original, tinfoil_link.NOT_CONNECTED
+            translated = text(result.get('text'))
         except (EngineError, OSError, ValueError, KeyError):
             return original, 'Translation unavailable. You can send the original instead.'
         with self.store.db() as db:
             db.execute('INSERT OR REPLACE INTO translation VALUES (?,?)', (key, translated))
         return translated, None
-
-    def via_app(self, original, language):
-        """Issue 251: one translation through the Wizard Tinfoil app's box gateway (raises NotLinked without a link)."""
-        if self.link is None:
-            raise tinfoil_link.NotLinked()
-        try:
-            out = self.link.chat(translation_worker.translation_payload(original, language), 60)
-        except tinfoil_link.NotLinked:
-            raise
-        except Exception:
-            # No upstream text, headers, submitted text or token in logs or API errors.
-            raise ValueError('Tinfoil translation failed') from None
-        return text(out.strip())
 
 
 MEDIA_LABELS = {'m.image': 'Photo', 'm.video': 'Video', 'm.audio': 'Voice message', 'm.file': 'File', 'm.location': 'Location'}
@@ -1574,7 +1551,7 @@ class UnifiedInbox:
         self.store = PeopleStore(self.root / 'people.sqlite3')
         self.engine = engine
         self.tinfoil = tinfoil_link.TinfoilLink(self.root)
-        self.translator = Translator(self.store, self.root, lambda: self.switch_on('box-translate'), self.tinfoil)
+        self.translator = Translator(self.store, self.root)
         self.catchup = catchup.CatchUpService(self.store, self.catchup_complete, fail, self.store.own_names)
         self.lock = threading.RLock()
         self.sync_lock = threading.Lock()
@@ -2510,8 +2487,6 @@ class UnifiedInbox:
             fail('invalid_tinfoil_link', 'That Tinfoil link is not valid. Try again.')
         except Exception:
             fail('tinfoil_unavailable', 'Could not reach the Tinfoil app. Try again.', 502)
-        # Auto-translated chats that failed for want of Tinfoil are queued again on their next open.
-        self.tq_seen.clear()
         return state
 
     def save_transcript(self, message_id, payload):
@@ -2621,8 +2596,7 @@ class UnifiedInbox:
         if not error:
             with self.store.db() as db:
                 db.execute('UPDATE message SET translated=?, translation_error=NULL WHERE id=?', (translated, message_id))
-        return {'id': message_id, 'translated': None if error else translated, 'error': error,
-                **({'tinfoil': 'not_connected'} if error == tinfoil_link.NOT_CONNECTED else {})}
+        return {'id': message_id, 'translated': None if error else translated, 'error': error}
 
     # ---------- sending ----------
     def preview(self, person_id, payload):
@@ -2645,8 +2619,7 @@ class UnifiedInbox:
         preview_id = secrets.token_hex(16)
         with self.store.db() as db:
             db.execute('INSERT INTO preview(id,person_id,identity_id,original,translated,error,expires) VALUES (?,?,?,?,?,?,?)', (preview_id, person_id, identity_id, original, translated, error, int(time.time()) + 900))
-        return {'id': preview_id, 'original': original, 'translated': translated, 'error': error, 'identity_id': identity_id, 'language': person['language'],
-                **({'tinfoil': 'not_connected'} if error == tinfoil_link.NOT_CONNECTED else {})}
+        return {'id': preview_id, 'original': original, 'translated': translated, 'error': error, 'identity_id': identity_id, 'language': person['language']}
 
     def confirm(self, person_id, payload):
         with self.lock:

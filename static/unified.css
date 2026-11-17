@@ -1189,4 +1189,3 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-cu-model { display: flex; flex-direction: column; gap: .375rem; margin-top: 1rem; font-size: .8125rem; color: var(--ink-2); }
 .u-cu-model[hidden] { display: none; }
 /* Issue 251: the Open Tinfoil link next to a "Tinfoil isn’t connected" notice. */
-.u-tinfoil-open { color: var(--accent); font-weight: 600; white-space: nowrap; }

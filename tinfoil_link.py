@@ -24,8 +24,6 @@ TINFOIL_APP = os.environ.get('MESSENGER_TINFOIL_APP', 'http://wizard-tinfoil:188
 LINK_FILE = 'tinfoil-link.json'
 TIMEOUT_CHECK = 8
 ANSWER_MAX = 4 * 1024 * 1024
-# Shown when neither the install key nor the Tinfoil app can answer. The view adds an Open Tinfoil link to it.
-NOT_CONNECTED = 'Tinfoil isn’t connected yet. Connect it in the Tinfoil app, then try again. You can send the original instead.'
 
 
 class NotLinked(Exception):

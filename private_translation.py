@@ -1,4 +1,4 @@
-"""Private translation on the box itself (issue 209, switch box-translate).
+"""Private translation on the box itself (issue 209, on for everyone).
 
 Argos Translate's open models (OPUS data, CTranslate2 format) run here in the translation worker, so a phone whose
 browser has no built-in translator still gets Auto-translate, the send preview and Translate without any text going
@@ -101,6 +101,8 @@ class Engine:
 
     def folder(self, pair):
         # The folder name comes from the pinned list, never from the request.
+        if pair not in FOLDERS:
+            raise Unavailable('pair')
         return self.root / FOLDERS[pair]
 
     def ready(self, pair):

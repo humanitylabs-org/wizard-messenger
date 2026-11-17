@@ -1,4 +1,4 @@
-"""Issue 209 (switch box-translate): the translator that runs on the box, with no text going to Tinfoil."""
+"""Issue 209 (on for everyone): the translator that runs on the box, with no text going to Tinfoil."""
 import hashlib
 import io
 import json
@@ -158,12 +158,19 @@ class WorkerRouteTest(unittest.TestCase):
             self.assertEqual(self.post({'text': 'x', 'language': 'en', 'engine': 'box', 'source': 'xx'})[0], 400)
             tinfoil.assert_not_called()
 
-    def test_without_the_box_engine_tinfoil_is_used_as_before(self):
-        with patch.object(translation, 'translate', return_value={'text': 'Hello', 'error': None}) as tinfoil, \
-             patch.object(pt, 'translate') as box:
-            self.assertEqual(self.post({'text': 'สวัสดี', 'language': 'en'})[0], 200)
-            tinfoil.assert_called_once_with('สวัสดี', 'en')
-            box.assert_not_called()
+    def test_every_translation_runs_on_the_box_even_without_the_engine_field(self):
+        # Issue 209 (on for everyone): the worker has no Tinfoil translation path left.
+        self.assertFalse(hasattr(translation, 'translate'))
+        with patch.object(pt, 'translate', return_value={'text': 'Hello', 'error': None}) as box, \
+             patch('translation.urlopen') as net:
+            self.assertEqual(self.post({'text': 'สวัสดี', 'language': 'en'}), (200, {'text': 'Hello', 'error': None}))
+            box.assert_called_once_with('สวัสดี', 'en', None)
+            net.assert_not_called()
+
+    def test_a_pair_outside_the_pinned_list_never_names_a_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(pt.Unavailable):
+                pt.Engine(root=d).folder(('en', '../x'))
 
 
 if __name__ == '__main__':

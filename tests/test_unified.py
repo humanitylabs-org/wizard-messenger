@@ -12,7 +12,7 @@ from engine import EngineError
 import unified
 from unified import PeopleStore, Translator, UnifiedInbox
 from unified_setup import setup
-from translation import translate
+from translation import complete
 
 
 class PeopleTests(unittest.TestCase):
@@ -498,14 +498,15 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual(self.inbox.translator.translate.call_count, 2)
 
     def test_box_translate_sends_every_translation_to_the_box_model(self):
-        # Issue 209: with box-translate on, auto-translate (background queue), Translate and the send preview ask the
+        # Issue 209 (on for everyone, no switch): auto-translate (background queue), Translate and the send preview ask the
         # worker's own model on the box (engine box, with the chat's language as source), never Tinfoil.
         root = Path(self.tmp.name) / 'unified'
         (root / 'secrets.json').write_text(json.dumps({'translation_token': 'test'}))
         self.inbox.store.update(self.a['person_id'], {'language': 'th'})
         self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10)
         self.inbox.store.add_message('$thai2', self.a, 'alice', False, 'ขอบคุณ', 11)
-        self.inbox.switches.set('box-translate', True)
+        # A value stored for the removed switch is ignored (and dropped on the next write).
+        self.inbox.switches.path.write_text(json.dumps({'switches': {'box-translate': False}}))
         with patch('unified.http', return_value={'text': 'Hello', 'error': None}) as request:
             self.assertTrue(self.inbox.timeline(self.a['person_id'])['translating'])
             self.inbox.translate_pending()
@@ -516,11 +517,7 @@ class UnifiedTests(unittest.TestCase):
         self.assertIn({'text': 'ขอบคุณ', 'language': 'en', 'engine': 'box', 'source': 'th'}, bodies)
         self.assertEqual(bodies[-1], {'text': 'Hi', 'language': 'th', 'engine': 'box', 'source': None})
         self.assertEqual(self.inbox.store.messages(self.a['person_id'])[0]['translated'], 'Hello')
-        # Switch off: the same text goes the old way (Tinfoil) and is not answered from the box model's cache.
-        self.inbox.switches.set('box-translate', False)
-        with patch('unified.http', return_value={'text': 'Hi (Tinfoil)', 'error': None}) as request:
-            self.assertEqual(self.inbox.preview(self.a['person_id'], {'text': 'Hi'})['translated'], 'Hi (Tinfoil)')
-        self.assertEqual(request.call_args.args[3], {"text": "Hi", "language": "th"})
+        self.assertTrue(all(b.get('engine') == 'box' for b in bodies))
 
     def test_box_translate_first_use_retries_instead_of_keeping_the_error(self):
         # Issue 209: while the box's model downloads, the message shows "getting ready" and is queued again on the
@@ -529,7 +526,6 @@ class UnifiedTests(unittest.TestCase):
         (root / 'secrets.json').write_text(json.dumps({'translation_token': 'test'}))
         self.inbox.store.update(self.a['person_id'], {'language': 'th'})
         self.inbox.store.add_message('$thai', self.a, 'alice', False, 'สวัสดี', 10)
-        self.inbox.switches.set('box-translate', True)
         ready = {'text': 'สวัสดี', 'error': 'Your Wizard is getting its Thai translator ready', 'preparing': True}
         with patch('unified.http', return_value=ready):
             self.inbox.timeline(self.a['person_id'])
@@ -646,8 +642,8 @@ class UnifiedTests(unittest.TestCase):
 
     def test_tinfoil_missing_key_is_honest(self):
         with patch.dict(os.environ, {'TINFOIL_API_KEY': ''}):
-            result = translate('Hello', 'th')
-            self.assertEqual(result['text'], 'Hello')
+            result = complete('glm-5-3', 'sys', 'Hello')
+            self.assertEqual(result['text'], '')
             self.assertIn('not configured', result['error'])
 
     def test_setup_secrets_stable_and_no_federation(self):
