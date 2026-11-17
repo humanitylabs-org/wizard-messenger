@@ -1221,3 +1221,13 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-ac-compose[hidden] { display: none; }
 .u-ac-field { flex: 1; min-height: 2.75rem; max-height: 8rem; resize: none; border-radius: 1.375rem; padding: .625rem 1rem; }
 .u-ac-empty { color: var(--ink-3); line-height: 1.5; }
+/* Issue 266: photo and voice notes in the Agent chat. */
+.u-ac-msg.u-ac-media { display: flex; flex-direction: column; gap: .375rem; }
+.u-ac-photo { display: block; max-width: 100%; max-height: 20rem; border-radius: .75rem; object-fit: contain; }
+.u-ac-voice { width: min(16rem, 70vw); height: 2.5rem; }
+.u-ac-transcript { margin: 0; white-space: pre-wrap; line-height: 1.4; font-size: .875rem; }
+.u-ac-rec { flex: 1; display: flex; align-items: center; gap: .5rem; min-height: 2.75rem; padding: 0 .5rem 0 1rem; border-radius: 1.375rem; background: var(--raised); }
+.u-ac-rec[hidden], .u-ac-field[hidden], .u-ac-compose .icon-button[hidden] { display: none; }
+.u-ac-rec-time { flex: 1; font-variant-numeric: tabular-nums; }
+.u-ac-dot { width: .625rem; height: .625rem; border-radius: 50%; background: var(--err); }
+.u-ac-mic.on { color: var(--err); }

@@ -25,7 +25,7 @@ from passkey import Passkeys, PasskeyError
 SESSION_SECONDS=30*24*3600
 
 # GET routes a sandboxed Messenger window loads straight from its <img>/<video>/<audio> (BrowserAuth.media_ticket).
-MEDIA_TICKET_ROUTES=re.compile(r'/api/unified/(?:media/[^/]+|picker/media/[^/]+|people/[^/]+/avatar)')
+MEDIA_TICKET_ROUTES=re.compile(r'/api/unified/(?:media/[^/]+|picker/media/[^/]+|people/[^/]+/avatar|agent-chat/media/[^/]+)')
 
 class BrowserAuth:
     def __init__(self,path=None):

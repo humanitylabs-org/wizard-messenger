@@ -1647,9 +1647,10 @@ class UnifiedInbox:
     def close(self):
         self.stop.set()
         self.notify()
-        waker = getattr(self, 'waker', None)
-        if waker is not None:
-            waker.close()
+        for name in ('waker', 'agent_chat_waker'):
+            waker = getattr(self, name, None)
+            if waker is not None:
+                waker.close()
         if self.worker:
             self.worker.join(timeout=2)
 
@@ -3576,7 +3577,7 @@ class UnifiedInbox:
             # Issue 265 (switch agent-chat), owner session only: no agent capability maps here. Agents use the
             # messenger_agent_chat_* MCP tools instead.
             import agent_chat
-            return agent_chat.dispatch(self, method, suffix[1:], payload)
+            return agent_chat.dispatch(self, method, suffix[1:], payload, query, raw)
         if suffix == ['start-chat'] and method == 'POST':
             return self.start_chat(payload.get('network'), payload.get('to'))
         if suffix == ['sync'] and method == 'POST':

@@ -197,7 +197,9 @@ class ToolList(unittest.TestCase):
                                                 'messenger_agent_chat_inbox': 'agent-chat',
                                                 'messenger_agent_chat_ack': 'agent-chat',
                                                 'messenger_agent_chat_post': 'agent-chat',
-                                                'messenger_agent_chat_done': 'agent-chat'})
+                                                'messenger_agent_chat_done': 'agent-chat',
+                                                'messenger_agent_chat_attachment': 'agent-chat',
+                                                'messenger_agent_chat_wake_me': 'agent-chat'})
         self.assertFalse(set(agent_tools.SWITCHED) & names)
         self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft'} <= names)
         self.assertEqual(agent_tools.ROUTES['messenger_chats_needing_draft'], ('GET', '/api/unified/people'))

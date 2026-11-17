@@ -48,3 +48,15 @@ test('the pinned row says what is newest', () => {
   assert.equal(agentChatSnippet(null), null);
   assert.deepEqual(agentChatRows({entries: 'nope'}), []);
 });
+
+test('issue 266: a photo or voice note shows as media, and the row says what it is', () => {
+  const media = {entries: [
+    {id: 'n1', kind: 'note', by: 'owner', text: '', at: 10, seen: null, media: {type: 'photo', mime: 'image/png', size: 9, file: 'a'.repeat(32)}},
+    {id: 'n2', kind: 'note', by: 'owner', text: '', at: 20, seen: {at: 30}, media: {type: 'voice', mime: 'audio/ogg', duration: 4200, transcript: 'Call the vet', file: 'b'.repeat(32)}},
+    {id: 'n3', kind: 'note', by: 'owner', text: 'x', at: 40, seen: null, media: {type: 'svg'}}]};
+  const rows = agentChatRows(media);
+  assert.deepEqual(rows.map(r => r.media), [{type: 'photo', duration: null, transcript: null}, {type: 'voice', duration: 4200, transcript: 'Call the vet'}, null]);
+  assert.equal(rows[1].ticked, true);
+  assert.equal(agentChatSnippet({entries: media.entries.slice(0, 1)}).text, 'You: Photo');
+  assert.equal(agentChatSnippet({entries: media.entries.slice(0, 2)}).text, 'You: Voice note');
+});
