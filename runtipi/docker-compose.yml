@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-4249500cce04cbb625985f2586f651a83d3d816c@sha256:e85d23c73fb4d574a8732de7f4e0a6594702a340a79ccdd6dfd409a41de14aef}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9ba03e7f3ebac67d88ee4237884a6cc2028a6dfe@sha256:c1d357535072f7c97094bd962313e4034d07b9fb296b65133dda6bf507e11041}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-4249500cce04cbb625985f2586f651a83d3d816c@sha256:e85d23c73fb4d574a8732de7f4e0a6594702a340a79ccdd6dfd409a41de14aef}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9ba03e7f3ebac67d88ee4237884a6cc2028a6dfe@sha256:c1d357535072f7c97094bd962313e4034d07b9fb296b65133dda6bf507e11041}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -35,7 +35,7 @@ services:
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.61"
+      MESSENGER_VERSION: "0.2.0-unified.16.62"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
@@ -108,7 +108,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-4249500cce04cbb625985f2586f651a83d3d816c@sha256:e85d23c73fb4d574a8732de7f4e0a6594702a340a79ccdd6dfd409a41de14aef}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9ba03e7f3ebac67d88ee4237884a6cc2028a6dfe@sha256:c1d357535072f7c97094bd962313e4034d07b9fb296b65133dda6bf507e11041}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -134,7 +134,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-4249500cce04cbb625985f2586f651a83d3d816c@sha256:e85d23c73fb4d574a8732de7f4e0a6594702a340a79ccdd6dfd409a41de14aef}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9ba03e7f3ebac67d88ee4237884a6cc2028a6dfe@sha256:c1d357535072f7c97094bd962313e4034d07b9fb296b65133dda6bf507e11041}
     user: 0:0
     entrypoint:
     - python3
