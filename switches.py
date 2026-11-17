@@ -48,12 +48,6 @@ SWITCHES = (
                     'toggle at the top, next to Catch me up.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#201']},
-    {'id': 'box-translate', 'name': 'Translate on your Wizard',
-     'description': 'Auto-translate, the send preview and Translate under a message use a translator that runs on your '
-                    'Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each language is set up '
-                    'once on first use (a download of about 70-130 MB per direction, about a minute).',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#209']},
     {'id': 'agent-wake', 'name': 'Drafts without a schedule',
      'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents with '
                     'Draft-only access) to write the draft, so no agent needs a schedule. The wake carries only which '

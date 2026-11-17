@@ -38,7 +38,7 @@ RUN test "$(wn --version)" = 'wn 0.12.0'
 COPY owner_unix.py /app/owner_unix.py
 COPY engine.py server.py web.py trusted_owner.py passkey.py messenger_addresses.py unified.py group_features.py unified_setup.py telegram_application.py translation.py private_translation.py catchup.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py switches.py start_chat.py draft_watch.py draft_wake.py voice_archive.py inbox_feed.py remote_authority.py contacts_link.py tinfoil_link.py API-contract.json /app/
 RUN apt-get update && apt-get install -y --no-install-recommends python3-cryptography python3-pil python3-pypdf opus-tools mkvtoolnix && rm -rf /var/lib/apt/lists/*
-# Issue 209 (switch box-translate): the translator that runs on the box (Argos models, CTranslate2). Its own folder,
+# Issue 209 (on for everyone): the translator that runs on the box (Argos models, CTranslate2). Its own folder,
 # imported only by the translation worker; models are downloaded on first use into the worker's /models volume.
 RUN apt-get update && apt-get install -y --no-install-recommends python3-venv && \
     python3 -m venv /opt/argos && /opt/argos/bin/pip install --no-cache-dir ctranslate2==4.9.0 sentencepiece==0.2.1 && \

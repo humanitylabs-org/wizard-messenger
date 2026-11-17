@@ -114,7 +114,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    # 768m: the translator that runs on the box (switch box-translate, issue 209) holds one language both ways.
+    # 768m: the translator that runs on the box (issue 209) holds one language both ways.
     mem_limit: 768m
     pids_limit: 64
     environment:

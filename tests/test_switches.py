@@ -64,12 +64,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'keeps a draft ready, or Stop keeping a draft ready, without opening the chat. An open '
                                'chat shows a Drafts toggle at the top, next to Catch me up.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}, {
-                'id': 'box-translate', 'name': 'Translate on your Wizard',
-                'description': 'Auto-translate, the send preview and Translate under a message use a translator that '
-                               'runs on your Wizard itself, so no text goes to Tinfoil, on every phone and browser. Each '
-                               'language is set up once on first use (a download of about 70-130 MB per direction, about '
-                               'a minute).',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#209']}, {
                 'id': 'agent-wake', 'name': 'Drafts without a schedule',
                 'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents '
                                'with Draft-only access) to write the draft, so no agent needs a schedule. The wake '
@@ -337,7 +331,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'box-translate', 'agent-wake', 'agent-documents', 'transcript-paragraphs'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'agent-documents', 'transcript-paragraphs'])
 
 
 if __name__ == '__main__':
