@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.67 (A stalled voice note shows Retry instead of staying on the clock)
+
+Store recipe: pins the image built from main `4781577`. Ships #274 (Refs humanitylabs-org/wizard-messenger#273), a bug fix that is on for everyone: saving a voice note's original on the box and converting plus uploading it each get a deadline sized for a long take on a slow phone link (1 minute, plus 1 s per 64 KB, plus half the take's length; at most 10 minutes). When it passes, the stalled request is aborted, the bubble shows Retry, and later messages to the same person are sent instead of waiting behind it. Guard: `tests/test_voice_send_deadline.cjs`.
+
 ## 0.2.0-unified.16.66 (Agent chat opens like any other chat, behind a switch)
 
 Store recipe: pins the image built from main `e2949df`. Ships #271 (Refs humanitylabs-org/wizard-messenger#265), off by default behind the switch `agent-chat`: the Agent chat and a separate Reports chat are pinned on top of Chats and open in the normal chat pane (header, bubbles, composer) instead of a sheet. The chat's first bubble says how it works, and the header says whether an agent listens.
