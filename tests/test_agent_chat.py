@@ -102,6 +102,8 @@ class AgentChat(unittest.TestCase):
         state = self.ok('POST', '', {'text': 'Buy dog food https://shop.example/food'})
         note = state['entries'][-1]
         self.assertEqual((note['kind'], note['by'], note['seen']), ('note', 'owner', None))
+        # The header can say whether anyone listens: no agent has checked yet.
+        self.assertEqual(state['agent'], {'woken': False, 'checked': False})
         got, error = self.mcp('messenger_agent_chat_inbox')
         self.assertFalse(error, got)
         self.assertEqual([n['text'] for n in got['notes']], ['Buy dog food https://shop.example/food'])
@@ -110,6 +112,7 @@ class AgentChat(unittest.TestCase):
         self.assertEqual(done, {'picked_up': [note['id']], 'unknown': ['n999']})
         state = self.ok('GET')
         self.assertEqual(state['entries'][-1]['seen']['by'], 'Oscar')
+        self.assertEqual(state['agent'], {'woken': False, 'checked': True})
         self.assertEqual(self.mcp('messenger_agent_chat_inbox')[0]['notes'], [])
         # Quiet mode: there is no reply kind, a sweep needs the owner's Sweep tap, and a ping is one short line.
         refused, error = self.mcp('messenger_agent_chat_post', {'kind': 'reply', 'text': 'On it!'})

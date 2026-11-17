@@ -406,13 +406,13 @@
     }
     return out.filter(x => x.names.length);
   }
-  // Issue 265 (switch agent-chat): what the owner's Agent chat shows. 'chat' leaves reports out (they live under the
-  // Reports button); 'reports' shows only reports, newest first. A sweep item is open (buttons), answered (the pick
+  // Issue 265 (switch agent-chat): what the owner's Agent chat shows. 'chat' leaves reports out (they have their own
+  // Reports chat); 'reports' shows only reports, oldest first like any chat. A sweep item is open (buttons), answered (the pick
   // shows; it can still change until the agent picks it up) or done (collapsed to the agent's result).
   function agentChatRows(state, mode = 'chat') {
     const entries = Array.isArray(state?.entries) ? state.entries.filter(e => e && typeof e === 'object') : [];
     const who = e => (typeof e.agent === 'string' && e.agent) || 'Your agent';
-    if (mode === 'reports') return entries.filter(e => e.kind === 'report').reverse().map(e => ({id: e.id, kind: 'report', side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e)}));
+    if (mode === 'reports') return entries.filter(e => e.kind === 'report').map(e => ({id: e.id, kind: 'report', side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e)}));
     return entries.filter(e => e.kind !== 'report').map(e => {
       if (e.by === 'owner') {
         // Issue 266: a note can be a photo or a voice note (the file stays on the box).
@@ -439,7 +439,12 @@
         : last.text.split('\n')[0];
     return {text, at: last.at, urgent: !!(state?.urgent)};
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet};
+  // The Reports row's last line: the newest report's title.
+  function agentReportSnippet(state) {
+    const last = agentChatRows(state, 'reports').at(-1);
+    return last ? {text: last.text.split('\n')[0], at: last.at, urgent: false} : null;
+  }
+  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1604,7 +1609,7 @@
     const keep = list.dataset.keepTop ? +list.dataset.keepTop : list.scrollTop;
     list.replaceChildren(frag);
     // Issue 265 (switch agent-chat): the Agent chat is pinned on top of All, with no search or filter narrowing it.
-    if (agentChatOn() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(agentRow());
+    if (agentChatOn() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
     if (list.dataset.keepTop && shown.length) delete list.dataset.keepTop;
     if (keep && list.scrollTop !== keep) list.scrollTop = keep;
   }
@@ -1893,6 +1898,7 @@
   })();
 
   async function openPerson(id, hint) {
+    if (agentMode(id)) return openAgentChat(agentMode(id)); // issue 265: the two Agent chats open like any chat
     view.selection?.clear();
     if (split.on && s.native) native?.close?.(); // the native Wizard thread on the right gives way
     const fromList = !split.on && !s.person ? $('unified-inbox')?.querySelector(':scope > .u-list') : null;
@@ -4604,14 +4610,18 @@
     catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
   // ---------- Agent chat (issue 265, switch agent-chat) ----------
-  // One chat with the owner's own agent, kept on the box (api/unified/agent-chat). What the owner writes is a note to
-  // self: the agent never answers it in words, it ticks it once picked up. Sweep asks the agent for one list of what
-  // needs the owner, each item with one-tap answers; urgent things arrive as one line; reports sit under Reports.
-  const agentChat = {state: null, mode: 'chat', sheet: null, key: '', loading: null};
+  // Two chats with the owner's own agent, kept on the box (api/unified/agent-chat), listed on top of Chats and opened
+  // like any other chat (Miguel, 17 Nov: "the chat should look identical to the other chats"). Agent: what the owner
+  // writes is a note to self; the agent never answers it in words, it ticks it once picked up. Sweep asks for one list
+  // of what needs the owner, each item with one-tap answers; urgent things arrive as one line. Reports: the agent's
+  // longer write-ups, apart so they don't clutter the notes (the mentor's Notes to self + Reports).
+  const AGENT_IDS = {chat: 'agent:notes', reports: 'agent:reports'};
+  function agentMode(id) { return id === AGENT_IDS.chat ? 'chat' : id === AGENT_IDS.reports ? 'reports' : null; }
+  const agentChat = {state: null, mode: 'chat', root: null, key: '', loading: null};
   function agentChatOn() { return switchState.on['agent-chat'] === true; }
   function applyAgentChat(state) {
     if (!state || !Array.isArray(state.entries)) return;
-    agentChat.state = state; paintAgentRow(); paintAgentSheet(); syncBadge();
+    agentChat.state = state; paintAgentRow(); paintAgentThread(); syncBadge();
   }
   function loadAgentChat() {
     if (!agentChatOn()) { if (agentChat.state) { agentChat.state = null; paintAgentRow(); syncBadge(); } return Promise.resolve(); }
@@ -4619,46 +4629,94 @@
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
+  // Leave an open Agent chat for the list (the switch went off, or a stale resume).
+  function leaveAgentChat() {
+    if (!agentMode(s.person)) return;
+    agentRecDiscard(); s.person = null; view.id = null; view.root = view.scroll = null; s.epoch++; inChat(false);
+    if (split.on && hasListPane()) { closePane(); markSelected(); } else renderList();
+  }
   switchState.paints['agent-chat'] = () => {
     loadAgentChat();
-    if (!agentChatOn()) { agentChat.state = null; if (s.overlay === 'Agent') closeOverlay(); }
+    if (!agentChatOn()) { agentChat.state = null; leaveAgentChat(); }
     if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList();
   };
-  function agentRow() {
-    const st = agentChat.state, unread = st?.unread || 0, last = agentChatSnippet(st), compact = !previewsOn();
-    const card = button('', () => openAgentChat(), 'u-person u-agent-row' + (unread ? ' unread' : '') + (st?.urgent ? ' urgent' : ''));
-    card.setAttribute('aria-label', 'Agent chat' + (unread ? ', ' + unread + ' new' : '') + (st?.urgent ? ', urgent' : ''));
-    const face = node('span', 'u-avatar u-agent-av' + (compact ? ' small' : '')); face.append(icon('sparkle')); face.setAttribute('aria-hidden', 'true');
+  function agentRows() { return [agentRow('chat'), agentRow('reports')]; }
+  function agentRow(mode) {
+    const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];
+    const unread = (reports ? st?.reports_unread : st?.unread) || 0, urgent = !reports && !!st?.urgent, compact = !previewsOn();
+    const last = reports ? agentReportSnippet(st) : agentChatSnippet(st), name = reports ? 'Reports' : 'Agent';
+    const card = button('', () => openAgentChat(mode), 'u-person u-agent-row' + (unread ? ' unread' : '') + (urgent ? ' urgent' : ''));
+    card.dataset.pid = id; card.dataset.mode = mode;
+    if (split.on && s.person === id) { card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
+    card.setAttribute('aria-label', (reports ? 'Reports from your agent' : 'Agent chat') + (unread ? ', ' + unread + ' new' : '') + (urgent ? ', urgent' : ''));
     const info = node('span', 'u-person-info'), top = node('span', 'u-chat-top');
-    top.append(node('strong', '', 'Agent'));
+    top.append(node('strong', '', name));
     if (last?.at) top.append(node('time', 'u-when', when(last.at)));
     const badge = unread ? node('span', 'u-badge', unread > 99 ? '99+' : String(unread)) : null;
-    if (compact) { if (badge) top.append(badge); info.append(top); card.append(face, info); return card; }
+    if (compact) { if (badge) top.append(badge); info.append(top); card.append(agentFace(mode, true), info); return card; }
     const bottom = node('span', 'u-chat-bottom');
-    bottom.append(node('span', 'u-snippet' + (last?.urgent ? ' u-agent-urgent' : ''), last ? last.text : 'Notes to your agent. It never replies, it ticks.'));
+    bottom.append(node('span', 'u-snippet' + (last?.urgent ? ' u-agent-urgent' : ''), last ? last.text
+      : reports ? 'Longer write-ups from your agent' : 'Notes to your agent. It never replies, it ticks.'));
     if (badge) bottom.append(badge);
-    info.append(top, bottom); card.append(face, info); return card;
+    info.append(top, bottom); card.append(agentFace(mode, false), info); return card;
+  }
+  function agentFace(mode, small) {
+    const face = node('span', 'u-avatar u-agent-av' + (mode === 'reports' ? ' reports' : '') + (small ? ' small' : ''));
+    face.append(icon(mode === 'reports' ? 'compose' : 'sparkle')); face.setAttribute('aria-hidden', 'true'); return face;
   }
   function paintAgentRow() {
-    const old = document.querySelector('.u-list > .u-agent-row');
-    if (old && agentChatOn()) old.replaceWith(agentRow());
-    else if (old) old.remove();
+    for (const old of document.querySelectorAll('.u-list > .u-agent-row')) {
+      if (agentChatOn()) old.replaceWith(agentRow(old.dataset.mode === 'reports' ? 'reports' : 'chat')); else old.remove();
+    }
   }
   async function agentAct(path, body) {
     try { applyAgentChat(await call('agent-chat' + path, body)); return true; } catch (e) { error(e); return false; }
   }
   function markAgentRead() {
-    const st = agentChat.state; if (!st || document.hidden || s.overlay !== 'Agent') return;
-    if (agentChat.mode === 'reports' ? st.reports_unread : st.unread) agentAct('/read', agentChat.mode === 'reports' ? {reports: true} : {});
+    const st = agentChat.state, mode = agentMode(s.person); if (!st || document.hidden || !mode) return;
+    if (mode === 'reports' ? st.reports_unread : st.unread) agentAct('/read', mode === 'reports' ? {reports: true} : {});
+  }
+  // What the header says about the agent: is anyone listening here, and how fast.
+  function agentStatus(st) {
+    const a = st?.agent;
+    if (!a) return 'Notes to your agent';
+    return a.woken ? 'Your agent hears about each note within seconds' : a.checked ? 'Your agent checks here on its own schedule' : 'Your agent hasn’t checked here yet';
   }
   function openAgentChat(mode = 'chat') {
-    agentChat.mode = mode; agentChat.key = '';
-    const sheet = overlay('Agent'); sheet.classList.add('tall', 'u-agent-chat'); agentChat.sheet = sheet;
-    s.menuClosed = () => agentRecDiscard(); // closing the chat mid-recording drops that recording
-    const log = node('div', 'u-ac-log'); log.setAttribute('role', 'log'); log.tabIndex = 0;
+    if (!agentChatOn()) { leaveAgentChat(); return; }
+    const id = AGENT_IDS[mode] || AGENT_IDS.chat;
+    view.selection?.clear(); view.selection = null;
+    if (s.overlay) closeOverlay();
+    if (split.on && s.native) native?.close?.();
+    const fromList = !split.on && !s.person ? $('unified-inbox')?.querySelector(':scope > .u-list') : null;
+    if (fromList) split.listTop = fromList.scrollTop;
+    if (agentMode(s.person) !== mode) agentRecDiscard();
+    s.person = id; s.epoch++; split.threadGen++; inChat(true); els.clear(); view.reply = view.edit = view.attach = null; view.menu = null;
+    if (split.on) { if (!hasListPane()) renderList(); markSelected(); }
+    agentChat.mode = mode === 'reports' ? 'reports' : 'chat'; agentChat.key = '';
+    buildAgentThread();
+    if (fromList) slideIn();
+    paintAgentThread(true); loadAgentChat().then(markAgentRead);
+    if (agentChat.mode === 'chat' && !matchMedia('(hover: none)').matches) requestAnimationFrame(() => view.draft?.focus());
+  }
+  function buildAgentThread() {
+    const reports = agentChat.mode === 'reports';
+    const root = threadBase(reports ? 'Reports' : 'Agent', reports ? 'Longer write-ups from your agent' : agentStatus(agentChat.state), null, null, '');
+    const head = root.querySelector('.u-thread-head'); head.classList.add('u-agent-head'); // root is #unified-inbox itself on a phone
+    head.querySelector('.u-av-wrap')?.replaceChildren(agentFace(agentChat.mode, true));
+    view.sub = root.querySelector('.u-who-text span');
+    const scroll = node('div', 'u-timeline u-ac-log'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
+    scroll.setAttribute('aria-label', reports ? 'Reports from your agent' : 'Agent chat');
+    scroll.onscroll = () => { if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80) markAgentRead(); };
+    const wrap = node('div', 'u-thread-body'); wrap.append(scroll); root.append(wrap);
+    Object.assign(view, {root, scroll, pill: null, id: s.person, draft: null});
+    agentChat.root = root;
+    if (reports) { const foot = node('p', 'u-ac-readonly', 'Only your agent writes here.'); root.append(foot); return; }
+    // Telegram-bot style: the chat's own buttons sit above the composer, no typed commands.
+    const form = node('form', 'u-composer u-ac-compose');
     const bar = node('div', 'u-ac-bar');
-    const form = node('form', 'u-ac-compose');
-    const field = node('textarea', 'u-ac-field'); field.rows = 1; field.placeholder = 'Note to your agent'; field.setAttribute('aria-label', 'Note to your agent'); field.maxLength = 4000;
+    const draft = node('textarea', 'u-ac-field'); draft.rows = 1; draft.placeholder = 'Note to your agent'; draft.setAttribute('aria-label', 'Note to your agent'); draft.maxLength = 4000;
+    const field = node('div', 'u-field'); field.append(draft);
     const send = iconButton('send', 'Save note', null, 'u-send'); send.type = 'submit';
     // Issue 266: a photo or a voice note is a note too. Files are checked again on the box (type sniffed there).
     const file = node('input', 'u-ac-file'); file.type = 'file'; file.accept = 'image/*,audio/*'; file.multiple = true; file.hidden = true;
@@ -4669,19 +4727,21 @@
         catch (e) { toast(e.message || 'Could not save that. Try again.', 3000); }
       }
     };
-    const attach = iconButton('plus', 'Add a photo or voice note', () => file.click(), 'u-ac-attach');
-    const mic = iconButton('mic', 'Record a voice note', () => agentRecord(), 'u-ac-mic');
+    const attach = iconButton('plus', 'Add a photo or voice note', () => file.click(), 'u-attach u-ac-attach');
+    const mic = iconButton('mic', 'Record a voice note', () => agentRecord(), 'u-mic u-ac-mic');
     const rec = node('div', 'u-ac-rec'); rec.hidden = true; rec.setAttribute('role', 'status');
-    form.append(file, attach, field, rec, mic, send);
+    const row = node('div', 'u-compose-row'); row.append(attach, field, rec, mic, send, file);
+    form.append(bar, row);
+    const grow = () => { draft.style.height = 'auto'; draft.style.height = Math.min(draft.scrollHeight, 140) + 'px'; };
+    draft.oninput = () => { grow(); paintAgentRec(); };
     form.onsubmit = async e => {
-      e.preventDefault(); const text = field.value.trim(); if (!text) return;
-      field.value = '';
-      if (!(await agentAct('', {text}))) field.value = text;
+      e.preventDefault(); const text = draft.value.trim(); if (!text) return;
+      draft.value = ''; grow(); paintAgentRec();
+      if (!(await agentAct('', {text}))) { draft.value = text; grow(); paintAgentRec(); }
     };
-    field.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } };
-    sheet.append(log, bar, form);
-    paintAgentSheet(); loadAgentChat().then(markAgentRead);
-    if (mode === 'chat' && !matchMedia('(hover: none)').matches) requestAnimationFrame(() => field.focus());
+    draft.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(hover: none)').matches) { e.preventDefault(); form.requestSubmit(); } };
+    root.append(form); view.draft = draft;
+    paintAgentRec();
   }
   function agentText(cls, text) { const p = node('p', cls); inline(p, text || '', 0); return p; }
   // ---- Issue 266: photo and voice notes ----
@@ -4705,11 +4765,14 @@
       if (text && !result.unavailable) applyAgentChat(await call('agent-chat/transcript', {id, text}));
     } catch { /* the agent still gets the recording */ }
   }
+  // Like every chat's composer: the mic while the box is empty, Send once there are words.
   function paintAgentRec() {
-    const sheet = agentChat.sheet, r = agentChat.rec; if (!sheet?.isConnected) return;
-    const rec = sheet.querySelector('.u-ac-rec'), field = sheet.querySelector('.u-ac-field'), mic = sheet.querySelector('.u-ac-mic');
-    const attach = sheet.querySelector('.u-ac-attach'), send = sheet.querySelector('.u-ac-compose .u-send');
-    rec.hidden = !r; field.hidden = attach.hidden = send.hidden = !!r;
+    const root = agentChat.root, r = agentChat.rec; if (!root?.isConnected) return;
+    const rec = root.querySelector('.u-ac-rec'), field = root.querySelector('.u-ac-compose .u-field'), mic = root.querySelector('.u-ac-mic');
+    const attach = root.querySelector('.u-ac-attach'), send = root.querySelector('.u-ac-compose .u-send'), draft = root.querySelector('.u-ac-field');
+    if (!rec || !mic) return;
+    const typed = !!draft?.value.trim();
+    rec.hidden = !r; field.hidden = attach.hidden = !!r; send.hidden = !!r || !typed; mic.hidden = !r && typed;
     mic.setAttribute('aria-label', r ? 'Stop and save the voice note' : 'Record a voice note'); mic.title = mic.getAttribute('aria-label');
     mic.classList.toggle('on', !!r);
     if (!r) { rec.replaceChildren(); return; }
@@ -4731,7 +4794,8 @@
       if (agentChat.rec !== r) { r.session?.cancel?.().catch(() => {}); return; }
       if (!r.session) throw new Error('Could not start recording. Try again.');
       const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now(); r.phase = 'recording';
-      r.tick = setInterval(() => { if (agentChat.rec === r) paintAgentRec(); else clearInterval(r.tick); }, 500);
+      // Leaving the Agent chat mid-recording drops that recording (Wizard keeps the take in its own recordings).
+      r.tick = setInterval(() => { if (agentChat.rec !== r) clearInterval(r.tick); else if (agentMode(s.person) !== 'chat' || !agentChat.root?.isConnected) agentRecDiscard(); else paintAgentRec(); }, 500);
       paintAgentRec();
     } catch (e) { if (agentChat.rec === r) agentChat.rec = null; paintAgentRec(); toast(e?.message || 'Could not start recording. Try again.', 3000); }
   }
@@ -4774,7 +4838,7 @@
     const li = node('li', 'u-ac-item ' + i.state); li.value = i.n;
     if (i.state === 'done') { li.append(node('p', 'u-ac-result', '✓ ' + i.result)); li.title = i.text; return li; }
     li.append(agentText('u-ac-item-text', i.text));
-    if (i.recommendation) li.append(node('p', 'u-ac-rec', 'Recommended: ' + i.recommendation));
+    if (i.recommendation) li.append(node('p', 'u-ac-rec-line', 'Recommended: ' + i.recommendation));
     if (i.buttons.length) {
       const row = node('div', 'u-ac-buttons'); row.setAttribute('role', 'group'); row.setAttribute('aria-label', 'Answer ' + i.n);
       for (const b of i.buttons) {
@@ -4785,49 +4849,79 @@
     } else if (i.answer) li.append(node('p', 'u-ac-answer', 'You: ' + i.answer + ' · your agent is on it'));
     return li;
   }
-  function paintAgentSheet() {
-    const sheet = agentChat.sheet;
-    if (!sheet?.isConnected || s.overlay !== 'Agent') { agentChat.sheet = null; return; }
-    const st = agentChat.state, reports = agentChat.mode === 'reports';
-    const key = JSON.stringify([agentChat.mode, st?.entries, st?.sweep_open, st?.reports_unread]);
-    if (key === agentChat.key) return; agentChat.key = key;
-    const log = sheet.querySelector('.u-ac-log'), bar = sheet.querySelector('.u-ac-bar'), form = sheet.querySelector('.u-ac-compose');
-    sheet.querySelector('header h2').textContent = reports ? 'Reports' : 'Agent';
-    const near = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
-    const rows = agentChatRows(st, agentChat.mode), frag = document.createDocumentFragment();
-    if (!st) frag.append(node('p', 'u-empty', 'Loading…'));
-    else if (!rows.length) frag.append(node('p', 'u-empty u-ac-empty', reports ? 'No reports yet. Longer write-ups from your agent land here.'
-      : 'Drop notes, links and to-dos here. Your agent never replies: it ticks each note once picked up and works on it. Tap Sweep for one list of what needs you.'));
-    for (const r of rows) {
-      const row = node('div', 'u-ac-row ' + r.side + (r.urgent ? ' urgent' : '') + (r.kind === 'report' ? ' report' : '')); row.dataset.id = r.id;
-      const b = node('article', 'u-ac-msg');
-      if (r.side === 'out') {
+  // The chat's first bubble says how it works, like a bot's "What can this bot do?" (Miguel: "how exactly do I use this?").
+  function agentIntro(reports, st) {
+    const box = node('section', 'u-ac-intro'); box.setAttribute('aria-label', 'How this chat works');
+    if (reports) {
+      box.append(node('h3', '', 'Reports'), node('p', '', 'Your agent’s longer write-ups land here: weekly summaries, stats, research. They stay out of the Agent chat so your notes stay short.'));
+      return box;
+    }
+    const list = node('ol');
+    for (const line of ['Write anything here: a to-do, a link, a photo or a voice note. It is a note to your agent, like Notes to self.',
+      'Your agent never replies to a note. A ✓ under it means your agent picked it up and is working on it.',
+      'Tap Sweep when you have a minute: your agent sends one list of only what needs you, each with its recommendation. Answer with one tap.',
+      'Something urgent comes in here as one line, and only that marks the chat unread.']) list.append(node('li', '', line));
+    box.append(node('h3', '', 'How this chat works'), list);
+    if (!st?.agent?.woken && !st?.agent?.checked) box.append(node('p', 'u-ac-intro-tip', 'First time? Ask your agent once: “Check my Messenger Agent chat and have Messenger wake you when I write.”'));
+    return box;
+  }
+  function paintAgentThread(toBottom = false) {
+    const root = agentChat.root, mode = agentMode(s.person);
+    if (!root?.isConnected || mode !== agentChat.mode) { agentChat.root = null; return; }
+    const st = agentChat.state, reports = mode === 'reports', scroll = root.querySelector('.u-ac-log');
+    if (view.sub) view.sub.textContent = reports ? 'Longer write-ups from your agent' : agentStatus(st);
+    const key = JSON.stringify([mode, st?.entries, st?.sweep_open, st?.agent, !!st]);
+    if (!toBottom && key === agentChat.key) return; agentChat.key = key;
+    const near = toBottom || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80, top = scroll.scrollTop;
+    const rows = agentChatRows(st, mode), kids = [node('div', 'u-spacer'), agentIntro(reports, st)];
+    if (!st) kids.push(node('p', 'u-empty', 'Loading…'));
+    const side = r => r.side;
+    let day = '';
+    rows.forEach((r, i) => {
+      const label = dayLabel(r.at);
+      if (label !== day) { day = label; kids.push(node('p', 'u-day', label)); }
+      const prev = rows[i - 1], next = rows[i + 1];
+      const jp = prev && dayLabel(prev.at) === day && side(prev) === side(r) && r.at - prev.at < 3e5;
+      const jn = next && dayLabel(next.at) === day && side(next) === side(r) && next.at - r.at < 3e5;
+      const pos = jp && jn ? 'mid' : jp ? 'last' : jn ? 'first' : 'single', out = r.side === 'out';
+      const row = node('div', 'u-row u-ac-row ' + (out ? 'outgoing out' : 'incoming in') + ' pos-' + pos + (r.urgent ? ' urgent' : '') + (r.kind === 'report' ? ' report' : ''));
+      row.dataset.id = r.id; row.dataset.direction = out ? 'out' : 'in';
+      const b = node('article', 'u-message u-ac-msg' + (out ? ' outgoing' : ''));
+      if (out) {
         if (r.media) b.classList.add('u-ac-media'), b.append(...agentMedia(r));
-        if (r.kind === 'ask') b.append(node('p', 'u-ac-ask', 'Sweep'));
-        else if (r.text || !r.media) b.append(agentText('u-ac-text', r.text));
-        const meta = node('span', 'u-ac-meta', when(r.at));
-        if (r.ticked) { const t = node('span', 'u-ac-tick', '✓'); t.setAttribute('aria-label', 'Picked up'); t.title = 'Picked up'; meta.append(t); }
-        b.append(meta);
+        if (r.kind === 'ask') b.append(node('p', 'u-text u-ac-ask', 'Sweep'));
+        else if (r.text || !r.media) b.append(agentText('u-text u-ac-text', r.text));
       } else {
         if (r.urgent) b.append(node('span', 'u-ac-tag', 'Urgent'));
-        if (r.kind === 'report') { const [first, ...rest] = r.text.split('\n'); b.append(node('h3', 'u-ac-title', first)); if (rest.join('\n').trim()) b.append(agentText('u-ac-text', rest.join('\n').trim())); }
-        else if (r.text) b.append(agentText('u-ac-text', r.text));
+        if (r.kind === 'report') { const [first, ...rest] = r.text.split('\n'); b.append(node('h3', 'u-ac-title', first)); if (rest.join('\n').trim()) b.append(agentText('u-text u-ac-text', rest.join('\n').trim())); }
+        else if (r.text) b.append(agentText('u-text u-ac-text', r.text));
+        else if (r.kind === 'sweep' && !r.items?.length) b.append(agentText('u-text u-ac-text', 'Nothing needs you right now.'));
         if (r.items?.length) { const ol = node('ol', 'u-ac-items'); for (const i of r.items) ol.append(agentItem(r, i)); b.append(ol); }
         if (r.link) b.append(agentLink(r.link));
-        b.append(node('span', 'u-ac-meta', r.who + ' · ' + when(r.at)));
       }
-      row.append(b); frag.append(row);
+      const meta = node('footer');
+      if (!out && r.who !== 'Your agent') meta.append(node('span', 'u-ac-who', r.who));
+      meta.append(node('time', '', new Date(r.at).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})));
+      if (out) meta.append(node('span', 'u-status-ic', '✓'));
+      b.append(meta); row.append(b);
+      // Picked up: a ✓ under the note, where a reaction sits in any other chat.
+      if (r.ticked) {
+        const strip = node('div', 'u-reactions'), t = node('span', 'u-react u-ac-tick', '✓');
+        t.setAttribute('aria-label', 'Picked up by your agent'); t.title = 'Picked up by your agent'; strip.append(t); row.append(strip);
+      }
+      kids.push(row);
+    });
+    scroll.replaceChildren(...kids);
+    // The pane can still be settling (fonts, the slide-in), so the newest is put in view again on the next frame.
+    if (near) { scroll.scrollTop = scroll.scrollHeight; requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; }); } else scroll.scrollTop = top;
+    const bar = root.querySelector('.u-ac-bar');
+    if (bar) {
+      const sweep = button(st?.sweep_open ? 'Sweep asked' : 'Sweep', () => agentAct('/sweep', {}), 'u-chip u-ac-sweep');
+      sweep.disabled = !st || !!st.sweep_open;
+      sweep.title = st?.sweep_open ? 'Your agent is putting the list together' : 'One list of what needs you, with one-tap answers';
+      bar.replaceChildren(sweep);
     }
-    log.replaceChildren(frag);
-    if (!reports && (near || !log.dataset.seen)) { log.scrollTop = log.scrollHeight; log.dataset.seen = '1'; }
-    const sweep = button(st?.sweep_open ? 'Sweep asked' : 'Sweep', () => agentAct('/sweep', {}), 'u-chip u-ac-sweep');
-    sweep.disabled = !st || !!st.sweep_open;
-    const n = st?.reports_unread || 0;
-    const other = reports ? button('Back to chat', () => { agentChat.mode = 'chat'; paintAgentSheet(); markAgentRead(); }, 'u-chip u-ac-reports')
-      : button(n ? 'Reports (' + n + ')' : 'Reports', () => { agentChat.mode = 'reports'; paintAgentSheet(); markAgentRead(); }, 'u-chip u-ac-reports');
-    bar.replaceChildren(...(reports ? [other] : [sweep, other]));
-    form.hidden = reports;
-    if (st && !document.hidden) markAgentRead();
+    if (st && !document.hidden && near) markAgentRead();
   }
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
   // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).

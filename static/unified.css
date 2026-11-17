@@ -1189,45 +1189,45 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-cu-model { display: flex; flex-direction: column; gap: .375rem; margin-top: 1rem; font-size: .8125rem; color: var(--ink-2); }
 .u-cu-model[hidden] { display: none; }
 /* Issue 251: the Open Tinfoil link next to a "Tinfoil isn’t connected" notice. */
-/* Issue 265 (switch agent-chat): the pinned Agent chat row and its sheet. */
-.u-agent-row .u-agent-av { background: var(--accent); color: var(--on-accent); }
-.u-agent-row .u-agent-av svg { width: 55%; height: 55%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Issue 265 (switch agent-chat): the pinned Agent and Reports chats. They open as normal chats, so bubbles, day
+   chips and the composer are the chat's own styles; only what other chats lack is styled here. */
+.u-agent-row .u-agent-av, .u-agent-head .u-agent-av { background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+.u-agent-av.reports { background: var(--raised-2); color: var(--link); }
+.u-agent-av svg { width: 55%; height: 55%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .u-person.u-agent-row .u-snippet.u-agent-urgent { color: var(--err); font-weight: 600; }
-.u-sheet.u-agent-chat { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
-.u-agent-chat .u-ac-log { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: .5rem; padding: .25rem 0 .75rem; }
-.u-ac-row { display: flex; }
-.u-ac-row.out { justify-content: flex-end; }
-.u-ac-msg { max-width: min(85%, 32.5rem); padding: .5rem .75rem .375rem; border-radius: 1.125rem; background: var(--bubble-in); color: var(--bubble-in-ink, var(--ink)); overflow-wrap: anywhere; }
-.u-ac-row.out .u-ac-msg { background: var(--bubble-out); color: var(--bubble-out-ink, var(--on-accent)); }
-.u-ac-row.urgent .u-ac-msg { box-shadow: inset .25rem 0 0 var(--err); }
-.u-ac-row.report .u-ac-msg { max-width: 100%; width: 100%; }
-.u-ac-text, .u-ac-ask { margin: 0; white-space: pre-wrap; line-height: 1.4; }
+.u-ac-intro { align-self: center; max-width: min(92%, 32.5rem); margin: .75rem 0 .5rem; padding: .75rem 1rem; border-radius: 1rem; background: var(--surface); color: var(--ink-2); font-size: .875rem; line-height: 1.45; }
+.u-ac-intro h3 { margin: 0 0 .375rem; font-size: .9375rem; color: var(--ink); text-transform: none; letter-spacing: 0; }
+.u-ac-intro p, .u-ac-intro ol { margin: 0; }
+.u-ac-intro ol { padding-left: 1.25rem; display: flex; flex-direction: column; gap: .25rem; }
+.u-ac-intro .u-ac-intro-tip { margin-top: .5rem; color: var(--ink); }
+.u-ac-row.report .u-message { max-width: min(92%, 40rem); }
+.u-ac-row.urgent .u-message { box-shadow: inset .25rem 0 0 var(--err); }
+.u-ac-text { white-space: pre-wrap; }
 .u-ac-ask { font-weight: 600; }
 .u-ac-title { margin: 0 0 .25rem; font-size: 1rem; text-transform: none; letter-spacing: 0; color: inherit; }
-.u-ac-meta { display: flex; justify-content: flex-end; gap: .375rem; margin-top: .125rem; font-size: .75rem; opacity: .75; }
-.u-ac-tick { font-weight: 700; }
+.u-ac-who { font-weight: 600; }
 .u-ac-tag { display: inline-block; margin-bottom: .25rem; padding: 0 .5rem; border-radius: .5rem; background: var(--err); color: var(--on-accent); font-size: .75rem; font-weight: 600; }
 .u-ac-items { margin: .375rem 0 0; padding-left: 1.375rem; display: flex; flex-direction: column; gap: .625rem; }
 .u-ac-item p { margin: 0; }
-.u-ac-rec { font-size: .8125rem; color: var(--ink-2); margin-top: .125rem; }
+.u-ac-rec-line { font-size: .8125rem; color: var(--ink-2); margin-top: .125rem; }
 .u-ac-answer, .u-ac-result { font-size: .8125rem; color: var(--ink-2); }
 .u-ac-item.done .u-ac-result { color: var(--ink-3); }
 .u-ac-buttons { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .375rem; }
 .u-ac-choice { min-height: 2.25rem; padding: 0 .875rem; border-radius: 1.125rem; border: 1px solid var(--line-2); background: var(--raised); color: var(--ink); font-weight: 600; }
 .u-ac-choice[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .u-ac-link { display: inline-block; margin-top: .25rem; color: var(--link); font-weight: 600; }
-.u-ac-bar { display: flex; gap: .5rem; padding: .5rem 0; }
-.u-ac-compose { display: flex; gap: .5rem; align-items: flex-end; }
-.u-ac-compose[hidden] { display: none; }
-.u-ac-field { flex: 1; min-height: 2.75rem; max-height: 8rem; resize: none; border-radius: 1.375rem; padding: .625rem 1rem; }
-.u-ac-empty { color: var(--ink-3); line-height: 1.5; }
+.u-ac-tick { pointer-events: none; }
+.u-ac-bar { display: flex; gap: .5rem; }
+.u-ac-bar:empty { display: none; }
+.u-ac-compose .u-field[hidden], .u-ac-rec[hidden] { display: none; }
+.u-ac-readonly { flex-shrink: 0; margin: 0; padding: .75rem 1rem max(.75rem, env(safe-area-inset-bottom)); text-align: center; font-size: .8125rem; color: var(--ink-3); border-top: 1px solid var(--line); }
 /* Issue 266: photo and voice notes in the Agent chat. */
-.u-ac-msg.u-ac-media { display: flex; flex-direction: column; gap: .375rem; }
+.u-ac-media { display: flex; flex-direction: column; gap: .375rem; }
 .u-ac-photo { display: block; max-width: 100%; max-height: 20rem; border-radius: .75rem; object-fit: contain; }
 .u-ac-voice { width: min(16rem, 70vw); height: 2.5rem; }
 .u-ac-transcript { margin: 0; white-space: pre-wrap; line-height: 1.4; font-size: .875rem; }
 .u-ac-rec { flex: 1; display: flex; align-items: center; gap: .5rem; min-height: 2.75rem; padding: 0 .5rem 0 1rem; border-radius: 1.375rem; background: var(--raised); }
-.u-ac-rec[hidden], .u-ac-field[hidden], .u-ac-compose .icon-button[hidden] { display: none; }
 .u-ac-rec-time { flex: 1; font-variant-numeric: tabular-nums; }
 .u-ac-dot { width: .625rem; height: .625rem; border-radius: 50%; background: var(--err); }
-.u-ac-mic.on { color: var(--err); }
+.u-ac-mic.on { background: var(--err); }
+.u-ac-log { padding-bottom: .5rem; }
