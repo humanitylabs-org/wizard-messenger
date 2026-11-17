@@ -414,7 +414,12 @@
     const who = e => (typeof e.agent === 'string' && e.agent) || 'Your agent';
     if (mode === 'reports') return entries.filter(e => e.kind === 'report').reverse().map(e => ({id: e.id, kind: 'report', side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e)}));
     return entries.filter(e => e.kind !== 'report').map(e => {
-      if (e.by === 'owner') return {id: e.id, kind: e.kind, side: 'out', text: e.kind === 'ask' ? 'Sweep' : e.text || '', at: e.at, ticked: !!(e.seen || e.done)};
+      if (e.by === 'owner') {
+        // Issue 266: a note can be a photo or a voice note (the file stays on the box).
+        const m = e.media && typeof e.media === 'object' && (e.media.type === 'photo' || e.media.type === 'voice') ? e.media : null;
+        return {id: e.id, kind: e.kind, side: 'out', text: e.kind === 'ask' ? 'Sweep' : e.text || '', at: e.at, ticked: !!(e.seen || e.done),
+          media: m ? {type: m.type, duration: Number.isFinite(m.duration) ? m.duration : null, transcript: typeof m.transcript === 'string' ? m.transcript : null} : null};
+      }
       return {id: e.id, kind: e.kind, side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e), urgent: e.kind === 'ping',
         items: (Array.isArray(e.items) ? e.items : []).map(i => {
           const locked = !!(i.result || i.answer?.seen);
@@ -429,7 +434,7 @@
     const rows = agentChatRows(state, 'chat'), last = rows[rows.length - 1];
     if (!last) return null;
     const open = (last.items || []).filter(i => i.state === 'open').length;
-    const text = last.side === 'out' ? 'You: ' + last.text.split('\n')[0]
+    const text = last.side === 'out' ? 'You: ' + (last.text.split('\n')[0] || (last.media?.type === 'photo' ? 'Photo' : last.media ? 'Voice note' : ''))
       : last.kind === 'sweep' ? (last.items.length ? 'Sweep: ' + (open ? open + ' to answer' : 'all answered') : last.text)
         : last.text.split('\n')[0];
     return {text, at: last.at, urgent: !!(state?.urgent)};
@@ -4649,12 +4654,25 @@
   function openAgentChat(mode = 'chat') {
     agentChat.mode = mode; agentChat.key = '';
     const sheet = overlay('Agent'); sheet.classList.add('tall', 'u-agent-chat'); agentChat.sheet = sheet;
+    s.menuClosed = () => agentRecDiscard(); // closing the chat mid-recording drops that recording
     const log = node('div', 'u-ac-log'); log.setAttribute('role', 'log'); log.tabIndex = 0;
     const bar = node('div', 'u-ac-bar');
     const form = node('form', 'u-ac-compose');
     const field = node('textarea', 'u-ac-field'); field.rows = 1; field.placeholder = 'Note to your agent'; field.setAttribute('aria-label', 'Note to your agent'); field.maxLength = 4000;
     const send = iconButton('send', 'Save note', null, 'u-send'); send.type = 'submit';
-    form.append(field, send);
+    // Issue 266: a photo or a voice note is a note too. Files are checked again on the box (type sniffed there).
+    const file = node('input', 'u-ac-file'); file.type = 'file'; file.accept = 'image/*,audio/*'; file.multiple = true; file.hidden = true;
+    file.onchange = async () => {
+      const picked = [...file.files]; file.value = '';
+      for (const f of picked) {
+        try { await agentUpload(f.type.startsWith('audio/') ? 'voice' : 'photo', f); }
+        catch (e) { toast(e.message || 'Could not save that. Try again.', 3000); }
+      }
+    };
+    const attach = iconButton('plus', 'Add a photo or voice note', () => file.click(), 'u-ac-attach');
+    const mic = iconButton('mic', 'Record a voice note', () => agentRecord(), 'u-ac-mic');
+    const rec = node('div', 'u-ac-rec'); rec.hidden = true; rec.setAttribute('role', 'status');
+    form.append(file, attach, field, rec, mic, send);
     form.onsubmit = async e => {
       e.preventDefault(); const text = field.value.trim(); if (!text) return;
       field.value = '';
@@ -4666,6 +4684,87 @@
     if (mode === 'chat' && !matchMedia('(hover: none)').matches) requestAnimationFrame(() => field.focus());
   }
   function agentText(cls, text) { const p = node('p', cls); inline(p, text || '', 0); return p; }
+  // ---- Issue 266: photo and voice notes ----
+  const agentMediaURL = id => ticketed('api/unified/agent-chat/media/' + encodeURIComponent(id));
+  async function agentUpload(kind, blob, duration) {
+    const q = 'kind=' + kind + (duration > 0 ? '&duration=' + Math.round(duration) : '');
+    const response = await fetch('api/unified/agent-chat/media?' + q, {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
+    let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
+    if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Could not save that. Try again.');
+    applyAgentChat(env.result);
+    const made = [...(env.result.entries || [])].reverse().find(e => e.by === 'owner' && e.media?.type === kind);
+    if (kind === 'voice' && made) agentTranscribe(made.id, blob);
+    return made;
+  }
+  // Wizard's own transcription, when it has one, so the agent also gets the words. Best effort and silent.
+  async function agentTranscribe(id, blob) {
+    try {
+      const result = await window.WizardApp?.voice?.transcribe?.(blob);
+      const text = String(result?.text || '').trim();
+      if (text && !result.unavailable) applyAgentChat(await call('agent-chat/transcript', {id, text}));
+    } catch { /* the agent still gets the recording */ }
+  }
+  function paintAgentRec() {
+    const sheet = agentChat.sheet, r = agentChat.rec; if (!sheet?.isConnected) return;
+    const rec = sheet.querySelector('.u-ac-rec'), field = sheet.querySelector('.u-ac-field'), mic = sheet.querySelector('.u-ac-mic');
+    const attach = sheet.querySelector('.u-ac-attach'), send = sheet.querySelector('.u-ac-compose .u-send');
+    rec.hidden = !r; field.hidden = attach.hidden = send.hidden = !!r;
+    mic.setAttribute('aria-label', r ? 'Stop and save the voice note' : 'Record a voice note'); mic.title = mic.getAttribute('aria-label');
+    mic.classList.toggle('on', !!r);
+    if (!r) { rec.replaceChildren(); return; }
+    const word = r.phase === 'saving' ? 'Saving…' : r.phase === 'starting' ? 'Starting…' : 'Recording ' + fmtDur(Date.now() - r.started);
+    if (!rec.firstChild) {
+      const discard = iconButton('trash', 'Discard the voice note', () => agentRecDiscard(), 'u-ac-discard');
+      rec.append(node('span', 'u-ac-dot'), node('span', 'u-ac-rec-time'), discard);
+    }
+    rec.querySelector('.u-ac-rec-time').textContent = word;
+  }
+  async function agentRecord() {
+    const r0 = agentChat.rec;
+    if (r0) { if (r0.phase === 'recording') agentRecStop(r0); return; }
+    const capture = window.WizardApp?.capture;
+    if (!capture?.start) { toast('Voice notes need Wizard’s recorder. Reload Messenger and try again.', 3000); return; }
+    const r = {phase: 'starting', started: Date.now()}; agentChat.rec = r; paintAgentRec();
+    try {
+      r.session = await capture.start({kind: 'audio', meta: {purpose: 'messenger-agent-note'}, maxMs: 15 * 60e3, maxBytes: 24 * 1048576});
+      if (agentChat.rec !== r) { r.session?.cancel?.().catch(() => {}); return; }
+      if (!r.session) throw new Error('Could not start recording. Try again.');
+      const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now(); r.phase = 'recording';
+      r.tick = setInterval(() => { if (agentChat.rec === r) paintAgentRec(); else clearInterval(r.tick); }, 500);
+      paintAgentRec();
+    } catch (e) { if (agentChat.rec === r) agentChat.rec = null; paintAgentRec(); toast(e?.message || 'Could not start recording. Try again.', 3000); }
+  }
+  async function agentRecStop(r) {
+    r.phase = 'saving'; clearInterval(r.tick); paintAgentRec();
+    let take;
+    try { take = await r.session.stop(); }
+    catch (e) { r.phase = 'recording'; paintAgentRec(); toast(e?.message || 'Could not stop recording. Try again.', 3000); return; }
+    const duration = take?.durationMs || Date.now() - r.started;
+    try {
+      if (duration < 600 || !take?.blob?.size) { toast('Hold on a little longer to record', 2500); }
+      else await agentUpload('voice', take.blob, duration);
+      Promise.resolve(window.WizardApp?.capture?.ack?.(take.id)).catch(() => {});
+    } catch (e) { toast((e?.message || 'Could not save the voice note.') + ' It stays in Wizard’s recordings.', 4000); }
+    if (agentChat.rec === r) agentChat.rec = null;
+    paintAgentRec();
+  }
+  async function agentRecDiscard() {
+    const r = agentChat.rec; if (!r || r.phase === 'saving') return;
+    agentChat.rec = null; clearInterval(r.tick); paintAgentRec();
+    try { await r.session?.cancel?.(); } catch { /* Wizard keeps an unsaved take in its own recordings */ }
+  }
+  function agentMedia(r) {
+    if (r.media.type === 'photo') {
+      const img = node('img', 'u-ac-photo'); img.alt = 'Photo'; img.loading = 'lazy'; img.decoding = 'async'; img.src = agentMediaURL(r.id);
+      return [img];
+    }
+    const audio = node('audio', 'u-ac-voice'); audio.controls = true; audio.preload = 'none'; audio.src = agentMediaURL(r.id);
+    audio.setAttribute('aria-label', 'Voice note' + (r.media.duration ? ', ' + fmtDur(r.media.duration) : ''));
+    const out = [audio];
+    if (r.media.transcript) out.push(node('p', 'u-ac-transcript', r.media.transcript));
+    return out;
+  }
   function agentLink(url) {
     const a = node('a', 'u-ac-link'); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep the url */ }
@@ -4703,7 +4802,9 @@
       const row = node('div', 'u-ac-row ' + r.side + (r.urgent ? ' urgent' : '') + (r.kind === 'report' ? ' report' : '')); row.dataset.id = r.id;
       const b = node('article', 'u-ac-msg');
       if (r.side === 'out') {
-        b.append(r.kind === 'ask' ? node('p', 'u-ac-ask', 'Sweep') : agentText('u-ac-text', r.text));
+        if (r.media) b.classList.add('u-ac-media'), b.append(...agentMedia(r));
+        if (r.kind === 'ask') b.append(node('p', 'u-ac-ask', 'Sweep'));
+        else if (r.text || !r.media) b.append(agentText('u-ac-text', r.text));
         const meta = node('span', 'u-ac-meta', when(r.at));
         if (r.ticked) { const t = node('span', 'u-ac-tick', '✓'); t.setAttribute('aria-label', 'Picked up'); t.title = 'Picked up'; meta.append(t); }
         b.append(meta);

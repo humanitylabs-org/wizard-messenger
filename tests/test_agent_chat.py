@@ -1,6 +1,9 @@
 """The owner's agent chat (issue 265, switch agent-chat): notes to self, Sweep with one-tap answers, urgent pings and
 reports. Runs through the real view server (owner routes) and the real MCP endpoint (agent key)."""
+import base64
+import io
 import json
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -8,9 +11,13 @@ import test_web as fixtures
 from drafts import Drafts
 from unified import UnifiedInbox
 import agent_chat
+from test_draft_wake import Inbox as EventInbox, SECRET
 
 TOOLS = ('messenger_agent_chat_inbox', 'messenger_agent_chat_ack', 'messenger_agent_chat_post',
-         'messenger_agent_chat_done')
+         'messenger_agent_chat_done', 'messenger_agent_chat_attachment', 'messenger_agent_chat_wake_me')
+PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+       b'\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82')
+OGG = b'OggS' + b'\x00' * 60
 
 
 class AgentChat(unittest.TestCase):
@@ -35,7 +42,23 @@ class AgentChat(unittest.TestCase):
         self.level('draft_only')
 
     def tearDown(self):
+        waker = self.inbox.__dict__.get('agent_chat_waker')
+        if waker:
+            waker.close()
         self.tearDown_base()
+
+    def put_media(self, kind, data, extra='', headers=None):
+        status, _, body = self.request('PUT', '/api/unified/agent-chat/media?kind=' + kind + extra, data,
+                                       {**(headers or self.owner), 'Content-Type': 'application/octet-stream'})
+        return status, body
+
+    def wait_for(self, check, timeout=5):
+        end = time.time() + timeout
+        while time.time() < end:
+            if check():
+                return True
+            time.sleep(0.05)
+        return False
 
     def level(self, level):
         self.assertEqual(self.request('POST', '/api/view/agents/' + self.agent_id, {'level': level}, self.owner)[0], 200)
@@ -176,6 +199,114 @@ class AgentChat(unittest.TestCase):
         data = agent_chat._load(self.inbox.store)
         self.assertEqual(len(data['entries']), agent_chat.MAX_ENTRIES)
         self.assertEqual(len(agent_chat.state(self.inbox)['entries']), agent_chat.SHOWN)
+
+
+    # ---- issue 266: photos and voice notes, and waking the agent ----
+    def test_photo_and_voice_notes_reach_the_agent(self):
+        self.on()
+        status, body = self.put_media('photo', PNG)
+        self.assertEqual(status, 200, body)
+        photo = body['result']['entries'][-1]
+        self.assertEqual((photo['kind'], photo['by'], photo['media']['type'], photo['media']['mime']),
+                         ('note', 'owner', 'photo', 'image/png'))
+        status, body = self.put_media('voice', OGG, '&duration=4200')
+        self.assertEqual(status, 200, body)
+        voice = body['result']['entries'][-1]
+        self.assertEqual((voice['media']['type'], voice['media']['duration']), ('voice', 4200))
+        # The owner's view shows its own file back.
+        status, headers, data = self.request('GET', '/api/unified/agent-chat/media/' + photo['id'], None, self.owner)
+        self.assertEqual((status, headers['Content-Type'], data), (200, 'image/png', PNG))
+        # Wizard's transcription of the voice note is kept for the agent.
+        self.ok('POST', '/transcript', {'id': voice['id'], 'text': 'Remind me to call the vet'})
+        status, data = self.owner_call('POST', '/transcript', {'id': photo['id'], 'text': 'x'})
+        self.assertEqual(status, 404, data)
+        got = self.mcp('messenger_agent_chat_inbox')[0]
+        self.assertEqual([n['attachment']['type'] for n in got['notes']], ['photo', 'voice'])
+        self.assertEqual(got['notes'][1]['attachment']['transcript'], 'Remind me to call the vet')
+        self.assertEqual(got['notes'][0]['attachment']['fetch'], {'tool': 'messenger_agent_chat_attachment',
+                                                                  'note_id': photo['id']})
+        # The photo comes back as an image block, the voice note as an audio resource.
+        status, _, data = self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
+            'name': 'messenger_agent_chat_attachment', 'arguments': {'note_id': photo['id']}}},
+            {'Origin': fixtures.ORIGIN, **self.key})
+        content = data['result']['content']
+        self.assertEqual(content[1]['type'], 'image')
+        self.assertEqual(base64.b64decode(content[1]['data']), PNG)
+        status, _, data = self.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
+            'name': 'messenger_agent_chat_attachment', 'arguments': {'note_id': voice['id']}}},
+            {'Origin': fixtures.ORIGIN, **self.key})
+        content = data['result']['content']
+        meta = json.loads(content[0]['text'])
+        self.assertEqual((meta['type'], meta['transcript']), ('voice', 'Remind me to call the vet'))
+        self.assertEqual((content[1]['type'], content[1]['resource']['mimeType']), ('resource', 'audio/ogg'))
+        self.assertEqual(base64.b64decode(content[1]['resource']['blob']), OGG)
+        # A text note has nothing to fetch.
+        text = self.ok('POST', '', {'text': 'plain'})['entries'][-1]
+        refused, error = self.mcp('messenger_agent_chat_attachment', {'note_id': text['id']})
+        self.assertTrue(error)
+        self.assertEqual(refused['error']['code'], 'not_found')
+
+    def test_media_notes_are_checked_and_owner_only(self):
+        self.on()
+        self.assertEqual(self.put_media('photo', b'<svg onload=alert(1)>')[0], 415)
+        self.assertEqual(self.put_media('voice', PNG)[0], 415)
+        self.assertEqual(self.put_media('file', PNG)[0], 400)
+        status, body = self.put_media('photo', PNG, headers={'Origin': fixtures.ORIGIN, **self.key})
+        self.assertNotEqual(status, 200, body)
+        self.assertEqual(self.ok('GET')['entries'], [])
+        photo = self.put_media('photo', PNG)[1]['result']['entries'][-1]
+        status, _, _ = self.request('GET', '/api/unified/agent-chat/media/' + photo['id'], None,
+                                    {'Origin': fixtures.ORIGIN, **self.key})
+        self.assertNotEqual(status, 200)
+        # Off again: the files are not served.
+        self.on(False)
+        status, _, _ = self.request('GET', '/api/unified/agent-chat/media/' + photo['id'], None, self.owner)
+        self.assertEqual(status, 409)
+
+    def test_a_dropped_entry_takes_its_file_with_it(self):
+        self.on()
+        photo = self.put_media('photo', PNG)[1]['result']['entries'][-1]
+        path = agent_chat._media_path(self.inbox, photo['media'])
+        self.assertTrue(path.is_file())
+        for i in range(agent_chat.MAX_ENTRIES):
+            agent_chat.note(self.inbox, {'text': 'n%d' % i})
+        self.assertFalse(path.exists())
+
+    def test_a_note_a_sweep_and_an_answer_wake_the_agent(self):
+        self.server.unified.wake_levels = self.server.wake_levels
+        events = EventInbox()
+        self.addCleanup(events.close)
+        self.inbox.agent_chat_waker = agent_chat.Waker(self.inbox, delay=0.1)
+        self.on()
+        refused, error = self.mcp('messenger_agent_chat_wake_me', {'url': 'ftp://x', 'secret': SECRET})
+        self.assertTrue(error)
+        made, error = self.mcp('messenger_agent_chat_wake_me', {'url': events.url, 'secret': SECRET})
+        self.assertFalse(error, made)
+        self.assertTrue(made['woken'])
+        self.ok('POST', '', {'text': 'Buy dog food'})
+        self.put_media('photo', PNG)
+        self.assertTrue(self.wait_for(lambda: events.events), 'no wake')
+        time.sleep(0.3)
+        self.assertEqual(len(events.events), 1)  # a burst is one wake
+        event = events.events[0]
+        self.assertEqual((event['event'], event['reason'], event['waiting']),
+                         ('messenger.agent_chat', 'note', {'notes': 2, 'sweep_requests': 0, 'answers': 0}))
+        self.assertNotIn('Buy dog food', json.dumps(event))  # never the words
+        self.assertEqual(events.bad, 0)
+        self.assertTrue(self.mcp('messenger_agent_chat_wake_me', {'check': True})[0]['wake']['last_wake'])
+        self.ok('POST', '/sweep', {})
+        self.assertTrue(self.wait_for(lambda: len(events.events) == 2))
+        self.assertEqual(events.events[1]['reason'], 'sweep')
+        # Read-only now: no more wakes (ticking needs Draft-only); and off stops them too.
+        self.level('read_only')
+        self.ok('POST', '', {'text': 'another'})
+        time.sleep(0.4)
+        self.assertEqual(len(events.events), 2)
+        self.level('draft_only')
+        self.mcp('messenger_agent_chat_wake_me', {'off': True})
+        self.ok('POST', '', {'text': 'and another'})
+        time.sleep(0.4)
+        self.assertEqual(len(events.events), 2)
 
 
 if __name__ == '__main__':

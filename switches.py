@@ -63,9 +63,11 @@ SWITCHES = (
     {'id': 'agent-chat', 'name': 'Agent chat',
      'description': 'A pinned Agent chat at the top of Chats. What you write there is a note to your agent: it never '
                     'replies, it ticks the note once picked up and works on it. Sweep asks for one list of what needs '
-                    'you, with one-tap answers; urgent things come as one line, and longer write-ups go to Reports.',
+                    'you, with one-tap answers; urgent things come as one line, and longer write-ups go to Reports. A note '
+                    'can also be a photo or a voice note, and your agent is woken within seconds of a note, a Sweep '
+                    'or an answer.',
      'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#265']},
+     'issues': ['humanitylabs-org/wizard-messenger#265', 'humanitylabs-org/wizard-messenger#266']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

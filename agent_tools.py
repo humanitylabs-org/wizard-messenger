@@ -126,11 +126,32 @@ TOOLS = [
            'off': {'type': 'boolean', 'description': 'Stop waking me'}}),
     # Issue 265: the owner's agent chat, offered only while the agent-chat switch is on.
     _tool('messenger_agent_chat_inbox', 'The owner\'s Agent chat in Messenger: what is waiting for you there. `notes` are '
-          'notes to self the owner dropped (text and links): never reply to them with a message; mark each one picked up '
+          'notes to self the owner dropped (text, links, and photos or voice notes: those carry an `attachment`, fetch it '
+          'with messenger_agent_chat_attachment): never reply to them with a message; mark each one picked up '
           'with messenger_agent_chat_ack (the owner sees a check) and then act on it in the background. '
           '`sweep_requests`: the owner tapped Sweep; answer with ONE messenger_agent_chat_post kind sweep listing only what '
           'needs the owner since `since`. `answers`: the owner tapped a button on a sweep item; ack it, carry it out, then '
-          'messenger_agent_chat_done. Check it on your schedule. Needs Read-only or higher.'),
+          'messenger_agent_chat_done. Call messenger_agent_chat_wake_me once so Messenger wakes you when something waits '
+          'here; otherwise check it on your schedule. Needs Read-only or higher.'),
+    # Issue 266: photos and voice notes in the Agent chat, and waking the agent (switch agent-chat).
+    _tool('messenger_agent_chat_attachment', 'The photo or voice note of one Agent chat note (note_id from '
+          'messenger_agent_chat_inbox). A photo comes back as an image; a voice note as an audio file, plus its '
+          '`transcript` when the owner\'s Wizard transcribed it. The owner\'s own note: act on it, never reply. Needs '
+          'Read-only or higher.',
+          {'note_id': _string('The note id, e.g. n12')}, ['note_id']),
+    _tool('messenger_agent_chat_wake_me', 'Ask Messenger to wake you when something waits in the owner\'s Agent chat '
+          '(a note, a Sweep tap or a button answer), instead of checking on a schedule. Give the url of your own event '
+          'inbox (a Hermes webhook subscription: `hermes webhook subscribe messenger-agent-chat --prompt "Messenger: '
+          'something waits in the Agent chat. Call messenger_agent_chat_inbox, ack each note, and act. Never reply to a '
+          'note."`) and its secret. Messenger then posts {"event": "messenger.agent_chat", "reason": ..., '
+          '"waiting": {"notes": n, "sweep_requests": n, "answers": n}} there within seconds, signed with '
+          'X-Webhook-Timestamp and X-Webhook-Signature-V2 (hex HMAC-SHA256 of "<timestamp>.<body>"). Never the '
+          'words. Only while the owner gives you Draft-only access. Call with only `check: true` to see your current '
+          'wake, or `off: true` to stop. Needs Draft-only or higher.',
+          {'url': _string('Your event inbox, e.g. http://host.docker.internal:8644/webhooks/messenger-agent-chat'),
+           'secret': _string('The secret of that subscription (16..256 characters)'),
+           'check': {'type': 'boolean', 'description': 'Only report the current wake'},
+           'off': {'type': 'boolean', 'description': 'Stop waking me'}}),
     _tool('messenger_agent_chat_ack', 'Mark notes (id) and button answers (id, e.g. "p12/3") from '
           'messenger_agent_chat_inbox as picked up: the owner sees a check, and they leave the inbox. Never reply with '
           'text. Needs Draft-only or higher.',
@@ -178,11 +199,16 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           'messenger_agent_chat_inbox': ('GET', '/api/drafts'),
           'messenger_agent_chat_ack': ('POST', '/api/drafts'),
           'messenger_agent_chat_post': ('POST', '/api/drafts'),
-          'messenger_agent_chat_done': ('POST', '/api/drafts')}
+          'messenger_agent_chat_done': ('POST', '/api/drafts'),
+          # Issue 266: fetching a note's photo or voice note is a read; asking to be woken is Draft-only, the level a
+          # woken agent needs to tick the note.
+          'messenger_agent_chat_attachment': ('GET', '/api/drafts'),
+          'messenger_agent_chat_wake_me': ('POST', '/api/drafts')}
 # Tools offered only while their switch is on (tool name -> switch id).
 SWITCHED = {'messenger_wake_me': 'agent-wake', 'messenger_agent_chat_inbox': 'agent-chat',
             'messenger_agent_chat_ack': 'agent-chat', 'messenger_agent_chat_post': 'agent-chat',
-            'messenger_agent_chat_done': 'agent-chat'}
+            'messenger_agent_chat_done': 'agent-chat', 'messenger_agent_chat_attachment': 'agent-chat',
+            'messenger_agent_chat_wake_me': 'agent-chat'}
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -752,6 +778,37 @@ def agent_chat_done(handler, caller, args):
     return agent_chat.done(unified, args['post_id'], args['item'], args['result'])
 
 
+def agent_chat_attachment(handler, caller, args):
+    agent_chat, unified, _ = _agent_chat(handler, caller)
+    meta, blob = agent_chat.attachment(unified, args['note_id'])
+    meta['note'] = 'The owner\'s own note to you. Never answer it with a message: ack it, then act.'
+    if meta.get('type') == 'photo':
+        data = _read_blob(blob, agent_chat.MEDIA_MAX)
+        if len(data) > IMAGE_MAX_BYTES:
+            small = _shrink(data)
+            if not small:
+                meta.update(image='not_returned', reason='The photo is larger than 1.5 MB and could not be scaled down here.')
+                return meta
+            data, (w, h) = small
+            meta['returned'] = {'mime': 'image/jpeg', 'bytes': len(data), 'w': w, 'h': h, 'scaled': True}
+            return {**meta, '__image__': (data, 'image/jpeg')}
+        meta['returned'] = {'mime': blob.mime, 'bytes': len(data)}
+        return {**meta, '__image__': (data, blob.mime)}
+    data = _read_blob(blob, agent_chat.MEDIA_MAX)
+    meta['returned'] = {'mime': blob.mime, 'bytes': len(data), 'name': blob.filename}
+    return {**meta, '__resource__': ('messenger://agent-chat/%s/%s' % (args['note_id'], blob.filename), blob.mime, data)}
+
+
+def agent_chat_wake_me(handler, caller, args):
+    agent_chat, unified, _ = _agent_chat(handler, caller)
+    if caller[0] != 'agent':
+        raise EngineError('agent_required', 'Only an agent with its own Messenger access can be woken', 403)
+    agent = {'id': caller[1]['id'], 'name': caller[1].get('name')}
+    if args.get('check'):
+        return agent_chat.wake_status(unified, agent)
+    return agent_chat.wake_register(unified, agent, args.get('url'), args.get('secret'), off=args.get('off') is True)
+
+
 def listed(handler):
     """The tools this Messenger offers now: a switched tool only while its switch is on."""
     unified = getattr(handler.service, 'unified', None)
@@ -774,7 +831,9 @@ BODIES = {'messenger_list_chats': list_chats, 'messenger_read_thread': read_thre
           'messenger_chats_needing_draft': chats_needing_draft, 'messenger_draft_feedback': draft_feedback,
           'messenger_wake_me': wake_me,
           'messenger_agent_chat_inbox': agent_chat_inbox, 'messenger_agent_chat_ack': agent_chat_ack,
-          'messenger_agent_chat_post': agent_chat_post, 'messenger_agent_chat_done': agent_chat_done}
+          'messenger_agent_chat_post': agent_chat_post, 'messenger_agent_chat_done': agent_chat_done,
+          'messenger_agent_chat_attachment': agent_chat_attachment,
+          'messenger_agent_chat_wake_me': agent_chat_wake_me}
 
 
 def _result(data, error=False):
