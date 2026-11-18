@@ -3600,6 +3600,8 @@
       // draft ends now (closeForSend), never after the provider answers. A send the server refuses comes back into the
       // box and the server draft (restoreSend); one cut off by a restart keeps its Retry bubble (same client id).
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
+      // A voice notice is about a recording; once the owner sends a message with none open it is old news (wizard-ux issue 1503).
+      if (view.voiceNotice && !view.recording) voiceNotice('');
       const sendingDraft = view.sd; sendingDraft?.closeForSend(text);
       const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
       // Issue 186: LINE carries no words on a photo, so photos plus text go as the photos, then the text as its own
@@ -3716,7 +3718,7 @@
       // A notice about the take being recorded (a storage warning saying Send or Discard still works, a stalled mic)
       // ends with that take: once the recording panel closes it would sit under an idle composer (issue 262).
       const liveNotice = message => { r.liveNotice = message; voiceNotice(message); };
-      const close = () => { clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); r.offWarn?.(); if (view.recording === r) view.recording = null; if (r.liveNotice && view.voiceNotice === r.liveNotice) view.voiceNotice = ''; view.paintRecording?.(); hold(); };
+      const close = () => { r.closed = true; clearTimeout(r.deadline); clearInterval(r.tick); r.off?.(); r.offWarn?.(); if (view.recording === r) view.recording = null; if (r.liveNotice && view.voiceNotice === r.liveNotice) view.voiceNotice = ''; view.paintRecording?.(); hold(); };
       // An abandoned start may settle long after a newer recording began: it never paints a notice again.
       const failed = e => { if (!r.abandoned) voiceNotice(e?.message || 'Could not start recording. Try again.'); };
       const discardFailure = e => 'Could not discard the recording: ' + e.message + ' Try Discard again.';
@@ -3776,7 +3778,7 @@
           r.phase = 'recording';
           const info = r.session.getInfo?.(); r.started = info?.startedAt || Date.now() - (info?.durationMs || 0);
           let last = 0; r.off = r.session.onLevel?.(v => { last = v; });
-          r.offWarn = r.session.onWarn?.(message => { if (!r.abandoned) liveNotice(message); });
+          r.offWarn = r.session.onWarn?.(message => { if (!r.abandoned && !r.closed) liveNotice(message); }); // never after the take closed
           if (info?.warning) liveNotice(info.warning);
           r.tick = setInterval(() => {
             if (r.phase !== 'recording') return;
