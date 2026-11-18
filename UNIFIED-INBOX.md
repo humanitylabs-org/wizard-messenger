@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.75 (unread count for the phone icon, switch off by default)
+
+Store recipe: pins the image built from main `27e762e`. Ships #301 (Refs humanitylabs-org/wizard-messenger#296): new read-only `GET /api/unread` gives `{"unread_total": N}`, the number of chats and groups with an unread incoming message (box-side read mark; muted, Medium and Low priority never count), so the Wizard phone app can draw a count on the Messenger home-screen icon. A number only. Behind the new switch `unread-count` (off: 404). Private Messenger chats are humanitylabs-org/wizard-messenger#302. Guards: `tests/test_unread_count.py`.
+
 ## 0.2.0-unified.16.74 (the Agent chat is on for everyone)
 
 Store recipe: pins the image built from main `f20a687`. Ships #299 (Refs humanitylabs-org/wizard-messenger#265): the Agent chat was approved, so its switch `agent-chat` is gone and it is on for every owner. The pinned Agent and Reports chats, notes with a tick, Sweep with one-tap answers, urgent pings, photo and voice notes and agent wake (#266) need no switch any more, and the `messenger_agent_chat_*` tools are always offered to agents. A stored value for the old switch is ignored and dropped. Notifications in Reports and the Hide Agent and Reports button keep their own switches. Guards: `tests/test_agent_chat.py`, `tests/agent_chat_browser.cjs`.
