@@ -840,6 +840,12 @@
       "auth": true,
       "result": "logs out all bridge sessions",
       "body": {}
+    },
+    {
+      "method": "GET",
+      "path": "/api/unread",
+      "auth": "owner cookie + allowed Origin (a GET with Origin only is accepted, like every owner GET); trusted ingress proof when enabled; all bearers refused",
+      "result": "{\"unread_total\": N}: the number of chats and groups with an unread incoming message (box-side read mark, moved when a chat is opened); muted, Medium and Low priority chats never count. A number only: no ids, names or text. Switch unread-count off: 404 not_found (issue 296)"
     }
   ],
   "models": {

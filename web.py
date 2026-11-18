@@ -458,6 +458,26 @@ class ViewHandler(Handler):
         except EngineError as e:
             self.close_connection=True
             return e.status,{'ok':False,'error':e.message,'code':e.code}
+    def _unread(self,method):
+        """Issue 296 (switch unread-count): the unread chat count for the phone's home-screen icon. Read-only and
+        a number only. Owner only on the inbox feed's boundary: the Wizard ingress proof on a trusted install (the
+        phone's native call sends Origin only), else the owner's view session; never a bearer. Switch off: no
+        such route (404), so the phone leaves its icon alone."""
+        if self.headers.get('Authorization'):
+            raise EngineError('owner_only','Only the owner can read the unread count',403)
+        if self.service.trusted_owner.enabled:
+            self._trusted_owner()
+            self._origin()
+        else:
+            self._authorize()
+        if not self.service.switches.is_on('unread-count'):
+            raise EngineError('not_found','No such route',404)
+        if method!='GET':
+            raise EngineError('method_not_allowed','Use GET /api/unread',405)
+        store=getattr(self.service.unified,'store',None)
+        if store is None or not hasattr(store,'unread_total'):
+            raise EngineError('not_configured','Unified inbox is not enabled',503)
+        return 200,{'ok':True,'result':{'unread_total':store.unread_total()}}
     def _switches(self,method,feedback=False):
         """Messenger's feature switches for the box owner (wizard.app-switches/1): the Tracker's Try it toggle and
         Settings both use this. Owner session only (never a bearer or the gateway grant). A write needs the box's own
@@ -515,6 +535,8 @@ class ViewHandler(Handler):
         self._agent_gate(method,path)
         if path in ('/api/inbox','/api/inbox/wait','/api/inbox/act'):
             return self._inbox(method,path)
+        if path=='/api/unread':
+            return self._unread(method)
         if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
             raise EngineError('owner_only','Owner browser access is required',403)
         if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/'):
