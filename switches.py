@@ -80,6 +80,12 @@ SWITCHES = (
                     'access in Settings > Agents.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#277']},
+    {'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
+     'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, and a second '
+                    'tap shows them again. It shows only while Agent chat or Notifications in Reports is on, and this '
+                    'device remembers your choice.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#291']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
