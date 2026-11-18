@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.71 (creating an address while the chat relays are out of reach)
+
+Store recipe: pins the image built from main `4d26372`. Ships #289 (Refs humanitylabs-org/wizard-messenger#288), a bug fix with no switch: creating a Messenger address no longer fails with "Couldn't connect" when the Wizard can't reach the chat relays at that moment. The address made on the Wizard is kept, setup finishes, and its keys are published as soon as the relays answer (also on the next unlock of a Wizard where an earlier try broke off). Try again after such a break now opens Messenger with the same passphrase. Guard: `tests/test_engine_offline_setup.py`.
+
 ## 0.2.0-unified.16.70 (attach menu on +)
 
 Store recipe: pins the image built from main `a55803d`. Ships #286 (Refs humanitylabs-org/wizard-messenger#285), a bug fix with no switch: + in a chat's composer (and in the Agent chat) opens an attach menu like Telegram's paperclip, with Camera (touch screens only), Photo or video, and File (Agent chat: Camera, Photo, Voice note file), instead of jumping straight to the phone's photo gallery. Guards: `tests/test_attach_menu.cjs`, `tests/attach_menu_browser.cjs`.
