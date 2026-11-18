@@ -557,7 +557,14 @@
     if (choice.capture) input.setAttribute('capture', choice.capture); else input.removeAttribute('capture');
     input.click();
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
+  // Issue 291 (switch agent-rows-toggle): the button beside My QR codes that hides or shows the pinned Agent and
+  // Reports chats. `hidden` is this device's choice; the label says what a tap does, aria-pressed says it is hiding.
+  function agentRowsToggle(hidden) {
+    return hidden
+      ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
+      : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
+  }
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -620,6 +627,8 @@
     camera: ['M4 8h3l2-3h6l2 3h3v11H4z', 'M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z'],
     image: ['M4 5h16v14H4z', 'M8.5 10.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', 'm4 17 5-5 4 4 2-2 5 5'],
     file: ['M14 3H6v18h12V7z', 'M14 3v4h4', 'M9 13h6', 'M9 17h6'],
+    eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
+    eyeoff: ['M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.6', 'M6.6 6.6A16.5 16.5 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6', 'M9.9 9.9a3 3 0 0 0 4.2 4.2', 'M3 3l18 18'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -847,6 +856,7 @@
   function onBarTool({id} = {}) {
     if (!wantBar()) return;
     if (id === 'qr') myCodes();
+    else if (id === 'agent-rows') flipAgentRows();
     else if (id === 'search') { s.search = ''; renderList(); }
     else if (id === 'settings') accounts();
   }
@@ -865,7 +875,9 @@
       // The own toolbar stays hidden under a sheet or menu on the list, so nothing jumps behind it.
       barMode(bar.ok && narrow());
       const label = document.querySelector('.u-settings-btn')?.getAttribute('aria-label') || 'Settings';
-      const tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
+      let tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
+      // Issue 291: the Agent/Reports toggle rides right after QR. The shell has no eye icon, so it shows as text.
+      if (tools && agentToggleShown()) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
       const key = JSON.stringify(tools); if (key === bar.key) return; bar.key = key;
       const gen = ++bar.gen;
       let pending; try { pending = Promise.resolve(tb.set(tools, onBarTool)); } catch { pending = Promise.resolve(false); }
@@ -1129,7 +1141,8 @@
       // Issue 202: Inbox view and Suggested merges live in the list's own ⋯ menu.
       const more = iconButton('more', 'Inbox options', () => inboxMenu(more), 'u-inbox-more');
       more.setAttribute('aria-haspopup', 'menu');
-      actions.append(iconButton('qr', 'My QR codes', () => myCodes()), find, more, iconButton('settings', 'Settings', () => accounts(), 'u-settings-btn'));
+      const rows = iconButton('eye', 'Hide Agent and Reports', () => flipAgentRows(), 'u-agent-toggle'); paintAgentToggle(rows);
+      actions.append(iconButton('qr', 'My QR codes', () => myCodes()), rows, find, more, iconButton('settings', 'Settings', () => accounts(), 'u-settings-btn'));
       head.append(node('h1', '', title), actions);
     }
     root.append(head); const notice = node('p', 'error'); notice.id = 'u-error'; notice.setAttribute('role', 'status'); root.append(notice); return root;
@@ -1725,7 +1738,7 @@
     const keep = list.dataset.keepTop ? +list.dataset.keepTop : list.scrollTop;
     list.replaceChildren(frag);
     // Issue 265 (switch agent-chat): the Agent chat is pinned on top of All, with no search or filter narrowing it.
-    if (reportsOn() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
+    if (reportsOn() && !agentRowsHidden() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
     if (list.dataset.keepTop && shown.length) delete list.dataset.keepTop;
     if (keep && list.scrollTop !== keep) list.scrollTop = keep;
   }
@@ -4824,6 +4837,7 @@
     if (split.on && hasListPane()) { closePane(); markSelected(); } else renderList();
   }
   switchState.paints['agent-chat'] = () => {
+    paintAgentToggles();
     loadAgentChat();
     if (!reportsOn()) agentChat.state = null;
     if (agentMode(s.person) && !agentModeOn(agentMode(s.person))) leaveAgentChat();
@@ -4835,6 +4849,29 @@
     paintAgentThread();
     switchState.paints['agent-chat']();
   };
+  // Issue 291 (switch agent-rows-toggle): a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
+  // Only the list changes: an open Agent/Reports chat stays open and nothing about notes, Sweep or Reports delivery
+  // changes. Remembered on this device, like the Inbox view.
+  const AGENT_ROWS_KEY = 'messenger.agentRowsHidden';
+  function agentToggleOn() { return switchState.on['agent-rows-toggle'] === true; }
+  function agentToggleShown() { return agentToggleOn() && reportsOn(); }
+  function agentRowsHidden() {
+    if (!agentToggleOn()) return false;
+    try { return localStorage.getItem(AGENT_ROWS_KEY) === '1'; } catch { return false; }
+  }
+  function paintAgentToggle(el) {
+    const t = agentRowsToggle(agentRowsHidden());
+    el.hidden = !agentToggleShown();
+    el.setAttribute('aria-label', t.label); el.title = t.label; el.setAttribute('aria-pressed', String(t.pressed));
+    el.replaceChildren(icon(t.icon));
+  }
+  function paintAgentToggles() { for (const el of document.querySelectorAll('.u-agent-toggle')) paintAgentToggle(el); syncBar(); }
+  function flipAgentRows() {
+    const hide = !agentRowsHidden();
+    try { if (hide) localStorage.setItem(AGENT_ROWS_KEY, '1'); else localStorage.removeItem(AGENT_ROWS_KEY); } catch { /* this visit only */ }
+    paintAgentToggles(); drawList();
+  }
+  switchState.paints['agent-rows-toggle'] = () => { paintAgentToggles(); if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList(); };
   function agentRows() { return [agentChatOn() && agentRow('chat'), reportsOn() && agentRow('reports')].filter(Boolean); }
   function agentRow(mode) {
     const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];

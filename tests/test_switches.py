@@ -93,7 +93,12 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'The pinned Agent chat shows your agent\'s own name and picture, the way Wizard shows '
                                'it elsewhere, instead of the word Agent. With more than one agent, it is the one with '
                                'Draft-only access in Settings > Agents.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#277']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#277']}, {
+                'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
+                'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, '
+                               'and a second tap shows them again. It shows only while Agent chat or Notifications in '
+                               'Reports is on, and this device remembers your choice.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#291']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -361,7 +366,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'agent-chat', 'reports-notifications', 'agent-chat-name'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'agent-chat', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle'])
 
 
 if __name__ == '__main__':
