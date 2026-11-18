@@ -289,6 +289,7 @@
       key_package_not_found: 'This address is not ready for chats yet.', no_key_package: 'This address is not ready for chats yet.',
       locked: 'Unlock Messenger to continue.', vault_locked: 'Unlock Messenger to continue.', request_id_conflict: 'This draft could not be retried safely.',
       server_restarting: 'Messenger is restarting. Try again in a moment.',
+      marmot_operation_failed: "Messenger couldn't reach its chat servers. Check this Wizard's internet connection and try again.",
       send_outcome_unknown: 'Checking delivery. Your message will not be sent again automatically.',
       invalid_input: 'Check the text and try again.', csrf_invalid: "You were signed out of Messenger. Tap Try again."
     };
@@ -932,7 +933,12 @@
       if (typeof session?.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return false; }
       state.csrf = session.csrf_token; state.mediaTicket = mediaTicketOf(session); state.authenticated = true; state.sessionLocked = false;
     } else {
-      await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal});
+      try { await api('api/setup', {method: 'POST', body: {action: creating ? 'create' : 'unlock', vault_password: password, ...(creating && name.trim() ? {display_name: name} : {})}, signal}); }
+      catch (error) {
+        // Issue 288: a first try that broke off after the vault opened already set this passphrase, so Try again
+        // gets owner_unlock_required. The same passphrase then simply opens Messenger (unlock checks it).
+        if (!(creating && error.code === 'owner_unlock_required')) throw error;
+      }
       // Launcher tickets are setup-only; passphrase proof opens the owner view,
       // including when a phone-vault or PRF unlock calls this shared helper.
       const session = await api('api/view/unlock', {method: 'POST', body: {vault_password: password, ...(rememberWizard ? {remember_wizard: true} : {})}, signal, session: true});

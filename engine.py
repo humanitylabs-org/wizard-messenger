@@ -108,6 +108,11 @@ class MarmotEngine:
         self.keyring_process = None
         self.unlocked = False
         self.marker = self.data / 'identity-public.json'
+        # Issue 288: the address was made on this Wizard while the relays were out of reach, so its keys still wait
+        # to be published. The guard thread publishes them once the relays answer.
+        self.keys_pending = self.data / 'keys-pending'
+        self.keys_retry_at = 0.0
+        self.keys_retry_wait = 30.0
         self.env = os.environ.copy()
         self.env.update(WN_HOME=str(self.home), WN_SOCKET=str(self.socket), WN_SECRET_STORE='keychain', WN_KEYCHAIN_SERVICE=self.service, XDG_DATA_HOME=str(self.data), XDG_RUNTIME_DIR=str(self.runtime), GNOME_KEYRING_CONTROL=str(self.runtime / 'keyring'), RUST_LOG='off')
         # Never inherit a development file-store switch or inject one.
@@ -167,6 +172,25 @@ class MarmotEngine:
             time.sleep(15)
             try: self.recycle_if_bloated()
             except Exception: pass
+            try: self.publish_pending_keys()
+            except Exception: pass
+
+    def publish_pending_keys(self, now=None):
+        """Publish the keys of an address made while the relays were out of reach (issue 288). Others can start a
+        chat with it only after this. Retries with a growing wait (30 s up to 10 min) and stops once it worked."""
+        now = time.time() if now is None else now
+        if not self.keys_pending.exists() or now < self.keys_retry_at or self.status()['state'] != 'ready':
+            return False
+        with self.mutex:
+            try:
+                self._execute({'Keys':{'command':'Publish'}})
+            except EngineError:
+                self.keys_retry_at = now + self.keys_retry_wait
+                self.keys_retry_wait = min(self.keys_retry_wait * 2, 600.0)
+                return False
+            self.keys_pending.unlink(missing_ok=True)
+            self.keys_retry_at, self.keys_retry_wait = 0.0, 30.0
+            return True
 
     def status(self):
         ready = self.unlocked and self.daemon is not None and self.daemon.poll() is None
@@ -310,6 +334,7 @@ class MarmotEngine:
                 raise EngineError('invalid_setup_action', 'Use unlock, create, import or lock', 400)
             name=text(payload['display_name'],'display name') if payload.get('display_name') is not None else None
             proved = False
+            offline = False
             if not self.unlocked or self.daemon is None or self.daemon.poll() is not None:
                 self._unlock(payload.get('vault_password'))
                 proved = True
@@ -322,9 +347,22 @@ class MarmotEngine:
                 if accounts:
                     account=accounts[0]
                     # Repair the existing stable KeyPackage slot, not the key.
-                    self._execute({'Keys':{'command':'Publish'}})
+                    try:
+                        self._execute({'Keys':{'command':'Publish'}})
+                    except EngineError:
+                        offline = True  # issue 288: publish once the relays answer
                 else:
-                    account = self._execute('CreateIdentity')
+                    try:
+                        account = self._execute('CreateIdentity')
+                    except EngineError:
+                        # Issue 288: the identity is made on this Wizard first and then published. With the relays
+                        # out of reach the publish fails, but the identity stands: keep it (a second create would
+                        # refuse two accounts) and publish its keys once the relays answer.
+                        made = self._execute('Whoami')['accounts']
+                        if len(made) != 1:
+                            raise
+                        account = made[0]
+                        offline = True
             elif action == 'import':
                 secret = payload.get('nsec')
                 if not isinstance(secret, str) or not secret.startswith('nsec1') or len(secret) != 63:
@@ -334,16 +372,28 @@ class MarmotEngine:
                 account = accounts[0] if len(accounts) == 1 else None
                 if len(accounts) > 1:
                     raise EngineError('account_invariant_failed', 'Multiple messaging accounts are not supported', 409)
+                # Issue 288: an address whose first setup broke off offline has no marker yet; its keys may never
+                # have reached the relays, so publish them (the stable slot, never a new key).
+                offline = account is not None and not self.marker.exists()
             if account is not None:
                 identity = self._identity(account)
                 temporary = self.marker.with_suffix('.new')
                 temporary.write_text(json.dumps(identity))
                 temporary.replace(self.marker)
+                if offline:
+                    self.keys_pending.write_text('1')
+                    self.keys_retry_at, self.keys_retry_wait = time.time() + 30.0, 30.0
                 if name is not None:
-                    self._execute({'Profile':{'command':{'Update':{'name':None,'display_name':name,'about':None,'picture':None,'nip05':None,'lud16':None}}}})
-                    # Persist only public presentation metadata after upstream
-                    # publication; any failure leaves the identity intact.
-                    self.marker.write_text(json.dumps(self.identity()['identity']))
+                    try:
+                        self._execute({'Profile':{'command':{'Update':{'name':None,'display_name':name,'about':None,'picture':None,'nip05':None,'lud16':None}}}})
+                    except EngineError:
+                        # Offline (issue 288) the name can't be published yet; the address still works.
+                        if not offline:
+                            raise
+                    else:
+                        # Persist only public presentation metadata after upstream
+                        # publication; any failure leaves the identity intact.
+                        self.marker.write_text(json.dumps(self.identity()['identity']))
             return {**self.status(), **self.identity()}, proved
 
     def lock(self):
