@@ -89,7 +89,12 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
                 'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, '
                                'and a second tap shows them again. This device remembers your choice.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#291']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#291']}, {
+                'id': 'unread-count', 'name': 'Unread count on the phone icon',
+                'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never '
+                               'names or messages), so the Messenger icon on your home screen can show it. Muted, '
+                               'Medium and Low priority chats never count.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -372,7 +377,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count'])
 
 
 if __name__ == '__main__':

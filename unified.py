@@ -632,6 +632,17 @@ class PeopleStore:
             db.execute('UPDATE identity SET seq=?' + sets + ' WHERE id=?', (self.next_seq(), *fields.values(), identity_id))
         self.changed()
 
+    def unread_total(self):
+        """Issue 296: how many chats and groups have an unread incoming message, as one number (nothing else).
+        The same rule as the view's app badge: the box-side read mark (last_read_ts, moved when a chat is
+        opened) decides, and muted, Medium and Low priority chats never count (inbox_feed's UNREAD_SQL rule)."""
+        with self.db() as db:
+            row = db.execute('SELECT COUNT(DISTINCT i.person_id) FROM message m '
+                             'JOIN identity i ON i.id=m.identity_id JOIN person p ON p.id=i.person_id '
+                             "WHERE m.outgoing=0 AND m.deleted=0 AND m.timestamp>i.last_read_ts AND i.kind IN ('person','group') "
+                             'AND p.muted=0 AND p.low_priority=0 AND p.medium_priority=0').fetchone()
+        return int(row[0] or 0)
+
     def mark_unread(self, person_id):
         """Owner's 'Mark as unread': the newest incoming message counts as unread again (this Messenger only)."""
         with self.db() as db:
