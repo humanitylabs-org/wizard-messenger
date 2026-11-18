@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.74 (the Agent chat is on for everyone)
+
+Store recipe: pins the image built from main `f20a687`. Ships #299 (Refs humanitylabs-org/wizard-messenger#265): the Agent chat was approved, so its switch `agent-chat` is gone and it is on for every owner. The pinned Agent and Reports chats, notes with a tick, Sweep with one-tap answers, urgent pings, photo and voice notes and agent wake (#266) need no switch any more, and the `messenger_agent_chat_*` tools are always offered to agents. A stored value for the old switch is ignored and dropped. Notifications in Reports and the Hide Agent and Reports button keep their own switches. Guards: `tests/test_agent_chat.py`, `tests/agent_chat_browser.cjs`.
+
 ## 0.2.0-unified.16.73 (the emoji panel stays open for several emoji)
 
 Store recipe: pins the image built from main `8c3267d`. Ships #295 (Refs humanitylabs-org/wizard-messenger#294), a bug fix with no switch: the composer's Emoji panel stays open while several emoji are picked in a row. On a phone a pick never brings the keyboard up (also on phones that report a fine pointer), and focus coming back to the text box without a tap no longer closes the panel. The smiley, a tap outside, a tap in the text box and sending still close it. Guard: `tests/emoji_stays_open_browser.cjs`.
