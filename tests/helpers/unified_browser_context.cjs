@@ -69,6 +69,7 @@ class Element {
       child.remove();child.parent=this;child.ownerDocument=this.ownerDocument;this.children.push(child);
     }
   }
+  prepend(...nodes) {const old=this.children;this.children=[];this.append(...nodes);for(const c of old)if(c.parent===this)this.children.push(c);}
   replaceChildren(...nodes) {for(const child of this.children)child.parent=null;this.children=[];this._text='';this.append(...nodes);}
   remove() {if(this.parent)this.parent.children=this.parent.children.filter(c=>c!==this);this.parent=null;}
   setAttribute(k,v) {

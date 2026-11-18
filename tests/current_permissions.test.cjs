@@ -20,7 +20,8 @@ async function fixture(level='no_access'){
       'api/unified/connectors':{providers:[]},'api/unified/telegram/status':{logins:[]},'api/view/authority':{required:true,ready:false},
       'api/unified/merge-suggestions':{suggestions:[]},'api/view/push':{enabled:false},'api/drafts':{drafts:[]},
       'api/unified/directory':{people:[],groups:[]},'api/unified/labels':{labels:[],rev:0},'api/unified/catch-up/settings':{},'api/unified/tinfoil':{linked:true},
-      'api/unified/draft-watch':{on:true,watched:[],all_unread:false,stats:null}};
+      'api/unified/draft-watch':{on:true,watched:[],all_unread:false,stats:null},
+      'api/unified/agent-chat':{entries:[],unread:0,urgent:false,reports_unread:0,reports_read_at:0}};
     if(path in responses)return responses[path];
     unexpected.push(path);throw Error('Unexpected current-permissions API '+path);
   };

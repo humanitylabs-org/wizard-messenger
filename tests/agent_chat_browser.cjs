@@ -43,7 +43,7 @@ function fakeBox() {
   };
 }
 
-async function run(browser, label, switchOn, viewport) {
+async function run(browser, label, stale, viewport) {
   const ctx = await browser.newContext({viewport, deviceScaleFactor: 1, colorScheme: 'dark', hasTouch: viewport.width < 600});
   await ctx.addInitScript(() => {
     const noop = () => {};
@@ -55,7 +55,8 @@ async function run(browser, label, switchOn, viewport) {
   const page = await ctx.newPage(), errors = [], fake = fakeBox();
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = [{id: 'agent-chat', name: 'Agent chat', description: 'x', on: switchOn, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#265']}];
+  // Issue 265: the Agent chat has no switch any more. An older box may still list a stale 'agent-chat' off: it shows anyway.
+  const switches = stale ? [{id: 'agent-chat', name: 'Agent chat', description: 'x', on: false, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#265']}] : [];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -67,7 +68,6 @@ async function run(browser, label, switchOn, viewport) {
     if (p === 'api/invites') return ok({invites: []});
     if (p === 'api/dms') return ok({dms: []});
     if (p.startsWith('api/unified/agent-chat')) {
-      if (!switchOn) return route.fulfill({status: 409, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'feature_off', message: 'off'}})});
       const body = req.method() === 'POST' ? JSON.parse(req.postData() || '{}') : null;
       return ok(req.method() === 'POST' ? fake.owner(p.slice('api/unified/agent-chat'.length), body) : fake.state());
     }
@@ -85,13 +85,6 @@ async function run(browser, label, switchOn, viewport) {
   await page.waitForTimeout(1200);
   const shot = name => page.screenshot({path: path.join(out, `${label}-${name}.png`)});
   const result = {label};
-  if (!switchOn) {
-    result.row = await page.locator('.u-agent-row').count();
-    assert.equal(result.row, 0, label + ': switch off, no Agent row');
-    await shot('list');
-    assert.deepEqual(errors, [], label + ' page errors');
-    await ctx.close(); return result;
-  }
   const rows = await page.locator('.u-list > .u-person').evaluateAll(els => els.map(e => e.querySelector('strong')?.textContent));
   assert.deepEqual(rows.slice(0, 2), ['Agent', 'Reports'], label + ': the Agent and Reports chats are pinned on top');
   await shot('1-list');
@@ -188,8 +181,8 @@ async function run(browser, label, switchOn, viewport) {
 (async () => {
   const browser = await chromium.launch({headless: true, args: ['--no-sandbox']});
   try {
-    const results = [await run(browser, 'phone', true, {width: 390, height: 844}), await run(browser, 'desktop', true, {width: 1280, height: 860}),
-      await run(browser, 'switch-off', false, {width: 390, height: 844})];
+    const results = [await run(browser, 'phone', false, {width: 390, height: 844}), await run(browser, 'desktop', false, {width: 1280, height: 860}),
+      await run(browser, 'stale-switch-off', true, {width: 390, height: 844})];
     console.log(JSON.stringify({ok: true, results}, null, 1));
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

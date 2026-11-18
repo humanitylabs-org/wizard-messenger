@@ -406,7 +406,7 @@
     }
     return out.filter(x => x.names.length);
   }
-  // Issue 265 (switch agent-chat): what the owner's Agent chat shows. 'chat' leaves reports out (they have their own
+  // Issue 265: what the owner's Agent chat shows. 'chat' leaves reports out (they have their own
   // Reports chat); 'reports' shows only reports, oldest first like any chat. A sweep item is open (buttons), answered (the pick
   // shows; it can still change until the agent picks it up) or done (collapsed to the agent's result).
   function agentChatRows(state, mode = 'chat', notices = []) {
@@ -877,7 +877,7 @@
       const label = document.querySelector('.u-settings-btn')?.getAttribute('aria-label') || 'Settings';
       let tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
       // Issue 291: the Agent/Reports toggle rides right after QR. The shell has no eye icon, so it shows as text.
-      if (tools && agentToggleShown()) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
+      if (tools && agentToggleOn()) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
       const key = JSON.stringify(tools); if (key === bar.key) return; bar.key = key;
       const gen = ++bar.gen;
       let pending; try { pending = Promise.resolve(tb.set(tools, onBarTool)); } catch { pending = Promise.resolve(false); }
@@ -1278,7 +1278,7 @@
     // must not push it to 99+. Muted, Medium and Low priority chats never count.
     for (const [id, n] of Object.entries(unreadById)) { const t = twins.twinOf.get(id); if (n > 0 && !mutedById[id] && !lowById[id] && !mediumById[id] && !twins.hideMirror.has(id) && !(t && (t.muted || t.low_priority || t.medium_priority))) counts.people += 1; }
     // Issue 265: an unread urgent ping from the agent counts as one unread chat (nothing else from the agent does).
-    if (agentChatOn() && agentChat.state?.urgent) counts.people += 1;
+    if (agentChat.state?.urgent) counts.people += 1;
     paintTabBadges(counts);
     const n = counts.people + counts.groups;
     if (n === badgeShown) return; badgeShown = n;
@@ -1737,8 +1737,8 @@
     // a list built fresh beside an open chat (renderList in the split) takes over the old list's place once.
     const keep = list.dataset.keepTop ? +list.dataset.keepTop : list.scrollTop;
     list.replaceChildren(frag);
-    // Issue 265 (switch agent-chat): the Agent chat is pinned on top of All, with no search or filter narrowing it.
-    if (reportsOn() && !agentRowsHidden() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
+    // Issue 265: the Agent chat is pinned on top of All, with no search or filter narrowing it.
+    if (!agentRowsHidden() && s.tab === 'people' && s.seg === 'all' && !q && !filterState.net && filterState.type === 'all' && !filterState.label) list.prepend(...agentRows());
     if (list.dataset.keepTop && shown.length) delete list.dataset.keepTop;
     if (keep && list.scrollTop !== keep) list.scrollTop = keep;
   }
@@ -4749,7 +4749,7 @@
     try {
       applySwitches(await switchCall());
     } catch { /* not signed in yet or an older box: keep what we have, try again on the next poll */ }
-    if (reportsOn()) loadAgentChat();
+    loadAgentChat();
     loadNotices();
   }
   async function setSwitch(id, on) {
@@ -4758,7 +4758,7 @@
     try { applySwitches(await switchCall({id, on})); if (id === 'photo-prefetch' && on) prefetchSoon(); }
     catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
-  // ---------- Agent chat (issue 265, switch agent-chat) ----------
+  // ---------- Agent chat (issue 265, on for everyone) ----------
   // Two chats with the owner's own agent, kept on the box (api/unified/agent-chat), listed on top of Chats and opened
   // like any other chat (Miguel, 17 Nov: "the chat should look identical to the other chats"). Agent: what the owner
   // writes is a note to self; the agent never answers it in words, it ticks it once picked up. Sweep asks for one list
@@ -4767,18 +4767,15 @@
   const AGENT_IDS = {chat: 'agent:notes', reports: 'agent:reports'};
   function agentMode(id) { return id === AGENT_IDS.chat ? 'chat' : id === AGENT_IDS.reports ? 'reports' : null; }
   const agentChat = {state: null, mode: 'chat', root: null, key: '', loading: null};
-  function agentChatOn() { return switchState.on['agent-chat'] === true; }
-  // Issue 276 (switch reports-notifications): Reports also lists a copy of every notification, so either switch shows it.
+  // Issue 276 (switch reports-notifications): Reports also lists a copy of every notification.
   function noticesOn() { return switchState.on['reports-notifications'] === true; }
-  function reportsOn() { return agentChatOn() || noticesOn(); }
-  function agentModeOn(mode) { return mode === 'reports' ? reportsOn() : mode === 'chat' && agentChatOn(); }
   // Issue 277 (switch agent-chat-name): the Agent chat carries the agent's own name and sigil, as the Wizard shows it
   // (the agent with Draft-only access in Settings > Agents). Re-read at most once a minute, at once on open.
   const agentWho = {who: null, at: 0, loading: null};
   function agentNameOn() { return switchState.on['agent-chat-name'] === true; }
   const agentName = () => (agentNameOn() && agentWho.who?.name) || 'Agent';
   function loadAgentWho(force = false) {
-    if (!agentNameOn() || !agentChatOn()) { if (agentWho.who) { agentWho.who = null; agentWho.at = 0; paintAgentWho(); } return Promise.resolve(); }
+    if (!agentNameOn()) { if (agentWho.who) { agentWho.who = null; agentWho.at = 0; paintAgentWho(); } return Promise.resolve(); }
     if (agentWho.loading) return agentWho.loading;
     if (!force && Date.now() - agentWho.at < 60000) return Promise.resolve();
     agentWho.at = Date.now();
@@ -4831,44 +4828,29 @@
     agentChat.state = state; paintAgentRow(); paintAgentThread(); syncBadge();
   }
   function loadAgentChat() {
-    if (!reportsOn()) { if (agentChat.state) { agentChat.state = null; paintAgentRow(); syncBadge(); } return Promise.resolve(); }
     if (agentChat.loading) return agentChat.loading;
     loadAgentWho();
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
-  // Leave an open Agent chat for the list (the switch went off, or a stale resume).
-  function leaveAgentChat() {
-    if (!agentMode(s.person)) return;
-    agentRecDiscard(); s.person = null; view.id = null; view.root = view.scroll = null; s.epoch++; inChat(false);
-    if (split.on && hasListPane()) { closePane(); markSelected(); } else renderList();
-  }
-  switchState.paints['agent-chat'] = () => {
-    paintAgentToggles();
-    loadAgentChat();
-    if (!reportsOn()) agentChat.state = null;
-    if (agentMode(s.person) && !agentModeOn(agentMode(s.person))) leaveAgentChat();
-    if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList();
-  };
   switchState.paints['agent-chat-name'] = () => { loadAgentWho(true); paintAgentWho(); };
   switchState.paints['reports-notifications'] = () => {
     loadNotices(true);
+    paintAgentRow();
     paintAgentThread();
-    switchState.paints['agent-chat']();
   };
   // Issue 291 (switch agent-rows-toggle): a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
   // Only the list changes: an open Agent/Reports chat stays open and nothing about notes, Sweep or Reports delivery
   // changes. Remembered on this device, like the Inbox view.
   const AGENT_ROWS_KEY = 'messenger.agentRowsHidden';
   function agentToggleOn() { return switchState.on['agent-rows-toggle'] === true; }
-  function agentToggleShown() { return agentToggleOn() && reportsOn(); }
   function agentRowsHidden() {
     if (!agentToggleOn()) return false;
     try { return localStorage.getItem(AGENT_ROWS_KEY) === '1'; } catch { return false; }
   }
   function paintAgentToggle(el) {
     const t = agentRowsToggle(agentRowsHidden());
-    el.hidden = !agentToggleShown();
+    el.hidden = !agentToggleOn();
     el.setAttribute('aria-label', t.label); el.title = t.label; el.setAttribute('aria-pressed', String(t.pressed));
     el.replaceChildren(icon(t.icon));
   }
@@ -4879,7 +4861,7 @@
     paintAgentToggles(); drawList();
   }
   switchState.paints['agent-rows-toggle'] = () => { paintAgentToggles(); if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList(); };
-  function agentRows() { return [agentChatOn() && agentRow('chat'), reportsOn() && agentRow('reports')].filter(Boolean); }
+  function agentRows() { return [agentRow('chat'), agentRow('reports')]; }
   function agentRow(mode) {
     const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];
     const unread = (reports ? reportsUnread(st, shownNotices()) : st?.unread) || 0, urgent = !reports && !!st?.urgent, compact = !previewsOn();
@@ -4913,8 +4895,7 @@
   }
   function paintAgentRow() {
     for (const old of document.querySelectorAll('.u-list > .u-agent-row')) {
-      const mode = old.dataset.mode === 'reports' ? 'reports' : 'chat';
-      if (agentModeOn(mode)) old.replaceWith(agentRow(mode)); else old.remove();
+      old.replaceWith(agentRow(old.dataset.mode === 'reports' ? 'reports' : 'chat'));
     }
   }
   async function agentAct(path, body) {
@@ -4934,7 +4915,6 @@
     return a.woken ? 'Your agent hears about each note within seconds' : a.checked ? 'Your agent checks here on its own schedule' : 'Your agent hasn’t checked here yet';
   }
   function openAgentChat(mode = 'chat') {
-    if (!agentModeOn(mode)) { leaveAgentChat(); return; }
     const id = AGENT_IDS[mode] || AGENT_IDS.chat;
     view.selection?.clear(); view.selection = null;
     if (s.overlay) closeOverlay();

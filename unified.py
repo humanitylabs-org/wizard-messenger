@@ -3574,7 +3574,7 @@ class UnifiedInbox:
             if method == 'GET': return draft_watch.state(self)
             if method == 'POST': return draft_watch.configure(self, payload)
         if suffix[:1] == ['agent-chat']:
-            # Issue 265 (switch agent-chat), owner session only: no agent capability maps here. Agents use the
+            # Issue 265, owner session only: no agent capability maps here. Agents use the
             # messenger_agent_chat_* MCP tools instead.
             import agent_chat
             return agent_chat.dispatch(self, method, suffix[1:], payload, query, raw)

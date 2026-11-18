@@ -191,17 +191,11 @@ class ToolList(unittest.TestCase):
     def test_every_tool_is_listed_with_no_switch_on(self):
         handler = Mock(); handler.service.unified.switches.is_on = lambda sid: False
         names = {t['name'] for t in agent_tools.listed(handler)}
-        # Issue 223: the wake tool is offered only with agent-wake on; issue 265: the agent chat tools only with
-        # agent-chat on.
-        self.assertEqual(agent_tools.SWITCHED, {'messenger_wake_me': 'agent-wake',
-                                                'messenger_agent_chat_inbox': 'agent-chat',
-                                                'messenger_agent_chat_ack': 'agent-chat',
-                                                'messenger_agent_chat_post': 'agent-chat',
-                                                'messenger_agent_chat_done': 'agent-chat',
-                                                'messenger_agent_chat_attachment': 'agent-chat',
-                                                'messenger_agent_chat_wake_me': 'agent-chat'})
+        # Issue 223: the wake tool is offered only with agent-wake on; issue 265: the agent chat tools are always on.
+        self.assertEqual(agent_tools.SWITCHED, {'messenger_wake_me': 'agent-wake'})
         self.assertFalse(set(agent_tools.SWITCHED) & names)
-        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft'} <= names)
+        self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft',
+                         'messenger_agent_chat_inbox', 'messenger_agent_chat_wake_me'} <= names)
         self.assertEqual(agent_tools.ROUTES['messenger_chats_needing_draft'], ('GET', '/api/unified/people'))
         self.assertEqual(agent_tools.ROUTES['messenger_draft_feedback'], ('GET', '/api/drafts'))
 
