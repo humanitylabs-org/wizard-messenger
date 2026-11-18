@@ -3847,11 +3847,17 @@
     const body = node('div', 'u-pick-body');
     panel.append(tabs, body);
     const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0};
-    const touch = () => matchMedia('(pointer: coarse)').matches;
+    // Issue 294: a finger is told by the tap itself (the smiley or the panel), not only by the screen's media query:
+    // some phones report a fine pointer, and the box then took focus after every emoji, so the keyboard came up over
+    // the panel. A mouse or trackpad pick keeps the caret in the box as before.
+    let lastPointer = '';
+    const notePointer = e => { if (e.pointerType) lastPointer = e.pointerType; };
+    const touch = () => lastPointer ? lastPointer !== 'mouse' : matchMedia('(pointer: coarse)').matches;
     // The caret survives the box losing focus (the phone keyboard goes down while the panel is open).
     const keep = () => { state.start = o.draft.selectionStart; state.end = o.draft.selectionEnd; };
     for (const ev of ['select', 'keyup', 'pointerup', 'input', 'blur']) o.draft.addEventListener(ev, keep);
-    o.draft.addEventListener('focus', () => { if (state.open && touch()) close(); }); // tapping the box brings the keyboard back, like Telegram
+    // Issue 294: the panel stays open while several emoji go in. A tap in the box still closes it (the outside tap
+    // below covers the box, like Telegram), but focus alone (a phone handing focus back to the box) no longer does.
     function insert(k) {
       const v = o.draft.value, a = Math.min(state.start ?? v.length, v.length), b = Math.max(a, Math.min(state.end ?? a, v.length));
       o.draft.value = v.slice(0, a) + k + v.slice(b);
@@ -3987,6 +3993,7 @@
       state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
       return true;
     }
+    panel.addEventListener('pointerdown', notePointer, true); o.button.addEventListener('pointerdown', notePointer, true);
     panel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); o.draft.focus(); } });
     const handle = {panel, close, toggle: () => state.open ? close() : open(), get isOpen() { return state.open; }};
     view.picker = handle;
