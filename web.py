@@ -180,6 +180,8 @@ class ViewServer(MessengerServer):
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
         self.switches=SwitchStore(Path(data)/'switches.json' if data else None)
+        from private_unread import PrivateUnread
+        self.private_unread=PrivateUnread(Path(data)/'private-seen.json' if data else None)
         # One transaction for provider proof, engine transition and verifier issuance.
         self.setup_lock=threading.Lock()
         self.public_path=os.environ.get('MESSENGER_PUBLIC_PATH','/')
@@ -477,7 +479,23 @@ class ViewHandler(Handler):
         store=getattr(self.service.unified,'store',None)
         if store is None or not hasattr(store,'unread_total'):
             raise EngineError('not_configured','Unified inbox is not enabled',503)
-        return 200,{'ok':True,'result':{'unread_total':store.unread_total()}}
+        # Issue 302: plus Messenger's own private chats (seen marks the view hands the box, private_unread.py).
+        private=self.service.private_unread.count(self.service.engine)
+        return 200,{'ok':True,'result':{'unread_total':store.unread_total()+private}}
+    def _private_seen(self,method):
+        """Issue 302 (switch unread-count): the view hands the box its private chats' seen marks (one message id and
+        a quiet flag per chat, nothing else), so the phone icon count includes them. Owner session + CSRF only."""
+        if self.headers.get('Authorization'):
+            raise EngineError('owner_only','Only the owner can mark private chats seen',403)
+        self._authorize()
+        if not self.service.switches.is_on('unread-count'):
+            raise EngineError('not_found','No such route',404)
+        if method!='POST':
+            raise EngineError('method_not_allowed','Use POST /api/view/private-seen',405)
+        from engine import group_id
+        try: result=self.service.private_unread.mark(self._body(),group_id)
+        except ValueError as e: raise EngineError('invalid_input',str(e),400) from None
+        return 200,{'ok':True,'result':result}
     def _switches(self,method,feedback=False):
         """Messenger's feature switches for the box owner (wizard.app-switches/1): the Tracker's Try it toggle and
         Settings both use this. Owner session only (never a bearer or the gateway grant). A write needs the box's own
@@ -537,6 +555,8 @@ class ViewHandler(Handler):
             return self._inbox(method,path)
         if path=='/api/unread':
             return self._unread(method)
+        if path=='/api/view/private-seen':
+            return self._private_seen(method)
         if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
             raise EngineError('owner_only','Owner browser access is required',403)
         if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/'):

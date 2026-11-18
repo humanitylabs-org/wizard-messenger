@@ -80,9 +80,9 @@ SWITCHES = (
     {'id': 'unread-count', 'name': 'Unread count on the phone icon',
      'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
                     'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
-                    'priority chats never count.',
+                    'priority chats never count. Your private Messenger chats count too.',
      'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#296']},
+     'issues': ['humanitylabs-org/wizard-messenger#296', 'humanitylabs-org/wizard-messenger#302']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
