@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.70 (attach menu on +)
+
+Store recipe: pins the image built from main `a55803d`. Ships #286 (Refs humanitylabs-org/wizard-messenger#285), a bug fix with no switch: + in a chat's composer (and in the Agent chat) opens an attach menu like Telegram's paperclip, with Camera (touch screens only), Photo or video, and File (Agent chat: Camera, Photo, Voice note file), instead of jumping straight to the phone's photo gallery. Guards: `tests/test_attach_menu.cjs`, `tests/attach_menu_browser.cjs`.
+
 ## 0.2.0-unified.16.69 (Agent chat with your agent's name, behind a switch)
 
 Store recipe: pins the image built from main `66f0a47`. Ships #280 (Refs humanitylabs-org/wizard-messenger#277) behind the off-by-default switch `agent-chat-name` (Agent chat with your agent's name): the pinned Agent chat shows the owner's agent's own name (for example Oscar) and its sigil, the Wizard hat mark in that agent's colour, instead of the word Agent. The agent is the one with Draft-only access in Settings > Agents (the main one if several; with none, the only agent, else the main agent); name, privacy and colour come from the Agent Service's agent list. "Agent" stays when no agent is known. Needs `agent-chat` on to show. Guards: `tests/test_agent_chat_name.cjs`, `tests/agent_chat_name_browser.cjs`.
