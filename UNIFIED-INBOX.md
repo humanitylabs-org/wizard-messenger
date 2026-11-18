@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.76 (private chats in the phone icon count, switch off by default)
+
+Store recipe: pins the image built from main `bebf2e9`. Ships #304 (Refs humanitylabs-org/wizard-messenger#302): with the switch `unread-count` on, `GET /api/unread` also counts Messenger's own private chats whose newest message was received and not seen. The view hands the box only a seen message id and a quiet flag (muted, Medium or Low) per private chat through `POST /api/view/private-seen`; a locked engine keeps the last count. Response keys unchanged. Guards: `tests/test_unread_count.py`, `tests/test_view.cjs`.
+
 ## 0.2.0-unified.16.75 (unread count for the phone icon, switch off by default)
 
 Store recipe: pins the image built from main `27e762e`. Ships #301 (Refs humanitylabs-org/wizard-messenger#296): new read-only `GET /api/unread` gives `{"unread_total": N}`, the number of chats and groups with an unread incoming message (box-side read mark; muted, Medium and Low priority never count), so the Wizard phone app can draw a count on the Messenger home-screen icon. A number only. Behind the new switch `unread-count` (off: 404). Private Messenger chats are humanitylabs-org/wizard-messenger#302. Guards: `tests/test_unread_count.py`.
