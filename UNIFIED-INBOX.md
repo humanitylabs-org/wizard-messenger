@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.73 (the emoji panel stays open for several emoji)
+
+Store recipe: pins the image built from main `8c3267d`. Ships #295 (Refs humanitylabs-org/wizard-messenger#294), a bug fix with no switch: the composer's Emoji panel stays open while several emoji are picked in a row. On a phone a pick never brings the keyboard up (also on phones that report a fine pointer), and focus coming back to the text box without a tap no longer closes the panel. The smiley, a tap outside, a tap in the text box and sending still close it. Guard: `tests/emoji_stays_open_browser.cjs`.
+
 ## 0.2.0-unified.16.72 (a button to hide the pinned Agent and Reports chats)
 
 Store recipe: pins the image built from main `98614c1`. Ships #292 (Refs humanitylabs-org/wizard-messenger#291), a feature behind the off-by-default switch `agent-rows-toggle` (Hide Agent and Reports button): a button right beside My QR codes (on a phone inside Wizard, a title-bar button after QR) hides the pinned Agent and Reports chats from the list, and a second tap shows them again. It shows only while Agent chat or Notifications in Reports is on, and the choice is remembered on the device. Guard: `tests/agent_rows_toggle_browser.cjs`.
