@@ -496,3 +496,22 @@ test('DOM fixture: unavailable persistent storage refuses untracked send and ret
   const f=await fixture({storageBlocked:true});f.e('conversation-list').children[0].fire('click');await f.flush();f.e('draft').value='Fixture unsaved';f.e('draft').fire('input');f.e('composer').fire('submit');await f.flush();
   assert.equal(f.e('draft').value,'Fixture unsaved');assert.match(f.e('composer-error').textContent,/storage is unavailable/);assert.equal(f.calls.filter(c=>c.opts.method==='POST').length,0);
 });
+test('DOM fixture: issue 302 hands the box private seen marks only (id + quiet), once per change',async()=>{
+  const seen='e'.repeat(64);
+  const saved=new Map([['wizard-messenger:v1:'+ownHex+':'+group,JSON.stringify({draft:'never sent to the box',seen,muted:true})]]);
+  const f=await fixture({saved,respond:(url,opts,base)=>url==='api/view/private-seen'?{saved:1}:base(url,opts)});
+  const syncs=()=>f.calls.filter(c=>c.url==='api/view/private-seen');
+  const run=async()=>{for(const [id,t] of [...f.timers]) if(t.ms===800){f.timers.delete(id);t.fn();}await f.flush();};
+  await run();
+  assert.equal(syncs().length,1);
+  assert.deepEqual(syncs()[0].body,{marks:[{group,seen,quiet:true}]});
+  assert.equal(syncs()[0].opts.method,'POST');assert.equal(syncs()[0].opts.headers['X-Messenger-CSRF'],'fixture-csrf');
+  await f.poll();await run();
+  assert.equal(syncs().length,1,'unchanged marks are not sent again');
+});
+test('DOM fixture: issue 302 switch off (404) stops the seen sync without an error on screen',async()=>{
+  const f=await fixture({respond:(url,opts,base)=>url==='api/view/private-seen'?{httpError:404,code:'not_found'}:base(url,opts)});
+  for(const [id,t] of [...f.timers]) if(t.ms===800){f.timers.delete(id);t.fn();}await f.flush();
+  assert.equal(f.calls.filter(c=>c.url==='api/view/private-seen').length,1);
+  assert.equal(f.e('list-error').textContent,'');assert.equal(f.e('chat-error').textContent,'');
+});

@@ -93,8 +93,9 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'unread-count', 'name': 'Unread count on the phone icon',
                 'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never '
                                'names or messages), so the Messenger icon on your home screen can show it. Muted, '
-                               'Medium and Low priority chats never count.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296']}])
+                               'Medium and Low priority chats never count. Your private Messenger chats count too.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296',
+                                                           'humanitylabs-org/wizard-messenger#302']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):

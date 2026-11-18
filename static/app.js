@@ -298,7 +298,7 @@
   function eraseView() {
     state.identity = null; state.contacts = []; state.dms = []; state.invites = [];
     state.group = null; state.sheet = null; state.cache.clear(); state.records.clear(); state.nodes.clear(); state.scroll.clear();
-    state.chatOpening = null; state.lastActivity = ''; state.listLoaded = false; state.listSignature = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
+    state.chatOpening = null; state.lastActivity = ''; state.listLoaded = false; state.listSignature = ''; seenSync.sent = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
     $('public-address').textContent = ''; $('chat-name').textContent = ''; $('chat-subline').textContent = '';
     $('draft').value = ''; $('contact-address').value = ''; $('contact-name').value = '';
     $('passphrase').value = ''; $('confirm-passphrase').value = ''; $('display-name').value = '';
@@ -474,10 +474,31 @@
     if (unread) meta.append(element('span', 'row-dot' + (record.muted ? ' muted' : '')));
     el.append(body, meta); return el;
   }
+  // Issue 302 (switch unread-count): the box counts private chats for the phone icon from the marks the view hands
+  // it: per chat only the seen message id and whether it is quiet (muted, Medium or Low). A 404 means the switch is
+  // off: ask again after a while instead of on every list change.
+  const seenSync = {sent: '', timer: null, offUntil: 0};
+  function privateSeenMarks() {
+    return state.dms.filter(dm => !isIncoming(dm)).slice(0, 200).map(dm => {
+      const r = readRecord(dm.group_id);
+      return {group: dm.group_id, seen: typeof r.seen === 'string' && /^[0-9a-f]{64}$/.test(r.seen) ? r.seen : null, quiet: !!(r.muted || r.low_priority || r.medium_priority)};
+    });
+  }
+  function syncPrivateSeen() {
+    clearTimeout(seenSync.timer);
+    seenSync.timer = setTimeout(async () => {
+      if (state.mode !== 'ready' || !state.csrf || Date.now() < seenSync.offUntil) return;
+      const marks = privateSeenMarks(), body = JSON.stringify(marks);
+      if (!marks.length || body === seenSync.sent) return;
+      try { await api('api/view/private-seen', {method: 'POST', body: {marks}}); seenSync.sent = body; }
+      catch (error) { if (error?.status === 404) seenSync.offUntil = Date.now() + 300000; }
+    }, 800);
+  }
   function renderList() {
     if (state.mode !== 'ready') return;
     const signature = JSON.stringify([state.group, state.listLoaded, state.pendingInvite, state.contacts, state.invites, state.dms, [...state.cache].map(([id,c]) => [id,c.messages.at(-1)]), [...state.records].map(([id,r]) => [id,r.seen,r.invite_sent,r.muted,r.low_priority,r.medium_priority])]);
     if (signature === state.listSignature) return; state.listSignature = signature;
+    if (state.listLoaded) syncPrivateSeen();
     // Adapter rows only: native history, invite and send handling stay in this engine.
     const nativeRows = [...state.invites, ...state.dms.filter(dm => !isIncoming(dm))].map(dm => {
       const record = readRecord(dm.group_id), last = cacheFor(dm.group_id).messages.at(-1), invite = isIncoming(dm);

@@ -92,8 +92,8 @@ class StoreTests(Chats):
         self.assertEqual(store.unread_total(), 1)
 
 
-class UnreadHTTP(Chats):
-    """Route boundary on a trusted-owner install (the Wizard gateway signs each owner request)."""
+class HTTPBase(Chats):
+    """A real ViewServer on a trusted-owner install (the Wizard gateway signs each owner request)."""
     trusted = True
 
     def setUp(self):
@@ -128,6 +128,10 @@ class UnreadHTTP(Chats):
     def switch(self, on):
         self.server.switches.set('unread-count', on)
 
+
+class UnreadHTTP(HTTPBase):
+    """Route boundary on a trusted-owner install."""
+
     def test_off_by_default_is_no_route(self):
         self.three_unread(self.inbox)
         status, body = self.request(headers={'Origin': ORIGIN})
@@ -158,7 +162,114 @@ class UnreadHTTP(Chats):
         self.assertIn(status, (401, 403)); self.assertNotIn('result', body)
 
 
-class UnreadHTTPPassphrase(UnreadHTTP):
+def mid(n):
+    return '%064x' % n
+
+
+class FakePrivate:
+    """Synthetic Marmot engine: private chats and their newest message, nothing real."""
+    def __init__(self):
+        self.state = 'ready'
+        self.chats = {}  # group -> newest row
+
+    def status(self):
+        return {'state': self.state}
+
+    def dms(self):
+        if self.state != 'ready':
+            raise AssertionError('locked engine must not be read')
+        return {'dms': [{'group_id': g, 'pending_confirmation': False} for g in self.chats]}
+
+    def messages(self, group, limit=100, before=None, before_message_id=None):
+        assert limit == 1
+        last = self.chats[group]
+        return {'messages': [last] if last else [], 'next_cursor': None}
+
+
+class PrivateChats(HTTPBase):
+    """Issue 302: Messenger's own private chats count too, from the seen marks the view hands the box."""
+    G1, G2, G3 = 'aa' * 16, 'bb' * 16, 'cc' * 16
+
+    def setUp(self):
+        super().setUp()
+        self.private = FakePrivate()
+        self.server.engine = self.private
+        self.private.chats = {self.G1: {'message_id': mid(1), 'direction': 'received'},
+                              self.G2: {'message_id': mid(2), 'direction': 'received'},
+                              self.G3: {'message_id': mid(3), 'direction': 'sent'}}
+
+    def seen(self, marks, *, csrf=True, extra=None):
+        token, session = self.server.auth.create()
+        h = {'Cookie': 'wizard_messenger_session=' + token, 'Origin': ORIGIN, 'Content-Type': 'application/json'}
+        if csrf:
+            h['X-Messenger-CSRF'] = session['csrf']
+        h.update(extra or {})
+        target = '/api/view/private-seen'
+        if self.trusted:
+            h[HEADER] = sign_request(self.proof, 'POST', target)
+        body = json.dumps({'marks': marks})
+        c = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        c.request('POST', target, body, h)
+        r = c.getresponse(); out = (r.status, json.loads(r.read() or b'null')); c.close()
+        return out
+
+    def total(self):
+        status, body = self.request(headers={'Origin': ORIGIN})
+        self.assertEqual(status, 200)
+        self.assertEqual(set(body['result']), {'unread_total'})
+        return body['result']['unread_total']
+
+    def unified_one(self):
+        amy = self.chat(self.inbox, '!amy', 'Amy')
+        self.inbox.store.add_message('$a1', amy, 'Amy', False, 'hi', now_ms())
+
+    def test_two_private_and_one_unified_then_open_one(self):
+        self.switch(True)
+        self.unified_one()
+        self.assertEqual(self.total(), 3)  # 2 received private + 1 unified; G3's newest is our own line
+        self.assertEqual(self.seen([{'group': self.G1, 'seen': mid(1), 'quiet': False}]),
+                         (200, {'ok': True, 'result': {'saved': 1}}))
+        self.assertEqual(self.total(), 2)
+        # A new line in that chat makes it unread again (the cache is dropped on every mark; force it here).
+        self.private.chats[self.G1] = {'message_id': mid(4), 'direction': 'received'}
+        self.server.private_unread.cache = None
+        self.assertEqual(self.total(), 3)
+
+    def test_quiet_chats_never_count_and_null_keeps_another_devices_mark(self):
+        self.switch(True)
+        self.seen([{'group': self.G1, 'seen': mid(1), 'quiet': False}, {'group': self.G2, 'seen': None, 'quiet': True}])
+        self.assertEqual(self.total(), 0)
+        self.seen([{'group': self.G1, 'seen': None, 'quiet': False}, {'group': self.G2, 'seen': None, 'quiet': False}])
+        self.assertEqual(self.total(), 1)  # G1 keeps mid(1); G2 is loud again
+        stored = json.loads((self.data / 'private-seen.json').read_text())
+        self.assertEqual(set(stored), {'marks', 'last'})
+        self.assertEqual(stored['marks'][self.G1], {'seen': mid(1), 'quiet': False})
+
+    def test_locked_engine_keeps_the_last_count(self):
+        self.switch(True)
+        self.assertEqual(self.total(), 2)
+        self.private.state = 'locked'
+        self.server.private_unread.cache = None
+        self.assertEqual(self.total(), 2)
+        # And after a restart (a fresh store reads the saved count).
+        from private_unread import PrivateUnread
+        self.server.private_unread = PrivateUnread(self.data / 'private-seen.json')
+        self.assertEqual(self.total(), 2)
+
+    def test_marks_route_is_owner_only_and_switched(self):
+        good = [{'group': self.G1, 'seen': mid(1), 'quiet': False}]
+        self.assertEqual(self.seen(good)[0], 404)  # switch off: no such route
+        self.switch(True)
+        self.assertEqual(self.seen(good, csrf=False)[0], 403)
+        self.assertEqual(self.seen(good, extra={'Authorization': 'Bearer ' + TOKEN})[0], 403)
+        self.assertEqual(self.seen(good, extra={'Origin': 'https://evil.example'})[0], 403)
+        for bad in ([{'group': 'nope', 'seen': None}], [{'group': self.G1, 'seen': 'x'}],
+                    [{'group': self.G1, 'seen': None, 'name': 'Amy'}], [{'group': self.G1, 'quiet': 'yes'}], []):
+            self.assertEqual(self.seen(bad)[0], 400, bad)
+        self.assertFalse((self.data / 'private-seen.json').exists())
+
+
+class Passphrase:
     """Without the trusted Wizard ingress the count needs the owner's view session, like every other call."""
     trusted = False
 
@@ -167,6 +278,14 @@ class UnreadHTTPPassphrase(UnreadHTTP):
         if proof:
             o = self.owner(); o.update(h); h = o
         return super().request(target, method=method, proof=False, headers=h)
+
+
+class UnreadHTTPPassphrase(Passphrase, UnreadHTTP):
+    pass
+
+
+class PrivateChatsPassphrase(Passphrase, PrivateChats):
+    pass
 
 
 if __name__ == '__main__':
