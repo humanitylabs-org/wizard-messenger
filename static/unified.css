@@ -1191,7 +1191,7 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-cu-model { display: flex; flex-direction: column; gap: .375rem; margin-top: 1rem; font-size: .8125rem; color: var(--ink-2); }
 .u-cu-model[hidden] { display: none; }
 /* Issue 251: the Open Tinfoil link next to a "Tinfoil isn’t connected" notice. */
-/* Issue 265 (switch agent-chat): the pinned Agent and Reports chats. They open as normal chats, so bubbles, day
+/* Issue 265: the pinned Agent and Reports chats. They open as normal chats, so bubbles, day
    chips and the composer are the chat's own styles; only what other chats lack is styled here. */
 .u-agent-row .u-agent-av, .u-agent-head .u-agent-av { background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
 .u-agent-av.reports { background: var(--raised-2); color: var(--link); }

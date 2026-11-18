@@ -75,14 +75,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'through Tinfoil. The words stay exactly as spoken; if anything would change them, the '
                                'plain transcript is saved instead. Transcripts already saved stay as they are.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#248']}, {
-                'id': 'agent-chat', 'name': 'Agent chat',
-                'description': 'A pinned Agent chat at the top of Chats. What you write there is a note to your agent: '
-                               'it never replies, it ticks the note once picked up and works on it. Sweep asks for one '
-                               'list of what needs you, with one-tap answers; urgent things come as one line, and '
-                               'longer write-ups go to Reports. A note can also be a photo or a voice note, and your '
-                               'agent is woken within seconds of a note, a Sweep or an answer.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#265',
-                                                          'humanitylabs-org/wizard-messenger#266']}, {
                 'id': 'reports-notifications', 'name': 'Notifications in Reports',
                 'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the '
                                'Morning Report, app alerts) also shows as a message in the pinned Reports chat, newest '
@@ -96,8 +88,7 @@ class SwitchEndpoint(unittest.TestCase):
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#277']}, {
                 'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
                 'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, '
-                               'and a second tap shows them again. It shows only while Agent chat or Notifications in '
-                               'Reports is on, and this device remembers your choice.',
+                               'and a second tap shows them again. This device remembers your choice.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#291']}])
             self.assertEqual(body['feedback'], {})
 
@@ -254,6 +245,21 @@ class SwitchStorage(unittest.TestCase):
             store.set('photo-instant', True)
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
 
+    def test_agent_chat_is_gone_and_its_stored_value_cleared(self):
+        # Issue 265: the Agent chat is on for everyone now; a stored value and its feedback are dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"agent-chat": false, "photo-warm": true}, '
+                            '"feedback": {"agent-chat": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('agent-chat', [s['id'] for s in store.listing()['switches']])
+            with self.assertRaises(UnknownSwitch):
+                store.set('agent-chat', True)
+            store.set('photo-instant', True)
+            stored = json.loads(path.read_text())
+            self.assertEqual(stored['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('agent-chat', stored.get('feedback', {}))
+
     def test_agent_documents_is_gone_and_its_stored_value_cleared(self):
         # Issue 245: agent-documents is on for everyone now; a stored value and its feedback are dropped on the next write.
         with tempfile.TemporaryDirectory() as d:
@@ -366,7 +372,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'agent-chat', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle'])
 
 
 if __name__ == '__main__':

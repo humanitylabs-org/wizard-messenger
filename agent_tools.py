@@ -124,7 +124,7 @@ TOOLS = [
            'secret': _string('The secret of that subscription (16..256 characters)'),
            'check': {'type': 'boolean', 'description': 'Only report the current wake'},
            'off': {'type': 'boolean', 'description': 'Stop waking me'}}),
-    # Issue 265: the owner's agent chat, offered only while the agent-chat switch is on.
+    # Issue 265: the owner's agent chat.
     _tool('messenger_agent_chat_inbox', 'The owner\'s Agent chat in Messenger: what is waiting for you there. `notes` are '
           'notes to self the owner dropped (text, links, and photos or voice notes: those carry an `attachment`, fetch it '
           'with messenger_agent_chat_attachment): never reply to them with a message; mark each one picked up '
@@ -133,7 +133,7 @@ TOOLS = [
           'needs the owner since `since`. `answers`: the owner tapped a button on a sweep item; ack it, carry it out, then '
           'messenger_agent_chat_done. Call messenger_agent_chat_wake_me once so Messenger wakes you when something waits '
           'here; otherwise check it on your schedule. Needs Read-only or higher.'),
-    # Issue 266: photos and voice notes in the Agent chat, and waking the agent (switch agent-chat).
+    # Issue 266: photos and voice notes in the Agent chat, and waking the agent.
     _tool('messenger_agent_chat_attachment', 'The photo or voice note of one Agent chat note (note_id from '
           'messenger_agent_chat_inbox). A photo comes back as an image; a voice note as an audio file, plus its '
           '`transcript` when the owner\'s Wizard transcribed it. The owner\'s own note: act on it, never reply. Needs '
@@ -205,10 +205,7 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           'messenger_agent_chat_attachment': ('GET', '/api/drafts'),
           'messenger_agent_chat_wake_me': ('POST', '/api/drafts')}
 # Tools offered only while their switch is on (tool name -> switch id).
-SWITCHED = {'messenger_wake_me': 'agent-wake', 'messenger_agent_chat_inbox': 'agent-chat',
-            'messenger_agent_chat_ack': 'agent-chat', 'messenger_agent_chat_post': 'agent-chat',
-            'messenger_agent_chat_done': 'agent-chat', 'messenger_agent_chat_attachment': 'agent-chat',
-            'messenger_agent_chat_wake_me': 'agent-chat'}
+SWITCHED = {'messenger_wake_me': 'agent-wake'}
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -749,8 +746,6 @@ def wake_me(handler, caller, args):
 def _agent_chat(handler, caller):
     import agent_chat
     unified = _unified(handler)
-    if not unified.switch_on(agent_chat.SWITCH):
-        raise EngineError('feature_off', 'The agent chat is not switched on in this Messenger', 409)
     who = caller[1].get('name') if caller[0] == 'agent' else None
     return agent_chat, unified, who or 'Your agent'
 

@@ -33,7 +33,6 @@ async function run(browser, label, {on, service = SERVICE, levels = LEVELS}, vie
   const state = () => ({entries, unread: 0, urgent: false, sweep_open: false, read_at: 0, agent: {woken: true, checked: true}, reports_unread: 0, reports_read_at: 0});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
   const switches = [
-    {id: 'agent-chat', name: 'Agent chat', description: 'x', on: true, default: false, tried: false, vote: null, issues: []},
     {id: 'agent-chat-name', name: 'Agent chat with your agent\'s name', description: 'x', on, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#277']}];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);

@@ -60,14 +60,6 @@ SWITCHES = (
                     'is saved instead. Transcripts already saved stay as they are.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#248']},
-    {'id': 'agent-chat', 'name': 'Agent chat',
-     'description': 'A pinned Agent chat at the top of Chats. What you write there is a note to your agent: it never '
-                    'replies, it ticks the note once picked up and works on it. Sweep asks for one list of what needs '
-                    'you, with one-tap answers; urgent things come as one line, and longer write-ups go to Reports. A note '
-                    'can also be a photo or a voice note, and your agent is woken within seconds of a note, a Sweep '
-                    'or an answer.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#265', 'humanitylabs-org/wizard-messenger#266']},
     {'id': 'reports-notifications', 'name': 'Notifications in Reports',
      'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the Morning '
                     'Report, app alerts) also shows as a message in the pinned Reports chat, newest at the bottom, '
@@ -82,8 +74,7 @@ SWITCHES = (
      'issues': ['humanitylabs-org/wizard-messenger#277']},
     {'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
      'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, and a second '
-                    'tap shows them again. It shows only while Agent chat or Notifications in Reports is on, and this '
-                    'device remembers your choice.',
+                    'tap shows them again. This device remembers your choice.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#291']},
 )

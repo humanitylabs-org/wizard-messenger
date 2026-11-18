@@ -33,7 +33,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
   const state = () => ({entries, unread: 0, urgent: false, sweep_open: false, read_at: 0, agent: {woken: false, checked: true}, reports_unread: 0, reports_read_at: 0});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
   const sw = (id, v) => ({id, name: id, description: 'x', on: !!v, default: false, tried: false, vote: null, issues: []});
-  const switches = [sw('agent-chat', on.agentChat), sw('reports-notifications', on.notices), sw('agent-rows-toggle', on.toggle)];
+  const switches = [sw('reports-notifications', on.notices), sw('agent-rows-toggle', on.toggle)];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -71,7 +71,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
   try {
     // Desktop: the header button right after My QR codes.
     {
-      const t = await open(browser, {agentChat: true, toggle: true}, {width: 1280, height: 800});
+      const t = await open(browser, {toggle: true}, {width: 1280, height: 800});
       assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'desktop: both rows to start with');
       const order = await t.page.locator('.u-head-actions > button:not([hidden])').evaluateAll(els => els.map(e => e.getAttribute('aria-label')));
       assert.equal(order[0], 'My QR codes'); assert.equal(order[1], 'Hide Agent and Reports', 'desktop: toggle right after QR');
@@ -101,14 +101,14 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
     // Phone width inside Wizard: the shell title bar carries the toggle right after QR.
     {
       const t = await open(browser, {notices: true, toggle: true}, {width: 390, height: 800});
-      assert.deepEqual(await t.pinned(), ['reports'], 'phone: Reports row with only Notifications in Reports on');
+      assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'phone: both rows to start with');
       let tools = await t.bar();
       assert.deepEqual(tools.map(x => x.id), ['qr', 'agent-rows', 'search', 'settings'], 'phone: bar tool after QR');
       assert.equal(tools[1].label, 'Hide Agent and Reports');
       await t.page.screenshot({path: path.join(out, 'phone-shown.png')});
       await t.page.evaluate(() => window.__bar.fn({id: 'agent-rows'}));
       await t.page.waitForTimeout(200);
-      assert.deepEqual(await t.pinned(), [], 'phone: a tap hides the row');
+      assert.deepEqual(await t.pinned(), [], 'phone: a tap hides both rows');
       tools = await t.bar();
       assert.equal(tools[1].label, 'Show Agent and Reports'); assert.equal(tools[1].text, 'Show Agent');
       await t.load();
@@ -117,20 +117,13 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
       assert.equal(tools.find(x => x.id === 'agent-rows')?.label, 'Show Agent and Reports', 'phone: state after reload');
       await t.page.evaluate(() => window.__bar.fn({id: 'agent-rows'}));
       await t.page.waitForTimeout(200);
-      assert.deepEqual(await t.pinned(), ['reports'], 'phone: a second tap shows it again');
+      assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'phone: a second tap shows them again');
       assert.deepEqual(t.errors, [], 'phone: no page errors');
-      await t.ctx.close();
-    }
-    // Nothing to hide: no button, no bar tool.
-    for (const viewport of [{width: 1280, height: 800}, {width: 390, height: 800}]) {
-      const t = await open(browser, {toggle: true}, viewport);
-      assert.equal(await t.btn.isVisible(), false, 'nothing to hide: no header button');
-      assert.equal((await t.bar()).some(x => x.id === 'agent-rows'), false, 'nothing to hide: no bar tool');
       await t.ctx.close();
     }
     // Switch off: rows show as before even with a stored hide, and no toggle anywhere.
     for (const viewport of [{width: 1280, height: 800}, {width: 390, height: 800}]) {
-      const t = await open(browser, {agentChat: true}, viewport, {hidden: true});
+      const t = await open(browser, {}, viewport, {hidden: true});
       assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'switch off: rows as before');
       assert.equal(await t.btn.isVisible(), false, 'switch off: no header button');
       assert.equal((await t.bar()).some(x => x.id === 'agent-rows'), false, 'switch off: no bar tool');

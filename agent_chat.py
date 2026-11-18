@@ -1,4 +1,4 @@
-"""The owner's agent chat (issue 265, switch agent-chat).
+"""The owner's agent chat (issue 265; on for everyone since its switch was removed).
 
 One pinned chat with the owner's own agent, kept on the box (people store kv `agent_chat`), never on a network.
 
@@ -32,10 +32,6 @@ from urllib.parse import urlsplit
 
 from engine import EngineError
 
-SWITCH = 'agent-chat'
-# Issue 276: the Reports chat also lists every notification (read by the owner's view from the Notifications app).
-# With only that switch on, the view still needs the Reports chat's read mark, so those two routes answer too.
-REPORTS_SWITCH = 'reports-notifications'
 KEY = 'agent_chat'
 MAX_ENTRIES = 400
 SHOWN = 200
@@ -343,12 +339,6 @@ def read(unified, payload=None):
 
 
 def dispatch(unified, method, suffix, payload, query=None, raw=None):
-    if not unified.switch_on(SWITCH):
-        reports_only = unified.switch_on(REPORTS_SWITCH) and (
-            (suffix == [] and method == 'GET') or (suffix == ['read'] and method == 'POST'
-                                                   and (payload or {}).get('reports') is True))
-        if not reports_only:
-            _bad('feature_off', 'The agent chat is not switched on in this Messenger', 409)
     if suffix == [] and method == 'GET':
         return state(unified)
     if suffix == [] and method == 'POST':
@@ -368,7 +358,7 @@ def dispatch(unified, method, suffix, payload, query=None, raw=None):
     _bad('not_found', 'No such agent chat route', 404)
 
 
-# ---- agent (MCP tools, switched on agent-chat) ----
+# ---- agent (MCP tools) ----
 def inbox(unified):
     data = _load(unified.store)
     notes, sweeps, answers = [], [], []
@@ -565,8 +555,6 @@ class Waker:
 
     def wake(self, reasons):
         unified = self.unified
-        if not unified.switch_on(SWITCH):
-            return 0
         levels_fn = getattr(unified, 'wake_levels', None)
         levels = levels_fn() if callable(levels_fn) else {}
         subs = _wake_load(unified.store)['subs']

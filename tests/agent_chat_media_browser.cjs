@@ -53,7 +53,7 @@ async function run(browser, label, viewport) {
   const page = await ctx.newPage(), errors = [], fake = fakeBox();
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = [{id: 'agent-chat', name: 'Agent chat', description: 'x', on: true, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#265', 'humanitylabs-org/wizard-messenger#266']}];
+  const switches = [];  // Issue 265: the Agent chat has no switch any more.
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});

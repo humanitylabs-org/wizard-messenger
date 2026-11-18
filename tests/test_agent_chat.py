@@ -1,4 +1,4 @@
-"""The owner's agent chat (issue 265, switch agent-chat): notes to self, Sweep with one-tap answers, urgent pings and
+"""The owner's agent chat (issue 265, on for everyone): notes to self, Sweep with one-tap answers, urgent pings and
 reports. Runs through the real view server (owner routes) and the real MCP endpoint (agent key)."""
 import base64
 import io
@@ -63,9 +63,6 @@ class AgentChat(unittest.TestCase):
     def level(self, level):
         self.assertEqual(self.request('POST', '/api/view/agents/' + self.agent_id, {'level': level}, self.owner)[0], 200)
 
-    def on(self, value=True):
-        self.inbox.switches.set('agent-chat', value)
-
     def mcp(self, name, args=None, method='tools/call'):
         body = {'jsonrpc': '2.0', 'id': 1, 'method': method}
         if method == 'tools/call':
@@ -85,20 +82,17 @@ class AgentChat(unittest.TestCase):
         self.assertEqual(status, 200, data)
         return data['result']
 
-    def test_switch_off_hides_the_tools_and_the_chat(self):
-        names = {t['name'] for t in self.mcp(None, method='tools/list')['tools']}
-        self.assertFalse(set(TOOLS) & names)
-        refused, error = self.mcp('messenger_agent_chat_inbox')
-        self.assertTrue(error)
-        self.assertEqual(refused['error']['code'], 'feature_off')
-        status, data = self.owner_call('GET', '')
-        self.assertEqual(status, 409, data)
-        self.on()
+    def test_always_on_tools_and_chat_with_no_switch(self):
+        # Issue 265: the Agent chat was approved, so it has no switch any more: the tools are listed and the owner's
+        # chat answers on a box with no switch stored, and an old stored value is ignored.
         names = {t['name'] for t in self.mcp(None, method='tools/list')['tools']}
         self.assertTrue(set(TOOLS) <= names)
+        self.assertNotIn('agent-chat', [s['id'] for s in self.inbox.switches.listing()['switches']])
+        got, error = self.mcp('messenger_agent_chat_inbox')
+        self.assertFalse(error, got)
+        self.assertEqual(self.ok('GET')['entries'], [])
 
     def test_a_note_is_ticked_never_answered(self):
-        self.on()
         state = self.ok('POST', '', {'text': 'Buy dog food https://shop.example/food'})
         note = state['entries'][-1]
         self.assertEqual((note['kind'], note['by'], note['seen']), ('note', 'owner', None))
@@ -125,7 +119,6 @@ class AgentChat(unittest.TestCase):
         self.assertEqual([e['kind'] for e in self.ok('GET')['entries']], ['note'])
 
     def test_sweep_with_one_tap_answers(self):
-        self.on()
         self.ok('POST', '/sweep', {})
         state = self.ok('POST', '/sweep', {})  # a second tap while one is open asks nothing new
         self.assertEqual([e['kind'] for e in state['entries']], ['ask'])
@@ -167,7 +160,6 @@ class AgentChat(unittest.TestCase):
         self.assertEqual(self.mcp('messenger_agent_chat_inbox')[0]['sweep_requests'][0]['since'], sweep['at'])
 
     def test_urgent_ping_and_reports(self):
-        self.on()
         posted, error = self.mcp('messenger_agent_chat_post', {'kind': 'ping', 'text': "Buddy's comment\nneeds a reply",
                                                                 'link': 'https://social.example/p/1'})
         self.assertFalse(error, posted)
@@ -182,28 +174,19 @@ class AgentChat(unittest.TestCase):
         state = self.ok('POST', '/read', {'reports': True})
         self.assertEqual(state['reports_unread'], 0)
 
-    def test_reports_notifications_alone_opens_only_the_reports_read_mark(self):
-        # Issue 276: with only the Notifications in Reports switch on, the view reads the state (for the Reports
-        # chat's read mark) and marks Reports read; notes, sweeps and the Agent chat's own read stay off.
-        self.inbox.switches.set('reports-notifications', True)
-        state = self.ok('GET')
-        self.assertEqual(state['reports_read_at'], 0)
-        state = self.ok('POST', '/read', {'reports': True})
-        self.assertGreater(state['reports_read_at'], 0)
-        for method, path, body in (('POST', '', {'text': 'a note'}), ('POST', '/sweep', {}), ('POST', '/read', {})):
-            status, data = self.owner_call(method, path, body)
-            self.assertEqual(status, 409, (path, data))
-            self.assertEqual(data['error']['code'], 'feature_off')
-        names = {t['name'] for t in self.mcp(None, method='tools/list')['tools']}
-        self.assertFalse(set(TOOLS) & names)
+    def test_notes_and_reports_answer_with_notifications_in_reports_off(self):
+        # Issue 265: with the Agent chat always on, the Notifications in Reports switch only adds notifications to
+        # Reports; notes, Sweep and both read marks answer whether it is on or off.
+        for on in (False, True):
+            self.inbox.switches.set('reports-notifications', on)
+            self.ok('POST', '', {'text': 'a note'})
+            self.ok('POST', '/read', {})
+            self.assertGreater(self.ok('POST', '/read', {'reports': True})['reports_read_at'], 0)
         # An agent key still can't use the owner's routes.
         status, data = self.owner_call('GET', '', headers={'Origin': fixtures.ORIGIN, **self.key})
         self.assertNotEqual(status, 200, data)
-        self.inbox.switches.set('reports-notifications', False)
-        self.assertEqual(self.owner_call('GET', '')[0], 409)
 
     def test_owner_only_and_levels(self):
-        self.on()
         # An agent key can never use the owner's routes.
         status, data = self.owner_call('GET', '', headers={'Origin': fixtures.ORIGIN, **self.key})
         self.assertNotEqual(status, 200, data)
@@ -216,7 +199,6 @@ class AgentChat(unittest.TestCase):
         self.assertEqual(refused['error']['code'], 'agent_permission_denied')
 
     def test_store_keeps_a_bounded_history(self):
-        self.on()
         for i in range(agent_chat.MAX_ENTRIES + 5):
             agent_chat.note(self.inbox, {'text': 'n%d' % i})
         data = agent_chat._load(self.inbox.store)
@@ -226,7 +208,6 @@ class AgentChat(unittest.TestCase):
 
     # ---- issue 266: photos and voice notes, and waking the agent ----
     def test_photo_and_voice_notes_reach_the_agent(self):
-        self.on()
         status, body = self.put_media('photo', PNG)
         self.assertEqual(status, 200, body)
         photo = body['result']['entries'][-1]
@@ -270,7 +251,6 @@ class AgentChat(unittest.TestCase):
         self.assertEqual(refused['error']['code'], 'not_found')
 
     def test_media_notes_are_checked_and_owner_only(self):
-        self.on()
         self.assertEqual(self.put_media('photo', b'<svg onload=alert(1)>')[0], 415)
         self.assertEqual(self.put_media('voice', PNG)[0], 415)
         self.assertEqual(self.put_media('file', PNG)[0], 400)
@@ -281,13 +261,10 @@ class AgentChat(unittest.TestCase):
         status, _, _ = self.request('GET', '/api/unified/agent-chat/media/' + photo['id'], None,
                                     {'Origin': fixtures.ORIGIN, **self.key})
         self.assertNotEqual(status, 200)
-        # Off again: the files are not served.
-        self.on(False)
         status, _, _ = self.request('GET', '/api/unified/agent-chat/media/' + photo['id'], None, self.owner)
-        self.assertEqual(status, 409)
+        self.assertEqual(status, 200)
 
     def test_a_dropped_entry_takes_its_file_with_it(self):
-        self.on()
         photo = self.put_media('photo', PNG)[1]['result']['entries'][-1]
         path = agent_chat._media_path(self.inbox, photo['media'])
         self.assertTrue(path.is_file())
@@ -300,7 +277,6 @@ class AgentChat(unittest.TestCase):
         events = EventInbox()
         self.addCleanup(events.close)
         self.inbox.agent_chat_waker = agent_chat.Waker(self.inbox, delay=0.1)
-        self.on()
         refused, error = self.mcp('messenger_agent_chat_wake_me', {'url': 'ftp://x', 'secret': SECRET})
         self.assertTrue(error)
         made, error = self.mcp('messenger_agent_chat_wake_me', {'url': events.url, 'secret': SECRET})

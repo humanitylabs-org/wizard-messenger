@@ -24,7 +24,7 @@ async function run(browser, label, on, viewport) {
   });
   const page = await ctx.newPage(), errors = [], hits = {items: 0, writes: 0};
   page.on('pageerror', e => errors.push(e.message));
-  const box = {reports_read_at: 0, entries: on.agentChat ? [{id: 'p1', kind: 'report', by: 'agent', agent: 'Oscar', text: 'Weekly social stats\nFollowers +12.', link: null, items: [], at: now - 30 * min}] : []};
+  const box = {reports_read_at: 0, entries: [{id: 'p1', kind: 'report', by: 'agent', agent: 'Oscar', text: 'Weekly social stats\nFollowers +12.', link: null, items: [], at: now - 30 * min}]};
   const items = [
     {id: 'n-old', title: 'Sniper scan done', message: '2 new matches near you', time: sec(now - 50 * min), link: 'https://sniper.example/r/1', read: true, priority: 3},
     {id: 'n-mr', title: 'Morning Report', message: 'Three things today: dentist 10:00, rent due, rain after 4.', time: sec(now - 10 * min), link: '/morning-report/', read: false, priority: 3},
@@ -33,7 +33,6 @@ async function run(browser, label, on, viewport) {
     reports_unread: box.entries.filter(e => e.kind === 'report' && e.at > box.reports_read_at).length, reports_read_at: box.reports_read_at});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
   const switches = [
-    {id: 'agent-chat', name: 'Agent chat', description: 'x', on: !!on.agentChat, default: false, tried: false, vote: null, issues: []},
     {id: 'reports-notifications', name: 'Notifications in Reports', description: 'x', on: !!on.notices, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#276']}];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
@@ -52,9 +51,6 @@ async function run(browser, label, on, viewport) {
     if (p === 'api/dms') return ok({dms: []});
     if (p.startsWith('api/unified/agent-chat')) {
       const body = req.method() === 'POST' ? JSON.parse(req.postData() || '{}') : null, sub = p.slice('api/unified/agent-chat'.length);
-      // As agent_chat.dispatch: with only reports-notifications on, just the state and Reports' read mark answer.
-      const allowed = on.agentChat || (on.notices && ((sub === '' && !body) || (sub === '/read' && body?.reports === true)));
-      if (!allowed) return route.fulfill({status: 409, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'feature_off', message: 'off'}})});
       if (sub === '/read' && body?.reports) box.reports_read_at = Date.now();
       return ok(state());
     }
@@ -74,28 +70,26 @@ async function run(browser, label, on, viewport) {
   const pinned = await page.locator('.u-list > .u-agent-row').evaluateAll(els => els.map(e => e.dataset.mode));
   const phone = viewport.width < 600;
   if (!on.notices) {
-    assert.deepEqual(pinned, on.agentChat ? ['chat', 'reports'] : [], label + ': pinned rows as before');
-    if (on.agentChat) {
-      await page.locator('.u-agent-row[data-mode="reports"]').click();
-      await page.locator('#unified-inbox .u-row.report h3', {hasText: 'Weekly social stats'}).waitFor({timeout: 5000});
-      assert.equal(await page.locator('.u-ac-notice').count(), 0, label + ': no notification copies with the switch off');
-      await shot('reports');
-    }
+    assert.deepEqual(pinned, ['chat', 'reports'], label + ': pinned rows as before');
+    await page.locator('.u-agent-row[data-mode="reports"]').click();
+    await page.locator('#unified-inbox .u-row.report h3', {hasText: 'Weekly social stats'}).waitFor({timeout: 5000});
+    assert.equal(await page.locator('.u-ac-notice').count(), 0, label + ': no notification copies with the switch off');
+    await shot('reports');
     assert.equal(hits.items, 0, label + ': Notifications is never asked with the switch off');
     assert.deepEqual(errors, [], label + ' page errors');
     await ctx.close(); return {...result, pinned, asked: hits.items};
   }
-  assert.deepEqual(pinned, on.agentChat ? ['chat', 'reports'] : ['reports'], label + ': Reports is pinned (Agent only with its own switch)');
+  assert.deepEqual(pinned, ['chat', 'reports'], label + ': Agent and Reports are pinned');
   const row = page.locator('.u-agent-row[data-mode="reports"]');
   await row.locator('.u-snippet', {hasText: 'Morning Report'}).waitFor({timeout: 9000});
   // Before Reports was ever opened, old notifications do not count as new (only the agent's own unread report does).
-  assert.deepEqual(await row.locator('.u-badge').allTextContents(), on.agentChat ? ['1'] : [], label + ': no 99+ on day one');
+  assert.deepEqual(await row.locator('.u-badge').allTextContents(), ['1'], label + ': no 99+ on day one');
   await shot('1-list');
   await row.click();
   const chat = page.locator('#unified-inbox');
   await chat.locator('.u-row.u-ac-notice h3', {hasText: 'Morning Report'}).waitFor({timeout: 5000});
   const order = await chat.locator('.u-ac-log .u-row h3').allTextContents();
-  assert.deepEqual(order, on.agentChat ? ['Sniper scan done', 'Weekly social stats', 'Morning Report'] : ['Sniper scan done', 'Morning Report'], label + ': by time, newest at the bottom');
+  assert.deepEqual(order, ['Sniper scan done', 'Weekly social stats', 'Morning Report'], label + ': by time, newest at the bottom');
   const mr = chat.locator('.u-row.u-ac-notice', {hasText: 'Morning Report'});
   assert.ok((await mr.textContent()).includes('Three things today'), label + ': the text shows');
   assert.equal(await mr.locator('a[href="https://messenger.test/morning-report/"]').count(), 1, label + ': a box link opens on this box');
@@ -122,10 +116,9 @@ async function run(browser, label, on, viewport) {
   const browser = await chromium.launch({headless: true, args: ['--no-sandbox']});
   try {
     const results = [
-      await run(browser, 'phone-both', {agentChat: true, notices: true}, {width: 390, height: 844}),
-      await run(browser, 'desktop-notices-only', {notices: true}, {width: 1280, height: 860}),
-      await run(browser, 'switch-off', {agentChat: true}, {width: 390, height: 844}),
-      await run(browser, 'all-off', {}, {width: 390, height: 844})];
+      await run(browser, 'phone-notices', {notices: true}, {width: 390, height: 844}),
+      await run(browser, 'desktop-notices', {notices: true}, {width: 1280, height: 860}),
+      await run(browser, 'switch-off', {}, {width: 390, height: 844})];
     console.log(JSON.stringify({ok: true, results}, null, 1));
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

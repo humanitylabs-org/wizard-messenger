@@ -13,7 +13,7 @@ const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'te
 const now = Date.now(), min = 60e3;
 const person = {id: 'ann', display_name: 'Ann Lee', avatar: null, identities: [{id: 'ann-i', network: 'whatsapp', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false,
   low_priority: false, last: {text: 'Hi', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
-const switches = [{id: 'agent-chat', name: 'Agent chat', description: 'x', on: true, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#265']}];
+const switches = [];  // Issue 265: the Agent chat has no switch any more.
 
 async function open(browser, label, phone) {
   const viewport = phone ? {width: 390, height: 844} : {width: 1280, height: 800};
