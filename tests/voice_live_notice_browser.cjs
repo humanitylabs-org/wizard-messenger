@@ -2,7 +2,8 @@
  * still works." stayed under an idle composer after the voice note was gone. A warning about the take being recorded
  * ends with that take; notices about the finished take (too short, clipped) still show after it.
  * Exact production composer with synthetic dependencies, like voice_capture_guard_browser.
- * MESSENGER_SOURCE=<old unified.js> shows the stuck notice before the fix. */
+ * MESSENGER_SOURCE=<old unified.js> shows the stuck notice before the fix.
+ * wizard-ux issue 1503 reopen (James, 18 Nov): the notice still sat there after the next text was sent (cases 5, 6). */
 const fs=require('fs'),path=require('path'),assert=require('assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const source=fs.readFileSync(process.env.MESSENGER_SOURCE||path.join(__dirname,'../static/unified.js'),'utf8');
@@ -18,7 +19,7 @@ const button=(text,fn,cls)=>{const e=node('button',cls,text);e.type='button';e.o
 const netLabel=n=>n,netBadge=()=>node('span'),bridged=n=>['telegram','whatsapp','signal'].includes(n),actionMenu=()=>{},serverDraft=()=>null,uid=()=>Math.random().toString(36).slice(2),preparePhoto=async f=>({blob:f}),editMsg=()=>{},reviewSend=()=>{};
 const mentionComposer=()=>({close(){},paint(){},update(){},keydown(){return false;}}),composerMembers=()=>[],store={threads:{},lists:{}};
 const switchState={on:{}};
-const cap=x=>x,reviewedOf=()=>false,hold=()=>{},error=e=>{document.querySelector('#hidden-error').textContent=e.message;},toast=()=>{},fmtDur=ms=>'0:'+Math.floor(ms/1000),queueSend=(id,msg)=>{window.sent={id,take:msg.voice.take};WizardApp.capture.ack(msg.voice.take);},saveDrafts=()=>{},nameOf=()=>'',snippet=()=>'',call=async()=>({});
+const cap=x=>x,reviewedOf=()=>false,hold=()=>{},error=e=>{document.querySelector('#hidden-error').textContent=e.message;},toast=()=>{},fmtDur=ms=>'0:'+Math.floor(ms/1000),queueSend=(id,msg)=>{if(!msg.voice){window.texts=(window.texts||[]).concat(msg.text);return;}window.sent={id,take:msg.voice.take};WizardApp.capture.ack(msg.voice.take);},saveDrafts=()=>{},nameOf=()=>'',snippet=()=>'',call=async()=>({});
 ${composer}
 window.rebuild=()=>{document.querySelector('#root').replaceChildren(composer('synthetic',{identities:[{id:'tg-fixture',network:'telegram',label:'Synthetic'}]}));}; rebuild();`;
 (async()=>{const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM});try{
@@ -69,5 +70,18 @@ await p.getByRole('button',{name:'Send voice message'}).click();
 await p.getByRole('button',{name:'Record voice message'}).waitFor();
 assert.equal(await notice().innerText(),'Hold on a little longer to record','after-take notice still shown');
 console.log('PASS after-take notice kept');
+// 5. wizard-ux issue 1503 reopen: a notice still under the composer goes once the owner sends a text message.
+await p.locator('textarea').fill('Thanks');await p.getByRole('button',{name:'Send',exact:true}).click();
+await p.waitForFunction(()=>(window.texts||[]).includes('Thanks'));
+assert.equal(await notice().isVisible(),false,'no voice notice after the next text is sent');
+console.log('PASS notice cleared when a text is sent');
+// 6. A storage warning that reaches Messenger after the take closed never paints under the idle composer.
+await setup();await p.getByRole('button',{name:'Record voice message'}).click();
+await p.getByRole('button',{name:'Send voice message'}).waitFor();
+await p.evaluate(()=>{window.lateWarn=window.warn;});
+await p.getByRole('button',{name:'Send voice message'}).click();await p.waitForFunction(()=>window.sent);
+await p.evaluate(w=>window.lateWarn(w),WARN);await p.waitForTimeout(100);
+assert.equal(await notice().isVisible(),false,'a late warning after the take closed is ignored');
+console.log('PASS late warning ignored');
 assert.deepEqual(errors,[]);console.log('ALL PASS voice_live_notice_browser');
 }finally{await browser.close();}})().catch(e=>{console.error('FAIL',e.message);process.exit(1);});
