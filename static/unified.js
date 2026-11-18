@@ -539,7 +539,25 @@
     const late = new Promise((_, no) => { timer = timers.setTimeout(() => { const e = new Error(message); e.code = 'voice_timeout'; no(e); ctl.abort(); }, ms); });
     return Promise.race([Promise.resolve().then(() => work(ctl.signal)), late]).finally(() => timers.clearTimeout(timer));
   }
-  if (typeof module !== 'undefined') module.exports = {mergeRows, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
+  // Issue 285: + opens a small attach menu like Telegram's paperclip, because one bare file input sends an Android
+  // WebView straight to the photo gallery (it reads only the first accept type) with no camera and no files.
+  // Camera shows only on touch screens. The Agent chat takes photos and voice notes only, so its File is audio.
+  function attachChoices(agent = false, coarse = false) {
+    const out = [];
+    if (coarse) out.push({id: 'camera', label: 'Camera', icon: 'camera', accept: 'image/*', capture: 'environment', multiple: false});
+    out.push(agent ? {id: 'photo', label: 'Photo', icon: 'image', accept: 'image/*', multiple: true}
+      : {id: 'photo', label: 'Photo or video', icon: 'image', accept: 'image/*,video/*', multiple: true});
+    out.push(agent ? {id: 'file', label: 'Voice note file', icon: 'file', accept: 'audio/*', multiple: true}
+      : {id: 'file', label: 'File', icon: 'file', accept: '*/*', multiple: true});
+    return out;
+  }
+  // Points the one hidden input at a choice, then opens it (still inside the tap, so the browser allows it).
+  function aimPicker(input, choice) {
+    input.accept = choice.accept; input.multiple = !!choice.multiple;
+    if (choice.capture) input.setAttribute('capture', choice.capture); else input.removeAttribute('capture');
+    input.click();
+  }
+  if (typeof module !== 'undefined') module.exports = {mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -599,6 +617,9 @@
     lowpri: ['M3 4h18v4H3z', 'M5 8v11h14V8', 'M10 12h4'], unread: ['M21 12a9 9 0 1 1-6-8.5', 'M19 7a2 2 0 1 0 0-.01'], inbox: ['M3 13h5l2 3h4l2-3h5', 'M5.5 5h13L21 13v6H3v-6z'],
     smile: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M8.5 14.5s1.3 2 3.5 2 3.5-2 3.5-2', 'M9 9.5v.01', 'M15 9.5v.01'],
     tag: ['M3 12V4h8l10 10-8 8z', 'M7.5 8.5v.01'],
+    camera: ['M4 8h3l2-3h6l2 3h3v11H4z', 'M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z'],
+    image: ['M4 5h16v14H4z', 'M8.5 10.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', 'm4 17 5-5 4 4 2-2 5 5'],
+    file: ['M14 3H6v18h12V7z', 'M14 3v4h4', 'M9 13h6', 'M9 17h6'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -1778,6 +1799,12 @@
     else if (W > 600) { panel.style.left = clampX((right ? r.right - pw : r.left) - host.left) + 'px'; panel.style.top = (r.bottom + 4 - host.top + ph > H - 12 ? clampY(r.top - host.top - ph - 4) : clampY(r.bottom + 4 - host.top)) + 'px'; }
     // flip: a control near the bottom (the phone's filter rows) opens its menu above itself, not over it.
     else panel.style.top = (flip && r.bottom + 4 - host.top + ph > H - 12 ? clampY(r.top - host.top - ph - 4) : clampY(r.bottom + 4 - host.top)) + 'px';
+  }
+  function attachMenu(anchor, input, agent = false) {
+    const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    anchor.setAttribute('aria-expanded', 'true');
+    actionMenu(anchor, 'Attach', attachChoices(agent, coarse).map(c => ({label: c.label, icon: c.icon, run: () => aimPicker(input, c)})),
+      {cls: 'u-attach-menu', flip: true, onClose: () => anchor.setAttribute('aria-expanded', 'false')});
   }
   function actionMenu(card, title, actions, opts = {}) {
     closeOverlay(); lastFocus = document.activeElement; s.overlay = 'Chat';
@@ -3466,7 +3493,7 @@
     const reviewed = reviewedOf(p), telegramOnly = (p.identities || []).some(i => bridged(i.network)), canAttach = telegramOnly || (p.identities || []).some(i => i.network === 'messenger');
     const draft = node('textarea'); draft.rows = 1; draft.placeholder = reviewed ? 'Message in English' : 'Message'; draft.setAttribute('aria-label', 'Message'); draft.maxLength = 16384; draft.value = s.drafts[id] || '';
     const file = node('input'); file.type = 'file'; file.multiple = true; file.hidden = true; // any file: photos go as photos, the rest as files (James, 26 Oct 2026)
-    const attach = iconButton('plus', 'Attach photos or files', () => file.click(), 'u-attach'); attach.hidden = !canAttach;
+    const attach = iconButton('plus', 'Attach photos or files', () => attachMenu(attach, file), 'u-attach'); attach.hidden = !canAttach; attach.setAttribute('aria-haspopup', 'menu');
     const send = iconButton('send', reviewed ? 'Preview send' : 'Send', () => submit(), 'u-send');
     const mic = iconButton('mic', 'Record voice message', () => record(), 'u-mic'); mic.hidden = !telegramOnly;
     const field = node('div', 'u-field'); field.append(draft);
@@ -4909,7 +4936,7 @@
         catch (e) { toast(e.message || 'Could not save that. Try again.', 3000); }
       }
     };
-    const attach = iconButton('plus', 'Add a photo or voice note', () => file.click(), 'u-attach u-ac-attach');
+    const attach = iconButton('plus', 'Add a photo or voice note', () => attachMenu(attach, file, true), 'u-attach u-ac-attach'); attach.setAttribute('aria-haspopup', 'menu');
     const mic = iconButton('mic', 'Record a voice note', () => agentRecord(), 'u-mic u-ac-mic');
     const rec = node('div', 'u-ac-rec'); rec.hidden = true; rec.setAttribute('role', 'status');
     const row = node('div', 'u-compose-row'); row.append(attach, field, rec, mic, send, file);
