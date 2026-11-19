@@ -1235,7 +1235,7 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-ac-done { margin: .125rem 0 0; padding-left: 1.125rem; display: flex; flex-direction: column; gap: .25rem; }
 .u-ac-done-link, .u-ac-count { color: inherit; }
 .u-ac-counts { margin: .625rem 0 0; font-size: .8125rem; color: var(--ink-2); }
-.u-ac-yes-all { display: flex; margin-top: .5rem; }
+.u-ac-yes-all { display: flex; align-items: center; justify-content: center; margin-top: .5rem; }
 .u-ac-more, .u-ac-confirm { display: inline-block; margin-top: .375rem; }
 .u-ac-item.done .u-ac-result { color: var(--ink-3); }
 .u-ac-buttons { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .375rem; }
