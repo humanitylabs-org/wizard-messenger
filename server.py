@@ -63,6 +63,10 @@ class Handler(BaseHTTPRequestHandler):
     def _origin_allowed(self,origin):
         # Configured origins, or the page's own address (the Wizard gateway keeps Host), like other Wizard apps.
         if origin in self.service.origins: return True
+        # Issue 288: a proxy in front may show the app another Origin or Host than the page has (the Mac window gave
+        # writes Serve's Origin but kept its own Host). The browser's own Sec-Fetch-Site: same-origin, which no page
+        # script can set, already says the page and this address are one origin. The session cookie and CSRF still apply.
+        if self.headers.get('Sec-Fetch-Site') == 'same-origin': return True
         u=urlsplit(origin or '')
         return u.scheme in ('http','https') and bool(u.netloc) and u.netloc==self.headers.get('Host') and not (u.path or u.query or u.fragment)
     protocol_version='HTTP/1.1'
