@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.83 (videos download ahead of time, switch off by default)
+
+New switch Background video download (`video-prefetch`, off by default). With it on, the phone also downloads videos up to 25 MB from the newest messages of the newest chats (three per chat, after every photo), on Wi-Fi only unless Always is chosen for the background download, and the chat's bubble plays the kept copy, so one tap starts it at once. Bigger videos stream on tap; GIFs and stickers are not downloaded and still loop on their own. On cellular with Wi-Fi only, or on a phone that can't tell its network, nothing downloads. Guard: `tests/video_prefetch_browser.cjs`. Issue 320, PR 324.
+
 ## 0.2.0-unified.16.82 (one tap plays a video)
 
 Tapping a received video used to open Wizard's viewer, a second screen whose plain player waited for another tap on play. Now one tap plays the video right in the chat, with sound; tap again to pause, and the corner button goes full screen. One video plays at a time and it pauses when scrolled away or when the chat is left. GIFs and stickers still loop on their own, muted. Downloading videos ahead of time is a separate feature (issue 320). Guard: `tests/video_one_tap_browser.cjs`. Issue 319, PR 322.
