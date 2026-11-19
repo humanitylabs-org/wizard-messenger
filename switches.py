@@ -101,6 +101,13 @@ SWITCHES = (
                     'Bigger videos still stream on tap.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#320']},
+    {'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
+     'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: each note '
+                    'becomes a background task there (the tick shows once it is in), Sweep shows the same card as '
+                    'Daily with one-tap answers, and urgent alerts arrive as one-line pings. With the inbox off, the '
+                    'Agent chat works as before.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#325']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

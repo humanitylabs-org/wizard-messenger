@@ -34,6 +34,10 @@ services:
       MESSENGER_COOKIE_SECURE: "1"
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
+      # Issue 325 (switch agent-inbox-door): Messenger's own Agent Service app token (app-tokens/messenger), handed
+      # over by the App Manager (wizard-app-manager 804). Without it the Agent chat keeps its own list.
+      MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
+      MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
       MESSENGER_VERSION: "0.2.0-unified.16.84"
       UNIFIED_ENABLED: "1"

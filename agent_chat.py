@@ -207,17 +207,55 @@ def state(unified):
                       'checked': any(e.get('seen') or e.get('by') == 'agent' for e in entries)}}
 
 
+def owner_state(unified):
+    """The owner's view of the chat. Issue 325: with switch agent-inbox-door on, it also says whether the chat is a door
+    to the box's agent inbox right now, and starts a background pass (resends, pings, the card's state)."""
+    out = state(unified)
+    door = _door(unified)
+    if door is not None and door.switched():
+        door.kick()
+        out['door'] = {'on': door.opened()}
+    elif any(e.get('door') == 'pending' for e in out['entries']):
+        door_release(unified)   # switched off with notes still unsent: they go to the agent as before
+        out = state(unified)
+    return out
+
+
+def _door(unified):
+    try:
+        import agent_inbox_door
+        return agent_inbox_door.door(unified)
+    except Exception:
+        return None
+
+
+def _door_open(unified):
+    door = _door(unified)
+    return door is not None and door.opened()
+
+
 def note(unified, payload):
     body = _text((payload or {}).get('text'), 'note', NOTE_MAX)
+    door = _door_open(unified)
     store = unified.store
     with store.lock:
         data = _load(store)
         entry = {'id': _new_id(data, 'n'), 'kind': 'note', 'by': 'owner', 'text': body, 'at': _now(), 'seen': None}
+        if door:
+            entry['door'] = 'pending'
         data['entries'].append(entry)
         data['read_at'] = max(data['read_at'], entry['at'])
         _save(store, data, unified)
-    wake(unified, 'note')
-    return state(unified)
+    _noted(unified, door)
+    return owner_state(unified)
+
+
+def _noted(unified, door):
+    """A new note: in door mode it goes to the box's inbox now (in the background), else the agent is woken."""
+    if door:
+        _door(unified).kick(force=True)
+    else:
+        wake(unified, 'note')
 
 
 def media_note(unified, raw, query=None):
@@ -245,6 +283,7 @@ def media_note(unified, raw, query=None):
     folder = _media_dir(unified)
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = folder / media['file']
+    door = _door_open(unified)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'wb') as f:
         f.write(data)
@@ -253,11 +292,13 @@ def media_note(unified, raw, query=None):
         loaded = _load(store)
         entry = {'id': _new_id(loaded, 'n'), 'kind': 'note', 'by': 'owner', 'text': '', 'media': media, 'at': _now(),
                  'seen': None}
+        if door:
+            entry['door'] = 'pending'
         loaded['entries'].append(entry)
         loaded['read_at'] = max(loaded['read_at'], entry['at'])
         _save(store, loaded, unified)
-    wake(unified, 'note')
-    return state(unified)
+    _noted(unified, door)
+    return owner_state(unified)
 
 
 def media_blob(unified, entry_id):
@@ -285,10 +326,18 @@ def transcript(unified, payload):
             _bad('not_found', 'That voice note is gone', 404)
         e['media']['transcript'] = body
         _save(store, data, unified)
-    return state(unified)
+        waiting = e.get('door') == 'pending'
+    if waiting:
+        _door(unified).kick(force=True)
+    return owner_state(unified)
 
 
 def sweep(unified):
+    door = _door(unified)
+    if door is not None and door.switched() and door.probe():
+        card = door.sweep()
+        if card is not None:
+            return _door_sweep(unified, card)
     store = unified.store
     asked = False
     with store.lock:
@@ -302,7 +351,193 @@ def sweep(unified):
             asked = True
     if asked:
         wake(unified, 'sweep')
-    return state(unified)
+    return owner_state(unified)
+
+
+# ---- issue 325 (switch agent-inbox-door): the box's agent inbox does the work ----
+def _door_sweep(unified, card):
+    """The box drew the card: the owner's Sweep and the card are kept as a pair, like a sweep the agent answered."""
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        at = _now()
+        ask = {'id': _new_id(data, 's'), 'kind': 'ask', 'ask': 'sweep', 'by': 'owner', 'at': at,
+               'since': _last_sweep_at(data), 'seen': {'at': at, 'by': 'agent inbox'}, 'done': None}
+        entry = {'id': _new_id(data, 'p'), 'kind': 'sweep', 'by': 'agent', 'agent': None, 'text': '', 'link': None,
+                 'items': [], 'card': card, 'at': at, 'reply_to': ask['id']}
+        ask['done'] = entry['id']
+        data['entries'] += [ask, entry]
+        data['read_at'] = max(data['read_at'], at)
+        _save(store, data, unified)
+    return owner_state(unified)
+
+
+def _card_post(data, post_id):
+    e = _find(data, post_id) if isinstance(post_id, str) else None
+    return e if e is not None and e.get('by') == 'agent' and isinstance(e.get('card'), dict) else None
+
+
+def _door_failed(status, body):
+    code = (body or {}).get('error') if isinstance(body, dict) else None
+    if status == 0:
+        _bad('inbox_unreachable', 'Your Wizard\'s agent inbox did not answer. Try again in a moment.', 503)
+    if status == 404 and code == 'not_found':
+        _bad('not_found', 'That item is gone from your agent inbox', 404)
+    if status in (403, 409):
+        _bad('already_answered', 'That item was already answered or moved on', 409)
+    _bad('inbox_refused', 'Your agent inbox could not take that (%s)' % (code or status), 502)
+
+
+def _store_card(unified, post_id, card):
+    if not isinstance(card, dict) or not isinstance(card.get('id'), str):
+        return
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        post = _card_post(data, post_id)
+        if post is not None and post['card'].get('id') == card['id'] and post['card'] != card:
+            post['card'] = card
+            _save(store, data, unified)
+
+
+def door_answer(unified, payload):
+    payload = payload or {}
+    post_id, record, option = payload.get('post_id'), payload.get('record'), payload.get('option')
+    if not isinstance(record, str) or not isinstance(option, str) or not option:
+        _bad('invalid_answer', 'Choose one of the item\'s buttons')
+    post = _card_post(_load(unified.store), post_id)
+    items = ((post or {}).get('card') or {}).get('waiting', {}).get('items') or []
+    item = next((i for i in items if isinstance(i, dict) and i.get('id') == record), None)
+    if item is None:
+        _bad('not_found', 'That item is gone', 404)
+    tokens = [o.get('token') for o in item.get('options') or [] if isinstance(o, dict)]
+    if option != 'later' and option not in tokens:
+        _bad('invalid_answer', 'Choose one of the item\'s buttons')
+    if item.get('confirm'):
+        _bad('confirm_in_wizard', 'Open it in Wizard to confirm', 409)
+    door = _door(unified)
+    status, body = door.answer(record, option)
+    if status != 200:
+        _door_failed(status, body)
+    got = (body or {}).get('record') if isinstance(body, dict) else None
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        post = _card_post(data, post_id)
+        for i in ((post or {}).get('card') or {}).get('waiting', {}).get('items') or []:
+            if isinstance(i, dict) and i.get('id') == record:
+                i['state'] = (got or {}).get('state') or ('snoozed' if option == 'later' else 'answered')
+                if option != 'later':
+                    i['answer'] = option
+        if post is not None:
+            _save(store, data, unified)
+    _store_card(unified, post_id, door.card())
+    return owner_state(unified)
+
+
+def door_yes_to_all(unified, payload):
+    post_id = (payload or {}).get('post_id')
+    post = _card_post(_load(unified.store), post_id)
+    if post is None:
+        _bad('not_found', 'That sweep is gone', 404)
+    if not ((post['card'].get('yes_to_all') or {}).get('count') or 0):
+        _bad('nothing_to_answer', 'Nothing on this card can be answered with Yes to all', 409)
+    status, body = _door(unified).yes_to_all(post['card']['id'])
+    if status != 200:
+        _door_failed(status, body)
+    _store_card(unified, post_id, (body or {}).get('card'))
+    return owner_state(unified)
+
+
+def door_card(unified, card):
+    """The box's current view of its newest card: an answer given in Daily shows here too."""
+    if not isinstance(card, dict) or not isinstance(card.get('id'), str):
+        return
+    data = _load(unified.store)
+    for e in reversed(data['entries']):
+        if isinstance(e.get('card'), dict):
+            if e['card'].get('id') == card['id']:
+                _store_card(unified, e['id'], card)
+            return
+
+
+def door_pending(unified):
+    return [dict(e) for e in _load(unified.store)['entries'] if e.get('kind') == 'note' and e.get('door') == 'pending']
+
+
+def door_text(entry, now=None):
+    """What the box's worker reads for a note. A voice note waits up to VOICE_WAIT for its transcript (None = wait)."""
+    import agent_inbox_door
+    text = (entry.get('text') or '').strip()
+    media = entry.get('media') if isinstance(entry.get('media'), dict) else None
+    if media is None:
+        return text
+    fetch = ('fetch it with messenger_agent_chat_attachment, note_id %s' % entry['id'])
+    if media.get('type') == 'photo':
+        return ('Photo note in Messenger\'s Agent chat (%s).' % fetch) + ('\n' + text if text else '')
+    words = (media.get('transcript') or '').strip()
+    if words:
+        return words + '\n\n(Voice note in Messenger\'s Agent chat; %s.)' % fetch
+    if ((now or _now()) - entry.get('at', 0)) < agent_inbox_door.VOICE_WAIT * 1000:
+        return None
+    return 'Voice note in Messenger\'s Agent chat, no transcript (%s).' % fetch
+
+
+def door_captured(unified, note_id, record_id):
+    """The box made the record: the note gets its tick."""
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        e = _find(data, note_id)
+        if e is None or e.get('kind') != 'note':
+            return
+        e['door'] = {'record': record_id, 'at': _now()}
+        e['seen'] = e.get('seen') or {'at': _now(), 'by': 'agent inbox'}
+        _save(store, data, unified)
+
+
+def door_release(unified):
+    """The door closed (inbox off, switch off, no answer) with notes still unsent: they go to the agent as before."""
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        waiting = [e for e in data['entries'] if e.get('kind') == 'note' and e.get('door') == 'pending']
+        for e in waiting:
+            del e['door']
+        if waiting:
+            _save(store, data, unified)
+    if waiting:
+        wake(unified, 'note')
+
+
+def door_ping(unified, ping):
+    """One urgent alert from the box, as the chat's existing one-line ping (once per alert id)."""
+    if not isinstance(ping, dict) or not isinstance(ping.get('id'), str):
+        return None
+    title = ' '.join(str(ping.get('title') or '').split())
+    ask = ' '.join(str(ping.get('ask') or '').split())
+    body = (title + (': ' + ask if ask and ask != title else '')) or 'Urgent'
+    if len(body) > PING_MAX:
+        body = body[:PING_MAX - 1].rstrip() + '…'
+    try:
+        url = _link(ping.get('link'))
+    except EngineError:
+        url = None
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        if any(e.get('door_ping') == ping['id'] for e in data['entries']):
+            return None
+        entry = {'id': _new_id(data, 'p'), 'kind': 'ping', 'by': 'agent', 'agent': None, 'text': body, 'link': url,
+                 'items': [], 'at': _now(), 'door_ping': ping['id']}
+        data['entries'].append(entry)
+        _save(store, data, unified)
+    try:
+        import phone_notify
+        phone_notify.urgent(unified, entry['id'], body)
+    except Exception:
+        pass
+    return entry['id']
 
 
 def answer(unified, payload):
@@ -325,7 +560,7 @@ def answer(unified, payload):
         item['answer'] = {'label': button['label'], 'value': value, 'at': _now(), 'seen': None}
         _save(store, data, unified)
     wake(unified, 'answer')
-    return state(unified)
+    return owner_state(unified)
 
 
 def read(unified, payload=None):
@@ -335,12 +570,17 @@ def read(unified, payload=None):
         data = _load(store)
         data['reports_read_at' if reports else 'read_at'] = _now()
         _save(store, data, unified)
-    return state(unified)
+    return owner_state(unified)
+
+
+def _door_on(unified):
+    door = _door(unified)
+    return door is not None and door.switched()
 
 
 def dispatch(unified, method, suffix, payload, query=None, raw=None):
     if suffix == [] and method == 'GET':
-        return state(unified)
+        return owner_state(unified)
     if suffix == [] and method == 'POST':
         return note(unified, payload)
     if suffix == ['media'] and method == 'PUT':
@@ -355,6 +595,10 @@ def dispatch(unified, method, suffix, payload, query=None, raw=None):
         return answer(unified, payload)
     if suffix == ['read'] and method == 'POST':
         return read(unified, payload)
+    if suffix == ['door', 'answer'] and method == 'POST' and _door_on(unified):
+        return door_answer(unified, payload)
+    if suffix == ['door', 'yes-to-all'] and method == 'POST' and _door_on(unified):
+        return door_yes_to_all(unified, payload)
     _bad('not_found', 'No such agent chat route', 404)
 
 
@@ -363,7 +607,7 @@ def inbox(unified):
     data = _load(unified.store)
     notes, sweeps, answers = [], [], []
     for e in data['entries']:
-        if e.get('kind') == 'note' and not e.get('seen'):
+        if e.get('kind') == 'note' and not e.get('seen') and not e.get('door'):
             item = {'id': e['id'], 'text': e['text'], 'at': e['at']}
             media = e.get('media')
             if isinstance(media, dict):
