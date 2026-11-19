@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.81 (Create address works in the Mac window)
+
+In the Mac window, Create address and every other change in Messenger were refused, and the screen said "Couldn't connect. Try again when your Wizard is reachable." The window's proxy shows the app another address than the page has (until try-wizard 119 reaches the Mac), and Messenger refused that mix. Messenger now also accepts a change the browser itself marks as coming from the same page (Sec-Fetch-Site: same-origin); the session and its CSRF token still guard it. Error lines now say what went wrong instead of always blaming the Wizard's connection. Guards: `tests/test_proxied_origin.py`, `tests/test_setup_error_words.cjs`. Issue 288, PR 317.
+
 ## 0.2.0-unified.16.80 (share a file to Messenger, switch off by default)
 
 Store recipe: pins the image built from main `022ba04`. Ships #315 (Refs humanitylabs-org/wizard-messenger#314): with the new switch `share-files` on, Messenger tells Wizard's share sheet it also takes files (not only text, links and photos). A file shared from another Wizard app (an `.md` from a chat, a PDF) opens the chosen chat, or the Send to… picker, with the file as an attachment chip in the composer and in the chat's draft, exactly like one added with +; the owner taps Send. Over 25 MB says "too big"; a chat whose network can't carry files says so. Off: unchanged. Guards: `tests/share_image_receive.test.cjs`, `tests/share_file_receive_browser.cjs`.
