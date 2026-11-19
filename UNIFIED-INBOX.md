@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.78 (messages on your phone, switch off by default)
+
+Store recipe: pins the image built from main `b439b0a`. Ships #309 (Refs humanitylabs-org/wizard-messenger#308): with the new switch `phone-notifications` on, each new incoming message (and each urgent Agent chat ping, at high priority) is posted to the Notifications app tagged `app:messenger`, with the chat name, the start of the message and a link to the chat (`#chat=<id>`), so the Wizard phone app (wizard-ux `wizard/phone-app-notifications`) shows it as a Messenger notification. Muted, Medium and Low priority chats, WhatsApp Status and backlogs stay quiet. wizard.md now uses the `notifications` slot. Guards: `tests/test_phone_notify.py`, `tests/phone_notify_browser.cjs`.
+
 ## 0.2.0-unified.16.77 (voice-note notice no longer stays under the composer)
 
 Store recipe: pins the image built from main `c667ad8`. Ships #306 (Refs humanitylabs-org/wizard-ux#1503): sending a message with no recording open clears any voice-note notice still under the composer, and a storage warning that arrives after its take closed is ignored. Bug fix, no switch. Guard: `tests/voice_live_notice_browser.cjs`.
