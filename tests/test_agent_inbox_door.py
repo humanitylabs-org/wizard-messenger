@@ -87,7 +87,7 @@ class FakeService:
             if method == 'POST':
                 self.pings_on = body.get('pings') is True
             return 200, {'on': True, 'sweep_caps': {'waiting': 7, 'done': 10}, 'door': 'messenger', 'pings': self.pings_on}
-        if path == '/pings':
+        if path == '/pings?keep=1' or path == '/pings' and method == 'POST':
             # Like the Service since issue 325: a read consumes nothing; a ping goes once the door acks it.
             if method == 'POST':
                 acked = [i for i in body['ack'] if i in {p['id'] for p in self.pings} and i not in self.acked]

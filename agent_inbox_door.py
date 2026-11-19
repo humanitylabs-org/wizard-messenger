@@ -12,8 +12,8 @@ With this switch on and that inbox on, the Agent chat stops keeping its own task
 - Sweep: the Sweep button asks the box for the card (`POST .../sweep {door: 'messenger'}`) and keeps it as the sweep
   post. A button answers that record on the box (`PATCH .../<record id>`), Yes to all posts to the card. Answers
   given in Daily show here when the card is read again (`GET .../sweep`).
-- Pings: urgent alerts the box already decided (`GET .../pings`, after `POST .../doors {pings: true}`) arrive as the
-  Agent chat's one-line ping.
+- Pings: urgent alerts the box already decided (`GET .../pings?keep=1`, after `POST .../doors {pings: true}`) arrive
+  as the Agent chat's one-line ping. Each is acked (`POST .../pings {ack}`) only after it is stored here.
 
 Every call is best effort and bounded by TIMEOUT: the Service is on the same box. With the switch off nothing here
 runs, and the Agent chat state is exactly what it was.
@@ -161,7 +161,7 @@ class Door:
         """Urgent alerts from the box. The box hands a ping out until it is acked, so each one is acked only after it
         is stored in the chat: a lost answer, a crash or a failed store in between gets the same ping next pass."""
         import agent_chat
-        status, body = self.call('GET', '/pings')
+        status, body = self.call('GET', '/pings?keep=1')   # read without consuming; ack below
         if status != 200 or not isinstance(body, dict):
             return []
         stored = []
