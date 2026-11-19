@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.87 (agent inbox door: no lost pings, no double work, switch off)
+
+Store recipe: pins the image built from main `62dfca8`. Ships #334 (Refs humanitylabs-org/wizard-messenger#325), still behind switch `agent-inbox-door` (off by default): urgent pings from the box are acked only after they are stored in the Agent chat (`GET .../pings?keep=1` + `POST .../pings {ack}`, wizard-agent-service#573), a note whose capture already went out is never handed to Messenger's own agent on a failed probe (it is sent again with the same item id), and the Yes to all label is centred. Guards: `tests/test_agent_inbox_door.py`, `tests/agent_inbox_door_browser.cjs`.
+
 ## 0.2.0-unified.16.86 (a restart shows plain words)
 
 Store recipe: pins the image built from main `bdc6609`. Ships #332 (Refs humanitylabs-org/wizard-messenger#326), a bug fix, on for everyone: while Messenger restarts (every app update), the red notice line and toasts no longer show the raw code `server_restarting`. A chat or action the owner opens during the restart says "Messenger is restarting. Try again in a moment.", background refreshes stay quiet and retry, and the line clears by itself once Messenger answers again. Guards: `tests/test_restart_words.cjs`, `tests/restart_notice_browser.cjs`.
