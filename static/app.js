@@ -225,7 +225,9 @@
     }
   }
   class APIError extends Error {
-    constructor(code, status, message) { super(message || code); this.code = code; this.status = status; }
+    // Issue 326: with no server sentence the message is the plain words for the code, never the bare code
+    // (unified.js and toasts print e.message as is).
+    constructor(code, status, message) { super(message || ''); this.code = code; this.status = status; if (!message) this.message = friendly(this); }
   }
   // Reads ride out a restarting server or a gateway that refused part of the opening burst (502/503/504, a dropped
   // connection, an HTML error page): a few quick retries with backoff before anyone sees an error. Writes are never

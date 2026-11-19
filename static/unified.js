@@ -773,7 +773,19 @@
   // Two panes side by side (desktop split) each carry a notice line: errors go to the sheet if one is open,
   // else to the pane the owner is working in.
   const errorBox = () => $('u-overlay')?.querySelector('#u-error') || (split.on ? (s.person ? $('u-pane-thread') : $('u-pane-list'))?.querySelector('#u-error') : null) || $('u-error');
-  const error = e => { const el = errorBox(); if (el) { el.textContent = e.message || 'Request failed. Please try again.'; } };
+  // Issue 326: a restart (every app update) never shows a raw code. Background work stays quiet and retries; an
+  // owner's action shows the restarting sentence, and that line clears itself on the next answer from Messenger.
+  const RESTARTING = 'Messenger is restarting. Try again in a moment.';
+  const restartError = e => e?.code === 'server_restarting' || [502, 503, 504].includes(e?.status) || (e instanceof TypeError && /fetch|network|load failed/i.test(e.message || ''));
+  const error = (e, background) => {
+    const restart = restartError(e);
+    if (restart && background) return;
+    const el = errorBox(); if (!el) return;
+    el.textContent = restart ? RESTARTING : e?.message || 'Request failed. Please try again.';
+    if (restart) restartBoxes.add(el); else restartBoxes.delete(el);
+  };
+  const restartBoxes = new Set();
+  const clearRestartNotice = () => { if (!restartBoxes.size) return; for (const el of restartBoxes) if (el.textContent === RESTARTING) el.textContent = ''; restartBoxes.clear(); };
   // Issue 251: Catch me up and transcript formatting fall back to the Wizard Tinfoil app (translation runs on the box
   // itself since issue 209). Like Search's AI overviews, this owner page asks Tinfoil (sibling app, same origin) for a
   // Messenger-only token and hands it to the box (api/unified/tinfoil); the Tinfoil key never leaves the Tinfoil app.
@@ -1454,7 +1466,7 @@
       persist();
     } catch (e) {
       // Never leave skeletons on screen: the list asks again by itself (a restart or a refused burst passes).
-      error(e); if (s.ready) setTimeout(() => { if (s.ready && listLive(epoch, gen) && !store.lists.people) renderList(); }, 2500 + Math.random() * 1500);
+      error(e, true); if (s.ready) setTimeout(() => { if (s.ready && listLive(epoch, gen) && !store.lists.people) renderList(); }, 2500 + Math.random() * 1500);
     }
   }
   // A saved list painted first; the server's copy replaces it, then the change feed keeps it current.
@@ -1464,7 +1476,7 @@
       await loadLists(true);
       if (listLive(epoch, gen)) drawList();
       persist();
-    } catch (e) { error(e); if (s.ready) setTimeout(() => { if (s.ready && !store.seq) freshen(null, s.epoch); }, 3000 + Math.random() * 1500); }
+    } catch (e) { error(e, true); if (s.ready) setTimeout(() => { if (s.ready && !store.seq) freshen(null, s.epoch); }, 3000 + Math.random() * 1500); }
   }
   // ---------- accounts: always one tap away from the Inbox ----------
   let accountsSeen = null;
@@ -2267,7 +2279,7 @@
       while (alive()) {
         await sleep(1100);
         if (!alive()) return;
-        try { st = await call(cuPath(id)); } catch (e) { note(e.message); return; }
+        try { st = await call(cuPath(id)); } catch (e) { if (restartError(e)) continue; note(e.message); return; }
         const job = st.job;
         if (!job || job.state === 'running') { if (job) paintRunning(job); continue; }
         if (job.state === 'error') { show(); note(job.error); return; }
@@ -3385,7 +3397,7 @@
         if (e.code === 'draft_exists') { try { const rows = (await api('api/drafts')).drafts || []; sd.conflict = draftsFor(rows, id)[0] || null; } catch { /* next poll */ } }
         else if (e.code === 'draft_changed') { try { sd.conflict = (await api('api/drafts/' + sd.row.id)).draft; } catch { /* next poll */ } }
         else if (e.code === 'not_found' || e.code === 'draft_closed') { sd.row = null; sd.saved = null; }
-        else if (e.code !== 'server_restarting') error(e);
+        else error(e, true);
       } finally { if (sd.busy === run) sd.busy = null; draftWrote(); }
       if (alive()) { ui.paintBar(); if (!sd.conflict && dirty()) schedule(); } refreshDraftIndex();
     }
@@ -5519,7 +5531,7 @@
   const watchBusy = inner => (path, ...rest) => {
     if (String(path).includes('api/unified/updates')) return inner(path, ...rest);
     prefetchBusy.loads += 1;
-    return Promise.resolve().then(() => inner(path, ...rest)).finally(() => { prefetchBusy.loads -= 1; photoCache.pump(); });
+    return Promise.resolve().then(() => inner(path, ...rest)).then(r => { clearRestartNotice(); return r; }).finally(() => { prefetchBusy.loads -= 1; photoCache.pump(); });
   };
   function startPrefetch() {
     document.addEventListener('pointerdown', () => { prefetchBusy.until = Date.now() + 1500; }, {capture: true, passive: true});
@@ -5586,7 +5598,7 @@
       }
       sync();
     };
-    api('api/view/agents').then(st => { if (agents.isConnected) { paintAgents(st); paintStats(); } }).catch(e => error(e));
+    api('api/view/agents').then(st => { if (agents.isConnected) { paintAgents(st); paintStats(); } }).catch(e => error(e, true));
     sync();
     // Advanced has no row: support opens it with #advanced (see openFromHash).
   }
