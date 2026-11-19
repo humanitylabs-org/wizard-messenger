@@ -1642,7 +1642,10 @@
       if (split.on) { for (const el of list.querySelectorAll('.u-person.selected')) { el.classList.remove('selected'); el.removeAttribute('aria-current'); } card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
       p.native ? openNative(p.group_id, card) : openPerson(p.id, p);
     }, 'u-person u-chat-result' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
+    if (p.native) card.dataset.nativeGroup = p.group_id; // markSelected() reads it, as for the Inbox row
     card.dataset.pid = p.native ? 'native:' + p.group_id : p.id; card.dataset.network = networksOf(p)[0] || '';
+    // A redraw (results arriving, list updates) keeps the open chat highlighted in the split, like the Inbox row.
+    if (split.on && (p.native ? s.native && s.nativeGroup === p.group_id : p.id === s.person)) { card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
     card.append(netAvatar(p, 'small'));
     const info = node('span', 'u-person-info'), top = node('span', 'u-chat-top');
     top.append(node('strong', '', p.display_name));
