@@ -291,9 +291,22 @@
       server_restarting: 'Messenger is restarting. Try again in a moment.',
       marmot_operation_failed: "Messenger couldn't reach its chat servers. Check this Wizard's internet connection and try again.",
       send_outcome_unknown: 'Checking delivery. Your message will not be sent again automatically.',
-      invalid_input: 'Check the text and try again.', csrf_invalid: "You were signed out of Messenger. Tap Try again."
+      invalid_input: 'Check the text and try again.', csrf_invalid: "You were signed out of Messenger. Tap Try again.",
+      // Issue 288: these used to fall through to "Couldn't connect", which blamed a Wizard that had answered fine.
+      csrf_forbidden: 'Messenger was opened again somewhere else. Reload Messenger and try again.',
+      origin_forbidden: "This Wizard window isn't allowed to change Messenger. Reload Messenger and try again.",
+      engine_start_failed: "Messenger's chat engine didn't start. Wait a moment and try again.",
+      engine_unavailable: "Messenger's chat engine isn't answering. Wait a moment and try again.",
+      vault_unavailable: "Messenger's lock didn't open. Wait a moment and try again.",
+      relock_required: 'Restart Messenger from Wizard, then type your passphrase again.'
     };
-    return messages[error.code || error.message] || "Couldn't connect. Try again when your Wizard is reachable.";
+    const known = messages[error.code || error.message];
+    if (known) return known;
+    // No answer at all (the request never reached Messenger): that one really is about reaching the Wizard.
+    if (!error.code && error instanceof TypeError) return "Couldn't connect. Try again when your Wizard is reachable.";
+    // Any other answer: say what it was, so a screenshot of this line tells what went wrong.
+    const code = String(error.code || '').replace(/[^a-z0-9_.-]/gi, '').slice(0, 60);
+    return "Messenger couldn't finish this. Try again." + (code ? ' (' + code + ')' : '');
   }
   function eraseView() {
     state.identity = null; state.contacts = []; state.dms = []; state.invites = [];
