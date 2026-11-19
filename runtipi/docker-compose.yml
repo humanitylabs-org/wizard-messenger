@@ -304,7 +304,7 @@ services:
       retries: 10
     restart: unless-stopped
   instagram:
-    image: dock.mau.dev/mautrix/meta@sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26
+    image: dock.mau.dev/mautrix/meta@sha256:cfba25bf06e97412c5ea60e3c237b6e07b17a8681d2d1c2f7c97db2608fa664d
     user: 1000:1000
     entrypoint:
     - /bin/sh
@@ -340,7 +340,7 @@ services:
       retries: 10
     restart: unless-stopped
   facebook:
-    image: dock.mau.dev/mautrix/meta@sha256:22bfa54084b6855188f5146b325ee007a298443a9617caead06cc5fc0ba0d687
+    image: dock.mau.dev/mautrix/meta@sha256:ddb17fb65f52e2166ed73643f47b95a4638521150f7434087f4e0423680b0b1e
     user: 1000:1000
     entrypoint:
     - /bin/sh
