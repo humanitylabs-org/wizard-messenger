@@ -4746,6 +4746,17 @@
     const was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
     if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (switchState.on['photo-prefetch'] === true) prefetchSoon(); }
+    sendPhoneBase();
+  }
+  // Messages on your phone (issue 308, switch phone-notifications): the box posts new messages to Notifications with
+  // a link to the chat, but it can't see this Wizard's own address. The view tells it once per page while it is on.
+  let phoneBaseSent = '';
+  function sendPhoneBase() {
+    if (switchState.on['phone-notifications'] !== true) return;
+    let base = ''; try { base = new URL('./', location.href).href; } catch { return; }
+    if (phoneBaseSent === base || !base.startsWith('https://')) return;
+    phoneBaseSent = base;
+    call('phone-notify', {base}).catch(() => { phoneBaseSent = ''; });
   }
   async function syncSwitches() {
     try {
@@ -5622,7 +5633,7 @@
   // The fragment is dropped at once so Back/reload never reopens it.
   let linkedChat = null;
   function takeChatLink() {
-    const m = /^#chat=([A-Za-z0-9_-]{1,64})$/.exec(location.hash); if (!m) return false;
+    const m = /^#chat=([A-Za-z0-9_-]{1,64}|agent:notes|agent:reports)$/.exec(location.hash); if (!m) return false;
     linkedChat = m[1];
     try { history.replaceState(history.state, '', location.pathname + location.search); } catch { /* keep the fragment */ }
     return true;

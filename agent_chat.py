@@ -441,6 +441,13 @@ def post(unified, agent, kind, text, link=None, items=None):
             entry['reply_to'] = ask['id']
         data['entries'].append(entry)
         _save(store, data, unified)
+    if kind == 'ping':
+        # Issue 308 (switch phone-notifications): an urgent ping also shows on the phone.
+        try:
+            import phone_notify
+            phone_notify.urgent(unified, entry['id'], body)
+        except Exception:
+            pass
     return {'posted': entry['id'], 'kind': kind}
 
 

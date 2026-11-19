@@ -95,7 +95,13 @@ class SwitchEndpoint(unittest.TestCase):
                                'names or messages), so the Messenger icon on your home screen can show it. Muted, '
                                'Medium and Low priority chats never count. Your private Messenger chats count too.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296',
-                                                           'humanitylabs-org/wizard-messenger#302']}])
+                                                           'humanitylabs-org/wizard-messenger#302']}, {
+                'id': 'phone-notifications', 'name': 'Messages on your phone',
+                'description': 'Each new message (and an urgent ping in the Agent chat) also goes to Notifications, '
+                               'with the chat name and the start of the message, so the Wizard phone app can show it '
+                               'as a Messenger notification. A tap opens that chat. Muted, Medium and Low priority '
+                               'chats stay quiet.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#308']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -378,7 +384,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications'])
 
 
 if __name__ == '__main__':
