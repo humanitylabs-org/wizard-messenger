@@ -63,10 +63,12 @@ function fakeBox() {
 
 async function run(browser, label, viewport, scheme) {
   const ctx = await browser.newContext({viewport, deviceScaleFactor: 1, colorScheme: scheme, hasTouch: viewport.width < 600});
+  // The Wizard shell marks the skin on html[data-color-scheme]; Messenger's light skin keys on it, not on the media query.
+  await ctx.addInitScript(s => { window.__scheme = s; }, scheme);
   await ctx.addInitScript(() => {
     const noop = () => {};
     window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}};
-    const mark = () => { const r = document.documentElement; if (!r) return false; r.dataset.wzHosted = ''; return true; };
+    const mark = () => { const r = document.documentElement; if (!r) return false; r.dataset.wzHosted = ''; r.dataset.colorScheme = window.__scheme; return true; };
     if (!mark()) new MutationObserver((_, o) => { if (mark()) o.disconnect(); }).observe(document, {childList: true});
   });
   const page = await ctx.newPage(), errors = [], fake = fakeBox();
@@ -137,6 +139,7 @@ async function run(browser, label, viewport, scheme) {
   assert.equal(await bubble.getByRole('button', {name: /Yes to all/}).count(), 0, label + ': Yes to all goes once nothing is left for it');
   await page.waitForTimeout(300);
   await shot('2-answered');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.colorScheme), scheme, label + ': skin marked');
   assert.deepEqual(errors, [], label + ' page errors');
   await ctx.close();
   return {label, ok: true};
@@ -149,6 +152,11 @@ async function run(browser, label, viewport, scheme) {
     for (const scheme of ['dark', 'light']) {
       results.push(await run(browser, 'phone-' + scheme, {width: 390, height: 844}, scheme));
       results.push(await run(browser, 'desktop-' + scheme, {width: 1280, height: 860}, scheme));
+    }
+    // Light and dark shots must really differ (issue 325 review: they were byte-identical).
+    const digest = f => require('crypto').createHash('md5').update(fs.readFileSync(path.join(out, f))).digest('hex');
+    for (const size of ['phone', 'desktop']) for (const name of ['1-sweep-card', '2-answered']) {
+      assert.notEqual(digest(`${size}-dark-${name}.png`), digest(`${size}-light-${name}.png`), `${size} ${name}: light differs from dark`);
     }
     console.log(JSON.stringify({ok: true, results}));
   } finally { await browser.close(); }

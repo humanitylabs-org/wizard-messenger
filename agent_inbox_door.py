@@ -147,30 +147,51 @@ class Door:
     def run_pass(self):
         import agent_chat
         if not self.probe():
-            agent_chat.door_release(self.unified)
+            agent_chat.door_release(self.unified, switched_off=not self.switched())
             return
         for entry in agent_chat.door_pending(self.unified):
             self.capture(entry)
         if self.pings:
-            status, body = self.call('GET', '/pings')
-            if status == 200 and isinstance(body, dict):
-                for ping in body.get('pings') or []:
-                    agent_chat.door_ping(self.unified, ping)
+            self.take_pings()
         status, body = self.call('GET', '/sweep')
         if status == 200 and isinstance(body, dict) and isinstance(body.get('card'), dict):
             agent_chat.door_card(self.unified, body['card'])
+
+    def take_pings(self):
+        """Urgent alerts from the box. The box hands a ping out until it is acked, so each one is acked only after it
+        is stored in the chat: a lost answer, a crash or a failed store in between gets the same ping next pass."""
+        import agent_chat
+        status, body = self.call('GET', '/pings')
+        if status != 200 or not isinstance(body, dict):
+            return []
+        stored = []
+        for ping in body.get('pings') or []:
+            try:
+                if agent_chat.door_ping(self.unified, ping) is not None:
+                    stored.append(ping['id'])
+            except Exception:
+                continue   # not stored: not acked, so it comes again
+        if stored:
+            self.call('POST', '/pings', {'ack': stored[:500]})
+        return stored
 
     def capture(self, entry):
         import agent_chat
         text = agent_chat.door_text(entry)
         if text is None:
             return False   # a voice note still waiting for its words
+        # Once a capture is on its way the box may make the record even if its answer is lost, so this note never goes
+        # back to Messenger's own agent on a failed probe; it is sent again with the same item id (the box dedupes).
+        agent_chat.door_tried(self.unified, entry['id'])
         status, body = self.call('POST', '', {'source': {'app': APP, 'item_id': entry['id']}, 'text': text,
                                               'title': text.split('\n')[0][:120]})
         record = body.get('record') if isinstance(body, dict) else None
         if status in (200, 201) and isinstance(record, dict) and isinstance(record.get('id'), str):
             agent_chat.door_captured(self.unified, entry['id'], record['id'])
             return True
+        if status in (400, 401, 403, 404, 413, 415):
+            # A clear refusal: the box made no record, so the note may go back to Messenger's agent as before.
+            agent_chat.door_tried(self.unified, entry['id'], False)
         if status == 404:
             self.is_open = False
         return False

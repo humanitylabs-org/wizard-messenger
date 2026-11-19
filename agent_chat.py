@@ -216,7 +216,7 @@ def owner_state(unified):
         door.kick()
         out['door'] = {'on': door.opened()}
     elif any(e.get('door') == 'pending' for e in out['entries']):
-        door_release(unified)   # switched off with notes still unsent: they go to the agent as before
+        door_release(unified, switched_off=True)   # switched off with notes still unsent: they go to the agent as before
         out = state(unified)
     return out
 
@@ -492,18 +492,39 @@ def door_captured(unified, note_id, record_id):
         if e is None or e.get('kind') != 'note':
             return
         e['door'] = {'record': record_id, 'at': _now()}
+        e.pop('door_tried', None)
         e['seen'] = e.get('seen') or {'at': _now(), 'by': 'agent inbox'}
         _save(store, data, unified)
 
 
-def door_release(unified):
-    """The door closed (inbox off, switch off, no answer) with notes still unsent: they go to the agent as before."""
+def door_tried(unified, note_id, tried=True):
+    """Mark (or clear) that a capture of this note went out to the box, before the call is made."""
     store = unified.store
     with store.lock:
         data = _load(store)
-        waiting = [e for e in data['entries'] if e.get('kind') == 'note' and e.get('door') == 'pending']
+        e = _find(data, note_id)
+        if e is None or e.get('door') != 'pending' or bool(e.get('door_tried')) == bool(tried):
+            return
+        if tried:
+            e['door_tried'] = _now()
+        else:
+            e.pop('door_tried', None)
+        _save(store, data, unified)
+
+
+def door_release(unified, switched_off=False):
+    """The door closed (inbox off, no answer) with notes still unsent: they go to the agent as before. A note whose
+    capture already went out stays pending and is sent again with the same item id once the door opens (the box may
+    already have it, so handing it to Messenger's agent too would do the work twice). Only the owner turning the
+    switch off hands those back as well, so no note is ever stuck."""
+    store = unified.store
+    with store.lock:
+        data = _load(store)
+        waiting = [e for e in data['entries'] if e.get('kind') == 'note' and e.get('door') == 'pending'
+                   and (switched_off or not e.get('door_tried'))]
         for e in waiting:
             del e['door']
+            e.pop('door_tried', None)
         if waiting:
             _save(store, data, unified)
     if waiting:
@@ -526,8 +547,9 @@ def door_ping(unified, ping):
     store = unified.store
     with store.lock:
         data = _load(store)
-        if any(e.get('door_ping') == ping['id'] for e in data['entries']):
-            return None
+        stored = next((e for e in data['entries'] if e.get('door_ping') == ping['id']), None)
+        if stored is not None:
+            return stored['id']   # already in the chat: stored, so the box may forget it
         entry = {'id': _new_id(data, 'p'), 'kind': 'ping', 'by': 'agent', 'agent': None, 'text': body, 'link': url,
                  'items': [], 'at': _now(), 'door_ping': ping['id']}
         data['entries'].append(entry)

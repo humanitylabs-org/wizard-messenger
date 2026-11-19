@@ -25,6 +25,8 @@ class FakeService:
         self.calls = []
         self.pings = []
         self.reachable = True
+        self.lose_answers = False   # the call is handled but its answer never arrives
+        self.acked = set()
 
     def need(self, title, options=('yes', 'no'), default='yes', confirm=False, recommendation='Say yes'):
         rid = 'inbox_%024x' % (len(self.records) + 1)
@@ -73,6 +75,12 @@ class FakeService:
         self.calls.append((method, path, body))
         if not self.reachable:
             return 0, None
+        if self.lose_answers:
+            self.handle(method, path, body)
+            return 0, None
+        return self.handle(method, path, body)
+
+    def handle(self, method, path, body=None):
         if not self.on:
             return 404, {'error': 'not_found'}
         if path == '/doors':
@@ -80,8 +88,12 @@ class FakeService:
                 self.pings_on = body.get('pings') is True
             return 200, {'on': True, 'sweep_caps': {'waiting': 7, 'done': 10}, 'door': 'messenger', 'pings': self.pings_on}
         if path == '/pings':
-            out, self.pings = self.pings, []
-            return 200, {'pings': out}
+            # Like the Service since issue 325: a read consumes nothing; a ping goes once the door acks it.
+            if method == 'POST':
+                acked = [i for i in body['ack'] if i in {p['id'] for p in self.pings} and i not in self.acked]
+                self.acked.update(acked)
+                return 200, {'acked': acked}
+            return 200, {'pings': [p for p in self.pings if p['id'] not in self.acked]}
         if path == '' and method == 'POST':
             if body['source']['app'] != 'messenger':
                 return 403, {'error': 'wrong_app'}
@@ -183,6 +195,57 @@ class AgentInboxDoor(AgentChat):
         got = agent_chat._find(agent_chat._load(self.inbox.store), note['id'])
         self.assertTrue(got['door']['record'].startswith('inbox_'))
         self.assertTrue(got['seen'])
+
+    def test_a_capture_with_a_lost_answer_never_goes_to_messengers_agent_too(self):
+        self.opened()
+        woken = []
+        real_wake = agent_chat.wake
+        agent_chat.wake = lambda unified, why: woken.append(why)
+        self.addCleanup(setattr, agent_chat, 'wake', real_wake)
+        note = self.ok('POST', '', {'text': 'Book the vet'})['entries'][-1]
+        self.service.lose_answers = True   # the box makes the record and starts its worker, the answer is lost
+        self.door.run_pass()
+        self.service.lose_answers, self.service.reachable = False, False
+        self.door.probed_at = 0
+        self.door.run_pass()   # the next probe fails
+        got = agent_chat._find(agent_chat._load(self.inbox.store), note['id'])
+        self.assertEqual((got['door'], got['seen']), ('pending', None))
+        self.assertEqual(woken, [])
+        listed, _ = self.mcp('messenger_agent_chat_inbox')
+        self.assertEqual(listed['notes'], [])   # Messenger's agent never gets it
+        # The door opens again: the same item id is sent, the box answers with its one record, and the tick comes.
+        self.service.reachable = True
+        self.door.probed_at = 0
+        self.door.run_pass()
+        got = agent_chat._find(agent_chat._load(self.inbox.store), note['id'])
+        self.assertTrue(got['door']['record'].startswith('inbox_'))
+        self.assertNotIn('door_tried', got)
+        self.assertEqual(len([r for r in self.service.records.values() if r['kind'] == 'note']), 1)
+
+    def test_a_refused_capture_may_still_go_back_to_messengers_agent(self):
+        self.opened()
+        note = self.ok('POST', '', {'text': 'Order printer ink'})['entries'][-1]
+        real = self.service.handle
+        self.service.handle = lambda m, p, b=None: (403, {'error': 'owner_only'}) if p == '' else real(m, p, b)
+        self.door.run_pass()   # a clear refusal: the box made no record
+        self.assertNotIn('door_tried', agent_chat._find(agent_chat._load(self.inbox.store), note['id']))
+        self.service.on = False
+        self.door.probed_at = 0
+        self.door.run_pass()
+        self.assertNotIn('door', agent_chat._find(agent_chat._load(self.inbox.store), note['id']))
+        listed, _ = self.mcp('messenger_agent_chat_inbox')
+        self.assertEqual([n['id'] for n in listed['notes']], [note['id']])
+
+    def test_switching_off_hands_back_a_note_already_sent_too(self):
+        self.opened()
+        note = self.ok('POST', '', {'text': 'Sell the old bike'})['entries'][-1]
+        self.service.lose_answers = True
+        self.door.run_pass()
+        self.switch(False)
+        self.ok('GET')
+        got = agent_chat._find(agent_chat._load(self.inbox.store), note['id'])
+        self.assertNotIn('door', got)
+        self.assertNotIn('door_tried', got)
 
     def test_inbox_turned_off_hands_unsent_notes_back(self):
         self.opened()
@@ -288,9 +351,51 @@ class AgentInboxDoor(AgentChat):
         self.assertEqual(pings[0]['text'], 'Card payment failed: Netflix could not charge your card')
         self.assertEqual(pings[0]['link'], 'https://bank.example/card')
         self.assertTrue(state['urgent'])
+        self.assertEqual(self.service.acked, {'inbox_a1'})
         long = agent_chat.door_ping(self.inbox, {'id': 'inbox_a2', 'title': 'x' * 400, 'link': '/wizard-os-home/'})
         entry = agent_chat._find(agent_chat._load(self.inbox.store), long)
         self.assertEqual((len(entry['text']), entry['link']), (200, None))
+
+    def test_a_ping_is_acked_only_after_it_is_stored(self):
+        self.opened()
+        alert = {'id': 'inbox_a9', 'title': 'Server down', 'severity': 'urgent', 'at': 1}
+        self.service.pings = [alert]
+        real = agent_chat.door_ping
+
+        def crash(unified, ping):
+            raise RuntimeError('crashed before the store')
+        agent_chat.door_ping = crash
+        try:
+            self.door.run_pass()   # fetched, then the store fails: no ack
+        finally:
+            agent_chat.door_ping = real
+        self.assertEqual(self.service.acked, set())
+        self.assertFalse([e for e in agent_chat._load(self.inbox.store)['entries'] if e['kind'] == 'ping'])
+        self.assertFalse([c for c in self.service.calls if c[:2] == ('POST', '/pings')])
+        # A lost answer to the read is the same: nothing stored, nothing acked.
+        self.service.lose_answers = True
+        self.door.run_pass()
+        self.service.lose_answers = False
+        self.assertEqual(self.service.acked, set())
+        # The next pass gets the same ping, stores it once and acks it; after that it never comes again.
+        self.door.run_pass()
+        self.door.run_pass()
+        pings = [e for e in agent_chat._load(self.inbox.store)['entries'] if e['kind'] == 'ping']
+        self.assertEqual([p['door_ping'] for p in pings], ['inbox_a9'])
+        self.assertEqual(self.service.acked, {'inbox_a9'})
+        self.assertEqual(len([c for c in self.service.calls if c[:2] == ('POST', '/pings')]), 1)
+
+    def test_a_ping_stored_whose_ack_was_lost_is_acked_again_and_never_doubled(self):
+        self.opened()
+        self.service.pings = [{'id': 'inbox_b1', 'title': 'Card blocked', 'severity': 'urgent', 'at': 1}]
+        real = self.service.handle
+        self.service.handle = lambda m, p, b=None: (0, None) if (m, p) == ('POST', '/pings') else real(m, p, b)
+        self.door.run_pass()   # stored, but the ack never reached the box
+        self.service.handle = real
+        self.door.run_pass()   # the box hands it out again: already in the chat, so just ack
+        pings = [e for e in agent_chat._load(self.inbox.store)['entries'] if e['kind'] == 'ping']
+        self.assertEqual(len(pings), 1)
+        self.assertEqual(self.service.acked, {'inbox_b1'})
 
 
 class RealHTTP(unittest.TestCase):
