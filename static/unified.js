@@ -3611,6 +3611,8 @@
     // Paste and drop of files, dictation-safe text paste (Wispr Flow), the drag highlight and Enter / Shift+Enter /
     // A photo shared from another Wizard app lands in the same tray. True only when it is really staged (never sends).
     const stageFiles = async picked => {
+      // Issue 314: a shared file (not a photo) that this chat can't carry says why, like the + picker does.
+      if (!canAttach && picked.some(f => !PHOTO.test(f.type))) toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats');
       if (!canAttach || !picked.length || view.edit || s.person !== id || !s.ready || !form.isConnected) return false;
       if (picked.length > 10 - (view.attach?.length || 0)) { toast('Up to 10 attachments at a time'); return false; }
       const before = view.attach?.length || 0;
@@ -5743,16 +5745,29 @@
     const had = (s.drafts[id] || '').trim();
     s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
   }
+  // Issue 314 (switch share-files): a shared file that is not a photo (a PDF, an .md from a chat) lands in the
+  // composer's attachment tray like one added with +, so the owner reviews and taps Send. The shell hands a Blob plus
+  // name and mime; Messenger's own cap is 25 MB, so a bigger file is answered with a plain "too big" and not kept.
+  const SHARE_FILE_MAX = 25 * 1048576;
+  const shareFilesOn = () => switchState.on['share-files'] === true;
+  function sharedFile(item) {
+    const blob = item.file; if (!blob || typeof blob.size !== 'number' || typeof blob.slice !== 'function') return null;
+    const name = String(item.name || blob.name || 'File').slice(0, 255), type = item.mime || blob.type || 'application/octet-stream';
+    return blob instanceof File && blob.name === name ? blob : new File([blob], name, {type});
+  }
   async function receiveShare(item) {
     const text = sharedText(item), image = item.kind === 'image' && item.file?.type?.startsWith('image/');
-    if (!s.ready || (!text && !image) || item.kind === 'file') return false; // stays pending in Wizard; check() runs again once unlocked
+    const file = item.kind === 'file' && shareFilesOn() ? sharedFile(item) : null;
+    if (!s.ready || (!text && !image && !file) || (item.kind === 'file' && !file)) return false; // stays pending in Wizard; check() runs again once unlocked
+    if (file && file.size > SHARE_FILE_MAX) { toast((file.name || 'That file') + ' is too big to send (over 25 MB)', 4500); return true; }
     if (s.overlay) closeOverlay();
     if (s.tab === 'messenger' || s.search != null) switchTab('people');
-    if (image) {
-      // A shared photo is staged in the chat's photo tray (the same path as the + picker); the owner reviews and sends.
+    if (image || file) {
+      // A shared photo or file is staged in the chat's tray (the same path as the + picker); the owner reviews and sends.
+      const staged = file || item.file;
       const place = async id => {
         if (s.person !== id || view.id !== id || !store.threads[id]) await openPerson(id);
-        if (!s.ready || s.person !== id || view.id !== id || !await view.stageFiles?.([item.file])) return false;
+        if (!s.ready || s.person !== id || view.id !== id || !await view.stageFiles?.([staged])) return false;
         if (text) { placeShared(id, text); view.draft.value = s.drafts[id]; view.grow(); }
         return true;
       };
@@ -5762,9 +5777,14 @@
     if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
     return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
   }
+  const shareKinds = () => ['text', 'url', 'image', ...(shareFilesOn() ? ['file'] : [])];
+  let sharedKinds = '';
   function listenForShares() {
-    try { window.WizardApp?.share?.receive?.({accepts: ['text', 'url', 'image'], receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
+    const accepts = shareKinds(); sharedKinds = accepts.join();
+    try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
+  // Turning share-files on or off tells the share sheet at once (it re-offers a waiting file once it is on).
+  switchState.paints['share-files'] = () => { if (shareKinds().join() !== sharedKinds) listenForShares(); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
     setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || p.medium_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if ((!s.native && !s.person) || split.on) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },

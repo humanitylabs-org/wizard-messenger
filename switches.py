@@ -89,6 +89,12 @@ SWITCHES = (
                     'notification. A tap opens that chat. Muted, Medium and Low priority chats stay quiet.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#308']},
+    {'id': 'share-files', 'name': 'Share files to Messenger',
+     'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers Messenger. '
+                    'The file waits in the chosen chat\'s message box as an attachment, like one added with +, '
+                    'until you tap Send. Files over 25 MB are too big.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#314']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
