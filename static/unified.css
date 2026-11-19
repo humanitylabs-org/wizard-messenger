@@ -137,6 +137,12 @@ html[data-in-chat] #inbox-tabs, html[data-inbox-tab=messenger] #messenger:has(.w
 .u-search { min-height: 44px; border-radius: 22px; padding: 10px 16px; }
 .u-directory { display: flex; flex-direction: column; margin: 8px -20px 0; flex: 1; min-height: 0; overflow: auto; }
 .u-letter { font-size: 13px; font-weight: 600; color: var(--ink-3); padding: 14px 20px 4px; }
+/* Search: Chats (by name) above Messages (by text), like WhatsApp and Telegram. */
+.u-search-head { margin: 0; }
+.u-search-all { display: block; width: calc(100% - 2.5rem); min-height: 2.75rem; margin: .25rem 1.25rem .5rem; }
+.u-chat-result .u-chat-top { align-items: center; }
+.u-chat-result .u-chat-top strong { flex: 1 1 auto; min-width: 0; }
+.u-chat-result .u-state { flex: none; font-size: .75rem; color: var(--ink-3); }
 .u-directory-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 20px; text-align: left; border-radius: 0; color: var(--ink); }
 
 /* Telegram phone login */
