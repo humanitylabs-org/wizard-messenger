@@ -2770,7 +2770,7 @@
     for (const name of ['play', 'pause', 'ended']) v.addEventListener(name, paint);
     v.addEventListener('timeupdate', () => { if (!v.isConnected) { v.pause(); return; } paint(); });
     // Full screen shows the browser's own controls (seek, volume); back in the bubble they go away again.
-    const fsChange = () => { v.controls = (document.fullscreenElement || document.webkitFullscreenElement) === v; };
+    const fsChange = () => { v.controls = (v.ownerDocument.fullscreenElement || v.ownerDocument.webkitFullscreenElement) === v; };
     v.addEventListener('fullscreenchange', fsChange); v.addEventListener('webkitfullscreenchange', fsChange);
     inlineSeen?.observe(box);
     function play() {
@@ -2794,7 +2794,7 @@
         try { big.currentTime = at; } catch {}
         big.play().catch(() => { big.muted = true; big.play().catch(() => {}); });
       };
-      if ((document.fullscreenEnabled || document.webkitFullscreenEnabled) && typeof ask === 'function') {
+      if ((v.ownerDocument.fullscreenEnabled || v.ownerDocument.webkitFullscreenEnabled) && typeof ask === 'function') {
         try { Promise.resolve(ask.call(v)).catch(own); } catch { own(); }
         return;
       }
