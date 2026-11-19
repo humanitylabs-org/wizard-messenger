@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.80 (share a file to Messenger, switch off by default)
+
+Store recipe: pins the image built from main `022ba04`. Ships #315 (Refs humanitylabs-org/wizard-messenger#314): with the new switch `share-files` on, Messenger tells Wizard's share sheet it also takes files (not only text, links and photos). A file shared from another Wizard app (an `.md` from a chat, a PDF) opens the chosen chat, or the Send to… picker, with the file as an attachment chip in the composer and in the chat's draft, exactly like one added with +; the owner taps Send. Over 25 MB says "too big"; a chat whose network can't carry files says so. Off: unchanged. Guards: `tests/share_image_receive.test.cjs`, `tests/share_file_receive_browser.cjs`.
+
 ## 0.2.0-unified.16.79 (search finds chats by name)
 
 Store recipe: pins the image built from main `278f555`. Ships #311 (Miguel: typing a person's name in Search only found message text): Search is one field, "Search chats and messages". A Chats section comes first, drawn at once from the loaded chat list: chats and groups whose name, pre-rename name or merged account label contains the query (case- and accent-insensitive, every folder including Medium and Low), at most 5 with "Show all". The existing Messages results and paging follow. A chat result opens like its Inbox row (split pane on desktop, Back returns to the results); Enter opens the first result. No switch. Guard: `tests/search_chats_browser.cjs`.
