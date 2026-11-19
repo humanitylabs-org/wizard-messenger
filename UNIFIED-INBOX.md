@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.85 (the Agent chat as a door to your agent inbox, switch off)
+
+Store recipe: pins the image built from main `65045f8`. Ships #330 (Refs humanitylabs-org/wizard-messenger#325), a feature behind the off-by-default switch `agent-inbox-door` (Agent chat through your agent inbox). With it on and the box's agent inbox on (wizard-agent-service `wizard/agent-inbox`, app doors from issue 569), each Agent chat note goes to the box's inbox once as a background task (it gets its tick when the box has the record), Sweep shows the box's capped card (Waiting with up to 4 answer buttons, Open to confirm, Done, the counts, Yes to all when allowed) and answers go to the box, so Daily and Messenger show the same items. Urgent alerts arrive as one-line pings. The messenger service gets `MESSENGER_AGENT_INBOX_TOKEN` (Messenger's own app token, handed over by the App Manager, wizard-app-manager#804) and `MESSENGER_AGENT_SERVICE`. Without a token, with the inbox off, or with the switch off, the Agent chat works as before. Guards: `tests/test_agent_inbox_door.py`, `tests/test_agent_inbox_door_view.cjs`, `tests/agent_inbox_door_browser.cjs`.
+
 ## 0.2.0-unified.16.84 (open chat stays highlighted in Search)
 
 Search's Chats section (Search finds chats by name, shipped in 16.79) now keeps the open chat highlighted on a wide window when the results redraw, and marks private chats too, like the Inbox row. Guard: `tests/search_chats_browser.cjs`. Issue 321, PR 328.
