@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {PREFETCH, hasThumb, prefetchPlan, prefetchAllowed, photoPrefetcher} = require('../static/unified.js');
+const {PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher} = require('../static/unified.js');
 // Issue 166: with "Background photo download" on, the phone quietly fetches thumbnails of the last messages of the
 // newest chats, then view copies of the newest photos in each, on Wi-Fi only unless the owner picks Always.
 const url = (id, kind) => 'api/unified/media/' + encodeURIComponent(id) + (kind ? '?kind=' + kind : '');
@@ -136,4 +136,43 @@ test('the index survives a reload, and Lock forgets everything', async () => {
   assert.deepEqual(r.q.stats(), {files: 0, bytes: 0, queued: 0, running: 0});
   assert.equal(r.cache.size, 0, 'a download that finishes after Lock is not kept');
   assert.deepEqual(r.saved.at(-1), {});
+});
+
+// Issue 320: with "Background video download" on, videos up to 25 MB (not GIFs or stickers) join the plan, after
+// every photo, three per chat at most.
+const video = (id, size, extra = {}) => ({id, msgtype: 'm.video', media: {mime: 'video/mp4', size, thumb: true, ...extra}});
+
+test('videos up to 25 MB only, never GIFs, stickers or ones still sending', () => {
+  assert.deepEqual(VIDEO_PREFETCH, {perChat: 3, maxBytes: 25 * 1024 * 1024});
+  assert.ok(prefetchVideo(video('$v', 10 * 1024 * 1024)));
+  assert.ok(prefetchVideo(video('$e', 25 * 1024 * 1024)));
+  for (const m of [video('$big', 25 * 1024 * 1024 + 1), video('$n', undefined), video('$g', 1000, {gif: true}), video('$s', 1000, {sticker: true}),
+    {...video('$l', 1000), local: 'blob:x'}, {...video('$p', 1000), pending: true}, {...video('$d', 1000), deleted: true}, photo('$photo')]) assert.ok(!prefetchVideo(m), m.id);
+});
+
+test('plan: videos come after every photo, only when asked for, at most three per chat', () => {
+  const threads = {a: [video('a1', 100), photo('a2'), video('a3', 100), video('a4', 100), video('a5', 100), video('big', 30e6)], b: [video('b1', 100)]};
+  const both = prefetchPlan([{id: 'a'}, {id: 'b'}], id => threads[id], url, PREFETCH, {photos: true, videos: true});
+  assert.deepEqual(both.filter(x => x.kind === 'video').map(x => x.id), ['a5', 'a4', 'a3', 'b1']);
+  assert.equal(both.find(x => x.id === 'a5' && x.kind === 'video').url, 'api/unified/media/a5');
+  const kinds = both.map(x => x.kind);
+  assert.ok(kinds.lastIndexOf('view') < kinds.indexOf('video'), 'videos last: ' + kinds);
+  assert.ok(!prefetchPlan([{id: 'a'}], id => threads[id], url).some(x => x.kind === 'video'), 'photos only by default');
+  const only = prefetchPlan([{id: 'a'}], id => threads[id], url, PREFETCH, {photos: false, videos: true});
+  assert.deepEqual(only.map(x => x.kind), ['video', 'video', 'video'], 'videos alone when only that switch is on');
+});
+
+test('a video waits behind thumbnails and view copies added later, and is first to go over the cap', async () => {
+  const r = rig({cap: 100});
+  const view = id => ({url: url(id, 'view'), kind: 'view', id}), vid = id => ({url: url(id), kind: 'video', id});
+  r.q.add([...items('a', 'b'), vid('v')]); await r.flush();
+  r.q.add([view('c'), ...items('d')]); await r.flush();
+  for (const u of [url('a', 'thumb'), url('b', 'thumb')]) r.answer(u, 10); await r.flush();
+  assert.deepEqual(r.calls.slice(2, 4), [url('d', 'thumb'), url('c', 'view')]);
+  r.answer(url('d', 'thumb'), 10); r.answer(url('c', 'view'), 10); await r.flush();
+  assert.equal(r.calls[4], url('v'));
+  r.answer(url('v'), 50); await r.flush();
+  r.q.add([view('e')]); await r.flush(); r.answer(url('e', 'view'), 30); await r.flush();
+  assert.ok(!r.q.has(url('v')), 'the video goes first');
+  assert.ok(r.q.has(url('c', 'view')) && r.q.has(url('e', 'view')) && r.q.has(url('a', 'thumb')));
 });
