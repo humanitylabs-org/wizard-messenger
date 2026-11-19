@@ -443,6 +443,7 @@
           media: m ? {type: m.type, duration: Number.isFinite(m.duration) ? m.duration : null, transcript: typeof m.transcript === 'string' ? m.transcript : null} : null};
       }
       return {id: e.id, kind: e.kind, side: 'in', text: e.text || '', link: e.link || null, at: e.at, who: who(e), urgent: e.kind === 'ping',
+        card: e.card && typeof e.card === 'object' ? doorCard(e.card) : null,
         items: (Array.isArray(e.items) ? e.items : []).map(i => {
           const locked = !!(i.result || i.answer?.seen);
           return {n: i.n, text: i.text || '', recommendation: i.recommendation || null, state: i.result ? 'done' : i.answer ? 'answered' : 'open',
@@ -451,10 +452,37 @@
         })};
     });
   }
+  // Issue 325 (switch agent-inbox-door): the box's agent inbox card (wizard-agent-service agent-sweep.mjs composeCard /
+  // cardView), as the Agent chat draws it: Waiting items with their recommendation and up to 4 answer buttons, Done,
+  // and the counts. Only record fields, never free text. A `confirm` item is never answered here ("Open to confirm").
+  function doorCard(card) {
+    const str = v => (typeof v === 'string' ? v : '');
+    const href = v => { const t = str(v).trim(); return /^https?:\/\/\S+$/i.test(t) || /^\/(?!\/)\S*$/.test(t) ? t : null; };
+    const label = t => { const w = t.replace(/[-_]+/g, ' ').trim(); return w ? w[0].toUpperCase() + w.slice(1) : t; };
+    const w = card.waiting && typeof card.waiting === 'object' ? card.waiting : {}, d = card.done && typeof card.done === 'object' ? card.done : {};
+    const waiting = (Array.isArray(w.items) ? w.items : []).filter(i => i && typeof i.id === 'string').map(i => {
+      const open = i.state === 'new' || i.state === 'surfaced' || i.state === undefined;
+      const tokens = (Array.isArray(i.options) ? i.options : []).map(o => str(o?.token)).filter(Boolean).slice(0, 4);
+      return {id: i.id, title: str(i.title), ask: str(i.ask), recommendation: str(i.recommendation) || null, seen: Number(i.seen) || 1,
+        confirm: i.confirm === true, link: href(i.link), answer: str(i.answer) ? label(str(i.answer)) : null,
+        state: open ? 'open' : i.state === 'answered' ? 'answered' : i.state === 'snoozed' ? 'later' : 'closed',
+        buttons: open && i.confirm !== true ? tokens.map(t => ({label: label(t), value: t})) : []};
+    });
+    const count = (o, name) => ({label: name, count: Math.max(0, Number(o?.count) || 0), link: href(o?.link)});
+    return {id: str(card.id), waiting, more: Math.max(0, Number(w.more) || 0), moreLink: href(w.link),
+      done: (Array.isArray(d.items) ? d.items : []).filter(i => i && typeof i.id === 'string').map(i => ({id: i.id, title: str(i.title), link: href(i.link)})),
+      doneMore: Math.max(0, Number(d.more) || 0), doneLink: href(d.link),
+      counts: [count(card.running, 'Running'), count(card.later, 'Later and FYI'), count(card.parked, 'Parked')].filter(c => c.count > 0),
+      yes: Math.max(0, Number(card.yes_to_all?.count) || 0)};
+  }
   // The pinned row's last line: the newest thing in the chat (reports stay under Reports).
   function agentChatSnippet(state) {
     const rows = agentChatRows(state, 'chat'), last = rows[rows.length - 1];
     if (!last) return null;
+    if (last.card) {
+      const n = last.card.waiting.filter(i => i.state === 'open').length;
+      return {text: 'Sweep: ' + (n ? n + ' to answer' : last.card.waiting.length ? 'all answered' : 'nothing needs you'), at: last.at, urgent: !!(state?.urgent)};
+    }
     const open = (last.items || []).filter(i => i.state === 'open').length;
     const text = last.side === 'out' ? 'You: ' + (last.text.split('\n')[0] || (last.media?.type === 'photo' ? 'Photo' : last.media ? 'Voice note' : ''))
       : last.kind === 'sweep' ? (last.items.length ? 'Sweep: ' + (open ? open + ' to answer' : 'all answered') : last.text)
@@ -582,7 +610,7 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -5073,6 +5101,7 @@
   // What the header says about the agent: is anyone listening here, and how fast.
   function agentStatus(st) {
     const a = st?.agent;
+    if (st?.door?.on) return 'Notes go to your agent inbox, the same one as Daily'; // issue 325
     if (!a) return 'Notes to your agent';
     return a.woken ? 'Your agent hears about each note within seconds' : a.checked ? 'Your agent checks here on its own schedule' : 'Your agent hasn’t checked here yet';
   }
@@ -5244,6 +5273,52 @@
     } else if (i.answer) li.append(node('p', 'u-ac-answer', 'You: ' + i.answer + ' · your agent is on it'));
     return li;
   }
+  // Issue 325: the box's sweep card. Links go to Wizard's own inbox views and threads (the top window when framed).
+  function agentCardLink(text, href, cls = 'u-ac-link') {
+    const a = node('a', cls, text); a.href = href; a.target = '_top'; return a;
+  }
+  function agentCard(r) {
+    const c = r.card, out = [];
+    out.push(node('h3', 'u-ac-title', 'Waiting on you' + (c.waiting.length + c.more ? ' (' + (c.waiting.length + c.more) + ')' : '')));
+    if (!c.waiting.length) out.push(node('p', 'u-ac-text', 'Nothing is waiting on you.'));
+    else {
+      const ol = node('ol', 'u-ac-items');
+      c.waiting.forEach((i, n) => {
+        const li = node('li', 'u-ac-item ' + (i.state === 'open' ? 'open' : 'answered')); li.value = n + 1; li.dataset.record = i.id;
+        const title = node('p', 'u-ac-item-text'); title.append(node('strong', '', i.title));
+        if (i.ask && i.ask !== i.title) title.append(node('span', '', ': ' + i.ask));
+        if (i.seen > 1) title.append(node('span', 'u-ac-seen', ' · sweep ' + i.seen));
+        li.append(title);
+        if (i.recommendation) li.append(node('p', 'u-ac-rec-line', 'Recommended: ' + i.recommendation));
+        if (i.state === 'answered') li.append(node('p', 'u-ac-answer', 'You: ' + (i.answer || 'answered') + ' · your agent is on it'));
+        else if (i.state === 'later') li.append(node('p', 'u-ac-answer', 'Later: back on the next sweep'));
+        else if (i.state === 'closed') li.append(node('p', 'u-ac-answer', 'Moved on'));
+        else if (i.confirm) { if (i.link) li.append(agentCardLink('Open to confirm', i.link, 'u-ac-link u-ac-confirm')); else li.append(node('p', 'u-ac-answer', 'Open it in Wizard to confirm')); }
+        else if (i.buttons.length) {
+          const row = node('div', 'u-ac-buttons'); row.setAttribute('role', 'group'); row.setAttribute('aria-label', 'Answer ' + (n + 1));
+          for (const b of i.buttons) row.append(button(b.label, () => agentAct('/door/answer', {post_id: r.id, record: i.id, option: b.value}), 'u-ac-choice'));
+          li.append(row);
+        } else if (i.link) li.append(agentCardLink('Open', i.link));
+        ol.append(li);
+      });
+      out.push(ol);
+    }
+    if (c.more && c.moreLink) out.push(agentCardLink('And ' + c.more + ' more', c.moreLink, 'u-ac-link u-ac-more'));
+    if (c.yes > 0) out.push(button('Yes to all (' + c.yes + ')', () => agentAct('/door/yes-to-all', {post_id: r.id}), 'u-ac-choice u-ac-yes-all'));
+    if (c.done.length) {
+      out.push(node('h3', 'u-ac-title', 'Done'));
+      const ul = node('ul', 'u-ac-done');
+      for (const d of c.done) { const li = node('li'); if (d.link) li.append(agentCardLink(d.title, d.link, 'u-ac-done-link')); else li.textContent = d.title; ul.append(li); }
+      out.push(ul);
+      if (c.doneMore && c.doneLink) out.push(agentCardLink('And ' + c.doneMore + ' more', c.doneLink, 'u-ac-link u-ac-more'));
+    }
+    if (c.counts.length) {
+      const p = node('p', 'u-ac-counts');
+      c.counts.forEach((k, n) => { if (n) p.append(node('span', '', ' · ')); const t = k.label + ': ' + k.count; p.append(k.link ? agentCardLink(t, k.link, 'u-ac-count') : node('span', '', t)); });
+      out.push(p);
+    }
+    return out;
+  }
   // The chat's first bubble says how it works, like a bot's "What can this bot do?" (Miguel: "how exactly do I use this?").
   function agentIntro(reports, st) {
     const box = node('section', 'u-ac-intro'); box.setAttribute('aria-label', 'How this chat works');
@@ -5291,6 +5366,7 @@
         if (r.urgent) b.append(node('span', 'u-ac-tag', 'Urgent'));
         if (r.kind === 'report' || r.kind === 'notification') { const [first, ...rest] = r.text.split('\n'); b.append(node('h3', 'u-ac-title', first)); if (rest.join('\n').trim()) b.append(agentText('u-text u-ac-text', rest.join('\n').trim())); }
         else if (r.text) b.append(agentText('u-text u-ac-text', r.text));
+        else if (r.card) b.classList.add('u-ac-card'), b.append(...agentCard(r));
         else if (r.kind === 'sweep' && !r.items?.length) b.append(agentText('u-text u-ac-text', 'Nothing needs you right now.'));
         if (r.items?.length) { const ol = node('ol', 'u-ac-items'); for (const i of r.items) ol.append(agentItem(r, i)); b.append(ol); }
         if (r.link) b.append(agentLink(r.link));

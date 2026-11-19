@@ -1229,6 +1229,14 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-ac-item p { margin: 0; }
 .u-ac-rec-line { font-size: .8125rem; color: var(--ink-2); margin-top: .125rem; }
 .u-ac-answer, .u-ac-result { font-size: .8125rem; color: var(--ink-2); }
+.u-ac-card .u-ac-title + .u-ac-items { margin-top: .125rem; }
+.u-ac-card .u-ac-title:not(:first-child) { margin-top: .625rem; }
+.u-ac-seen { font-size: .8125rem; color: var(--ink-2); }
+.u-ac-done { margin: .125rem 0 0; padding-left: 1.125rem; display: flex; flex-direction: column; gap: .25rem; }
+.u-ac-done-link, .u-ac-count { color: inherit; }
+.u-ac-counts { margin: .625rem 0 0; font-size: .8125rem; color: var(--ink-2); }
+.u-ac-yes-all { display: flex; margin-top: .5rem; }
+.u-ac-more, .u-ac-confirm { display: inline-block; margin-top: .375rem; }
 .u-ac-item.done .u-ac-result { color: var(--ink-3); }
 .u-ac-buttons { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .375rem; }
 .u-ac-choice { min-height: 2.25rem; padding: 0 .875rem; border-radius: 1.125rem; border: 1px solid var(--line-2); background: var(--raised); color: var(--ink); font-weight: 600; }

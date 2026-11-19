@@ -111,7 +111,13 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your '
                                'newest chats, on Wi-Fi only unless you chose Always for photos, so a tapped video plays '
                                'at once from the phone. Bigger videos still stream on tap.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#320']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#320']}, {
+                'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
+                'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: '
+                               'each note becomes a background task there (the tick shows once it is in), Sweep shows '
+                               'the same card as Daily with one-tap answers, and urgent alerts arrive as one-line '
+                               'pings. With the inbox off, the Agent chat works as before.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#325']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -394,7 +400,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door'])
 
 
 if __name__ == '__main__':
