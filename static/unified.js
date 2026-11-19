@@ -629,6 +629,7 @@
     file: ['M14 3H6v18h12V7z', 'M14 3v4h4', 'M9 13h6', 'M9 17h6'],
     eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
     eyeoff: ['M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.6', 'M6.6 6.6A16.5 16.5 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6', 'M9.9 9.9a3 3 0 0 0 4.2 4.2', 'M3 3l18 18'],
+    expand: ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -2712,7 +2713,7 @@
     box.setAttribute('aria-label', sticker ? 'Sticker' : m.media?.gif ? 'GIF' : m.msgtype === 'm.video' ? 'Play video' : 'Open photo');
     const w = m.media?.w, h = m.media?.h;
     if (w && h) box.style.aspectRatio = w + ' / ' + h; else box.classList.add('unsized');
-    let v = null;
+    let v = null, inline = null;
     if (m.msgtype === 'm.video') {
       v = node('video'); v.playsInline = true; v.muted = true; v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
       if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
@@ -2727,7 +2728,9 @@
         loopSeen?.observe(box);
       } else {
         v.preload = 'metadata'; v.src = m.local || mediaURL(m.id) + (m.media?.thumb ? '' : '#t=0.1'); box.append(v, node('span', 'u-play', '▶'));
-        if (m.media?.duration) box.append(node('span', 'u-vdur', fmtDur(m.media.duration)));
+        const dur = m.media?.duration ? node('span', 'u-vdur', fmtDur(m.media.duration)) : null;
+        if (dur) box.append(dur);
+        if (!m.pending) inline = inlineVideo(box, v, dur, m);
       }
     } else {
       const img = node('img'); img.alt = m.original || (sticker ? 'Sticker' : 'Photo'); img.decoding = 'async'; img.loading = 'lazy';
@@ -2738,11 +2741,71 @@
       else if (m.media?.mime === 'image/gif') { box.classList.add('gif'); box.append(node('span', 'u-gif-tag', 'GIF')); }
     }
     box.message = m;
-    if (!m.pending) box.onclick = () => {
+    if (!m.pending) box.onclick = e => {
+      if (inline) { inline.tap(e); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
       if (!sticker) viewer(m, box); // stickers are part of the conversation, not photos to open
     }; else box.append(node('span', 'u-spin'));
     return box;
+  }
+  // A video plays where it is, with sound, from the one tap (issue 319). Handing it to Wizard's viewer meant an extra
+  // screen whose player could not start on its own (the tap had been spent in Messenger), so it took a second tap.
+  // Tap again pauses; the corner button goes full screen. One video plays at a time, and it pauses once it scrolls
+  // away or leaves the chat.
+  let inlinePlaying = null;
+  const inlineSeen = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const e of entries) if (!e.isIntersecting) e.target.querySelector('video')?.pause();
+  }, {threshold: 0.1}) : null;
+  function inlineVideo(box, v, dur, m) {
+    const full = node('span', 'u-vfull'); full.append(icon('expand')); full.setAttribute('aria-hidden', 'true'); full.hidden = true;
+    box.append(full);
+    const total = () => Number.isFinite(v.duration) && v.duration > 0 ? v.duration * 1000 : m.media?.duration || 0;
+    const paint = () => {
+      const on = !v.paused && !v.ended, started = box.classList.contains('started');
+      box.classList.toggle('playing', on);
+      box.setAttribute('aria-label', on ? 'Pause video' : 'Play video');
+      full.hidden = !started;
+      if (dur && started) dur.textContent = fmtDur(Math.max(0, total() - v.currentTime * 1000));
+    };
+    for (const name of ['play', 'pause', 'ended']) v.addEventListener(name, paint);
+    v.addEventListener('timeupdate', () => { if (!v.isConnected) { v.pause(); return; } paint(); });
+    // Full screen shows the browser's own controls (seek, volume); back in the bubble they go away again.
+    const fsChange = () => { v.controls = (v.ownerDocument.fullscreenElement || v.ownerDocument.webkitFullscreenElement) === v; };
+    v.addEventListener('fullscreenchange', fsChange); v.addEventListener('webkitfullscreenchange', fsChange);
+    inlineSeen?.observe(box);
+    function play() {
+      if (inlinePlaying && inlinePlaying !== v) { try { inlinePlaying.pause(); } catch {} }
+      inlinePlaying = v; box.classList.add('started');
+      v.muted = false; v.removeAttribute('muted'); v.preload = 'auto';
+      if (v.ended) v.currentTime = 0;
+      // Started inside the tap, so sound is allowed. A browser that still refuses plays it muted rather than not at all.
+      const started = v.play();
+      started?.catch?.(() => { v.muted = true; v.play().catch(() => {}); });
+      paint();
+    }
+    function fullScreen() {
+      if (v.paused) play();
+      const ask = v.requestFullscreen || v.webkitRequestFullscreen;
+      const own = () => {
+        // No full screen here (an Android WebView without it): Messenger's own full-size view, from the same moment.
+        const at = v.currentTime; v.pause();
+        photoView({url: v.currentSrc || v.src, kind: 'video', name: m.outgoing ? 'You' : nameOf(m.sender) || 'Video'});
+        const big = view.photo?.media; if (!big) return;
+        try { big.currentTime = at; } catch {}
+        big.play().catch(() => { big.muted = true; big.play().catch(() => {}); });
+      };
+      if ((v.ownerDocument.fullscreenEnabled || v.ownerDocument.webkitFullscreenEnabled) && typeof ask === 'function') {
+        try { Promise.resolve(ask.call(v)).catch(own); } catch { own(); }
+        return;
+      }
+      if (typeof v.webkitEnterFullscreen === 'function') { try { v.webkitEnterFullscreen(); return; } catch {} }
+      own();
+    }
+    return {tap(e) {
+      if (e?.target?.closest?.('.u-vfull') && !full.hidden) { fullScreen(); return; }
+      if (!v.paused && !v.ended) { v.pause(); return; }
+      play();
+    }, play, fullScreen};
   }
   // Tapping a photo or video opens Wizard's own media viewer, the one Chats uses: pinch and double-tap zoom, pan,
   // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Only when Wizard does not open
@@ -2809,7 +2872,7 @@
     layer.onclick = e => { if (e.target === layer) close(); };
     layer.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
     ($('messenger') || document.documentElement).append(layer);
-    view.photo = {layer, close};
+    view.photo = {layer, close, media};
     layer.focus({preventScroll: true});
   }
   function voice(m) {
