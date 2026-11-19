@@ -95,6 +95,12 @@ SWITCHES = (
                     'until you tap Send. Files over 25 MB are too big.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#314']},
+    {'id': 'video-prefetch', 'name': 'Background video download',
+     'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your newest chats, '
+                    'on Wi-Fi only unless you chose Always for photos, so a tapped video plays at once from the phone. '
+                    'Bigger videos still stream on tap.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#320']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
