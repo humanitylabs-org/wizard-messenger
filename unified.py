@@ -1949,14 +1949,16 @@ class UnifiedInbox:
             media = dict(media, album_index=group['index'], album_count=group['count'])
             if isinstance(filename, str):
                 media['filename'] = filename[:200]
-        self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
-                               event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, album=album, push_live=live, mentions=mentions, mentioned=mentioned)
+        inserted = self.store.add_message(event['event_id'], identity, meta.get('names', {}).get(sender) or sender, outgoing, body,
+                                          event.get('origin_server_ts', 0), msgtype=msgtype, media=media, reply_to=reply_to, album=album, push_live=live, mentions=mentions, mentioned=mentioned)
         self.warm_voice(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
         self.warm_photo(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
         if live:
             self.photo_arrived(identity['network'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
             if not outgoing:
                 self.draft_wake_incoming(identity.get('person_id'))
+                if inserted:
+                    self.phone_notify_incoming(event['event_id'])
 
     WARM_DAYS = 3
     EDIT_TEXT = ('m.text', 'm.notice', 'm.emote')
@@ -3509,6 +3511,17 @@ class UnifiedInbox:
         except Exception:
             pass  # never let a wake stall the room's sync
 
+    def phone_notify_incoming(self, message_id):
+        """Issue 308 (switch phone-notifications): a new live incoming message goes to Notifications, so it shows on
+        the phone as a Messenger notification. Nothing happens while the switch is off."""
+        if not self.switch_on('phone-notifications'):
+            return
+        try:
+            import phone_notify
+            phone_notify.incoming(self, message_id)
+        except Exception:
+            pass  # never let a notification stall the room's sync
+
     def drafts_changed(self, person_id):
         """A draft was created or closed: a started chat (no messages) shows or leaves the list with it."""
         if not isinstance(person_id, str) or person_id not in self.store.started():
@@ -3584,6 +3597,10 @@ class UnifiedInbox:
             import draft_watch
             if method == 'GET': return draft_watch.state(self)
             if method == 'POST': return draft_watch.configure(self, payload)
+        if suffix == ['phone-notify']:
+            # Issue 308, owner session only: no agent capability maps here.
+            import phone_notify
+            return phone_notify.dispatch(self, method, payload)
         if suffix[:1] == ['agent-chat']:
             # Issue 265, owner session only: no agent capability maps here. Agents use the
             # messenger_agent_chat_* MCP tools instead.

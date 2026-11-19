@@ -83,6 +83,12 @@ SWITCHES = (
                     'priority chats never count. Your private Messenger chats count too.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#296', 'humanitylabs-org/wizard-messenger#302']},
+    {'id': 'phone-notifications', 'name': 'Messages on your phone',
+     'description': 'Each new message (and an urgent ping in the Agent chat) also goes to Notifications, with the '
+                    'chat name and the start of the message, so the Wizard phone app can show it as a Messenger '
+                    'notification. A tap opens that chat. Muted, Medium and Low priority chats stay quiet.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#308']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
