@@ -24,7 +24,7 @@ supports private Synapse. `bbctl` is Beeper-server-only and is **not used** here
   generated template hashes, source revisions/dependencies and local LINE build
   provenance. Upstream-maintained does not mean network-vendor-endorsed.
 - Instagram's actual registry image is **`dock.mau.dev/mautrix/meta:ig-v0.2610.0`**,
-  pinned to `sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26`.
+  pinned to `sha256:cfba25bf06e97412c5ea60e3c237b6e07b17a8681d2d1c2f7c97db2608fa664d`.
   Its executable is **`/usr/bin/mautrix-meta`**, despite being the Instagram build.
   `dock.mau.dev/mautrix/instagram:v0.2610.0` does not exist.
 - LINE release **1.2.0 has no binary assets and lacks the current QR adapter**.

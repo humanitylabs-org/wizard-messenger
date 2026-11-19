@@ -127,7 +127,7 @@
   },
   "instagram": {
     "tag": "v0.2610.0",
-    "image": "dock.mau.dev/mautrix/meta@sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26",
+    "image": "dock.mau.dev/mautrix/meta@sha256:cfba25bf06e97412c5ea60e3c237b6e07b17a8681d2d1c2f7c97db2608fa664d",
     "manifest": {
       "schemaVersion": 2,
       "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",

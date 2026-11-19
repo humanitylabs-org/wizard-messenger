@@ -14,7 +14,7 @@ covers phone/desktop in Nebula and Signal with live skin switching.
 
 The Instagram image is **`dock.mau.dev/mautrix/meta:ig-v0.2610.0`**, not the
 Messenger-only tag. Its pinned index is
-`sha256:a65249320ab4fba15587b77b9aa7d4024e4ff3e68ade1077da6000a899abbf26`
+`sha256:cfba25bf06e97412c5ea60e3c237b6e07b17a8681d2d1c2f7c97db2608fa664d`
 (`plumbing/connectors-provenance.json`). This image names its Instagram executable
 `/usr/bin/mautrix-meta`. Do not infer the protocol from the executable name.
 
