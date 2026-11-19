@@ -1130,8 +1130,10 @@
     if (split.on) { const r = $('unified-inbox'); r.dataset.split = ''; if (!s.person) r.dataset.view = root.dataset.view; }
     const head = node('header', 'u-header');
     if (s.search != null) {
-      const field = node('input', 'u-search'); field.type = 'search'; field.placeholder = 'Search messages'; field.setAttribute('aria-label', 'Search ' + title.toLowerCase()); field.value = s.search;
+      // Miguel: one field finds chats by name (Chats, from the loaded list) and stored messages (Messages, from the server).
+      const field = node('input', 'u-search'); field.type = 'search'; field.placeholder = 'Search chats and messages'; field.setAttribute('aria-label', 'Search chats and messages'); field.value = s.search; field.enterKeyHint = 'search';
       field.oninput = () => { s.search = field.value; scheduleSearch(); };
+      field.onkeydown = e => { if (e.key !== 'Enter' || e.isComposing) return; const first = root.querySelector('.u-list .u-person'); if (first) { e.preventDefault(); first.click(); } };
       head.append(iconButton('back', 'Close search', back), field);
       requestAnimationFrame(() => field.focus());
     } else {
@@ -1581,10 +1583,10 @@
     return wrap;
   }
   let searchTimer, searchGeneration = 0;
-  const searchView = {query: null, rows: [], cursor: null, loading: false};
+  const searchView = {query: null, rows: [], cursor: null, loading: false, allChats: false};
   function scheduleSearch() {
     clearTimeout(searchTimer); const generation = ++searchGeneration;
-    Object.assign(searchView, {query: s.search, rows: [], cursor: null, loading: !!s.search.trim()});
+    Object.assign(searchView, {query: s.search, rows: [], cursor: null, loading: !!s.search.trim(), allChats: false});
     drawSearch();
     if (s.search.trim()) searchTimer = setTimeout(() => loadSearch(generation), 200);
   }
@@ -1600,9 +1602,46 @@
       searchView.loading = false; drawSearch(); error(e);
     }
   }
+  // Search's Chats section: every listed chat (any folder: Medium and Low too, no filters) whose name, the name it had
+  // before a Contacts rename, or a merged account's label contains the query, ignoring case and accents. Names that
+  // start with it come first, then names with a word starting with it, then the rest; most recent first within each.
+  const fold = t => String(t || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  function chatMatches(query) {
+    const q = fold(query).trim(); if (!q) return [];
+    const ranked = [];
+    for (const p of chatOrder(inboxRows())) {
+      const names = [p.display_name, p.messenger_name, ...(p.identities || []).map(i => i.label)].map(fold).filter(Boolean);
+      const rank = names.some(n => n.startsWith(q)) ? 0 : names.some(n => n.split(/[\s.,_()@-]+/).some(w => w.startsWith(q))) ? 1 : names.some(n => n.includes(q)) ? 2 : -1;
+      if (rank >= 0) ranked.push({p, rank});
+    }
+    return ranked.sort((a, b) => a.rank - b.rank).map(r => r.p); // stable: recency order kept within a rank
+  }
+  function searchHead(text) { const h = node('p', 'u-letter u-search-head', text); h.setAttribute('role', 'heading'); h.setAttribute('aria-level', '2'); return h; }
+  function chatResult(p, list) {
+    // Opens exactly like the same row in the Inbox (split pane on desktop; Back returns to these results).
+    const card = button('', () => {
+      if (split.on) { for (const el of list.querySelectorAll('.u-person.selected')) { el.classList.remove('selected'); el.removeAttribute('aria-current'); } card.classList.add('selected'); card.setAttribute('aria-current', 'true'); }
+      p.native ? openNative(p.group_id, card) : openPerson(p.id, p);
+    }, 'u-person u-chat-result' + (p.unread ? ' unread' : '') + (p.muted ? ' muted' : ''));
+    card.dataset.pid = p.native ? 'native:' + p.group_id : p.id; card.dataset.network = networksOf(p)[0] || '';
+    card.append(netAvatar(p, 'small'));
+    const info = node('span', 'u-person-info'), top = node('span', 'u-chat-top');
+    top.append(node('strong', '', p.display_name));
+    if (isLow(p) || isMedium(p)) top.append(node('span', 'u-state', isLow(p) ? 'Low' : 'Medium'));
+    if (p.last) top.append(node('time', 'u-when', when(p.last.timestamp)));
+    if (p.unread) top.append(node('span', 'u-badge' + (p.muted || isLow(p) || isMedium(p) ? ' muted' : ''), p.unread > 99 ? '99+' : String(p.unread)));
+    info.append(top); card.append(info); return card;
+  }
   function drawSearch() {
     const list = (split.on ? $('u-pane-list') : $('unified-inbox'))?.querySelector('.u-list'); if (!list || (s.person && !split.on) || s.search == null) return;
     list.replaceChildren();
+    const chats = chatMatches(s.search), CHATS_SHOWN = 5;
+    if (chats.length) {
+      list.append(searchHead('Chats'));
+      for (const p of searchView.allChats ? chats : chats.slice(0, CHATS_SHOWN)) list.append(chatResult(p, list));
+      if (!searchView.allChats && chats.length > CHATS_SHOWN) list.append(button('Show all ' + chats.length + ' chats', () => { searchView.allChats = true; drawSearch(); }, 'u-search-all'));
+      list.append(searchHead('Messages'));
+    }
     for (const m of searchView.rows) {
       const row = button('', () => action(async () => {
         if (split.on) { for (const el of list.querySelectorAll('.u-person.selected')) { el.classList.remove('selected'); el.removeAttribute('aria-current'); } row.classList.add('selected'); row.setAttribute('aria-current', 'true'); }
@@ -1617,7 +1656,7 @@
       row.append(info); list.append(row);
     }
     if (searchView.loading) list.append(node('p', 'u-empty', 'Searching stored messages…'));
-    else if (!searchView.rows.length) list.append(node('p', 'u-empty', s.search.trim() ? 'No stored messages match' : 'Type any words from a message. Every network is searched at once.'));
+    else if (!searchView.rows.length) list.append(node('p', 'u-empty', !s.search.trim() ? 'Type a name or any words from a message. Every network is searched at once.' : chats.length ? 'No stored messages match' : 'No chats or messages match'));
     if (searchView.cursor) {
       const more = button('More results', () => { more.disabled = true; loadSearch(searchGeneration, searchView.cursor); }); list.append(more);
     }
@@ -1647,10 +1686,7 @@
       return;
     }
     const list = (split.on ? $('u-pane-list') : $('unified-inbox'))?.querySelector('.u-list'); if (!list || (s.person && !split.on)) return;
-    const twins = wizardTwins();
-    const rows = [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
-      .map(p => { const t = twins.twinOf.get(p.id); if (!t) return p; const low = !!(p.low_priority || t.low_priority); return {...p, muted: !!(p.muted || t.muted), low_priority: low, medium_priority: !low && !!(p.medium_priority || t.medium_priority), twin: t}; })
-      .concat(twins.visible);
+    const rows = inboxRows();
     const everyone = chatOrder(rows, {draftsFirst: true, draftOf: p => p.native ? null : (s.draftIndex?.[p.id] || ((s.drafts[p.id] || '').trim() ? {updated: 0} : null))});
     // Low priority (Beeper's name; WhatsApp's Archive): out of All/Unread, unread counts and notifications, and a new
     // message never brings a chat back. Medium priority stays in All but never pings (no push, badge or Unread).
@@ -1744,6 +1780,13 @@
   }
 
   const isLow = p => !!p.low_priority;
+  // Every chat the Inbox lists, before folders and filters: one row per Wizard chat, its native mute/priority unioned.
+  function inboxRows() {
+    const twins = wizardTwins();
+    return [...(store.lists.people || []), ...(store.lists.groups || [])].filter(p => !twins.hideMirror.has(p.id))
+      .map(p => { const t = twins.twinOf.get(p.id); if (!t) return p; const low = !!(p.low_priority || t.low_priority); return {...p, muted: !!(p.muted || t.muted), low_priority: low, medium_priority: !low && !!(p.medium_priority || t.medium_priority), twin: t}; })
+      .concat(twins.visible);
+  }
   // One row per Wizard chat. The native engine row (private:<group>) and the mirrored unified chat (network
   // 'messenger', address = group) are the same conversation; once the mirror exists only it is listed, because
   // its thread has attachments and server drafts. The native row's device mute/Low priority still apply to it.
