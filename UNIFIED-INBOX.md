@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.82 (one tap plays a video)
+
+Tapping a received video used to open Wizard's viewer, a second screen whose plain player waited for another tap on play. Now one tap plays the video right in the chat, with sound; tap again to pause, and the corner button goes full screen. One video plays at a time and it pauses when scrolled away or when the chat is left. GIFs and stickers still loop on their own, muted. Downloading videos ahead of time is a separate feature (issue 320). Guard: `tests/video_one_tap_browser.cjs`. Issue 319, PR 322.
+
 ## 0.2.0-unified.16.81 (Create address works in the Mac window)
 
 In the Mac window, Create address and every other change in Messenger were refused, and the screen said "Couldn't connect. Try again when your Wizard is reachable." The window's proxy shows the app another address than the page has (until try-wizard 119 reaches the Mac), and Messenger refused that mix. Messenger now also accepts a change the browser itself marks as coming from the same page (Sec-Fetch-Site: same-origin); the session and its CSRF token still guard it. Error lines now say what went wrong instead of always blaming the Wizard's connection. Guards: `tests/test_proxied_origin.py`, `tests/test_setup_error_words.cjs`. Issue 288, PR 317.
