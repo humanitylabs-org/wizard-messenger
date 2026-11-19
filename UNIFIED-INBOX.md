@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.79 (search finds chats by name)
+
+Store recipe: pins the image built from main `278f555`. Ships #311 (Miguel: typing a person's name in Search only found message text): Search is one field, "Search chats and messages". A Chats section comes first, drawn at once from the loaded chat list: chats and groups whose name, pre-rename name or merged account label contains the query (case- and accent-insensitive, every folder including Medium and Low), at most 5 with "Show all". The existing Messages results and paging follow. A chat result opens like its Inbox row (split pane on desktop, Back returns to the results); Enter opens the first result. No switch. Guard: `tests/search_chats_browser.cjs`.
+
 ## 0.2.0-unified.16.78 (messages on your phone, switch off by default)
 
 Store recipe: pins the image built from main `b439b0a`. Ships #309 (Refs humanitylabs-org/wizard-messenger#308): with the new switch `phone-notifications` on, each new incoming message (and each urgent Agent chat ping, at high priority) is posted to the Notifications app tagged `app:messenger`, with the chat name, the start of the message and a link to the chat (`#chat=<id>`), so the Wizard phone app (wizard-ux `wizard/phone-app-notifications`) shows it as a Messenger notification. Muted, Medium and Low priority chats, WhatsApp Status and backlogs stay quiet. wizard.md now uses the `notifications` slot. Guards: `tests/test_phone_notify.py`, `tests/phone_notify_browser.cjs`.
