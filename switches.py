@@ -108,6 +108,11 @@ SWITCHES = (
                     'Agent chat works as before.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#325']},
+    {'id': 'photo-file-names', 'name': 'Saved photos keep their file name',
+     'description': 'Save on a photo or video keeps its own file name when the sender\'s app sent a real one, '
+                    'else it is named by date, like "Messenger photo 2026-11-20 14.03.jpg", instead of after the sender.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#337']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

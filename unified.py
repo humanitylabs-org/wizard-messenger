@@ -1255,7 +1255,7 @@ class PeopleStore:
             if media and media.get('links') and not media.get('mxc'):
                 r['media'] = None
             elif media and (r.get('msgtype') != 'm.text' or media.get('mxc') or media.get('marmot')):
-                r['media'] = {k: v for k, v in media.items() if k in ('mime', 'size', 'w', 'h', 'duration', 'filename', 'waveform', 'voice', 'gif', 'sticker', 'album_index', 'album_count')}
+                r['media'] = {k: v for k, v in media.items() if k in ('mime', 'size', 'w', 'h', 'duration', 'filename', 'source_name', 'waveform', 'voice', 'gif', 'sticker', 'album_index', 'album_count')}
                 r['media']['thumb'] = bool(media.get('thumb')) or is_picture(r.get('msgtype'), media)
             else:
                 r['media'] = None
@@ -1365,6 +1365,9 @@ def message_text(event):
 REPLY_FALLBACK = re.compile(r'\A(?:> [^\n]*\n)+\n', re.S)
 
 
+SOURCE_NAME = re.compile(r'[^\\/\x00-\x1f]{1,195}\.(?:jpe?g|png|gif|webp|hei[cf]|avif|bmp|tiff?|mp4|mov|webm|m4v|3gp|mkv)', re.I)
+
+
 def message_parts(event):
     """(msgtype, text, media, reply_to) for a timeline event, or None when it is not a message.
 
@@ -1407,6 +1410,10 @@ def message_parts(event):
                  'thumb': info.get('thumbnail_url') or None}
         if kind == 'm.audio' and ('org.matrix.msc3245.voice' in content or 'org.matrix.msc3245.voice.v2' in content):
             media['voice'] = True
+        source = content.get('filename') or ('' if content.get('filename') is not None else body)
+        if kind in ('m.image', 'm.video') and isinstance(source, str) and SOURCE_NAME.fullmatch(source.strip()):
+            # Switch photo-file-names (issue 337): the photo's own file name, so Save can keep it.
+            media['source_name'] = source.strip()[:200]
         wave = audio.get('waveform')
         if isinstance(wave, list) and wave:
             # Normalise to 48 buckets of 0-100 for the voice bubble.
