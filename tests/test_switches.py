@@ -122,7 +122,13 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Save on a photo or video keeps its own file name when the sender\'s app sent a real '
                                'one, else it is named by date, like "Messenger photo 2026-11-20 14.03.jpg", instead of '
                                'after the sender.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#337']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#337']}, {
+                'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
+                'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows '
+                               'and changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level '
+                               'is still kept in Messenger, so a change there shows in Settings > Agents too, and the '
+                               'other way round.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#342']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -405,7 +411,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names', 'connected-accounts-levels'])
 
 
 if __name__ == '__main__':

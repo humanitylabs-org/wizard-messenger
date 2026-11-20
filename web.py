@@ -230,6 +230,39 @@ class ViewServer(MessengerServer):
             self.unified.close()
         super().server_close()
 
+def chat_accounts(profiles):
+    """[(network, login)] from the bridges' /whoami -> [{network, label, name}]: names only, connected ones only,
+    never ids, phone numbers beyond what the account is called, or tokens (issue 342)."""
+    from connectors import PROVIDERS
+    out, seen = [], set()
+    for network, login in profiles or []:
+        if not isinstance(login, dict) or network not in PROVIDERS:
+            continue
+        state = login.get('state')
+        state = state.get('state_event') if isinstance(state, dict) else login.get('state_event', state)
+        if state not in (None, 'CONNECTED'):
+            continue
+        prof = login.get('profile') if isinstance(login.get('profile'), dict) else {}
+        name = next((v.strip() for v in (prof.get('name'), login.get('name')) if isinstance(v, str) and v.strip()), '')
+        name = ' '.join(name.split())[:80]
+        key = (network, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({'network': network, 'label': PROVIDERS[network].label, 'name': name})
+    return out
+
+
+def agent_levels_listing(agents, accounts):
+    """The answer of /api/agent-levels: Messenger's own rows, exactly as Settings > Agents shows them."""
+    from wizard_agents import LEVELS, LABELS
+    from agent_keys import RECOMMENDED
+    return {'app': 'messenger', 'accounts': accounts,
+            'agents': [{'id': a['id'], 'label': a['label'], 'main': bool(a.get('main')), 'level': a['level'],
+                        'level_label': LABELS[a['level']]} for a in agents],
+            'levels': [{'id': l, 'label': LABELS[l], 'recommended': l == RECOMMENDED} for l in LEVELS]}
+
+
 class ViewHandler(Handler):
     @property
     def service(self) -> ViewServer:
@@ -539,6 +572,52 @@ class ViewHandler(Handler):
         except EngineError as e:
             self.close_connection=True
             return e.status,{'error':e.message,'code':e.code}
+    def _agent_levels(self,method):
+        """Issue 342 (switch connected-accounts-levels): Connected accounts' Agent access screen reads Messenger's
+        connected chat accounts (network and name only) and each Wizard agent's Messenger level, and sets a level.
+        Messenger stays the only place the level is kept and enforced (wizard_agents.py); this is a second door to
+        the same Settings > Agents row, never a copy. Same owner boundary as the switches route: the Wizard's owner
+        proof on a trusted install, else the owner's view session; never a bearer or the gateway grant. A write
+        needs the box's own Origin, JSON and X-Wizard-Agent-Level: 1 (a cross-site page cannot send it without a
+        CORS preflight we never answer), which stands in for the Messenger CSRF token the other app does not hold.
+        Switch off: no such route (404), so the screen keeps saying "set in Messenger". Errors are {"error", "code"}."""
+        try:
+            if not self.service.switches.is_on('connected-accounts-levels'):
+                raise EngineError('not_found','No such route',404)
+            if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
+                raise EngineError('owner_only','Only the owner can see or change agent levels',403)
+            proven=False
+            if self.service.trusted_owner.enabled:
+                self._trusted_owner(); proven=True
+            self._origin(required=method!='GET')
+            if not proven:
+                session=self._session()
+                if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
+                if session.get('setup_only'): raise EngineError('owner_unlock_required','Finish setup or unlock with your passphrase first',403)
+            if method=='POST':
+                if self.headers.get('X-Wizard-Agent-Level')!='1':
+                    raise EngineError('level_header_required','Send X-Wizard-Agent-Level: 1',403)
+                if self.headers.get('Content-Type','').split(';')[0].strip()!='application/json':
+                    raise EngineError('invalid_input','Send JSON {"agent": ..., "level": ...}',400)
+                try: body=self._body()
+                except EngineError as e: raise EngineError('invalid_input',e.message,400) from None
+                if not isinstance(body,dict) or set(body)!={'agent','level'} or not isinstance(body['agent'],str) or not isinstance(body['level'],str):
+                    raise EngineError('invalid_input','Send JSON {"agent": ..., "level": ...}',400)
+                from wizard_agents import WizardAgentError
+                try: row=self.service.wizard_agents.set_level(body['agent'],body['level'])
+                except WizardAgentError as e: raise EngineError(e.code,e.message,e.status) from None
+                self.service.agent_access.record('OWNER','/agents','%s → %s (Connected accounts)'%(row['label'],row['label_level']))
+            elif method!='GET':
+                raise EngineError('method_not_allowed','Use GET or POST',405)
+            return 200,agent_levels_listing(self.service.wizard_agents.list(),self._chat_accounts())
+        except EngineError as e:
+            self.close_connection=True
+            return e.status,{'error':e.message,'code':e.code}
+    def _chat_accounts(self):
+        unified=self.service.unified
+        try: profiles=unified.own_profiles() if unified is not None and hasattr(unified,'own_profiles') else []
+        except Exception: profiles=[]  # a bridge that is down only hides its account
+        return chat_accounts(profiles)
     def _dispatch(self,method):
         self.pending_cookie=None
         self._trusted_owner_verified=False
@@ -557,6 +636,8 @@ class ViewHandler(Handler):
             return self._unread(method)
         if path=='/api/view/private-seen':
             return self._private_seen(method)
+        if path=='/api/agent-levels':
+            return self._agent_levels(method)
         if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
             raise EngineError('owner_only','Owner browser access is required',403)
         if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/'):
