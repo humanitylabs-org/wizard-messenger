@@ -113,6 +113,12 @@ SWITCHES = (
                     'else it is named by date, like "Messenger photo 2026-11-20 14.03.jpg", instead of after the sender.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#337']},
+    {'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
+     'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows and '
+                    'changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level is still kept '
+                    'in Messenger, so a change there shows in Settings > Agents too, and the other way round.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#342']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
