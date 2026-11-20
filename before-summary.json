@@ -1,0 +1,73 @@
+{
+  "unified": {
+    "open": {
+      "list": false,
+      "unified": true,
+      "native": false
+    },
+    "back1": "handled",
+    "after1": {
+      "list": true,
+      "unified": false,
+      "native": false
+    },
+    "back2": "atRoot",
+    "after2": {
+      "list": true,
+      "unified": false,
+      "native": false
+    },
+    "errors": []
+  },
+  "native": {
+    "open": {
+      "list": false,
+      "unified": false,
+      "native": true
+    },
+    "back1": "handled",
+    "after1": {
+      "list": true,
+      "unified": false,
+      "native": false
+    },
+    "back2": "atRoot",
+    "after2": {
+      "list": true,
+      "unified": false,
+      "native": false
+    },
+    "errors": []
+  },
+  "shareOverNative": {
+    "open": {
+      "list": false,
+      "unified": false,
+      "native": true
+    },
+    "back1": "handled",
+    "after1": {
+      "list": false,
+      "unified": false,
+      "native": false
+    },
+    "back2": "handled",
+    "after2": {
+      "list": true,
+      "unified": false,
+      "native": false
+    },
+    "errors": []
+  },
+  "nativeEmpty": {
+    "listHidden": true,
+    "back1": "atRoot",
+    "after1": {
+      "list": false,
+      "unified": false,
+      "native": false
+    },
+    "back2": "atRoot",
+    "errors": []
+  }
+}
