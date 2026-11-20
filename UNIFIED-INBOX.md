@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.90 (Android Back from a chat lands on the chat list)
+
+Store recipe: pins the image built from main `748085b`. Ships #346 (Refs humanitylabs-org/wizard-messenger#341), a bug fix switched on: on a phone, opening a chat while a private Wizard chat is open now closes the Wizard chat (it stayed on screen over the chat being opened), and the Wizard chats view with nothing of its own open answers Back by showing the chat list instead of handing Back to the Wizard (Home). Guard: `tests/android_back_thread_browser.cjs`.
+
 ## 0.2.0-unified.16.89 (Connected accounts can show and set agent levels, switch off)
 
 Store recipe: pins the image built from main `693be81`. Ships #344 (Refs humanitylabs-org/wizard-messenger#342), behind switch `connected-accounts-levels` (off by default): an owner-only route `GET/POST /api/agent-levels` lets Connected accounts' Agent access screen list Messenger's connected chat accounts (names only) and show and change each Wizard agent's Messenger level. The level stays in Messenger's one store (the Settings > Agents row), so a change on either side shows on the other. Guards: `tests/test_agent_levels_route.py`, `tests/test_switches.py`.
