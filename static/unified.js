@@ -160,6 +160,23 @@
       return item;
     });
   }
+  // With "Saved photos keep their file name" on (issue 337), Save in a photo viewer names the file after the photo,
+  // not after its sender ('You.jpg'): the name the sender's app gave it when that is a real one, else a dated name
+  // such as 'Messenger photo 2026-11-20 14.03.jpg' (local time). Camera names like IMG_1234.jpg are kept; generic or
+  // random ones (image.jpg, a hex id) are not.
+  function savedMediaName(m, when = new Date(m?.timestamp || Date.now())) {
+    const video = m?.msgtype === 'm.video', mime = String(m?.media?.mime || '').split(';')[0].toLowerCase();
+    const raw = String(m?.media?.source_name || m?.media?.filename || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim();
+    const dot = raw.lastIndexOf('.'), stem = dot > 0 ? raw.slice(0, dot) : '', ext = dot > 0 ? raw.slice(dot + 1) : '';
+    const generic = /^(image|img|photo|picture|pic|video|movie|clip|file|media|attachment|unnamed|untitled|download|sticker|gif)([ _-]?\d{0,3})?$/i;
+    const random = /^[0-9a-f-]{16,}$/i.test(stem) || /^[A-Za-z0-9]{20,}$/.test(stem) && /\d/.test(stem) && /[A-Za-z]/.test(stem);
+    if (stem && /^[a-z0-9]{2,5}$/i.test(ext) && !generic.test(stem) && !random) return raw.slice(0, 200);
+    const types = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic', 'image/avif': 'avif',
+      'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov'};
+    const d = Number.isNaN(when.getTime()) ? new Date() : when, pad = n => String(n).padStart(2, '0');
+    const date = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + '.' + pad(d.getMinutes());
+    return 'Messenger ' + (video ? 'video ' : 'photo ') + date + '.' + (types[mime] || (/^[a-z0-9]{2,5}$/i.test(ext) ? ext.toLowerCase() : video ? 'mp4' : 'jpg'));
+  }
   // A tapped file attachment downloads once, and shows that it is downloading (issue 157). The box fetches the whole
   // file from its homeserver before it answers, so a plain link looked dead for seconds and every extra tap started
   // another download. start(key, work) runs work(report) unless that key is already running (then it returns null);
@@ -610,7 +627,7 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2894,7 +2911,8 @@
   function viewer(m, box) {
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
-    const who = x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
+    const who = switchState.on['photo-file-names'] === true ? x => savedMediaName(x)
+      : x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
     const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
     const open = blobs => {
       const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
@@ -3117,7 +3135,7 @@
     if (!m.deleted) item('Forward to Wizard', 'forward', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(shown[m.id] === 'translated' && (deviceText(m) || m.translated) || m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
-    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { if (m.msgtype === 'm.file' && !m.photos) return saveFile(m); for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = photo.media?.filename || ''; a.click(); } });
+    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { if (m.msgtype === 'm.file' && !m.photos) return saveFile(m); for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = switchState.on['photo-file-names'] === true ? savedMediaName(photo) : photo.media?.filename || ''; a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     if (opts.selectText && m.original && !m.deleted) item('Select text', 'textsel', opts.selectText);
     if (opts.select && !m.deleted && !m.pending) item('Select', 'check', opts.select);

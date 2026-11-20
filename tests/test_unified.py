@@ -788,6 +788,19 @@ class SignalMvpTests(unittest.TestCase):
         self.assertNotIn('mxc', json.dumps(self.inbox.timeline(self.pid)))
         self.assertNotIn('mxc', json.dumps(self.inbox.updates(0, 0)))
 
+    def test_photo_rows_carry_their_own_file_name(self):
+        # Issue 337: Save can name a photo after its own file, never after its sender.
+        self.ingest(self.event('$named', {'msgtype': 'm.image', 'body': 'look', 'filename': 'IMG_1234.JPG', 'url': 'mxc://messenger.internal/a',
+                                          'info': {'mimetype': 'image/jpeg'}}, ts=5))
+        self.ingest(self.event('$bare', {'msgtype': 'm.image', 'body': 'Beach.png', 'url': 'mxc://messenger.internal/b',
+                                         'info': {'mimetype': 'image/png'}}, ts=6))
+        self.ingest(self.event('$caption', {'msgtype': 'm.image', 'body': 'see you at 5.30', 'url': 'mxc://messenger.internal/c',
+                                            'info': {'mimetype': 'image/jpeg'}}, ts=7))
+        rows = {r['id']: r for r in self.inbox.timeline(self.pid)['messages']}
+        self.assertEqual(rows['$named']['media']['source_name'], 'IMG_1234.JPG')
+        self.assertEqual(rows['$bare']['media']['source_name'], 'Beach.png')
+        self.assertNotIn('source_name', rows['$caption']['media'])
+
     def test_voice_note_ingest(self):
         self.ingest(self.event('$v', {'msgtype': 'm.audio', 'body': 'Voice message', 'url': 'mxc://messenger.internal/v',
                                       'info': {'mimetype': 'audio/ogg', 'duration': 4200}, 'org.matrix.msc3245.voice': {},
