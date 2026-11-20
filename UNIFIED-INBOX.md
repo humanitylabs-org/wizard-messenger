@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.89 (Connected accounts can show and set agent levels, switch off)
+
+Store recipe: pins the image built from main `693be81`. Ships #344 (Refs humanitylabs-org/wizard-messenger#342), behind switch `connected-accounts-levels` (off by default): an owner-only route `GET/POST /api/agent-levels` lets Connected accounts' Agent access screen list Messenger's connected chat accounts (names only) and show and change each Wizard agent's Messenger level. The level stays in Messenger's one store (the Settings > Agents row), so a change on either side shows on the other. Guards: `tests/test_agent_levels_route.py`, `tests/test_switches.py`.
+
 ## 0.2.0-unified.16.88 (saved photos keep their file name, switch off)
 
 Store recipe: pins the image built from main `9d14a4e`. Ships #338 (Refs humanitylabs-org/wizard-messenger#337), behind switch `photo-file-names` (off by default): Save on a photo or video in Wizard's media viewer (and Save in the message menu) names the file after the photo, its own file name when the sender's app sent a real one, else `Messenger photo 2026-11-20 14.03.jpg`, instead of after the sender (`You.jpg`). The box keeps an incoming photo's file name as `media.source_name`. Guards: `tests/test_saved_media_name.cjs`, `tests/test_unified.py`.
