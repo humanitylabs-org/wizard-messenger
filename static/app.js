@@ -876,13 +876,22 @@
     if (window.MessengerUnified?.active()) return window.MessengerUnified.back();
     if (!state.sheet && state.selection?.active) { state.selection.clear(); return true; }
     const next = backLayer(state);
-    if (!next.handled) return false;
+    if (!next.handled) {
+      // Issue 341: the Wizard chats view with nothing of its own open still hides the Inbox: Back shows it again.
+      if (!window.MessengerUnified?.nativeOpen?.()) return false;
+      window.MessengerUnified.returnNative(); return true;
+    }
     cancel();
     if (state.sheet) closeSheet(); else leaveChat();
     schedule(); return true;
   }
+  // Whether backStep has a step to take. It must agree with backStep: a false here hands Back to the Wizard (Home).
+  function canGoBack() {
+    if (window.MessengerUnified?.active()) return window.MessengerUnified.canGoBack();
+    return !!(state.sheet || state.group || state.selection?.active || window.MessengerUnified?.nativeOpen?.());
+  }
   window.__wizardCloseOverlay = backStep;
-  window.WizardApp.back.register({canGoBack: () => window.MessengerUnified?.active() ? window.MessengerUnified.canGoBack() : !!(state.sheet || state.group), back: backStep});
+  window.WizardApp.back.register({canGoBack, back: backStep});
   for (const id of ['contact-address', 'contact-name', 'display-name']) $(id).addEventListener('input', syncUpdateHold);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && backStep()) { event.preventDefault(); event.stopPropagation(); }

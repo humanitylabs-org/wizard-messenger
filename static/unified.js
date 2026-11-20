@@ -2157,7 +2157,9 @@
   async function openPerson(id, hint) {
     if (agentMode(id)) return openAgentChat(agentMode(id)); // issue 265: the two Agent chats open like any chat
     view.selection?.clear();
-    if (split.on && s.native) native?.close?.(); // the native Wizard thread on the right gives way
+    // The native Wizard thread gives way: on the right in the split, and on a phone too (issue 341: it stayed on screen
+    // over the chat being opened, and Back then walked through a hidden chat).
+    if (s.native) native?.close?.();
     const fromList = !split.on && !s.person ? $('unified-inbox')?.querySelector(':scope > .u-list') : null;
     if (fromList) split.listTop = fromList.scrollTop;
     // Where to start reading: taken before anything can mark the chat read, kept until the owner leaves the chat.
@@ -5139,7 +5141,7 @@
     const id = AGENT_IDS[mode] || AGENT_IDS.chat;
     view.selection?.clear(); view.selection = null;
     if (s.overlay) closeOverlay();
-    if (split.on && s.native) native?.close?.();
+    if (s.native) native?.close?.(); // issue 341: phones too, as in openPerson
     const fromList = !split.on && !s.person ? $('unified-inbox')?.querySelector(':scope > .u-list') : null;
     if (fromList) split.listTop = fromList.scrollTop;
     if (agentMode(s.person) !== mode) agentRecDiscard();
@@ -5998,6 +6000,9 @@
   switchState.paints['share-files'] = () => { if (shareKinds().join() !== sharedKinds) listenForShares(); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
+    // Issue 341: the Wizard chats view is on screen with no chat or sheet of its own (the Inbox list is hidden). Back then
+    // shows the Inbox again, one step, instead of handing Back to the Wizard (which went Home on Android).
+    nativeOpen: () => !!(s.ready && s.native && !s.overlay),
     setNativeRows(rows) { nativeRows = rows; nativeUnread = rows.reduce((n, p) => n + (p.muted || p.low_priority || p.medium_priority || !(p.unread > 0) ? 0 : 1), 0); syncBadge(); if ((!s.native && !s.person) || split.on) drawList(); if (s.resumeNative && rows.some(p => p.group_id === s.resumeNative)) { const group = s.resumeNative; s.resumeNative = null; openNative(group); } },
     receiveShare, shareTargetRows,
     ask, toast, holdToMenu, actionMenu, muteAction, icon, messageGestures, messageSelection,
