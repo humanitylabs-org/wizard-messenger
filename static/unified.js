@@ -691,7 +691,46 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 348: a tapped photo is handed to Wizard's viewer in the tap itself, never after a wait on this phone's photo
+  // cache (it used to wait up to 120 ms for Cache Storage). readyCopies keeps the view copies this phone downloaded
+  // (issue 166) as blob: URLs in memory, read ahead (when a chat shows its photos and on the finger's touch, before its
+  // tap) and decoded ahead, so the viewer's first frame is a sharp, already decoded picture. match(url) resolves a blob:
+  // URL or null, has(url) says the cache holds it, decode(blobURL) decodes it (resolves when done), revoke frees one.
+  // get(url) answers at once: the blob: URL, or undefined while it is still being read. keep bounds the blobs held,
+  // hot the decoded pictures held (each is a few MB of memory).
+  function readyCopies({match, has, decode = () => Promise.resolve(), revoke = () => {}, keep = 12, hot = 3}) {
+    const ready = new Map(), reading = new Map(), warm = [];
+    const touch = url => { const b = ready.get(url); ready.delete(url); ready.set(url, b); };
+    const heat = (url, blob) => {
+      const at = warm.findIndex(x => x.url === url); if (at >= 0) warm.splice(at, 1);
+      const entry = {url, done: Promise.resolve().then(() => decode(blob)).catch(() => {})};
+      warm.push(entry); while (warm.length > hot) warm.shift();
+      return entry.done;
+    };
+    function prime(urls, {decoded = false} = {}) {
+      const jobs = [];
+      for (const url of urls || []) {
+        if (!url) continue;
+        if (ready.has(url)) { touch(url); if (decoded) jobs.push(heat(url, ready.get(url))); continue; }
+        if (reading.has(url)) { if (decoded) jobs.push(reading.get(url).then(b => b && heat(url, b))); continue; }
+        if (!has(url)) continue;
+        const job = Promise.resolve().then(() => match(url)).then(blob => {
+          reading.delete(url);
+          if (!blob) return null;
+          ready.set(url, blob);
+          while (ready.size > keep) { const [old, b] = ready.entries().next().value; ready.delete(old); revoke(b); }
+          return blob;
+        }, () => { reading.delete(url); return null; });
+        reading.set(url, job);
+        jobs.push(decoded ? job.then(b => b && heat(url, b)) : job);
+      }
+      return Promise.all(jobs);
+    }
+    // Lock or a wiped cache: every kept blob goes.
+    function clear() { for (const b of ready.values()) revoke(b); ready.clear(); reading.clear(); warm.length = 0; }
+    return {prime, clear, get: url => ready.get(url), size: () => ready.size};
+  }
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1428,7 +1467,7 @@
     if (n === badgeShown) return; badgeShown = n;
     try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
-  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { photoCache.clear(); } catch { /* not started */ } try { for (const b of videoBlobs.values()) URL.revokeObjectURL(b); videoBlobs.clear(); } catch { /* none kept */ } try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
+  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { photoCache.clear(); } catch { /* not started */ } try { viewCopies.clear(); } catch { /* not started */ } try { for (const b of videoBlobs.values()) URL.revokeObjectURL(b); videoBlobs.clear(); } catch { /* none kept */ } try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
   let recent = [];
   let csrf = () => '';
   let feedCtl = null;
@@ -2547,6 +2586,7 @@
     if (!t.messages.length) kids.push(node('p', 'u-empty', 'No messages yet. Say hi 👋'));
     // Download the newest few voice notes from others now, so Play starts at once.
     t.messages.filter(m => m.media?.voice && !m.outgoing && !m.deleted && !m.local).slice(-6).forEach(m => player.preload(mediaURL(m.id)));
+    primeChatCopies(t.messages); // issue 348: the newest photos' view copies are ready before a tap
     const before = scroll.scrollHeight - scroll.scrollTop, top = scroll.scrollTop;
     const old = [...scroll.children];
     const kept = (k, i) => k === old[i] || (i === 0 && old[0]?.className === 'u-spacer') || (k.className === 'u-day' && old[i]?.className === 'u-day' && k.textContent === old[i].textContent) || (k.className === 'u-older' && old[i]?.className === 'u-older');
@@ -2888,6 +2928,7 @@
       else if (m.media?.mime === 'image/gif') { box.classList.add('gif'); box.append(node('span', 'u-gif-tag', 'GIF')); }
     }
     box.message = m;
+    if (!m.pending && !sticker && !v) box.addEventListener('pointerdown', () => primeTapped(m, box), {passive: true});
     if (!m.pending) box.onclick = e => {
       if (inline) { inline.tap(e); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
@@ -2985,19 +3026,41 @@
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
     const who = x => savedMediaName(x);
     const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
-    const open = blobs => {
-      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
-      if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
-    };
-    // Issue 170: the tapped photo and the ones either side, when this phone already has their view copies, go to
-    // Wizard as blob: URLs, so the first frame and the first swipe show a sharp picture. A slow cache never holds the tap.
-    const near = placeholder ? [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(u => u && photoCache.has(u)) : [];
-    if (!near.length) { open({}); return; }
-    const blobs = {}, keep = viewerBlobs;
-    const reads = near.map(u => photoCache.match(u).then(b => { if (b) { blobs[u] = b; keep.push(b); while (keep.length > 12) URL.revokeObjectURL(keep.shift()); } }));
-    Promise.race([Promise.all(reads), sleep(120)]).then(() => open({...blobs}));
+    // Issue 348: opened in the tap, never after a wait. The view copies this phone already read (viewCopies) go as
+    // blob: URLs; one still being read goes as the thumbnail the bubble shows, and the swipe to it finds it ready.
+    const near = placeholder ? nearCopies(list, at) : [];
+    const blobs = {};
+    for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
+    viewCopies.prime(near);
+    const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+    if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
   }
-  const viewerBlobs = []; // blob: URLs handed to Wizard's viewer; the oldest are revoked once more than 12 are out
+  // The view copies of a chat's photo at `at` and the ones either side (photo-instant's screen copies, issue 164).
+  const nearCopies = (list, at) => [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(Boolean);
+  // Issue 348: this phone's downloaded view copies, held as blob: URLs so a tap hands them over at once. A photo is read
+  // ahead when its chat shows it and decoded ahead on the finger's touch (pointerdown comes before the tap's click).
+  const viewCopies = readyCopies({
+    match: url => photoCache.match(url),
+    has: url => photoCache.has(url),
+    decode: blob => { const img = new Image(); img.decoding = 'async'; img.src = blob; return img.decode().then(() => img); },
+    revoke: blob => { try { URL.revokeObjectURL(blob); } catch { /* already gone */ } },
+  });
+  // Read ahead the newest photos of the chat on screen, so the first tap already finds them (only while the shared
+  // viewer gets placeholders: viewer-placeholder).
+  function primeChatCopies(messages) {
+    if (switchState.on['viewer-placeholder'] !== true) return;
+    const list = (messages || []).filter(x => x && !x.pending && !x.deleted && !isSticker(x));
+    viewCopies.prime(list.map(x => photoStages(x, true, mediaURL).sharp).filter(Boolean).slice(-6));
+  }
+  function primeTapped(m, box) {
+    if (switchState.on['viewer-placeholder'] !== true) return;
+    const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
+    const list = boxes.map(b => b.message), at = list.indexOf(m);
+    if (at < 0) return;
+    const urls = nearCopies(list, at), mine = photoStages(m, true, mediaURL).sharp;
+    viewCopies.prime(urls.filter(u => u === mine), {decoded: true});
+    viewCopies.prime(urls.filter(u => u !== mine));
+  }
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
   // zooms natively); Close, Esc or Back closes it.
   // With "Photos open instantly" on (issue 164) a photo opens from its thumbnail and sharpens in place (photoStages),
@@ -3008,7 +3071,9 @@
     const layer = node('div', 'u-photo-view'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true'); layer.setAttribute('aria-label', item.name || 'Photo'); layer.tabIndex = -1;
     const instant = switchState.on['photo-instant'] === true, m = list[at];
     const stages = item.kind !== 'video' && m ? photoStages(m, instant, mediaURL) : {first: item.url, sharp: null, full: item.url};
-    let media, shown = stages.first, upgrade = () => {}, stop = () => {};
+    // Issue 348: a view copy this phone already holds ready (viewCopies) is the first picture, sharp at once.
+    const ready = stages.sharp ? viewCopies.get(stages.sharp) : undefined;
+    let media, shown = ready || stages.first, upgrade = () => {}, stop = () => {};
     const clock = item.kind !== 'video' && switchState.on['photo-timings'] === true ? photoClock.tap(tapped) : null;
     const kept = [];
     if (item.kind === 'video') { media = node('video'); media.controls = true; media.autoplay = true; media.playsInline = true; media.setAttribute('playsinline', ''); }
@@ -3022,7 +3087,7 @@
           const next = new Image(); next.onload = () => { if (layer.isConnected && rank > best) { best = rank; shown = next.src; media.src = next.src; layer.dataset.stage = rank === 2 ? 'full' : 'view'; if (rank === 1) clock?.sharp(performance.now()); } };
           (rank === 1 && photoCache.has(url) ? photoCache.match(url) : Promise.resolve(null)).then(hit => { if (hit) kept.push(hit); next.src = hit || url; });
         };
-        layer.dataset.stage = 'thumb'; swap(stages.sharp, 1);
+        if (ready) { best = 1; layer.dataset.stage = 'view'; } else { layer.dataset.stage = 'thumb'; swap(stages.sharp, 1); }
         upgrade = () => { if (best < 2 && !layer.dataset.zoom) { layer.dataset.zoom = '1'; swap(stages.full, 2); } };
         media.addEventListener('dblclick', upgrade);
         const vv = window.visualViewport, zoomed = () => { if ((vv?.scale || 1) > 1.05) upgrade(); };
@@ -3031,12 +3096,21 @@
       }
     }
     media.src = shown;
-    if (clock) {
-      // The first frame after the viewer is in the page: a picture already decoded, or black.
-      const painted = () => media.complete && media.naturalWidth > 0;
-      media.addEventListener('load', () => clock.shown(performance.now()), {once: true});
-      requestAnimationFrame(() => { clock.firstFrame(painted()); if (painted()) clock.shown(performance.now()); });
-    }
+    if (ready) clock?.sharp(performance.now());
+    // Issue 348: the view stays clear (the chat still shows under it) until its first picture is decoded, at most
+    // 150 ms, then appears in one frame: never a black first frame.
+    const painted = () => media.complete && media.naturalWidth > 0;
+    const reveal = () => {
+      if (!layer.classList.contains('u-wait')) return;
+      layer.classList.remove('u-wait');
+      if (clock) requestAnimationFrame(() => { clock.firstFrame(painted()); if (painted()) clock.shown(performance.now()); });
+    };
+    if (clock) media.addEventListener('load', () => { if (!layer.classList.contains('u-wait')) clock.shown(performance.now()); }, {once: true});
+    if (item.kind !== 'video' && !painted() && typeof media.decode === 'function') {
+      layer.classList.add('u-wait');
+      const cap = setTimeout(reveal, 150);
+      media.decode().then(reveal, reveal).finally(() => clearTimeout(cap));
+    } else if (clock) requestAnimationFrame(() => { clock.firstFrame(painted()); if (painted()) clock.shown(performance.now()); });
     const close = () => { if (!layer.isConnected) return false; stop(); for (const u of kept.splice(0)) URL.revokeObjectURL(u); try { media.pause?.(); } catch {} layer.remove(); if (view.photo?.layer === layer) view.photo = null; if (before?.isConnected) before.focus({preventScroll: true}); return true; };
     layer.append(media, iconButton('close', 'Close', close, 'u-photo-view-close'));
     layer.onclick = e => { if (e.target === layer) close(); };

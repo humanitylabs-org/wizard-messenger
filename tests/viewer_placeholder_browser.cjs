@@ -21,7 +21,7 @@ async function run(browser, on, label, viewport, mobile) {
   await ctx.addInitScript(() => {
     const noop = () => {};
     window.__views = [];
-    window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop},
+    window.WizardApp = {hosted: true, ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop},
       media: {view: (items, at) => { window.__views.push({items: JSON.parse(JSON.stringify(items)), at, t: performance.now()}); return true; }}};
     const mark = () => { const r = document.documentElement; if (!r) return false; r.dataset.wzHosted = ''; return true; };
     if (!mark()) new MutationObserver((_, o) => { if (mark()) o.disconnect(); }).observe(document, {childList: true});
