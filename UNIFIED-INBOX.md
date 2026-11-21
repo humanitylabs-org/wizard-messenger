@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.92 (Transcripts in paragraphs for everyone)
+
+Store recipe: pins the image built from main `3c0a53b`. Ships #355 (Refs humanitylabs-org/wizard-messenger#248): the `transcript-paragraphs` switch is removed, so Transcribe on a voice note always gives the saved transcript paragraph breaks, punctuation and capitals (the raw text is saved when the words would change or the call fails). A stored value for the old switch is ignored. Guards: `tests/test_unified.py`, `tests/test_switches.py`, `tests/transcript_paragraphs_browser.cjs`.
+
 ## 0.2.0-unified.16.91 (Emoji panel like Telegram, switch off)
 
 Store recipe: pins the image built from main `6eca887`. Ships #350 (Refs humanitylabs-org/wizard-messenger#349), behind switch `telegram-emoji` (off by default): the emoji panel gets a category bar that jumps to a section and lights the one on screen, a delete key in a bottom strip (hold to repeat, the phone keyboard stays down), a keyboard button that swaps the panel for the keyboard and back with the caret kept, skin tones on a long press (or right-click) that stick per emoji and show in Recent, a Recent of about three rows ranked by use, the phone keyboard's height on a phone, tabs in the bottom strip with a sideways swipe between them, and lazy section painting. Guards: `tests/test_telegram_emoji.cjs`, `tests/telegram_emoji_browser.cjs`, `tests/test_switches.py`.
