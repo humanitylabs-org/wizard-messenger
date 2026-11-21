@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.93 (Messenger opens faster)
+
+Store recipe: pins the image built from main `de25932`. Ships #358 (Refs humanitylabs-org/wizard-messenger#356), a bug fix with no switch: private (Marmot) chats no longer ask the messaging daemon for each chat's members on every list, read and send (they are kept and refreshed in the background), reads run side by side instead of queueing behind one engine lock (writes and the daemon restart still run alone), and the phone icon's private unread count comes from a snapshot of each chat's newest message, so asking for it makes no daemon call. Guards: `tests/test_engine_read_cache.py`, `tests/test_unread_count.py`, `tests/test_engine_memory_guard.py`.
+
 ## 0.2.0-unified.16.92 (Transcripts in paragraphs for everyone)
 
 Store recipe: pins the image built from main `3c0a53b`. Ships #355 (Refs humanitylabs-org/wizard-messenger#248): the `transcript-paragraphs` switch is removed, so Transcribe on a voice note always gives the saved transcript paragraph breaks, punctuation and capitals (the raw text is saved when the words would change or the call fails). A stored value for the old switch is ignored. Guards: `tests/test_unified.py`, `tests/test_switches.py`, `tests/transcript_paragraphs_browser.cjs`.
