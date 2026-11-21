@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.96 (Saved photos keep their file name for everyone)
+
+Store recipe: pins the image built from main `8b37f67`. Ships #365 (Refs humanitylabs-org/wizard-messenger#337): the `photo-file-names` switch is removed (approved), so Save on a photo or video in Wizard's media viewer or a message's menu always keeps the photo's own file name, else a dated name like "Messenger photo 2026-11-20 14.03.jpg", never the sender's name. Guards: `tests/test_saved_media_name.cjs`, `tests/test_switches.py`.
+
 ## 0.2.0-unified.16.95 (Agent chat always shows your agent's name)
 
 Store recipe: pins the image built from main `4356903`. Ships #363 (Refs humanitylabs-org/wizard-messenger#277): the `agent-chat-name` switch is removed (approved), so the pinned Agent chat always shows your agent's own name and hat picture in its colour ("Agent" when no agent is known). Guards: `tests/test_agent_chat_name.cjs`, `tests/agent_chat_name_browser.cjs`.
