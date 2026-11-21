@@ -2983,8 +2983,7 @@
   function viewer(m, box) {
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
-    const who = switchState.on['photo-file-names'] === true ? x => savedMediaName(x)
-      : x => (x.outgoing ? 'You' : nameOf(x.sender) || 'Photo') + (x.original ? ' · ' + x.original : '');
+    const who = x => savedMediaName(x);
     const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
     const open = blobs => {
       const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
@@ -3207,7 +3206,7 @@
     if (!m.deleted) item('Forward to Wizard', 'forward', () => view.selection.forward([m.id]));
     if (!m.deleted) item('Reply', 'reply', () => startReply(m));
     if (m.original && !m.deleted) item('Copy', 'copy', () => navigator.clipboard?.writeText(shown[m.id] === 'translated' && (deviceText(m) || m.translated) || m.original)?.then(() => toast('Copied')).catch(() => toast('Copy is not available here')));
-    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { if (m.msgtype === 'm.file' && !m.photos) return saveFile(m); for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = switchState.on['photo-file-names'] === true ? savedMediaName(photo) : photo.media?.filename || ''; a.click(); } });
+    if (m.media && !m.deleted) item(m.photos?.length > 1 ? 'Save photos' : 'Save', 'download', () => { if (m.msgtype === 'm.file' && !m.photos) return saveFile(m); for (const photo of m.photos || [m]) if (!photo.deleted) { const a = node('a'); a.href = mediaURL(photo.id); a.download = savedMediaName(photo); a.click(); } });
     if (m.outgoing && telegram && m.msgtype === 'm.text' && !m.deleted) item('Edit', 'compose', () => startEdit(m));
     if (opts.selectText && m.original && !m.deleted) item('Select text', 'textsel', opts.selectText);
     if (opts.select && !m.deleted && !m.pending) item('Select', 'check', opts.select);

@@ -72,7 +72,7 @@ const assert = require('node:assert/strict');
   let st = await page.evaluate(() => window.WosChat.viewer.state);
   assert.equal(st.open, true); assert.equal(st.n, 3, 'swipe through every photo in the chat'); assert.equal(st.i, 1, 'opens on the tapped photo');
   assert.match(await page.locator('.mviewer .mv-stage img').getAttribute('src'), /api\/unified\/media\/%24photo-1$/);
-  assert.match(st.name, /Album preview/);
+  assert.match(st.name, /^Messenger photo \d{4}-\d\d-\d\d \d\d\.\d\d\.\w+$/, 'saved under a dated name, not the sender (issue 337)');
   assert.equal(await app.locator('.u-viewer').count(), 0, 'Messenger keeps no viewer of its own');
   await page.waitForTimeout(400);
   // Pinch out with two fingers (real touch events): the photo zooms.

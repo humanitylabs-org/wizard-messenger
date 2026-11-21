@@ -96,11 +96,6 @@ SWITCHES = (
                     'Agent chat works as before.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#325']},
-    {'id': 'photo-file-names', 'name': 'Saved photos keep their file name',
-     'description': 'Save on a photo or video keeps its own file name when the sender\'s app sent a real one, '
-                    'else it is named by date, like "Messenger photo 2026-11-20 14.03.jpg", instead of after the sender.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#337']},
     {'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
      'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows and '
                     'changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level is still kept '
