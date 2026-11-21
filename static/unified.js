@@ -542,7 +542,7 @@
     const readAt = Number(state?.reports_read_at) || 0;
     return (Number(state?.reports_unread) || 0) + (readAt > 0 ? (Array.isArray(notices) ? notices : []).filter(n => n.at > readAt && !n.read).length : 0);
   }
-  // Issue 277 (switch agent-chat-name): which of the owner's agents the pinned Agent chat is with. `levels` is Messenger's
+  // Issue 277: which of the owner's agents the pinned Agent chat is with. `levels` is Messenger's
   // own Settings > Agents list (api/view/agents `wizard_agents`: id, label, level, main, last_used); `agents` is the
   // Agent Service's list (GET /wizard/v1/agents: id, label, privacy, appearance.hue, is_default, hidden), the one the
   // Wizard shows its agents from. The agent with Draft-only access wins (the main one, else the one used last); with
@@ -5250,13 +5250,11 @@
   const agentChat = {state: null, mode: 'chat', root: null, key: '', loading: null};
   // Issue 276 (switch reports-notifications): Reports also lists a copy of every notification.
   function noticesOn() { return switchState.on['reports-notifications'] === true; }
-  // Issue 277 (switch agent-chat-name): the Agent chat carries the agent's own name and sigil, as the Wizard shows it
+  // Issue 277: the Agent chat carries the agent's own name and sigil, as the Wizard shows it
   // (the agent with Draft-only access in Settings > Agents). Re-read at most once a minute, at once on open.
   const agentWho = {who: null, at: 0, loading: null};
-  function agentNameOn() { return switchState.on['agent-chat-name'] === true; }
-  const agentName = () => (agentNameOn() && agentWho.who?.name) || 'Agent';
+  const agentName = () => agentWho.who?.name || 'Agent';
   function loadAgentWho(force = false) {
-    if (!agentNameOn()) { if (agentWho.who) { agentWho.who = null; agentWho.at = 0; paintAgentWho(); } return Promise.resolve(); }
     if (agentWho.loading) return agentWho.loading;
     if (!force && Date.now() - agentWho.at < 60000) return Promise.resolve();
     agentWho.at = Date.now();
@@ -5264,7 +5262,6 @@
       .then(r => r.ok ? r.json() : null).catch(() => null);
     agentWho.loading = Promise.all([api('api/view/agents').catch(() => null), service])
       .then(([mine, svc]) => {
-        if (!agentNameOn()) return;
         const who = agentIdentity(mine?.wizard_agents, svc?.agents);
         if (JSON.stringify(who) === JSON.stringify(agentWho.who)) return;
         agentWho.who = who; paintAgentWho();
@@ -5281,7 +5278,7 @@
     head.querySelector('.u-av-wrap')?.replaceChildren(agentFace('chat', true));
     root.querySelector('.u-ac-log')?.setAttribute('aria-label', agentChatLabel());
   }
-  const agentChatLabel = () => agentNameOn() && agentWho.who ? 'Chat with ' + agentWho.who.name : 'Agent chat';
+  const agentChatLabel = () => agentWho.who ? 'Chat with ' + agentWho.who.name : 'Agent chat';
   // Read straight from the Notifications app on this box, like the shell's bell (same origin, the owner's session). It
   // is a copy: nothing here marks, archives or changes anything in Notifications. At most every 15 s, at once on open.
   const NOTIFICATIONS = new URL('../notifications/', location.href).pathname;
@@ -5314,7 +5311,6 @@
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
-  switchState.paints['agent-chat-name'] = () => { loadAgentWho(true); paintAgentWho(); };
   switchState.paints['reports-notifications'] = () => {
     loadNotices(true);
     paintAgentRow();
@@ -5363,7 +5359,7 @@
     info.append(top, bottom); card.append(agentFace(mode, false), info); return card;
   }
   function agentFace(mode, small) {
-    const who = mode === 'chat' && agentNameOn() ? agentWho.who : null;
+    const who = mode === 'chat' ? agentWho.who : null;
     if (who) {
       // The Wizard's agent sigil: its hat mark (the private hat for a private agent) in the agent's own colour.
       const own = node('span', 'u-avatar u-agent-av u-agent-own' + (who.private ? ' private' : '') + (small ? ' small' : ''));

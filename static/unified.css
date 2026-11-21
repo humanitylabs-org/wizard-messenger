@@ -1225,7 +1225,7 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-agent-row .u-agent-av, .u-agent-head .u-agent-av { background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
 .u-agent-av.reports { background: var(--raised-2); color: var(--link); }
 .u-agent-av svg { width: 55%; height: 55%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-/* Issue 277 (switch agent-chat-name): the agent's own sigil, as the Wizard draws it: its hat mark in the agent's colour
+/* Issue 277: the agent's own sigil, as the Wizard draws it: its hat mark in the agent's colour
    (set from its hue as --ag-l/--ag-c/--ag-h) on a tile tinted with that colour. The mark is the shell's own file. */
 .u-agent-row .u-agent-av.u-agent-own, .u-agent-head .u-agent-av.u-agent-own { --ag: oklch(var(--ag-l) var(--ag-c) var(--ag-h)); background: color-mix(in oklab, var(--ag) 18%, var(--raised-2)); color: var(--ag); }
 .u-agent-hat { display: block; width: 100%; height: 100%; background: currentColor; -webkit-mask: url("/wizard-os-home/brand/wizard-mark-white.png") center / auto 60% no-repeat; mask: url("/wizard-os-home/brand/wizard-mark-white.png") center / auto 60% no-repeat; }
