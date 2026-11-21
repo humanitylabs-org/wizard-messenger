@@ -1,9 +1,11 @@
 ---
 name: messenger
-description: Use when opening Messenger or checking its account and connection status.
+description: "Use when the owner asks to draft, write, reply to or message anyone (WhatsApp, LINE, Telegram, Instagram, Slack, Signal): save it as a Messenger draft, never only in chat. Also for opening Messenger or checking its account and connection status."
 ---
 
 # Messenger
+
+**Draft a message = save it in Messenger.** When the owner says draft, write, reply or message someone, save it with `messenger_create_draft` (an existing chat: find it with `messenger_list_chats`) or `messenger_start_draft` (a new WhatsApp number, LINE ID or Telegram @username). Text in the Wizard chat is not a draft. If these tools are not in your tool list, find them with tool_search or run them with tool_call (`mcp__wizard__messenger__messenger_create_draft`, `mcp__wizard__messenger__messenger_start_draft`). Then tell the owner the draft is waiting in that chat.
 
 Messenger is an installed Wizard container app. Its view opens through its `view.url` from the app registry; its APIs and MCP stay behind the box's authenticated app route. Do not install it as a host daemon or create a separate ad-hoc web service.
 
