@@ -56,3 +56,16 @@ test('inside Wizard (framed, or connected to a Wizard host): Wizard viewer as be
   assert.equal(openMedia(hostViewer(hosted, false), items, 0, fallback), 'wizard');
   assert.deepEqual(fallback.seen, []);
 });
+
+// Issue 354: a photo staged in the composer (a draft) opens full size on a tap, like a sent one: the tray's photos in
+// order, files left out, the tapped one's index.
+test('draft tray: the tapped photo opens among the tray photos; files are not offered', () => {
+  const {trayPhotos} = require('../static/unified.js');
+  const a = {key: 'a', url: 'blob:a', name: 'beach.jpg'}, f = {key: 'f', file: true, name: 'plan.pdf'}, b = {key: 'b', url: 'blob:b'};
+  assert.deepEqual(trayPhotos([a, f, b], b), {items: [{url: 'blob:a', kind: 'image', name: 'beach.jpg'}, {url: 'blob:b', kind: 'image', name: 'Photo'}], at: 1});
+  assert.equal(trayPhotos([a, f, b], f).at, -1, 'a file chip is not a photo');
+  assert.deepEqual(trayPhotos(null, a), {items: [], at: -1});
+  const fallback = spy(), t = trayPhotos([a, b], a);
+  assert.equal(openMedia(hostViewer({hosted: false}, false), t.items, t.at, fallback), 'messenger');
+  assert.deepEqual(fallback.seen, [{url: 'blob:a', kind: 'image', name: 'beach.jpg'}]);
+});

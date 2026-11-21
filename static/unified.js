@@ -138,6 +138,13 @@
     if (!item?.url) return 'none';
     fallback(item); return 'messenger';
   }
+  // Issue 354: a photo staged in the composer (picked, pasted, shared in, or restored from a saved draft) opens full
+  // size on a tap, like a sent one. The items are the tray's photos (files and voice takes stay out), with the tapped
+  // one's index; at is -1 when the tapped item is not a photo with a preview.
+  function trayPhotos(attach, tapped) {
+    const photos = (attach || []).filter(it => it && !it.file && it.url);
+    return {items: photos.map(it => ({url: it.url, kind: 'image', name: it.name || 'Photo'})), at: photos.indexOf(tapped)};
+  }
   // With "Photos open instantly" on (issue 164), Messenger's own viewer shows a still photo in stages: the thumbnail the
   // bubble already shows (so the first frame is never black), then the box's screen-size view copy, then the original
   // only on zoom. Off, or for GIFs, videos and photos still sending, it opens the original as before. url(id, kind)
@@ -684,7 +691,7 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2885,7 +2892,11 @@
       if (inline) { inline.tap(e); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
       if (!sticker) viewer(m, box); // stickers are part of the conversation, not photos to open
-    }; else box.append(node('span', 'u-spin'));
+    }; else {
+      box.append(node('span', 'u-spin'));
+      // Issue 354: a photo still sending opens full size from this phone's own copy.
+      if (m.local && !sticker && m.msgtype === 'm.image') box.onclick = () => openMedia(hostViewer(window.WizardApp, window.parent !== window), [{url: m.local, kind: 'image', name: 'You'}], 0, item => photoView(item));
+    }
     return box;
   }
   // Issue 320: a video this phone already downloaded plays from the phone. The bubble swaps to the kept copy before
@@ -3792,7 +3803,12 @@
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
       // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
-      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) strip.append(WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }})); bar.append(strip); }
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) { const chip = WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }});
+        // Issue 354: tapping a staged photo opens it full size (Wizard's viewer, else Messenger's own), never the Remove button.
+        if (!it.file && it.url) { chip.classList.add('u-attach-open'); chip.setAttribute('role', 'button'); chip.tabIndex = 0; chip.setAttribute('aria-label', 'Open ' + (it.name || 'photo') + ' full size');
+          const open = e => { if (e.target?.closest?.('.ch-attrm')) return; e.preventDefault(); const t = trayPhotos(view.attach, it); if (t.at >= 0) openMedia(hostViewer(window.WizardApp, window.parent !== window), t.items, t.at, item => photoView(item)); };
+          chip.addEventListener('click', open); chip.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === chip) open(e); }); }
+        strip.append(chip); } bar.append(strip); }
       for (const take of voiceKept.values()) {
         if (take.meta?.person !== id) continue;
         bar.hidden = false;
