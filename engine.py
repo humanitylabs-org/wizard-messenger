@@ -5,6 +5,7 @@ Secret Service vault is encrypted by GNOME Keyring and unlocked via stdin.
 Messages and imported keys cross only the private wnd Unix socket, never argv.
 """
 from __future__ import annotations
+import copy
 import json
 from contextlib import contextmanager
 import hashlib
@@ -92,6 +93,10 @@ def vault_password(value):
         raise EngineError('invalid_vault_password', 'Use a passphrase of at least 16 characters, on one line', 400)
     return value
 
+# Issue 356: how long a DM's members are kept before a background refresh (a member without a name: sooner).
+MEMBERS_TTL = 600.0
+MEMBERS_NAMELESS_TTL = 60.0
+
 class MarmotEngine:
     def __init__(self, data='/data', relays=None):
         self.data = Path(data)
@@ -103,7 +108,16 @@ class MarmotEngine:
         self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.home.mkdir(exist_ok=True, mode=0o700)
+        # Writes (sends, setup, lock, a daemon restart) take `mutex` alone. Reads share `_reading()` (issue 356): they
+        # wait for a write, never for each other, so an opening view's reads don't queue behind the unread count.
         self.mutex = threading.RLock()
+        self._read_cv = threading.Condition(threading.Lock())
+        self._readers = 0
+        self._local = threading.local()
+        # Issue 356: a DM's two members barely change, so they are asked once (not on every list, read and send).
+        self._members = {}  # group -> (fresh until, members | None for not a DM)
+        self._refreshing = set()
+        self._cache_lock = threading.Lock()
         self.daemon = None
         self.keyring_process = None
         self.unlocked = False
@@ -132,6 +146,62 @@ class MarmotEngine:
         finally:
             connection.close()
 
+    @contextmanager
+    def _writing(self):
+        """An operation that may change something (or restart the daemon): alone, after every running read."""
+        with self.mutex:
+            local = self._local
+            depth = getattr(local, 'writes', 0)
+            if not depth:
+                with self._read_cv:
+                    while self._readers - getattr(local, 'reads', 0) > 0:  # a read on this thread can't wait for itself
+                        self._read_cv.wait()
+            local.writes = depth + 1
+            try:
+                yield
+            finally:
+                local.writes = depth
+
+    @contextmanager
+    def _reading(self):
+        """A read-only daemon call: runs side by side with other reads, never during a write (issue 356)."""
+        local = self._local
+        if getattr(local, 'writes', 0) or getattr(local, 'reads', 0):
+            yield  # already inside a write or a read on this thread
+            return
+        with self.mutex:  # a write in progress (or waiting for reads to end) goes first
+            with self._read_cv:
+                self._readers += 1
+        local.reads = 1
+        try:
+            yield
+        finally:
+            local.reads = 0
+            with self._read_cv:
+                self._readers -= 1
+                if not self._readers:
+                    self._read_cv.notify_all()
+
+    def _forget_members(self, group=None):
+        with self._cache_lock:
+            if group is None: self._members.clear()
+            else: self._members.pop(group, None)
+
+    def _refresh_later(self, key, work):
+        """Run `work` once in the background (deduplicated by key); the caller keeps answering from its cache."""
+        with self._cache_lock:
+            if key in self._refreshing: return
+            self._refreshing.add(key)
+        def run():
+            try:
+                if self.status()['state'] == 'ready':
+                    with self._reading(): work()
+            except Exception:
+                pass
+            finally:
+                with self._cache_lock: self._refreshing.discard(key)
+        threading.Thread(target=run, name='messenger-cache-refresh', daemon=True).start()
+
     def daemon_memory_mb(self):
         daemon = self.daemon
         if daemon is None or daemon.poll() is not None:
@@ -150,7 +220,7 @@ class MarmotEngine:
         limit = limit_mb or float(os.environ.get('MESSENGER_WND_MAX_MB', '600'))
         if self.daemon_memory_mb() < limit:
             return False
-        with self.mutex:
+        with self._writing():
             if not self.unlocked or self.daemon_memory_mb() < limit:
                 return False
             daemon = self.daemon
@@ -181,7 +251,7 @@ class MarmotEngine:
         now = time.time() if now is None else now
         if not self.keys_pending.exists() or now < self.keys_retry_at or self.status()['state'] != 'ready':
             return False
-        with self.mutex:
+        with self._writing():
             try:
                 self._execute({'Keys':{'command':'Publish'}})
             except EngineError:
@@ -310,7 +380,7 @@ class MarmotEngine:
         return {'account_id':account['account_id'], 'npub':account['npub'], 'display_name':profile.get('display_name') or profile.get('name') or '', 'dedicated_messaging_identity':True}
 
     def identity(self):
-        with self.mutex:
+        with self._reading():
             self._require_ready()
             accounts = self._execute('Whoami')['accounts']
             if not accounts:
@@ -325,7 +395,7 @@ class MarmotEngine:
     def setup_with_proof(self, payload):
         """Return (result, proved): proved is True only when THIS call's
         passphrase is the one that just unlocked the encrypted provider."""
-        with self.mutex:
+        with self._writing():
             action = payload.get('action')
             if action == 'lock':
                 self.lock()
@@ -397,8 +467,9 @@ class MarmotEngine:
             return {**self.status(), **self.identity()}, proved
 
     def lock(self):
-        with self.mutex:
+        with self._writing():
             self.unlocked = False
+            self._forget_members()
             if self.daemon is not None and self.daemon.poll() is None:
                 try: self._rpc('Shutdown', timeout=5)
                 except EngineError: self.daemon.terminate()
@@ -417,7 +488,7 @@ class MarmotEngine:
             return {'contacts':[{'pubkey':p,'label':l} for p,l in db.execute('SELECT pubkey,label FROM contacts ORDER BY label COLLATE NOCASE,pubkey')]}
 
     def save_contact(self, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             key = public_key(payload.get('pubkey'))
             label = text(payload.get('label'), 'contact label')
@@ -426,7 +497,7 @@ class MarmotEngine:
             return {'contact':{'pubkey':key,'label':label}, 'publication':'local_only'}
 
     def delete_contact(self, key):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             public_key(key)
             with self._db() as db: db.execute('DELETE FROM contacts WHERE pubkey=?',(key,))
@@ -437,9 +508,26 @@ class MarmotEngine:
         return {'group_id':group['group_id'], 'name':group.get('name') or group.get('profile',{}).get('name',''), 'pending_confirmation':group.get('pending_confirmation',False), 'welcomer_account_id':group.get('welcomer_account_id'), 'members':members or []}
 
     def _dm_members(self, group):
+        """The DM's two members (public fields only). Issue 356: asked once per chat and kept (MEMBERS_TTL, then
+        refreshed in the background while the kept answer is served), instead of one daemon call per chat on every
+        list, read and send."""
         group_id(group)
+        with self._cache_lock:
+            hit = self._members.get(group)
+        if hit is None:
+            return self._load_members(group)
+        fresh, members = hit
+        if fresh <= time.monotonic():
+            self._refresh_later(('members', group), lambda: self._load_members(group))
+        if members is None:
+            raise EngineError('not_a_dm', 'Only two-member direct messages are supported', 409)
+        return copy.deepcopy(members)
+
+    def _load_members(self, group):
         members = self._groups({'Members':{'group_id':group}})['members']
         if len(members) != 2:
+            with self._cache_lock:
+                self._members[group] = (time.monotonic() + MEMBERS_TTL, None)
             raise EngineError('not_a_dm', 'Only two-member direct messages are supported', 409)
         # Only public identity fields; discard MLS cryptographic metadata.
         result=[{k:v for k,v in member.items() if k in ['account_id','member_id','npub','display_name','profile']} for member in members]
@@ -447,6 +535,10 @@ class MarmotEngine:
             if not member.get('display_name'):
                 name=self._public_name(member.get('npub') or member.get('member_id') or member.get('account_id'))
                 if name: member['display_name']=name
+        # A member still without a name is asked again sooner (its profile may arrive), in the background.
+        ttl = MEMBERS_TTL if all(m.get('display_name') for m in result) else MEMBERS_NAMELESS_TTL
+        with self._cache_lock:
+            self._members[group] = (time.monotonic() + ttl, copy.deepcopy(result))
         return result
 
     def _public_name(self, key):
@@ -474,7 +566,7 @@ class MarmotEngine:
         return name
 
     def dms(self):
-        with self.mutex:
+        with self._reading():
             self._require_ready()
             result=[]
             for group in self._groups('List')['groups']:
@@ -487,7 +579,7 @@ class MarmotEngine:
             return {'dms':result}
 
     def create_dm(self, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             key=public_key(payload.get('pubkey'))
             own=self.identity()['identity']
@@ -502,7 +594,7 @@ class MarmotEngine:
             return {'dm':self._group(group,self._dm_members(group['group_id'])), 'invite_sent':True}
 
     def invites(self):
-        with self.mutex:
+        with self._reading():
             self._require_ready()
             result=[]; unsupported=0
             for g in self._groups('Invites')['invites']:
@@ -514,7 +606,7 @@ class MarmotEngine:
             return {'invites':result,'unsupported_invites':unsupported}
 
     def invite_action(self, group, action):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             group_id(group)
             if action not in ['accept','decline']: raise EngineError('invalid_action','Use accept or decline',400)
@@ -523,7 +615,7 @@ class MarmotEngine:
             return {'group_id':group,'action':action,'completed':True}
 
     def messages(self, group, limit=100, before=None, before_message_id=None):
-        with self.mutex:
+        with self._reading():
             self._require_ready()
             members = self._dm_members(group)
             names = {member[k]: member.get('display_name') or '' for member in members for k in ('account_id','member_id','npub') if member.get(k)}
@@ -548,7 +640,7 @@ class MarmotEngine:
         return message_id
 
     def edit(self, group, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             self._dm_members(group)
             message_id=self._message_target(group,payload)
@@ -557,7 +649,7 @@ class MarmotEngine:
             return {'group_id':group,'message_id':message_id,'message_ids':result.get('message_ids',[]),'published':result.get('published')}
 
     def delete(self, group, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             self._dm_members(group)
             message_id=self._message_target(group,payload)
@@ -565,7 +657,7 @@ class MarmotEngine:
             return {'group_id':group,'message_id':message_id,'message_ids':result.get('message_ids',[]),'published':result.get('published')}
 
     def react(self, group, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             self._dm_members(group)
             message_id=self._message_target(group,payload)
@@ -579,7 +671,7 @@ class MarmotEngine:
             return {'group_id':group,'message_id':message_id,'message_ids':result.get('message_ids',[]),'published':result.get('published')}
 
     def retry(self, group, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             self._dm_members(group)
             event_id=payload.get('message_id')
@@ -596,7 +688,7 @@ class MarmotEngine:
     def send_media(self, group, payload):
         """Encrypt each file with the group's MIP-04 media key, upload the ciphertext to the group's
         Blossom endpoints (engine defaults) and publish one kind-9 message carrying every imeta tag."""
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             self._dm_members(group)
             paths=payload.get('paths')
@@ -638,7 +730,7 @@ class MarmotEngine:
 
     def media_download(self, group, sha256, output):
         """Fetch one attachment's ciphertext from Blossom and decrypt it with the group key into `output`."""
-        with self.mutex:
+        with self._reading():
             self._require_ready()
             self._dm_members(group)
             if not isinstance(sha256,str) or not HEX64.fullmatch(sha256):
@@ -650,7 +742,7 @@ class MarmotEngine:
             return {'size':result.get('size_bytes'),'mime':(result.get('media') or {}).get('media_type')}
 
     def send(self, group, payload):
-        with self.mutex:
+        with self._writing():
             self._require_ready()
             self._dm_members(group)
             body=text(payload.get('text'),'TEXT message',16384)

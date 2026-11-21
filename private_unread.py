@@ -26,7 +26,8 @@ class PrivateUnread:
     def __init__(self, path):
         self.path = Path(path) if path else None
         self.lock = threading.Lock()
-        self.cache = None  # (count, expires at)
+        self.cache = None  # ({group: (newest message id, direction)}, fresh until)
+        self.refreshing = False
         data = self._read()
         self.marks = data['marks']
         self.last = data['last']
@@ -77,51 +78,101 @@ class PrivateUnread:
                 self.marks[group] = {'seen': mark['seen'] or old.get('seen'), 'quiet': mark['quiet']}
             while len(self.marks) > MAX_CHATS:
                 self.marks.pop(next(iter(self.marks)))
-            self.cache = None
+            if self.cache is not None:
+                # Issue 356: a mark updates the snapshot instead of dropping it, so the next count needs no engine
+                # call. The view marks the newest message it showed: when that is newer than the one we know of,
+                # it is the newest now (and read), and the snapshot is read again soon in the background.
+                snapshot, fresh = dict(self.cache[0]), self.cache[1]
+                for group, mark in clean.items():
+                    if group not in snapshot:
+                        continue
+                    if mark['seen'] and snapshot[group][0] != mark['seen']:
+                        snapshot[group] = (mark['seen'], 'seen')
+                        fresh = 0
+                self.cache = (snapshot, fresh)
             self._write()
         return {'saved': len(clean)}
 
     def count(self, engine):
-        """How many private chats have an unread newest message (a number only)."""
+        """How many private chats have an unread newest message (a number only).
+
+        Issue 356: the count is worked out from a snapshot of each chat's newest message, so asking for it never
+        waits on the messaging engine: the seen marks are applied to the snapshot as they arrive, and a snapshot
+        older than TTL is answered as it is while a fresh one is read in the background. Only the very first ask
+        (or one after the snapshot was dropped) reads the engine while the caller waits."""
         with self.lock:
-            if self.cache and self.cache[1] > time.monotonic():
-                return self.cache[0]
-            marks = dict(self.marks)
+            cache = self.cache
+            stale = cache is not None and cache[1] <= time.monotonic()
+            if stale and not self.refreshing:
+                self.refreshing = True
+                threading.Thread(target=self._refresh_in_background, args=(engine,), name='private-unread',
+                                 daemon=True).start()
+        if cache is None:
+            snapshot = self._snapshot(engine)
+            if snapshot is None:
+                return self.last
+            with self.lock:
+                self.cache = (snapshot, time.monotonic() + TTL)
+        return self._tally()
+
+    def _refresh_in_background(self, engine):
+        try:
+            snapshot = self._snapshot(engine)
+            with self.lock:
+                if snapshot is not None:
+                    self.cache = (snapshot, time.monotonic() + TTL)
+                elif self.cache is not None:  # locked or unreachable: keep the old one, try again after TTL
+                    self.cache = (self.cache[0], time.monotonic() + TTL)
+            self._tally()
+        finally:
+            with self.lock:
+                self.refreshing = False
+
+    def _snapshot(self, engine):
+        """{group: (newest message id, direction)} for every confirmed private chat, or None while the engine
+        can't be read (locked after a restart, or down)."""
         if engine is None:
-            return self.last
+            return None
         try:
             ready = engine.status().get('state') == 'ready'
         except Exception:
             ready = False
         if not ready:
-            return self.last
+            return None
         try:
             dms = engine.dms().get('dms')
         except Exception:
-            return self.last
+            return None
         if not isinstance(dms, list):
-            return self.last
-        total = 0
+            return None
+        snapshot = {}
         for dm in dms:
             group = dm.get('group_id') if isinstance(dm, dict) else None
             if not group or dm.get('pending_confirmation'):
-                continue
-            mark = marks.get(group) or {}
-            if mark.get('quiet'):
                 continue
             try:
                 rows = engine.messages(group, 1).get('messages')
             except Exception:
                 continue
             last = rows[-1] if isinstance(rows, list) and rows else None
-            if isinstance(last, dict) and last.get('direction') == 'received' and last.get('message_id') != mark.get('seen'):
-                total += 1
+            snapshot[group] = (last.get('message_id'), last.get('direction')) if isinstance(last, dict) else (None, None)
+        return snapshot
+
+    def _tally(self):
         with self.lock:
-            self.cache = (total, time.monotonic() + TTL)
+            snapshot = self.cache[0] if self.cache else {}
+            total = 0
+            for group, newest in snapshot.items():
+                mark = self.marks.get(group) or {}
+                if mark.get('quiet'):
+                    continue
+                message_id, direction = newest
+                if direction == 'received' and message_id != mark.get('seen'):
+                    total += 1
             if total != self.last:
                 self.last = total
                 try:
                     self._write()
                 except OSError:
                     pass
-        return total
+            return total
