@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.95 (Agent chat always shows your agent's name)
+
+Store recipe: pins the image built from main `4356903`. Ships #363 (Refs humanitylabs-org/wizard-messenger#277): the `agent-chat-name` switch is removed (approved), so the pinned Agent chat always shows your agent's own name and hat picture in its colour ("Agent" when no agent is known). Guards: `tests/test_agent_chat_name.cjs`, `tests/agent_chat_name_browser.cjs`.
+
 ## 0.2.0-unified.16.94 (Draft photos open full size)
 
 Store recipe: pins the image built from main `3236013`. Ships #360 (Refs humanitylabs-org/wizard-messenger#354), a bug fix with no switch: tapping a photo staged in the composer (picked, pasted, shared in or restored from a saved draft) opens it full size in Wizard's media viewer (pinch to zoom, swipe through the draft's photos), or Messenger's own full-size view when Wizard's viewer is not around; Remove still only removes. A photo still sending also opens from the phone's own copy. Guards: `tests/test_open_media.cjs`, `tests/draft_photo_open_browser.cjs`.
