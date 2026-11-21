@@ -1,6 +1,6 @@
-// Issue 277 (switch agent-chat-name): the pinned Agent chat carries the owner's agent's own name and sigil (the Wizard's
-// hat mark in the agent's colour), picked as the agent with Draft-only access in Settings > Agents. Off: "Agent" and the
-// Agent Service is never asked. On with no agent known: "Agent" stays.
+// Issue 277: the pinned Agent chat carries the owner's agent's own name and sigil (the Wizard's hat mark in the agent's
+// colour), picked as the agent with Draft-only access in Settings > Agents. Always on (its switch was removed); a stale
+// stored `agent-chat-name: off` from an older box changes nothing. With no agent known: "Agent" stays.
 // Synthetic API (agent_chat.py's owner routes, api/view/agents, the Agent Service's /wizard/v1/agents), no container:
 //   PLAYWRIGHT_MODULE=... [SHELL_DIR=<wizard-ux>/web] node tests/agent_chat_name_browser.cjs [outdir]
 // SHELL_DIR serves the shell's hat mark (/wizard-os-home/brand/...) for the screenshots; without it the tile has no mark.
@@ -19,7 +19,7 @@ const SERVICE = [{id: 'hermes', label: 'Hermes', is_default: true, privacy: 'sta
 const LEVELS = [{id: 'hermes', label: 'Your Wizard agent', level: 'read_only', main: true, last_used: now - min},
   {id: 'oscar', label: 'Oscar', level: 'draft_only', main: false, last_used: now - 2 * min}];
 
-async function run(browser, label, {on, service = SERVICE, levels = LEVELS}, viewport) {
+async function run(browser, label, {stale = false, service = SERVICE, levels = LEVELS}, viewport) {
   const ctx = await browser.newContext({viewport, deviceScaleFactor: 1, colorScheme: 'dark', hasTouch: viewport.width < 600});
   await ctx.addInitScript(() => {
     const noop = () => {};
@@ -32,8 +32,8 @@ async function run(browser, label, {on, service = SERVICE, levels = LEVELS}, vie
   const entries = [{id: 'n1', kind: 'note', by: 'owner', text: 'Buy dog food', at: now - 20 * min, seen: {at: now - 19 * min, by: 'Oscar'}}];
   const state = () => ({entries, unread: 0, urgent: false, sweep_open: false, read_at: 0, agent: {woken: true, checked: true}, reports_unread: 0, reports_read_at: 0});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = [
-    {id: 'agent-chat-name', name: 'Agent chat with your agent\'s name', description: 'x', on, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#277']}];
+  const switches = stale ? [
+    {id: 'agent-chat-name', name: 'Agent chat with your agent\'s name', description: 'x', on: false, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#277']}] : [];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -69,7 +69,7 @@ async function run(browser, label, {on, service = SERVICE, levels = LEVELS}, vie
   await row.waitFor({timeout: 10000});
   await page.waitForTimeout(1500);
   const shot = name => page.screenshot({path: path.join(out, `${label}-${name}.png`)});
-  const expect = on && service ? 'Oscar' : 'Agent';
+  const expect = service ? 'Oscar' : 'Agent';
   assert.equal(await row.locator('strong').textContent(), expect, label + ': the pinned row\'s name');
   assert.equal(await row.locator('.u-agent-own').count(), expect === 'Oscar' ? 1 : 0, label + ': the agent\'s own sigil');
   if (expect === 'Oscar') {
@@ -89,7 +89,7 @@ async function run(browser, label, {on, service = SERVICE, levels = LEVELS}, vie
   assert.equal(await head.locator('.u-agent-own').count(), expect === 'Oscar' ? 1 : 0, label + ': the header sigil');
   assert.equal(await page.locator('#unified-inbox .u-ac-field').count(), 1, label + ': still the note composer');
   await shot('2-chat');
-  if (!on) assert.equal(hits.service, 0, label + ': the Agent Service is never asked with the switch off');
+  assert.ok(hits.service > 0, label + ': the Agent Service is asked for the agent\'s name');
   assert.deepEqual(errors, [], label + ' page errors');
   await ctx.close();
   return {label, name: expect, asked: hits.service};
@@ -99,10 +99,10 @@ async function run(browser, label, {on, service = SERVICE, levels = LEVELS}, vie
   const browser = await chromium.launch();
   try {
     const results = [];
-    results.push(await run(browser, 'phone-on', {on: true}, {width: 390, height: 780}));
-    results.push(await run(browser, 'desktop-on', {on: true}, {width: 1280, height: 800}));
-    results.push(await run(browser, 'phone-off', {on: false}, {width: 390, height: 780}));
-    results.push(await run(browser, 'phone-unknown', {on: true, service: null, levels: [LEVELS[0]]}, {width: 390, height: 780}));
+    results.push(await run(browser, 'phone', {}, {width: 390, height: 780}));
+    results.push(await run(browser, 'desktop', {}, {width: 1280, height: 800}));
+    results.push(await run(browser, 'phone-stale-off', {stale: true}, {width: 390, height: 780}));
+    results.push(await run(browser, 'phone-unknown', {service: null, levels: [LEVELS[0]]}, {width: 390, height: 780}));
     console.log(JSON.stringify(results));
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

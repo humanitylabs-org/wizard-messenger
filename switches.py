@@ -60,12 +60,6 @@ SWITCHES = (
                     'with its title, text and link. Notifications keeps working as before; Reports stays read-only.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#276']},
-    {'id': 'agent-chat-name', 'name': 'Agent chat with your agent\'s name',
-     'description': 'The pinned Agent chat shows your agent\'s own name and picture, the way Wizard shows it '
-                    'elsewhere, instead of the word Agent. With more than one agent, it is the one with Draft-only '
-                    'access in Settings > Agents.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#277']},
     {'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
      'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, and a second '
                     'tap shows them again. This device remembers your choice.',

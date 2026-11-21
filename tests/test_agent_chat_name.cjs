@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {agentIdentity, agentHue, agentInk} = require('../static/unified.js');
-// Issue 277 (switch agent-chat-name): the pinned Agent chat carries the owner's agent's own name and colour.
+// Issue 277: the pinned Agent chat carries the owner's agent's own name and colour.
 
 const main = {id: 'hermes', label: 'Hermes', is_default: true, appearance: {glyph: 'hat', hue: 265}};
 const oscar = {id: 'oscar', label: 'Oscar', is_default: false, privacy: 'standard', appearance: {hue: 30}};
