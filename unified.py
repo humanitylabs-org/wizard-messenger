@@ -2511,10 +2511,10 @@ class UnifiedInbox:
         return state
 
     def save_transcript(self, message_id, payload):
-        """Issue 248 (switch transcript-paragraphs): before the first transcript of a voice note is saved, one Tinfoil
+        """Issue 248: before the first transcript of a voice note is saved, one Tinfoil
         call adds paragraph breaks, punctuation and capitals. The words must come back unchanged (same letters and
         digits in the same order), else the raw text is saved. Any failure saves the raw text; nothing blocks."""
-        if self.switch_on('transcript-paragraphs') and isinstance(payload, dict) and isinstance(payload.get('text'), str):
+        if isinstance(payload, dict) and isinstance(payload.get('text'), str):
             m = self.store.message(message_id)
             if not m['deleted'] and m['msgtype'] == 'm.audio' and not m.get('transcript'):
                 raw = payload['text'].strip()

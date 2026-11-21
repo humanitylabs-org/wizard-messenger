@@ -1,4 +1,4 @@
-// Issue 248 (switch transcript-paragraphs): a transcript saved with paragraph breaks shows as separate paragraphs in the
+// Issue 248 (always on): a transcript saved with paragraph breaks shows as separate paragraphs in the
 // voice-note bubble, both for one already saved and right after Transcribe. Old one-block transcripts are unchanged.
 // Synthetic API only, no container and no shell:
 //   PLAYWRIGHT_MODULE=... node tests/transcript_paragraphs_browser.cjs [outdir]

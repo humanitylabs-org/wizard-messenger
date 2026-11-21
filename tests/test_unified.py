@@ -320,7 +320,7 @@ class UnifiedTests(unittest.TestCase):
         with self.assertRaises(EngineError): self.inbox.dispatch('POST', path, {'text': 'resurrect'})
 
     def test_transcript_paragraphs_formats_once_and_keeps_words(self):
-        # Issue 248 (switch transcript-paragraphs): paragraphs and punctuation added, words unchanged, cached.
+        # Issue 248 (always on since the switch was removed): paragraphs and punctuation added, words unchanged, cached.
         raw = 'hey its me so about saturday i can come at five then on sunday we could go hiking what do you think'
         formatted = "Hey, it's me. So about Saturday, I can come at five.\n\nThen on Sunday we could go hiking.  What do you think?"
         calls = []
@@ -330,11 +330,9 @@ class UnifiedTests(unittest.TestCase):
         self.inbox.transcript_complete = complete
         self.inbox.store.add_message('$v1', self.a, 'alice', False, '', 100, msgtype='m.audio', media={'voice': True})
         path = '/api/unified/messages/%24v1/transcript'
-        # Off: the raw text is saved, no model call.
-        self.inbox.store.add_message('$v0', self.a, 'alice', False, '', 99, msgtype='m.audio', media={'voice': True})
-        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/messages/%24v0/transcript', {'text': raw})['text'], raw)
-        self.assertEqual(calls, [])
-        self.inbox.switches.set('transcript-paragraphs', True)
+        # A stale stored off value from the removed switch no longer matters: formatting always runs.
+        if self.inbox.switches.path:
+            self.inbox.switches.path.write_text('{"switches": {"transcript-paragraphs": false}}')
         saved = self.inbox.dispatch('POST', path, {'text': '  ' + raw + ' '})['text']
         self.assertEqual(saved, "Hey, it's me. So about Saturday, I can come at five.\n\nThen on Sunday we could go hiking. What do you think?")
         self.assertEqual(calls, [('glm-5-3', raw)])
@@ -347,7 +345,6 @@ class UnifiedTests(unittest.TestCase):
 
     def test_transcript_paragraphs_falls_back_to_raw(self):
         # Issue 248: a failing, rewording or dropping formatter saves the raw transcript and never blocks.
-        self.inbox.switches.set('transcript-paragraphs', True)
         raw = 'ok see you at the station at seven'
         outcomes = [EngineError('upstream_unavailable', 'down', 503), 'Okay, see you at the station at seven.',
                     'See you at the station.', 'OK, see you at the train station at seven.', '']
