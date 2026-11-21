@@ -1412,7 +1412,7 @@ def message_parts(event):
             media['voice'] = True
         source = content.get('filename') or ('' if content.get('filename') is not None else body)
         if kind in ('m.image', 'm.video') and isinstance(source, str) and SOURCE_NAME.fullmatch(source.strip()):
-            # Switch photo-file-names (issue 337): the photo's own file name, so Save can keep it.
+            # Issue 337: the photo's own file name, so Save can keep it.
             media['source_name'] = source.strip()[:200]
         wave = audio.get('waveform')
         if isinstance(wave, list) and wave:

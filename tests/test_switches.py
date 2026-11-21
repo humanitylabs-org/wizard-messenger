@@ -108,11 +108,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'the same card as Daily with one-tap answers, and urgent alerts arrive as one-line '
                                'pings. With the inbox off, the Agent chat works as before.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#325']}, {
-                'id': 'photo-file-names', 'name': 'Saved photos keep their file name',
-                'description': 'Save on a photo or video keeps its own file name when the sender\'s app sent a real '
-                               'one, else it is named by date, like "Messenger photo 2026-11-20 14.03.jpg", instead of '
-                               'after the sender.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#337']}, {
                 'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
                 'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows '
                                'and changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level '
@@ -401,6 +396,21 @@ class SwitchStorage(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
             self.assertNotIn('clean-settings', json.loads(path.read_text()).get('feedback', {}))
 
+    def test_photo_file_names_is_gone_and_its_stored_value_cleared(self):
+        # Issue 337: saved photos keep their own or a dated file name for everyone now; a stored value is dropped.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"photo-file-names": false, "photo-warm": true}, '
+                            '"feedback": {"photo-file-names": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('photo-file-names', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('photo-file-names', store.listing().get('feedback', {}))
+            with self.assertRaises(UnknownSwitch):
+                store.set('photo-file-names', True)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('photo-file-names', json.loads(path.read_text()).get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
@@ -420,7 +430,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'reports-notifications', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'reports-notifications', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
 
 
 if __name__ == '__main__':
