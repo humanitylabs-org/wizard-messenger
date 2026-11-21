@@ -119,6 +119,13 @@ SWITCHES = (
                     'in Messenger, so a change there shows in Settings > Agents too, and the other way round.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#342']},
+    {'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
+     'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to keep '
+                    'deleting), a keyboard button that swaps the panel for the keyboard and back, skin tones on a '
+                    'long press, a Recent row ranked by how often you use each emoji, and on a phone the same height '
+                    'as your keyboard.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#349']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

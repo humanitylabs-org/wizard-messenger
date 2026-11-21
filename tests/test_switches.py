@@ -128,7 +128,13 @@ class SwitchEndpoint(unittest.TestCase):
                                'and changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level '
                                'is still kept in Messenger, so a change there shows in Settings > Agents too, and the '
                                'other way round.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#342']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#342']}, {
+                'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
+                'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to '
+                               'keep deleting), a keyboard button that swaps the panel for the keyboard and back, '
+                               'skin tones on a long press, a Recent row ranked by how often you use each emoji, and '
+                               'on a phone the same height as your keyboard.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -411,7 +417,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names', 'connected-accounts-levels'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names', 'connected-accounts-levels', 'telegram-emoji'])
 
 
 if __name__ == '__main__':

@@ -1107,6 +1107,23 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-sticker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; }
 .u-pick-tile.sticker { aspect-ratio: 1; margin: 0; background: none; }
 .u-pick-tile.sticker img { object-fit: contain; }
+/* Issue 349 (switch telegram-emoji): Telegram's layout. A category bar on top, the tabs and a delete key in a bottom
+   strip, skin-tone choices floating over the grid. */
+.u-picker.tg { position: relative; }
+.u-emo-cats { display: flex; gap: 2px; padding: 4px 6px 2px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.u-emo-cats[hidden] { display: none; }
+.u-emo-cat { flex: 1 0 36px; min-width: 36px; min-height: 36px; height: 36px; padding: 0; border-radius: 10px; background: none; font-size: 1.25rem; line-height: 1; opacity: .55; filter: grayscale(.6); }
+.u-emo-cat.on { opacity: 1; filter: none; background: var(--accent-soft); }
+.u-emo-cat:hover, .u-emo-cat:focus-visible { opacity: 1; }
+.u-pick-foot { display: flex; align-items: center; gap: 4px; padding: 4px 6px; flex-shrink: 0; border-top: 1px solid var(--line); }
+.u-picker.tg .u-pick-tabs { flex: 1; padding: 0; justify-content: center; }
+.u-pick-del { flex: 0 0 auto; width: 44px; height: 36px; min-width: 0; min-height: 0; border-radius: 10px; background: none; color: var(--ink-2); touch-action: none; user-select: none; -webkit-user-select: none; }
+.u-pick-del svg { width: 22px; height: 22px; }
+.u-pick-del:hover, .u-pick-del:active { background: var(--raised); color: var(--ink); }
+.u-picker.tg .u-emo { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.u-emo-tones { position: absolute; z-index: 2; display: flex; gap: 2px; padding: 4px; border-radius: 14px; background: var(--panel-solid); border: 1px solid var(--line); box-shadow: 0 6px 24px color-mix(in srgb, black 35%, transparent); }
+.u-emo-tone { width: 42px; flex: 0 0 42px; }
+.u-emo-tone.on { background: var(--accent-soft); }
 @media (max-width: 600px) {
   .u-picker { height: min(42vh, 340px); border-radius: 16px; }
   .u-emo-grid { grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); }

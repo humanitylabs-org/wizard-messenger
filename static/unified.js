@@ -620,6 +620,63 @@
     if (choice.capture) input.setAttribute('capture', choice.capture); else input.removeAttribute('capture');
     input.click();
   }
+  // ---------- Emoji panel like Telegram (issue 349, switch telegram-emoji): the pure parts ----------
+  // Skin tones: an emoji takes a tone when exactly one of its characters is an Emoji_Modifier_Base (👍, 🏃‍♀️, ☝️);
+  // the tone goes right after that character (in place of its variation selector). Several people (👨‍👩‍👧) get none.
+  const EMOJI_TONES = ['\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
+  const EMOJI_TONE_RE = /[\u{1F3FB}-\u{1F3FF}]/gu;
+  // One key for every tone of an emoji (and with or without its variation selector).
+  function emojiToneKey(k) { return String(k || '').replace(EMOJI_TONE_RE, '').replace(/\uFE0F/g, ''); }
+  // The six choices (plain first, then light to dark) for an emoji that takes a skin tone, else null.
+  function emojiTones(k) {
+    const base = String(k || '').replace(EMOJI_TONE_RE, ''), cps = [...base], at = [];
+    cps.forEach((c, i) => { if (/\p{Emoji_Modifier_Base}/u.test(c)) at.push(i); });
+    if (at.length !== 1) return null;
+    const i = at[0];
+    return [base, ...EMOJI_TONES.map(t => { const out = cps.slice(); out.splice(i + 1, out[i + 1] === '\uFE0F' ? 1 : 0, t); return out.join(''); })];
+  }
+  // Recent ranks by how often and how recently (Telegram keeps the ones you use most): each use adds 1 to a score
+  // that halves every week. One entry per emoji: picking another tone of it moves the score to the new tone.
+  const EMOJI_HALF_LIFE = 7 * 864e5, EMOJI_USAGE_KEEP = 60;
+  const emojiScore = (v, now) => v.s * Math.pow(0.5, Math.max(0, now - v.t) / EMOJI_HALF_LIFE);
+  function emojiUsage(usage, k, now) {
+    const key = emojiToneKey(k), out = {};
+    let s = 0;
+    for (const [e, v] of Object.entries(usage && typeof usage === 'object' ? usage : {})) {
+      if (!e || !v || !Number.isFinite(v.s) || !Number.isFinite(v.t)) continue;
+      if (emojiToneKey(e) === key) { s += emojiScore(v, now); continue; }
+      out[e] = {s: v.s, t: v.t};
+    }
+    out[k] = {s: s + 1, t: now};
+    const kept = Object.entries(out).sort((a, b) => emojiScore(b[1], now) - emojiScore(a[1], now) || b[1].t - a[1].t).slice(0, EMOJI_USAGE_KEEP);
+    return Object.fromEntries(kept);
+  }
+  function emojiRanked(usage, now, n = 24) {
+    return Object.entries(usage && typeof usage === 'object' ? usage : {})
+      .filter(([e, v]) => e && v && Number.isFinite(v.s) && Number.isFinite(v.t))
+      .sort((a, b) => emojiScore(b[1], now) - emojiScore(a[1], now) || b[1].t - a[1].t)
+      .slice(0, n).map(([e]) => e);
+  }
+  // The delete key: a selection goes, else the one character (a whole emoji, flags and families too) before the caret.
+  function emojiDelete(value, start, end) {
+    const v = String(value || ''), a = Math.max(0, Math.min(start ?? v.length, v.length)), b = Math.max(a, Math.min(end ?? a, v.length));
+    if (a !== b) return {value: v.slice(0, a) + v.slice(b), at: a};
+    if (!a) return {value: v, at: 0};
+    let cut = a - 1;
+    if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+      for (const seg of new Intl.Segmenter(undefined, {granularity: 'grapheme'}).segment(v.slice(0, a))) cut = seg.index;
+    } else if (cut > 0 && /[\uDC00-\uDFFF]/.test(v[cut]) && /[\uD800-\uDBFF]/.test(v[cut - 1])) cut--;
+    return {value: v.slice(0, cut) + v.slice(a), at: cut};
+  }
+  // The panel takes the phone keyboard's height (what the keyboard took from the page), when that is believable;
+  // 0 keeps the CSS height.
+  function emojiPanelHeight(keyboard, viewport) {
+    const k = Number(keyboard), h = Number(viewport);
+    if (!Number.isFinite(k) || !Number.isFinite(h) || h <= 0 || k < 160 || k > h * 0.7) return 0;
+    return Math.round(k);
+  }
+  // The category bar, in Telegram's order (the shared Wizard set's eight categories, plus Recent).
+  const EMOJI_CATEGORY_ICONS = {'Recent': '🕘', 'Smileys & People': '😀', 'Animals & Nature': '🐻', 'Food & Drink': '🍔', 'Activity': '⚽', 'Travel & Places': '🚗', 'Objects': '💡', 'Symbols': '🔣', 'Flags': '🏁'};
   // Issue 291 (switch agent-rows-toggle): the button beside My QR codes that hides or shows the pinned Agent and
   // Reports chats. `hidden` is this device's choice; the label says what a tap does, aria-pressed says it is hiding.
   function agentRowsToggle(hidden) {
@@ -627,7 +684,7 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline};
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -693,6 +750,8 @@
     eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
     eyeoff: ['M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.6', 'M6.6 6.6A16.5 16.5 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6', 'M9.9 9.9a3 3 0 0 0 4.2 4.2', 'M3 3l18 18'],
     expand: ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'],
+    keyboard: ['M2.5 6.5h19v11h-19z', 'M6 10h.01', 'M10 10h.01', 'M14 10h.01', 'M18 10h.01', 'M8 14h8'],
+    backspace: ['M21 5H8l-6 7 6 7h13z', 'm17 9-6 6', 'm11 9 6 6'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -4045,9 +4104,35 @@
     return emojiKit;
   }
   const emojiRecent = () => { try { const v = JSON.parse(localStorage.getItem(EMOJI_RECENT) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 24) : []; } catch { return []; } };
+  // Issue 349 (switch telegram-emoji): how often each emoji is used (Recent's ranking) and the skin tone picked per emoji.
+  const EMOJI_USAGE = 'messenger-emoji-usage-v1', EMOJI_TONE_PICKS = 'messenger-emoji-tones-v1', KEYBOARD_HEIGHT = 'messenger.keyboardHeight';
+  const storedObject = key => { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; } };
+  const storeObject = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode: kept for this session only */ } };
+  // The first time with the switch on, Recent starts from the plain recent list (newest first).
+  function emojiUsageNow() {
+    const u = storedObject(EMOJI_USAGE); if (u) return u;
+    const now = Date.now(), seed = {}; emojiRecent().forEach((k, i) => { seed[k] = {s: 1, t: now - (i + 1) * 60000}; });
+    return seed;
+  }
+  // The phone keyboard's height, learnt while the box has the keyboard up (what it took from the page), per width.
+  const keyboardWatch = {on: false, full: {}};
+  function watchKeyboard() {
+    const vv = window.visualViewport; if (keyboardWatch.on || !vv) return; keyboardWatch.on = true;
+    const look = () => {
+      if ((vv.scale || 1) > 1.01) return;
+      const w = innerWidth, full = keyboardWatch.full;
+      full[w] = Math.max(full[w] || 0, innerHeight, vv.height);
+      const el = document.activeElement;
+      if (!el || el.tagName !== 'TEXTAREA' || !el.closest?.('.u-composer')) return;
+      const kb = emojiPanelHeight(full[w] - vv.height, full[w]);
+      if (kb) storeObject(KEYBOARD_HEIGHT, {...(storedObject(KEYBOARD_HEIGHT) || {}), [w]: kb});
+    };
+    vv.addEventListener('resize', look); look();
+  }
   function rememberEmoji(k) {
     const list = [k, ...emojiRecent().filter(x => x !== k)].slice(0, 24);
     try { localStorage.setItem(EMOJI_RECENT, JSON.stringify(list)); } catch { /* private mode: recent stays for this session */ }
+    if (switchState.on['telegram-emoji'] === true) storeObject(EMOJI_USAGE, emojiUsage(emojiUsageNow(), k, Date.now()));
     recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); // the reaction strip leads with the same recent picks
   }
   const pickerCache = {stickers: null, packs: Object.create(null), gifs: Object.create(null)};
@@ -4057,7 +4142,13 @@
     const tabs = node('div', 'u-pick-tabs'); tabs.setAttribute('role', 'tablist');
     const body = node('div', 'u-pick-body');
     panel.append(tabs, body);
-    const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0};
+    const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0, tg: false, lit: null, swallow: false};
+    // Issue 349 (switch telegram-emoji): like Telegram, a category bar over the emoji and a bottom strip with the
+    // tabs and a delete key; the smiley turns into a keyboard button while the panel is open.
+    const cats = node('div', 'u-emo-cats'); cats.setAttribute('role', 'toolbar'); cats.setAttribute('aria-label', 'Emoji categories');
+    const foot = node('div', 'u-pick-foot');
+    const tones = {box: null};
+    watchKeyboard();
     // Issue 294: a finger is told by the tap itself (the smiley or the panel), not only by the screen's media query:
     // some phones report a fine pointer, and the box then took focus after every emoji, so the keyboard came up over
     // the panel. A mouse or trackpad pick keeps the caret in the box as before.
@@ -4084,10 +4175,131 @@
       const tg = o.telegram(); if (!tg && state.tab !== 'emoji') state.tab = 'emoji';
       tabs.replaceChildren(tab('emoji', 'Emoji'), ...(tg ? [tab('gifs', 'GIFs'), tab('stickers', 'Stickers')] : []));
     }
-    function show(name) { state.tab = name; state.gen++; paintTabs(); body.replaceChildren(); body.scrollTop = 0; ({emoji: emojiTab, gifs: gifTab, stickers: stickerTab})[name](state.gen); }
+    function show(name) { state.tab = name; state.gen++; closeTones(); state.lit = null; cats.replaceChildren(); cats.hidden = true; paintTabs(); body.replaceChildren(); body.scrollTop = 0; ({emoji: emojiTab, gifs: gifTab, stickers: stickerTab})[name](state.gen); }
     function section(title, cls) { const h = node('h3', 'u-pick-head', title); const g = node('div', cls); body.append(h, g); return g; }
-    function emojiButton(k) { const b = button(k, () => insert(k), 'u-emo'); b.setAttribute('aria-label', k); return b; }
+    function emojiButton(k) {
+      if (!state.tg) { const b = button(k, () => insert(k), 'u-emo'); b.setAttribute('aria-label', k); return b; }
+      const choices = emojiTones(k), shown = choices ? toneFor(k) : k;
+      const b = button(shown, () => { if (b.held) { b.held = false; return; } insert(choices ? toneFor(k) : k); }, 'u-emo');
+      b.setAttribute('aria-label', shown); b.dataset.emoji = k;
+      if (choices) { b.dataset.tones = emojiToneKey(k); holdForTones(b, k, choices); }
+      return b;
+    }
+    // Skin tones: a long press (or a right-click) on an emoji that has them shows six choices; the pick sticks.
+    const hasTone = k => String(k).replace(EMOJI_TONE_RE, '') !== String(k);
+    const tonePicks = () => state.tonePicks || (state.tonePicks = storedObject(EMOJI_TONE_PICKS) || {});
+    function toneFor(k) {
+      if (hasTone(k)) return k;
+      const key = emojiToneKey(k), picked = tonePicks()[key];
+      return typeof picked === 'string' && emojiToneKey(picked) === key ? picked : k;
+    }
+    function holdForTones(b, k, choices) {
+      let timer = null, x = 0, y = 0;
+      const stop = () => { clearTimeout(timer); timer = null; };
+      b.addEventListener('pointerdown', e => {
+        if (e.button > 0) return;
+        stop(); b.held = false; x = e.clientX; y = e.clientY;
+        timer = setTimeout(() => { timer = null; b.held = true; showTones(b, k, choices); }, 420);
+      });
+      b.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - x, e.clientY - y) > 10) stop(); });
+      for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, stop);
+      b.addEventListener('contextmenu', e => { e.preventDefault(); stop(); if (tones.box?.owner !== b) showTones(b, k, choices); });
+    }
+    function showTones(b, k, choices) {
+      closeTones();
+      const box = node('div', 'u-emo-tones'); box.setAttribute('role', 'menu'); box.setAttribute('aria-label', 'Skin tone'); box.owner = b;
+      const now = toneFor(k);
+      for (const c of choices) { const t = button(c, () => pickTone(k, c), 'u-emo u-emo-tone' + (c === now ? ' on' : '')); t.setAttribute('role', 'menuitem'); t.setAttribute('aria-label', c); box.append(t); }
+      panel.append(box); tones.box = box;
+      const pr = panel.getBoundingClientRect(), br = b.getBoundingClientRect(), w = box.offsetWidth, h = box.offsetHeight;
+      let top = br.top - pr.top - h - 6; if (top < 4) top = br.bottom - pr.top + 6;
+      box.style.left = Math.max(4, Math.min(pr.width - w - 4, br.left - pr.left + br.width / 2 - w / 2)) + 'px'; box.style.top = top + 'px';
+    }
+    function closeTones() { tones.box?.remove(); tones.box = null; }
+    function pickTone(k, c) {
+      const key = emojiToneKey(k), picks = {...tonePicks(), [key]: c};
+      state.tonePicks = picks; storeObject(EMOJI_TONE_PICKS, picks);
+      for (const el of body.querySelectorAll('.u-emo[data-tones]')) if (el.dataset.tones === key && !hasTone(el.dataset.emoji)) { el.textContent = c; el.setAttribute('aria-label', c); }
+      closeTones(); insert(c);
+    }
+    // The delete key removes the emoji or letter before the caret; holding it keeps deleting. The box keeps no focus
+    // on a phone, so the keyboard stays down.
+    function erase() {
+      const r = emojiDelete(o.draft.value, state.start, state.end);
+      if (r.value === o.draft.value) return;
+      o.draft.value = r.value;
+      o.draft.dispatchEvent(new Event('input', {bubbles: true}));
+      state.start = state.end = r.at;
+      if (!touch()) { o.draft.focus(); o.draft.setSelectionRange(r.at, r.at); }
+    }
+    const delHold = {pointer: false, t: null, i: null};
+    const stopDel = () => { clearTimeout(delHold.t); clearInterval(delHold.i); delHold.t = delHold.i = null; };
+    const del = iconButton('backspace', 'Delete', e => { if (e?.detail === 0 || !delHold.pointer) erase(); delHold.pointer = false; }, 'u-pick-del');
+    del.addEventListener('pointerdown', e => {
+      if (e.button > 0) return;
+      e.preventDefault(); stopDel(); delHold.pointer = true; erase();
+      delHold.t = setTimeout(() => { delHold.i = setInterval(erase, 80); }, 450);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) del.addEventListener(ev, stopDel);
+    del.addEventListener('contextmenu', e => e.preventDefault());
+    function layout() {
+      state.tg = switchState.on['telegram-emoji'] === true; panel.classList.toggle('tg', state.tg);
+      if (state.tg) { foot.replaceChildren(tabs, del); panel.replaceChildren(cats, body, foot); }
+      else panel.replaceChildren(tabs, body);
+      // On a phone the panel takes the keyboard's place at the keyboard's own height, so nothing jumps.
+      const kb = state.tg && touch() ? emojiPanelHeight((storedObject(KEYBOARD_HEIGHT) || {})[innerWidth], keyboardWatch.full[innerWidth] || innerHeight) : 0;
+      panel.style.height = kb ? kb + 'px' : '';
+    }
+    // Recent: about three rows, ranked by how often and how recently each emoji was used.
+    const recentRows = () => emojiRanked(emojiUsageNow(), Date.now(), Math.min(48, Math.max(6, Math.floor(((body.clientWidth || 360) - 14) / 42)) * 3));
+    function emojiTabTg(gen) {
+      const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
+      const list = node('div', 'u-emo-list');
+      body.append(search, list);
+      let round = 0, timer = null, kitNow = window.WosTopicEmoji?.categories?.length ? window.WosTopicEmoji : null;
+      const paint = () => {
+        if (gen !== state.gen) return;
+        const mine = ++round, q = search.value.trim(), heads = [], fills = [];
+        list.replaceChildren(); cats.replaceChildren();
+        const groups = q ? [] : [{label: 'Recent', emoji: recentRows()}];
+        for (const c of kitNow ? kitNow.search(q) : [{label: 'Smileys & People', emoji: [...QUICK, ...MORE].filter(k => !q || k.includes(q))}]) groups.push({label: c.label, emoji: [...c.emoji]});
+        for (const g of groups.filter(x => x.emoji.length)) {
+          const h = node('h3', 'u-pick-head', g.label), grid = node('div', 'u-emo-grid'), i = heads.length; h.dataset.cat = g.label;
+          list.append(h, grid); heads.push(h);
+          fills.push(() => { if (grid.childElementCount) return; for (const k of g.emoji) grid.append(emojiButton(k)); });
+          if (!q && EMOJI_CATEGORY_ICONS[g.label]) { const c = button(EMOJI_CATEGORY_ICONS[g.label], () => jump(i), 'u-emo-cat'); c.setAttribute('aria-label', g.label); c.title = g.label; c.dataset.cat = g.label; cats.append(c); }
+        }
+        cats.hidden = !!q || !cats.childElementCount;
+        if (!list.childElementCount) list.append(node('p', 'u-pick-empty', 'No emoji found'));
+        // Issue 349: the first sections paint at once, the rest a section at a time just after, so opening and
+        // typing stay quick on a phone (about 1,900 emoji in all).
+        fills.slice(0, q ? fills.length : 2).forEach(f => f());
+        let next = q ? fills.length : 2;
+        const step = () => { if (gen !== state.gen || mine !== round || next >= fills.length) return; fills[next++](); setTimeout(step, 0); };
+        setTimeout(step, 0);
+        const fillAll = () => { while (next < fills.length) fills[next++](); };
+        const jump = i => {
+          fillAll(); closeTones();
+          body.scrollTop += heads[i].getBoundingClientRect().top - body.getBoundingClientRect().top - 2;
+          lit(i);
+        };
+        const lit = at => {
+          if (cats.hidden || !heads.length) return;
+          if (at == null) {
+            const top = body.getBoundingClientRect().top; at = 0;
+            heads.forEach((h, i) => { if (h.getBoundingClientRect().top - top <= 12) at = i; });
+            if (next >= fills.length && body.scrollTop > 0 && body.scrollTop + body.clientHeight >= body.scrollHeight - 2) at = heads.length - 1;
+          }
+          for (const c of cats.children) { const on = c.dataset.cat === heads[at].dataset.cat; c.classList.toggle('on', on); c.setAttribute('aria-pressed', String(on)); }
+        };
+        state.lit = () => lit(); lit(0);
+      };
+      paint();
+      search.oninput = () => { clearTimeout(timer); timer = setTimeout(paint, 120); };
+      if (!kitNow) loadEmojiKit().then(kit => { if (kit && gen === state.gen) { kitNow = kit; paint(); } });
+    }
     function emojiTab(gen) {
+      if (state.tg) return emojiTabTg(gen);
       const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
       const list = node('div', 'u-pick-list');
       body.append(search, list);
@@ -4186,7 +4398,8 @@
     }
     function open() {
       if (state.open) return;
-      if (document.activeElement === o.draft) keep(); state.open = true; panel.hidden = false; o.button.classList.add('on'); o.button.setAttribute('aria-expanded', 'true'); o.form.classList.add('picking');
+      if (document.activeElement === o.draft) keep(); state.open = true; layout(); panel.hidden = false; o.button.classList.add('on'); o.button.setAttribute('aria-expanded', 'true'); o.form.classList.add('picking');
+      if (state.tg) paintButton(true);
       if (touch()) o.draft.blur(); // the panel takes the keyboard's place
       show(state.tab);
       // Issue 159: a tap anywhere outside the panel (the chat, the text box, Send, another control) closes it, like
@@ -4202,11 +4415,41 @@
     function close() {
       if (!state.open) return false;
       state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
+      stopDel(); closeTones(); state.lit = null; if (state.tg) paintButton(false);
       return true;
     }
+    function paintButton(keyboard) {
+      const label = keyboard ? 'Show keyboard' : 'Emoji, GIFs and stickers';
+      o.button.replaceChildren(icon(keyboard ? 'keyboard' : 'smile')); o.button.setAttribute('aria-label', label); o.button.title = label;
+    }
+    // Issue 349: with the switch on, the button shows a keyboard while the panel is open; a tap brings the keyboard
+    // back with the caret where it was, and the next tap swaps the panel back in.
+    function toggle() {
+      if (!state.open) return open();
+      const tg = state.tg; close();
+      if (!tg) return;
+      const n = o.draft.value.length, a = Math.min(state.start ?? n, n), b = Math.max(a, Math.min(state.end ?? a, n));
+      o.draft.focus(); o.draft.setSelectionRange(a, b);
+    }
+    // A tap in the panel while the tone choices are open only closes them. The panel scrolling lights its category.
+    panel.addEventListener('pointerdown', e => { state.swallow = false; if (tones.box && !tones.box.contains(e.target)) { closeTones(); state.swallow = true; } }, true);
+    panel.addEventListener('click', e => { if (state.swallow) { state.swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
+    let litQueued = false;
+    body.addEventListener('scroll', () => { closeTones(); if (state.lit && !litQueued) { litQueued = true; requestAnimationFrame(() => { litQueued = false; state.lit?.(); }); } }, {passive: true});
+    // Swiping sideways over the panel moves between Emoji, GIFs and Stickers.
+    let swipe = null;
+    body.addEventListener('touchstart', e => { swipe = state.tg && e.touches.length === 1 && !e.target?.closest?.('.u-pack-row, .u-emo-tones') ? {x: e.touches[0].clientX, y: e.touches[0].clientY} : null; }, {passive: true});
+    body.addEventListener('touchend', e => {
+      const t = e.changedTouches?.[0], from = swipe; swipe = null;
+      if (!from || !t || !state.open) return;
+      const dx = t.clientX - from.x, dy = t.clientY - from.y;
+      if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) / 2) return;
+      const names = [...tabs.children].map(x => x.dataset.tab), next = names[names.indexOf(state.tab) + (dx < 0 ? 1 : -1)];
+      if (next) show(next);
+    }, {passive: true});
     panel.addEventListener('pointerdown', notePointer, true); o.button.addEventListener('pointerdown', notePointer, true);
     panel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); o.draft.focus(); } });
-    const handle = {panel, close, toggle: () => state.open ? close() : open(), get isOpen() { return state.open; }};
+    const handle = {panel, close, toggle, get isOpen() { return state.open; }};
     view.picker = handle;
     return handle;
   }
