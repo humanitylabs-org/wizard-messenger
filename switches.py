@@ -54,12 +54,6 @@ SWITCHES = (
                     'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#223']},
-    {'id': 'transcript-paragraphs', 'name': 'Transcripts in paragraphs',
-     'description': 'Transcribe on a voice note gives the text paragraph breaks, punctuation and capitals, through '
-                    'Tinfoil. The words stay exactly as spoken; if anything would change them, the plain transcript '
-                    'is saved instead. Transcripts already saved stay as they are.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#248']},
     {'id': 'reports-notifications', 'name': 'Notifications in Reports',
      'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the Morning '
                     'Report, app alerts) also shows as a message in the pinned Reports chat, newest at the bottom, '

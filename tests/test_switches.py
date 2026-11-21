@@ -70,11 +70,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'carries only which chat, never the words. If no agent can be woken, the chat says '
                                'Drafts paused.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#223']}, {
-                'id': 'transcript-paragraphs', 'name': 'Transcripts in paragraphs',
-                'description': 'Transcribe on a voice note gives the text paragraph breaks, punctuation and capitals, '
-                               'through Tinfoil. The words stay exactly as spoken; if anything would change them, the '
-                               'plain transcript is saved instead. Transcripts already saved stay as they are.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#248']}, {
                 'id': 'reports-notifications', 'name': 'Notifications in Reports',
                 'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the '
                                'Morning Report, app alerts) also shows as a message in the pinned Reports chat, newest '
@@ -278,6 +273,19 @@ class SwitchStorage(unittest.TestCase):
             with self.assertRaises(UnknownSwitch):
                 store.set('drafts-first', True)
 
+    def test_transcript_paragraphs_is_no_longer_a_switch(self):
+        # Issue 248: Transcripts in paragraphs was approved (switch-default), so it is always on; a stored value from
+        # before is ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"transcript-paragraphs": false, "photo-warm": true}}')
+            store = SwitchStore(path)
+            self.assertNotIn('transcript-paragraphs', [s['id'] for s in store.listing()['switches']])
+            with self.assertRaises(UnknownSwitch):
+                store.set('transcript-paragraphs', True)
+            store.set('photo-instant', True)
+            self.assertNotIn('transcript-paragraphs', json.loads(path.read_text())['switches'])
+
     def test_a_removed_switch_is_ignored_and_cleared(self):
         # Issue 176: new-contact-drafts is on for everyone now; a stored value from before is dropped on the next write.
         with tempfile.TemporaryDirectory() as d:
@@ -417,7 +425,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'transcript-paragraphs', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'reports-notifications', 'agent-chat-name', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'photo-file-names', 'connected-accounts-levels', 'telegram-emoji'])
 
 
 if __name__ == '__main__':
