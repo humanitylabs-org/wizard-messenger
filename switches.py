@@ -42,12 +42,6 @@ SWITCHES = (
                     '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#182']},
-    {'id': 'agent-wake', 'name': 'Drafts without a schedule',
-     'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents with '
-                    'Draft-only access) to write the draft, so no agent needs a schedule. The wake carries only which '
-                    'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#223']},
     {'id': 'unread-count', 'name': 'Unread count on the phone icon',
      'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
                     'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
