@@ -1,7 +1,7 @@
-// Issue 276 (switch reports-notifications): every notification from the Notifications app also shows in Messenger's
-// pinned Reports chat, newest at the bottom, with its title, text and link. Reports stays read-only, nothing is marked
-// in Notifications, and a new notification after Reports was opened makes the Reports row unread. Switch off: Reports
-// shows only the agent's reports and Notifications is never asked.
+// Issue 276: every notification from the Notifications app also shows in Messenger's pinned Reports chat, newest at
+// the bottom, with its title, text and link. Reports stays read-only, nothing is marked in Notifications, and a new
+// notification after Reports was opened makes the Reports row unread. Its switch (reports-notifications) was removed:
+// this is always on, also when a box still lists a stale `on: false` entry for it.
 // Synthetic API (agent_chat.py's owner routes + the Notifications app's /notifications/api/items), no container:
 //   PLAYWRIGHT_MODULE=... node tests/reports_notifications_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -32,8 +32,8 @@ async function run(browser, label, on, viewport) {
   const state = () => ({entries: box.entries, unread: 0, urgent: false, sweep_open: false, read_at: 0, agent: {woken: false, checked: true},
     reports_unread: box.entries.filter(e => e.kind === 'report' && e.at > box.reports_read_at).length, reports_read_at: box.reports_read_at});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = [
-    {id: 'reports-notifications', name: 'Notifications in Reports', description: 'x', on: !!on.notices, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#276']}];
+  const switches = on.stale ? [
+    {id: 'reports-notifications', name: 'Notifications in Reports', description: 'x', on: false, default: false, tried: false, vote: null, issues: ['humanitylabs-org/wizard-messenger#276']}] : [];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -69,16 +69,6 @@ async function run(browser, label, on, viewport) {
   const result = {label};
   const pinned = await page.locator('.u-list > .u-agent-row').evaluateAll(els => els.map(e => e.dataset.mode));
   const phone = viewport.width < 600;
-  if (!on.notices) {
-    assert.deepEqual(pinned, ['chat', 'reports'], label + ': pinned rows as before');
-    await page.locator('.u-agent-row[data-mode="reports"]').click();
-    await page.locator('#unified-inbox .u-row.report h3', {hasText: 'Weekly social stats'}).waitFor({timeout: 5000});
-    assert.equal(await page.locator('.u-ac-notice').count(), 0, label + ': no notification copies with the switch off');
-    await shot('reports');
-    assert.equal(hits.items, 0, label + ': Notifications is never asked with the switch off');
-    assert.deepEqual(errors, [], label + ' page errors');
-    await ctx.close(); return {...result, pinned, asked: hits.items};
-  }
   assert.deepEqual(pinned, ['chat', 'reports'], label + ': Agent and Reports are pinned');
   const row = page.locator('.u-agent-row[data-mode="reports"]');
   await row.locator('.u-snippet', {hasText: 'Morning Report'}).waitFor({timeout: 9000});
@@ -116,9 +106,9 @@ async function run(browser, label, on, viewport) {
   const browser = await chromium.launch({headless: true, args: ['--no-sandbox']});
   try {
     const results = [
-      await run(browser, 'phone-notices', {notices: true}, {width: 390, height: 844}),
-      await run(browser, 'desktop-notices', {notices: true}, {width: 1280, height: 860}),
-      await run(browser, 'switch-off', {}, {width: 390, height: 844})];
+      await run(browser, 'phone', {}, {width: 390, height: 844}),
+      await run(browser, 'desktop', {}, {width: 1280, height: 860}),
+      await run(browser, 'stale-off', {stale: true}, {width: 390, height: 844})];
     console.log(JSON.stringify({ok: true, results}, null, 1));
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

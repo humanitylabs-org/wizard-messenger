@@ -518,7 +518,7 @@
     const last = agentChatRows(state, 'reports', notices).at(-1);
     return last ? {text: last.text.split('\n')[0], at: last.at, urgent: false} : null;
   }
-  // Issue 276 (switch reports-notifications): the Notifications app's items (GET /notifications/api/items, the list the
+  // Issue 276: the Notifications app's items (GET /notifications/api/items, the list the
   // shell's bell reads) as read-only Reports rows: title on the first line, then the text, then its link. `time` is in
   // seconds there. A link is kept only if it is http(s) or a path on this box (resolved against `origin`).
   function notificationReports(items, origin = '') {
@@ -5245,8 +5245,7 @@
   const AGENT_IDS = {chat: 'agent:notes', reports: 'agent:reports'};
   function agentMode(id) { return id === AGENT_IDS.chat ? 'chat' : id === AGENT_IDS.reports ? 'reports' : null; }
   const agentChat = {state: null, mode: 'chat', root: null, key: '', loading: null};
-  // Issue 276 (switch reports-notifications): Reports also lists a copy of every notification.
-  function noticesOn() { return switchState.on['reports-notifications'] === true; }
+  // Issue 276: Reports also lists a copy of every notification (always on since its switch was removed).
   // Issue 277: the Agent chat carries the agent's own name and sigil, as the Wizard shows it
   // (the agent with Draft-only access in Settings > Agents). Re-read at most once a minute, at once on open.
   const agentWho = {who: null, at: 0, loading: null};
@@ -5281,14 +5280,13 @@
   const NOTIFICATIONS = new URL('../notifications/', location.href).pathname;
   const notices = {list: [], at: 0, loading: null};
   function loadNotices(force = false) {
-    if (!noticesOn()) { if (notices.list.length) { notices.list = []; notices.at = 0; paintAgentRow(); paintAgentThread(); } return Promise.resolve(); }
     if (notices.loading) return notices.loading;
     if (!force && Date.now() - notices.at < 15000) return Promise.resolve();
     notices.at = Date.now();
     notices.loading = fetch(NOTIFICATIONS + 'api/items?view=all&limit=200', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (!d || !Array.isArray(d.items) || !noticesOn()) return;
+        if (!d || !Array.isArray(d.items)) return;
         const list = notificationReports(d.items, location.origin);
         if (JSON.stringify(list) === JSON.stringify(notices.list)) return;
         notices.list = list; paintAgentRow(); paintAgentThread();
@@ -5297,7 +5295,7 @@
       .finally(() => { notices.loading = null; });
     return notices.loading;
   }
-  const shownNotices = () => noticesOn() ? notices.list : [];
+  const shownNotices = () => notices.list;
   function applyAgentChat(state) {
     if (!state || !Array.isArray(state.entries)) return;
     agentChat.state = state; paintAgentRow(); paintAgentThread(); syncBadge();
@@ -5308,11 +5306,6 @@
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
-  switchState.paints['reports-notifications'] = () => {
-    loadNotices(true);
-    paintAgentRow();
-    paintAgentThread();
-  };
   // Issue 291 (switch agent-rows-toggle): a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
   // Only the list changes: an open Agent/Reports chat stays open and nothing about notes, Sweep or Reports delivery
   // changes. Remembered on this device, like the Inbox view.
@@ -5381,7 +5374,7 @@
     const reportsNew = () => reportsUnread(st, shownNotices()) || (!(st.reports_read_at > 0) && shownNotices().length);
     if (mode === 'reports' ? reportsNew() : st.unread) agentAct('/read', mode === 'reports' ? {reports: true} : {});
   }
-  function reportsSub() { return noticesOn() ? 'Reports and notifications' : 'Longer write-ups from your agent'; }
+  function reportsSub() { return 'Reports and notifications'; }
   // What the header says about the agent: is anyone listening here, and how fast.
   function agentStatus(st) {
     const a = st?.agent;
@@ -5414,12 +5407,12 @@
     head.querySelector('.u-av-wrap')?.replaceChildren(agentFace(agentChat.mode, true));
     view.sub = root.querySelector('.u-who-text span');
     const scroll = node('div', 'u-timeline u-ac-log'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
-    scroll.setAttribute('aria-label', reports ? (noticesOn() ? 'Reports and notifications' : 'Reports from your agent') : agentChatLabel());
+    scroll.setAttribute('aria-label', reports ? 'Reports and notifications' : agentChatLabel());
     scroll.onscroll = () => { if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80) markAgentRead(); };
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll); root.append(wrap);
     Object.assign(view, {root, scroll, pill: null, id: s.person, draft: null});
     agentChat.root = root;
-    if (reports) { const foot = node('p', 'u-ac-readonly', noticesOn() ? 'Read-only: your agent’s reports and a copy of your notifications.' : 'Only your agent writes here.'); root.append(foot); return; }
+    if (reports) { const foot = node('p', 'u-ac-readonly', 'Read-only: your agent’s reports and a copy of your notifications.'); root.append(foot); return; }
     // Telegram-bot style: the chat's own buttons sit above the composer, no typed commands.
     const form = node('form', 'u-composer u-ac-compose');
     const bar = node('div', 'u-ac-bar');
@@ -5608,7 +5601,7 @@
     const box = node('section', 'u-ac-intro'); box.setAttribute('aria-label', 'How this chat works');
     if (reports) {
       box.append(node('h3', '', 'Reports'), node('p', '', 'Your agent’s longer write-ups land here: weekly summaries, stats, research. They stay out of the Agent chat so your notes stay short.'));
-      if (noticesOn()) box.append(node('p', '', 'Every notification also shows here as a copy, newest at the bottom. Notifications keeps them as before; anything that needs an answer comes to the Agent chat.'));
+      box.append(node('p', '', 'Every notification also shows here as a copy, newest at the bottom. Notifications keeps them as before; anything that needs an answer comes to the Agent chat.'));
       return box;
     }
     const list = node('ol');
