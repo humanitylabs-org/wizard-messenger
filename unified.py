@@ -511,6 +511,9 @@ class PeopleStore:
             CREATE TABLE IF NOT EXISTS preview(id TEXT PRIMARY KEY, person_id TEXT NOT NULL, identity_id TEXT NOT NULL, original TEXT NOT NULL, translated TEXT NOT NULL, error TEXT, expires INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'preview', send_original INTEGER, event_id TEXT);
             ''')
         self.migrate()
+        with self.db() as db:
+            # Issue 368: the dropped draft wake (issue 223) kept agents' event-inbox urls and secrets here; drop them.
+            db.execute("DELETE FROM kv WHERE key='draft_wake'")
         self.search_index = SearchStore(self.path, connection=self._conn, lock=self.lock)
         self.install_search()
         os.chmod(self.path, 0o600)
@@ -573,8 +576,6 @@ class PeopleStore:
 
     def migrate(self):
         with self.db() as db:
-            # Issue 368: the dropped draft wake (issue 223) kept agents' event-inbox urls and secrets here; drop them.
-            db.execute("DELETE FROM kv WHERE key='draft_wake'")
             have = {t: {r[1] for r in db.execute('PRAGMA table_info(' + t + ')')} for t in ('message', 'identity', 'person')}
             missing = [m for m in MIGRATIONS if m[1] not in have[m[0]]]
             if missing and db.execute('SELECT COUNT(*) FROM message').fetchone()[0]:
