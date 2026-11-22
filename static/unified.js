@@ -275,6 +275,11 @@
     if (type === 'cellular' || type === 'bluetooth' || type === 'wimax' || type === 'none') return false;
     return !mobile;
   }
+  // Issue 343: a video bubble near the screen starts buffering its first seconds on Wi-Fi (or a wired desktop), so the
+  // tap plays at once; on mobile data, with Data Saver or an unknown phone network it only reads the video's header.
+  function videoPreload(conn, mobile) {
+    return prefetchAllowed('wifi', conn, mobile) ? 'auto' : 'metadata';
+  }
   // The download queue: one or two at a time, low priority, paused while busy() (the owner is loading something) or
   // while allowed() says no. Each file is kept in Cache Storage (open() gives the cache, or null without one) and
   // listed in index ({load, save}) with its size. Over cap, videos go first, then view copies, oldest first, then
@@ -691,7 +696,7 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2851,6 +2856,14 @@
       if (e.isIntersecting && !e.target.dataset.still) v.play().catch(() => {}); else v.pause();
     }
   }, {threshold: 0.15}) : null;
+  const videoNear = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const v = e.target.querySelector('video');
+      if (v && v.paused && !v.currentTime) v.preload = videoPreload(navigator.connection, onPhone());
+      videoNear.unobserve(e.target);
+    }
+  }, {rootMargin: '50% 0px'}) : null;
   function visualMedia(m) {
     const box = node('button', 'u-media'); box.type = 'button';
     const sticker = isSticker(m), loop = m.msgtype === 'm.video' && (m.media?.gif || m.media?.sticker);
@@ -2876,6 +2889,7 @@
         const dur = m.media?.duration ? node('span', 'u-vdur', fmtDur(m.media.duration)) : null;
         if (dur) box.append(dur);
         if (!m.pending) inline = inlineVideo(box, v, dur, m);
+        if (!m.pending && !m.local) videoNear?.observe(box);
       }
     } else {
       const img = node('img'); img.alt = m.original || (sticker ? 'Sticker' : 'Photo'); img.decoding = 'async'; img.loading = 'lazy';
