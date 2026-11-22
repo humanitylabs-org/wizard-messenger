@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.98
+
+Store recipe: pins the image built from main `95e1620`. Ships #371 (Refs humanitylabs-org/wizard-messenger#276): Notifications in Reports is on for everyone; the `reports-notifications` switch is removed. Also fixes the 16.97 image pin, which had a doubled `sha256:` in its digest. Guards: `tests/test_agent_chat.py`, `tests/test_switches.py`, `tests/reports_notifications_browser.cjs`.
+
 ## 0.2.0-unified.16.97
 
 Store recipe: pins the image built from main `7b2ba40`. Ships #369 (Refs #201): Draft ready from the chat list is on for everyone (switch `list-draft-ready` removed). Holding or right-clicking a chat offers Agent keeps a draft ready / Stop keeping a draft ready, and an open chat always shows the one-tap Drafts pill next to Catch me up.
