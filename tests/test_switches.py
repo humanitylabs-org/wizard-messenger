@@ -65,12 +65,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'carries only which chat, never the words. If no agent can be woken, the chat says '
                                'Drafts paused.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#223']}, {
-                'id': 'reports-notifications', 'name': 'Notifications in Reports',
-                'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the '
-                               'Morning Report, app alerts) also shows as a message in the pinned Reports chat, newest '
-                               'at the bottom, with its title, text and link. Notifications keeps working as before; '
-                               'Reports stays read-only.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#276']}, {
                 'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
                 'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, '
                                'and a second tap shows them again. This device remembers your choice.',
@@ -440,7 +434,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'reports-notifications', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
 
 
 if __name__ == '__main__':

@@ -33,7 +33,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
   const state = () => ({entries, unread: 0, urgent: false, sweep_open: false, read_at: 0, agent: {woken: false, checked: true}, reports_unread: 0, reports_read_at: 0});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
   const sw = (id, v) => ({id, name: id, description: 'x', on: !!v, default: false, tried: false, vote: null, issues: []});
-  const switches = [sw('reports-notifications', on.notices), sw('agent-rows-toggle', on.toggle)];
+  const switches = [sw('agent-rows-toggle', on.toggle)];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -100,7 +100,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
     }
     // Phone width inside Wizard: the shell title bar carries the toggle right after QR.
     {
-      const t = await open(browser, {notices: true, toggle: true}, {width: 390, height: 800});
+      const t = await open(browser, {toggle: true}, {width: 390, height: 800});
       assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'phone: both rows to start with');
       let tools = await t.bar();
       assert.deepEqual(tools.map(x => x.id), ['qr', 'agent-rows', 'search', 'settings'], 'phone: bar tool after QR');

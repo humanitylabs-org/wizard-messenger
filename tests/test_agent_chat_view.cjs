@@ -65,7 +65,7 @@ test('issue 266: a photo or voice note shows as media, and the row says what it 
   assert.equal(agentChatSnippet({entries: media.entries.slice(0, 2)}).text, 'You: Voice note');
 });
 
-// Issue 276 (switch reports-notifications): every notification also shows in Reports, read-only, by time.
+// Issue 276: every notification also shows in Reports, read-only, by time.
 const items = [
   {id: 'b', title: 'Morning Report', message: 'Three things today', time: 1700000300, link: '/morning-report/', read: false},
   {id: 'a', title: 'Sniper scan done', message: '', details: '2 new matches', time: 1700000100, link: 'https://sniper.example/r/1', read: true},

@@ -174,14 +174,14 @@ class AgentChat(unittest.TestCase):
         state = self.ok('POST', '/read', {'reports': True})
         self.assertEqual(state['reports_unread'], 0)
 
-    def test_notes_and_reports_answer_with_notifications_in_reports_off(self):
-        # Issue 265: with the Agent chat always on, the Notifications in Reports switch only adds notifications to
-        # Reports; notes, Sweep and both read marks answer whether it is on or off.
-        for on in (False, True):
-            self.inbox.switches.set('reports-notifications', on)
-            self.ok('POST', '', {'text': 'a note'})
-            self.ok('POST', '/read', {})
-            self.assertGreater(self.ok('POST', '/read', {'reports': True})['reports_read_at'], 0)
+    def test_notes_and_reports_answer_with_a_stale_notifications_in_reports_value(self):
+        # Issue 276: the Notifications in Reports switch was removed (always on). A stale stored value for it is
+        # ignored: it is not listed, and notes, Sweep and both read marks answer as always.
+        self.inbox.switches.path.write_text(json.dumps({'switches': {'reports-notifications': False}}))
+        self.assertNotIn('reports-notifications', [s['id'] for s in self.inbox.switches.listing()['switches']])
+        self.ok('POST', '', {'text': 'a note'})
+        self.ok('POST', '/read', {})
+        self.assertGreater(self.ok('POST', '/read', {'reports': True})['reports_read_at'], 0)
         # An agent key still can't use the owner's routes.
         status, data = self.owner_call('GET', '', headers={'Origin': fixtures.ORIGIN, **self.key})
         self.assertNotEqual(status, 200, data)

@@ -48,12 +48,6 @@ SWITCHES = (
                     'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#223']},
-    {'id': 'reports-notifications', 'name': 'Notifications in Reports',
-     'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the Morning '
-                    'Report, app alerts) also shows as a message in the pinned Reports chat, newest at the bottom, '
-                    'with its title, text and link. Notifications keeps working as before; Reports stays read-only.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#276']},
     {'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
      'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, and a second '
                     'tap shows them again. This device remembers your choice.',
