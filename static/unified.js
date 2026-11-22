@@ -5213,11 +5213,10 @@
     if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (prefetchMode() !== 'off') prefetchSoon(); }
     sendPhoneBase();
   }
-  // Messages on your phone (issue 308, switch phone-notifications): the box posts new messages to Notifications with
-  // a link to the chat, but it can't see this Wizard's own address. The view tells it once per page while it is on.
+  // Messages on your phone (issue 308, on for everyone): the box posts new messages to Notifications with a link to
+  // the chat, but it can't see this Wizard's own address. The view tells it once per page.
   let phoneBaseSent = '';
   function sendPhoneBase() {
-    if (switchState.on['phone-notifications'] !== true) return;
     let base = ''; try { base = new URL('./', location.href).href; } catch { return; }
     if (phoneBaseSent === base || !base.startsWith('https://')) return;
     phoneBaseSent = base;

@@ -708,7 +708,7 @@ def post(unified, agent, kind, text, link=None, items=None):
         data['entries'].append(entry)
         _save(store, data, unified)
     if kind == 'ping':
-        # Issue 308 (switch phone-notifications): an urgent ping also shows on the phone.
+        # Issue 308: an urgent ping also shows on the phone.
         try:
             import phone_notify
             phone_notify.urgent(unified, entry['id'], body)
