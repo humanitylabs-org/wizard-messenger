@@ -573,17 +573,15 @@ class ViewHandler(Handler):
             self.close_connection=True
             return e.status,{'error':e.message,'code':e.code}
     def _agent_levels(self,method):
-        """Issue 342 (switch connected-accounts-levels): Connected accounts' Agent access screen reads Messenger's
+        """Issue 342: Connected accounts' Agent access screen reads Messenger's
         connected chat accounts (network and name only) and each Wizard agent's Messenger level, and sets a level.
         Messenger stays the only place the level is kept and enforced (wizard_agents.py); this is a second door to
         the same Settings > Agents row, never a copy. Same owner boundary as the switches route: the Wizard's owner
         proof on a trusted install, else the owner's view session; never a bearer or the gateway grant. A write
         needs the box's own Origin, JSON and X-Wizard-Agent-Level: 1 (a cross-site page cannot send it without a
         CORS preflight we never answer), which stands in for the Messenger CSRF token the other app does not hold.
-        Switch off: no such route (404), so the screen keeps saying "set in Messenger". Errors are {"error", "code"}."""
+        Always on since the switch was approved (issue 342). Errors are {"error", "code"}."""
         try:
-            if not self.service.switches.is_on('connected-accounts-levels'):
-                raise EngineError('not_found','No such route',404)
             if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
                 raise EngineError('owner_only','Only the owner can see or change agent levels',403)
             proven=False

@@ -1,4 +1,4 @@
-"""Issue 342 (switch connected-accounts-levels): Connected accounts' Agent access screen reads and sets Messenger's
+"""Issue 342: Connected accounts' Agent access screen reads and sets Messenger's
 agent level through GET/POST /api/agent-levels. Messenger stays the only store (wizard_agents.py).
 
 Synthetic agents and accounts only: nothing leaves the process."""
@@ -73,20 +73,21 @@ class Base(unittest.TestCase):
         r = c.getresponse(); out = (r.status, json.loads(r.read() or b'null')); c.close()
         return out
 
-    def on(self):
-        self.server.switches.set('connected-accounts-levels', True)
 
 
 class AgentLevels(Base):
-    def test_off_by_default_is_no_route(self):
+    def test_always_on_even_with_a_stale_stored_off(self):
+        # The old switch connected-accounts-levels is gone; a value still stored for it changes nothing.
+        self.server.switches.path.write_text(json.dumps({'switches': {'connected-accounts-levels': False}}))
+        self.assertNotIn('connected-accounts-levels', [s['id'] for s in self.server.switches.listing()['switches']])
         status, body = self.request(headers=self.owner())
-        self.assertEqual((status, body['code']), (404, 'not_found'))
+        self.assertEqual(status, 200)
+        self.assertEqual(body['app'], 'messenger')
         status, body = self.request('POST', {'agent': 'hermes', 'level': 'draft_only'}, headers={**self.owner(), **WRITE})
-        self.assertEqual(status, 404)
-        self.assertEqual(self.server.wizard_agents.list()[0]['level'], 'no_access')
+        self.assertEqual(status, 200)
+        self.assertEqual(self.server.wizard_agents.list()[0]['level'], 'draft_only')
 
     def test_lists_accounts_names_only_and_messengers_levels(self):
-        self.on()
         self.server.wizard_agents.caller('research', 'Research')
         status, body = self.request(headers=self.owner())
         self.assertEqual(status, 200)
@@ -103,7 +104,6 @@ class AgentLevels(Base):
                          [('no_access', False), ('read_only', False), ('draft_only', True)])
 
     def test_set_here_shows_in_settings_agents_and_back(self):
-        self.on()
         status, body = self.request('POST', {'agent': 'hermes', 'level': 'draft_only'}, headers={**self.owner(), **WRITE})
         self.assertEqual(status, 200)
         self.assertEqual(body['agents'][0]['level'], 'draft_only')
@@ -117,7 +117,6 @@ class AgentLevels(Base):
         self.assertTrue(any('Connected accounts' in str(r) for r in self.server.agent_access.recent(5)))
 
     def test_bad_writes_change_nothing(self):
-        self.on()
         good = {'agent': 'hermes', 'level': 'draft_only'}
         cases = [
             (good, {**self.owner(), 'Content-Type': 'application/json'}, 403),  # no X-Wizard-Agent-Level
@@ -139,12 +138,10 @@ class AgentLevels(Base):
         self.assertEqual(self.server.wizard_agents.list()[0]['level'], 'no_access')
 
     def test_needs_the_owner(self):
-        self.on()
         status, body = self.request(proof=False, headers={'Origin': ORIGIN})
         self.assertIn(status, (401, 403)); self.assertNotIn('agents', body)
 
     def test_a_bridge_that_is_down_hides_only_its_accounts(self):
-        self.on()
         def boom():
             raise RuntimeError('bridge down')
         self.server.unified.own_profiles = boom
@@ -158,7 +155,6 @@ class AgentLevelsWithSession(AgentLevels):
     trusted = False
 
     def test_setup_only_session_is_refused(self):
-        self.on()
         token, session = self.server.auth.create()
         session['setup_only'] = True
         status, _ = self.request(headers={'Cookie': 'wizard_messenger_session=' + token, 'Origin': ORIGIN})
