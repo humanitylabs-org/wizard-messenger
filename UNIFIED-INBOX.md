@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.100
+
+Store recipe: pins the image built from main `d2e35b5`. Ships #375 (Refs humanitylabs-org/wizard-messenger#308): Messages on your phone is on for everyone; new incoming messages and urgent Agent chat pings always go to the Notifications app, and the `phone-notifications` switch is removed. Guards: `tests/test_phone_notify.py`, `tests/test_switches.py`, `tests/phone_notify_browser.cjs`.
+
 ## 0.2.0-unified.16.99
 
 Store recipe: pins the image built from main `246df33`. Ships #373 (Refs humanitylabs-org/wizard-messenger#291): the Hide/Show Agent and Reports button beside My QR codes is on for everyone; the `agent-rows-toggle` switch is removed. Guards: `tests/test_switches.py`, `tests/agent_rows_toggle_browser.cjs`.
