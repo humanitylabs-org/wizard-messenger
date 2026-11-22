@@ -257,6 +257,118 @@ def shrink_photo(source, target):
         return None
 
 
+FASTSTART_MOOV_MAX = 64 * 1024 * 1024
+FASTSTART_CONTAINERS = (b'trak', b'mdia', b'minf', b'stbl')
+
+
+def mp4_atoms(f, size):
+    """Top-level atoms of an MP4/MOV file as (type, offset, length, header length); None when the file is not a
+    well-formed sequence of atoms."""
+    atoms, at = [], 0
+    while at < size:
+        f.seek(at)
+        head = f.read(8)
+        if len(head) < 8:
+            return None
+        length, kind = int.from_bytes(head[:4], 'big'), head[4:8]
+        header = 8
+        if length == 1:
+            big = f.read(8)
+            if len(big) < 8:
+                return None
+            length, header = int.from_bytes(big, 'big'), 16
+        elif length == 0:
+            length = size - at
+        if length < header or at + length > size:
+            return None
+        atoms.append((kind, at, length, header))
+        at += length
+    return atoms
+
+
+def moov_shifted(moov, delta):
+    """The moov atom with every chunk offset (stco/co64) moved by delta bytes; None when it can't be done safely
+    (compressed moov, or a 32-bit offset that would overflow)."""
+    data = bytearray(moov)
+
+    def walk(start, end):
+        at = start
+        while at + 8 <= end:
+            length, kind = int.from_bytes(data[at:at + 4], 'big'), bytes(data[at + 4:at + 8])
+            header = 8
+            if length == 1:
+                length, header = int.from_bytes(data[at + 8:at + 16], 'big'), 16
+            elif length == 0:
+                length = end - at
+            if length < header or at + length > end:
+                return False
+            body = at + header
+            if kind == b'cmov':
+                return False
+            if kind in FASTSTART_CONTAINERS and not walk(body, at + length):
+                return False
+            if kind in (b'stco', b'co64'):
+                wide = 8 if kind == b'co64' else 4
+                count = int.from_bytes(data[body + 4:body + 8], 'big')
+                if body + 8 + count * wide > at + length:
+                    return False
+                for i in range(count):
+                    p = body + 8 + i * wide
+                    value = int.from_bytes(data[p:p + wide], 'big') + delta
+                    if value >= 1 << (8 * wide):
+                        return False
+                    data[p:p + wide] = value.to_bytes(wide, 'big')
+            at += length
+        return True
+    first = 16 if int.from_bytes(data[:4], 'big') == 1 else 8
+    return bytes(data) if walk(first, len(data)) else None
+
+
+def faststart(source, target):
+    """Write source (MP4/MOV) to target with its moov atom in front of the media data, so a player can start
+    streaming from the first bytes instead of first fetching the end of the file (issue 343). The same tracks and
+    bytes, no re-encode: atoms are moved and chunk offsets corrected. False (and no target) when the file already
+    starts fast, is fragmented or isn't a plain MP4."""
+    source, target = Path(source), Path(target)
+    try:
+        size = source.stat().st_size
+        with source.open('rb') as f:
+            atoms = mp4_atoms(f, size)
+            if not atoms or atoms[0][0] != b'ftyp':
+                return False
+            kinds = [a[0] for a in atoms]
+            if b'moof' in kinds or kinds.count(b'moov') != 1 or b'mdat' not in kinds:
+                return False
+            moov = atoms[kinds.index(b'moov')]
+            first_mdat = kinds.index(b'mdat')
+            if moov[1] < atoms[first_mdat][1] or moov[2] > FASTSTART_MOOV_MAX:
+                return False  # already fast, or too odd to touch
+            if any(a[0] == b'mdat' and a[1] > moov[1] for a in atoms):
+                return False  # media data after moov would not move: leave the file alone
+            f.seek(moov[1])
+            shifted = moov_shifted(f.read(moov[2]), moov[2])
+            if shifted is None:
+                return False
+            with target.open('wb') as out:
+                for i, (kind, at, length, _) in enumerate(atoms):
+                    if i == first_mdat:
+                        out.write(shifted)
+                    if kind == b'moov':
+                        continue
+                    f.seek(at)
+                    left = length
+                    while left > 0:
+                        chunk = f.read(min(1 << 20, left))
+                        if not chunk:
+                            raise OSError('short read')
+                        out.write(chunk)
+                        left -= len(chunk)
+        return True
+    except (OSError, ValueError):
+        target.unlink(missing_ok=True)
+        return False
+
+
 def webm_to_ogg(data):
     """WebM Opus voice note (Safari, the Mac app) -> Ogg Opus, packet for packet, with mkvextract. Tolerates the
     unknown sizes and cut-off tails Safari's recorder writes. Works in the /tmp tmpfs only."""
@@ -3371,6 +3483,12 @@ class UnifiedInbox:
                     raise
                 with tmp.open('rb') as f:
                     sniffed = sniff(f.read(64))
+                if not (thumb or raw_thumb) and sniffed == 'video/mp4':
+                    # Issue 343: a received video keeps its index (moov) up front, so it starts streaming at once.
+                    fast = cache / (key + '.part-' + secrets.token_hex(4))
+                    if faststart(tmp, fast):
+                        os.replace(fast, tmp)
+                        self.timing('video_faststart', started)
                 meta_path.write_text(sniffed or got or mime)
                 if thumb or raw_thumb:
                     # Marks a thumbnail, so eviction with photo-warm on drops full files before thumbnails.
