@@ -71,12 +71,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'Medium and Low priority chats never count. Your private Messenger chats count too.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296',
                                                            'humanitylabs-org/wizard-messenger#302']}, {
-                'id': 'phone-notifications', 'name': 'Messages on your phone',
-                'description': 'Each new message (and an urgent ping in the Agent chat) also goes to Notifications, '
-                               'with the chat name and the start of the message, so the Wizard phone app can show it '
-                               'as a Messenger notification. A tap opens that chat. Muted, Medium and Low priority '
-                               'chats stay quiet.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#308']}, {
                 'id': 'share-files', 'name': 'Share files to Messenger',
                 'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers '
                                'Messenger. The file waits in the chosen chat\'s message box as an attachment, like '
@@ -411,6 +405,23 @@ class SwitchStorage(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
             self.assertNotIn('list-draft-ready', json.loads(path.read_text()).get('feedback', {}))
 
+    def test_phone_notifications_is_gone_and_its_stored_value_cleared(self):
+        # Issue 308: Messages on your phone was approved (switch-default), so it is always on; a stored value and its
+        # feedback from before are ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"phone-notifications": false, "photo-warm": true}, '
+                            '"feedback": {"phone-notifications": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('phone-notifications', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('phone-notifications', store.listing()['feedback'])
+            with self.assertRaises(UnknownSwitch):
+                store.set('phone-notifications', True)
+            store.set('photo-instant', True)
+            saved = json.loads(path.read_text())
+            self.assertNotIn('phone-notifications', saved['switches'])
+            self.assertNotIn('phone-notifications', saved.get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
@@ -430,7 +441,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
 
 
 if __name__ == '__main__':

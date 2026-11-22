@@ -46,7 +46,7 @@ switches:
 provides: [messaging]
 # Contacts: names, Add to Contacts and My card when the Wizard sandboxes Messenger's window (contacts_link.py).
 # Tinfoil: Translate, Catch me up and transcripts use the connected Tinfoil app's box gateway (tinfoil_link.py).
-# Notifications: with the phone-notifications switch on, new messages are posted to the Notifications app (phone_notify.py).
+# Notifications: new messages are posted to the Notifications app (phone_notify.py).
 uses: [contacts, tinfoil-api-key, notifications]
 needs: []
 ---

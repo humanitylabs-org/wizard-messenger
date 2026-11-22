@@ -1,6 +1,6 @@
-"""Messages on the phone (issue 308, switch `phone-notifications`, off by default).
+"""Messages on the phone (issue 308, on for everyone).
 
-With the switch on, Messenger posts one item to the Notifications app for each new incoming message, and one for
+Messenger posts one item to the Notifications app for each new incoming message, and one for
 each urgent Agent chat ping. Each item is tagged `app:messenger` (the Notifications `notify` tool's `app`), so the
 Wizard phone app (wizard-ux switch wizard/phone-app-notifications) shows it as a Messenger notification on its own
 Android channel, and a tap opens the item's link: this Wizard's Messenger at `#chat=<chat id>`.
@@ -13,7 +13,7 @@ Android channel, and a tap opens the item's link: this Wizard's Messenger at `#c
   app's MCP `notify` tool on the box (uses: notifications in wizard.md, so the App Manager links the two apps).
   A failed post is dropped, never retried into a flood.
 - The link needs this Wizard's own https address, which the box can't see: the view tells it (`POST
-  api/unified/phone-notify` {base}) while the switch is on. Until then the item has no link and a tap opens
+  api/unified/phone-notify` {base}) once per page. Until then the item has no link and a tap opens
   Messenger itself.
 """
 from __future__ import annotations
@@ -27,7 +27,6 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-SWITCH = 'phone-notifications'
 APP = 'messenger'
 NOTIFY_URL = os.environ.get('MESSENGER_NOTIFICATIONS_URL', 'http://notifications:8080/mcp')
 KV_BASE = 'phone_notify_base'
@@ -182,23 +181,19 @@ def notifier(unified):
 
 
 def incoming(unified, message_id):
-    """A live incoming message was stored: post it when the switch is on and the chat isn't quiet."""
-    if not unified.switch_on(SWITCH):
-        return False
+    """A live incoming message was stored: post it when the chat isn't quiet."""
     return notifier(unified).add(message_note(unified.store, message_id))
 
 
 def urgent(unified, entry_id, text, name=None):
     """The agent posted an urgent ping in the Agent chat."""
-    if not unified.switch_on(SWITCH):
-        return False
     return notifier(unified).add(ping_note(text, 'agent-chat:' + str(entry_id), name))
 
 
 def dispatch(unified, method, payload):
     """Owner route api/unified/phone-notify: GET {on, base}; POST {base} remembers the view's own address."""
     if method == 'GET':
-        return {'on': unified.switch_on(SWITCH), 'base': clean_base(unified.store.get(KV_BASE) or '') or None}
+        return {'on': True, 'base': clean_base(unified.store.get(KV_BASE) or '') or None}
     if method == 'POST':
         from engine import EngineError
         base = clean_base((payload or {}).get('base'))

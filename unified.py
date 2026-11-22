@@ -3519,10 +3519,8 @@ class UnifiedInbox:
             pass  # never let a wake stall the room's sync
 
     def phone_notify_incoming(self, message_id):
-        """Issue 308 (switch phone-notifications): a new live incoming message goes to Notifications, so it shows on
-        the phone as a Messenger notification. Nothing happens while the switch is off."""
-        if not self.switch_on('phone-notifications'):
-            return
+        """Issue 308: a new live incoming message goes to Notifications, so it shows on the phone as a Messenger
+        notification."""
         try:
             import phone_notify
             phone_notify.incoming(self, message_id)
