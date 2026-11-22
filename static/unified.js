@@ -684,7 +684,7 @@
   }
   // The category bar, in Telegram's order (the shared Wizard set's eight categories, plus Recent).
   const EMOJI_CATEGORY_ICONS = {'Recent': '🕘', 'Smileys & People': '😀', 'Animals & Nature': '🐻', 'Food & Drink': '🍔', 'Activity': '⚽', 'Travel & Places': '🚗', 'Objects': '💡', 'Symbols': '🔣', 'Flags': '🏁'};
-  // Issue 291 (switch agent-rows-toggle): the button beside My QR codes that hides or shows the pinned Agent and
+  // Issue 291: the button beside My QR codes that hides or shows the pinned Agent and
   // Reports chats. `hidden` is this device's choice; the label says what a tap does, aria-pressed says it is hiding.
   function agentRowsToggle(hidden) {
     return hidden
@@ -1019,7 +1019,7 @@
       const label = document.querySelector('.u-settings-btn')?.getAttribute('aria-label') || 'Settings';
       let tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
       // Issue 291: the Agent/Reports toggle rides right after QR. The shell has no eye icon, so it shows as text.
-      if (tools && agentToggleOn()) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
+      if (tools) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
       const key = JSON.stringify(tools); if (key === bar.key) return; bar.key = key;
       const gen = ++bar.gen;
       let pending; try { pending = Promise.resolve(tb.set(tools, onBarTool)); } catch { pending = Promise.resolve(false); }
@@ -5306,18 +5306,15 @@
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
-  // Issue 291 (switch agent-rows-toggle): a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
+  // Issue 291: a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
   // Only the list changes: an open Agent/Reports chat stays open and nothing about notes, Sweep or Reports delivery
   // changes. Remembered on this device, like the Inbox view.
   const AGENT_ROWS_KEY = 'messenger.agentRowsHidden';
-  function agentToggleOn() { return switchState.on['agent-rows-toggle'] === true; }
   function agentRowsHidden() {
-    if (!agentToggleOn()) return false;
     try { return localStorage.getItem(AGENT_ROWS_KEY) === '1'; } catch { return false; }
   }
   function paintAgentToggle(el) {
     const t = agentRowsToggle(agentRowsHidden());
-    el.hidden = !agentToggleOn();
     el.setAttribute('aria-label', t.label); el.title = t.label; el.setAttribute('aria-pressed', String(t.pressed));
     el.replaceChildren(icon(t.icon));
   }
@@ -5327,7 +5324,6 @@
     try { if (hide) localStorage.setItem(AGENT_ROWS_KEY, '1'); else localStorage.removeItem(AGENT_ROWS_KEY); } catch { /* this visit only */ }
     paintAgentToggles(); drawList();
   }
-  switchState.paints['agent-rows-toggle'] = () => { paintAgentToggles(); if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList(); };
   function agentRows() { return [agentRow('chat'), agentRow('reports')]; }
   function agentRow(mode) {
     const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];
