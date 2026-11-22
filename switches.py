@@ -48,11 +48,6 @@ SWITCHES = (
                     'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#223']},
-    {'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
-     'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, and a second '
-                    'tap shows them again. This device remembers your choice.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#291']},
     {'id': 'unread-count', 'name': 'Unread count on the phone icon',
      'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
                     'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
