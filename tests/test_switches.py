@@ -59,12 +59,6 @@ class SwitchEndpoint(unittest.TestCase):
                                "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
                                'still opens it.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}, {
-                'id': 'agent-wake', 'name': 'Drafts without a schedule',
-                'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents '
-                               'with Draft-only access) to write the draft, so no agent needs a schedule. The wake '
-                               'carries only which chat, never the words. If no agent can be woken, the chat says '
-                               'Drafts paused.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#223']}, {
                 'id': 'unread-count', 'name': 'Unread count on the phone icon',
                 'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never '
                                'names or messages), so the Messenger icon on your home screen can show it. Muted, '
@@ -435,7 +429,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji'])
 
 
 if __name__ == '__main__':

@@ -21,11 +21,16 @@ answers it), a report goes to Reports. So a note can never get a text reply in t
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import secrets
 import threading
 import time
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlsplit
@@ -57,6 +62,7 @@ WAKE_EVENT = 'messenger.agent_chat'
 WAKE_DELAY = 1.5   # seconds: a burst (a photo, then a note) becomes one wake
 WAKE_SUBS_MAX = 16
 WAKE_LEVELS = ('draft_only', 'draft_and_send')   # ticking a note needs Draft-only, so only those are woken
+WAKE_TIMEOUT = 10
 
 
 def _now():
@@ -756,6 +762,43 @@ def _wake_load(store):
     return {'subs': {k: v for k, v in subs.items() if isinstance(k, str) and isinstance(v, dict)}}
 
 
+def valid_url(url):
+    if not isinstance(url, str) or not 8 <= len(url) <= 500 or any(ord(c) <= 32 for c in url):
+        return False
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.scheme in ('http', 'https') and bool(parts.hostname) and not parts.username and not parts.password
+
+
+def sign(secret, body, timestamp):
+    return hmac.new(secret.encode(), str(timestamp).encode() + b'.' + body, hashlib.sha256).hexdigest()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def signed_post(url, secret, payload):
+    """One signed POST (the way Hermes' generic webhook route checks it: X-Webhook-Timestamp plus
+    X-Webhook-Signature-V2 = hex HMAC-SHA256 of "<timestamp>.<body>"). True on a 2xx answer. Never follows a redirect."""
+    body = json.dumps(payload, separators=(',', ':')).encode()
+    stamp = str(int(time.time()))
+    req = urllib.request.Request(url, data=body, method='POST', headers={
+        'Content-Type': 'application/json', 'User-Agent': 'WizardMessenger',
+        'X-Request-ID': uuid.uuid4().hex, 'X-Webhook-Timestamp': stamp,
+        'X-Webhook-Signature-V2': sign(secret, body, stamp)})
+    try:
+        with _OPENER.open(req, timeout=WAKE_TIMEOUT) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
 def _wake_public(sub):
     return {'url': sub.get('url'), 'since': sub.get('at'), 'last_wake': sub.get('last_wake'),
             'last_error': sub.get('last_error')}
@@ -763,7 +806,6 @@ def _wake_public(sub):
 
 def wake_register(unified, agent, url=None, secret=None, off=False):
     """The agent ({'id', 'name'}) asks to be woken at `url` (a Hermes webhook subscription) with its secret, or stops."""
-    import draft_wake
     store, ident = unified.store, str((agent or {}).get('id') or '')
     if not ident:
         _bad('agent_required', 'Only an agent with its own Messenger access can be woken', 403)
@@ -773,7 +815,7 @@ def wake_register(unified, agent, url=None, secret=None, off=False):
             data['subs'].pop(ident, None)
             store.put(WAKE_KEY, json.dumps(data))
             return {'woken': False, 'note': 'Messenger no longer wakes you for the Agent chat.'}
-        if not draft_wake.valid_url(url):
+        if not valid_url(url):
             _bad('invalid_url', 'url must be an http(s) address of your event inbox')
         if not isinstance(secret, str) or not 16 <= len(secret) <= 256 or any(ord(c) < 33 for c in secret):
             _bad('invalid_secret', 'secret must be the 16..256 character secret of that subscription')
@@ -799,8 +841,7 @@ class Waker:
     the owner gives Draft-only or higher right now. Best effort: the agent can still check its inbox itself."""
 
     def __init__(self, unified, post=None, delay=WAKE_DELAY):
-        import draft_wake
-        self.unified, self.post, self.delay = unified, post or draft_wake.post, delay
+        self.unified, self.post, self.delay = unified, post or signed_post, delay
         self.lock, self.timer, self.reasons = threading.Lock(), None, []
 
     def poke(self, reason):

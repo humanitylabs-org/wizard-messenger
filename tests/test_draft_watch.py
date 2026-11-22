@@ -76,6 +76,25 @@ class DraftWatch(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertEqual(data['result']['on'], True)
 
+    def test_the_dropped_draft_wake_leaves_nothing_behind(self):
+        # Issue 368: the draft wake (issue 223) was dropped. A stale stored switch, wake list or paused chat changes
+        # nothing: the state has no paused chats, a new message wakes nobody, and the stored wake list (agents' event
+        # inbox urls and secrets) is deleted the next time Messenger starts.
+        self.inbox.switches.path.write_text(json.dumps({'switches': {'agent-wake': True}}))
+        self.inbox.store.put('draft_wake', json.dumps({'subs': {'a': {'url': 'http://127.0.0.1:9/x', 'secret': 's' * 20}},
+                                                       'paused': {'p': {'reason': 'no_agent'}}}))
+        a = self.chat('Ann')
+        self.assertEqual(self.watch({'person_id': a['person_id'], 'on': True})[0], 200)
+        self.say(a, 'Hello?')
+        state = self.request('GET', '/api/unified/draft-watch', None, self.owner)[2]['result']
+        self.assertNotIn('paused', state)
+        self.assertFalse(hasattr(self.inbox, 'draft_wake_incoming'))
+        self.assertNotIn('agent-wake', [s['id'] for s in self.inbox.switches.listing()['switches']])
+        self.inbox.close()
+        again = UnifiedInbox(self.temp.name, self.server.engine)
+        self.addCleanup(again.close)
+        self.assertEqual(again.store.get('draft_wake'), '')
+
     def test_watched_chat_needs_a_draft_until_the_agent_writes_one(self):
         names = [t['name'] for t in self.mcp(None, method='tools/list')['tools']]
         self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback'} <= set(names))
@@ -191,9 +210,11 @@ class ToolList(unittest.TestCase):
     def test_every_tool_is_listed_with_no_switch_on(self):
         handler = Mock(); handler.service.unified.switches.is_on = lambda sid: False
         names = {t['name'] for t in agent_tools.listed(handler)}
-        # Issue 223: the wake tool is offered only with agent-wake on; issue 265: the agent chat tools are always on.
-        self.assertEqual(agent_tools.SWITCHED, {'messenger_wake_me': 'agent-wake'})
-        self.assertFalse(set(agent_tools.SWITCHED) & names)
+        # Issue 368: the dropped draft wake (issue 223) and its messenger_wake_me tool are gone; issue 265: the agent
+        # chat tools are always on.
+        self.assertEqual(agent_tools.SWITCHED, {})
+        self.assertNotIn('messenger_wake_me', names)
+        self.assertNotIn('messenger_wake_me', agent_tools.ROUTES)
         self.assertTrue({'messenger_chats_needing_draft', 'messenger_draft_feedback', 'messenger_start_draft',
                          'messenger_agent_chat_inbox', 'messenger_agent_chat_wake_me'} <= names)
         self.assertEqual(agent_tools.ROUTES['messenger_chats_needing_draft'], ('GET', '/api/unified/people'))

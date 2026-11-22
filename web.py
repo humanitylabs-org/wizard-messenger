@@ -212,13 +212,12 @@ class ViewServer(MessengerServer):
         if self.unified:
             if getattr(self.unified, 'store', None) is not None:
                 self.unified.store.draft_people = self.drafts.waiting_people
-            # Issue 223 (switch agent-wake): what a wake needs from the server, read fresh at every wake.
-            self.unified.wake_drafts = lambda: self.drafts.dispatch('GET', [], {}, self.unified, owner=True)['drafts']
+            # Issue 266: the Agent chat wake reads the owner's current agent levels at every wake.
             self.unified.wake_levels = self.wake_levels
             self.unified.start()
 
     def wake_levels(self):
-        """Issue 223: agent id (as the MCP caller sees it) -> the level the owner picked for it now."""
+        """Agent id (as the MCP caller sees it) -> the level the owner picked for it now."""
         levels = {'wizard-' + r['id']: r['level'] for r in self.wizard_agents.list()}
         levels.update({r['id']: r['level'] for r in self.agent_keys.list()})
         return levels

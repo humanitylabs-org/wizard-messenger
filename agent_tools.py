@@ -111,19 +111,6 @@ TOOLS = [
           'sent, and the outcome (sent_as_drafted, edited or discarded). Use the edited pairs as style examples so your '
           'drafts read the way he writes. Needs Read-only or higher.',
           {'chat_id': _string('Only this chat'), 'limit': _int('Max entries, default 20, up to 100')}),
-    # Issue 223: offered only while the agent-wake switch is on.
-    _tool('messenger_wake_me', 'Ask Messenger to wake you when a chat needs a draft, instead of checking on a schedule. '
-          'Give the url of your own event inbox (a Hermes webhook subscription: `hermes webhook subscribe '
-          'messenger-drafts --prompt "Messenger: chat {chat_id} needs a draft. Call messenger_chats_needing_draft and '
-          'draft there. Never send."`) and its secret. When someone writes in a chat with drafts on, Messenger posts '
-          '{"event": "messenger.draft_needed", "chat_id": ..., "reason": ...} there, signed with X-Webhook-Timestamp '
-          'and X-Webhook-Signature-V2 (hex HMAC-SHA256 of "<timestamp>.<body>"). Never message text. Only while the '
-          'owner gives you Draft-only access. Call with only `check: true` to see your current wake, or `off: true` '
-          'to stop. Needs Draft-only or higher.',
-          {'url': _string('Your event inbox, e.g. http://host.docker.internal:8644/webhooks/messenger-drafts'),
-           'secret': _string('The secret of that subscription (16..256 characters)'),
-           'check': {'type': 'boolean', 'description': 'Only report the current wake'},
-           'off': {'type': 'boolean', 'description': 'Stop waking me'}}),
     # Issue 265: the owner's agent chat.
     _tool('messenger_agent_chat_inbox', 'The owner\'s Agent chat in Messenger: what is waiting for you there. `notes` are '
           'notes to self the owner dropped (text, links, and photos or voice notes: those carry an `attachment`, fetch it '
@@ -192,8 +179,6 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           # Reads: the same level as listing chats and drafts.
           'messenger_chats_needing_draft': ('GET', '/api/unified/people'),
           'messenger_draft_feedback': ('GET', '/api/drafts'),
-          # Same level as saving a draft: a wake only ever leads to a draft.
-          'messenger_wake_me': ('POST', '/api/drafts'),
           # Issue 265: reading the agent chat is a read; ticking, posting there and closing items are Draft-only
           # (the owner's own chat with his agent, never a message to anyone else).
           'messenger_agent_chat_inbox': ('GET', '/api/drafts'),
@@ -205,7 +190,7 @@ ROUTES = {'messenger_list_chats': ('GET', '/api/unified/people'),
           'messenger_agent_chat_attachment': ('GET', '/api/drafts'),
           'messenger_agent_chat_wake_me': ('POST', '/api/drafts')}
 # Tools offered only while their switch is on (tool name -> switch id).
-SWITCHED = {'messenger_wake_me': 'agent-wake'}
+SWITCHED = {}
 LEVEL_HINT = {'read': 'Read-only or higher', 'draft': 'Draft-only or higher'}
 
 
@@ -730,19 +715,6 @@ def draft_feedback(handler, caller, args):
     return {'feedback': out, 'stats': draft_watch.stats(unified.store)}
 
 
-def wake_me(handler, caller, args):
-    import draft_wake
-    unified = _unified(handler)
-    if not unified.switch_on(draft_wake.SWITCH):
-        raise EngineError('feature_off', 'Waking agents is not switched on in this Messenger', 409)
-    if caller[0] != 'agent':
-        raise EngineError('agent_required', 'Only an agent with its own Messenger access can be woken', 403)
-    agent = {'id': caller[1]['id'], 'name': caller[1].get('name')}
-    if args.get('check'):
-        return draft_wake.status(unified, agent)
-    return draft_wake.register(unified, agent, args.get('url'), args.get('secret'), off=args.get('off') is True)
-
-
 def _agent_chat(handler, caller):
     import agent_chat
     unified = _unified(handler)
@@ -824,7 +796,6 @@ BODIES = {'messenger_list_chats': list_chats, 'messenger_read_thread': read_thre
           'messenger_attach_to_draft': attach_to_draft, 'messenger_remove_draft_attachment': remove_draft_attachment,
           'messenger_start_draft': start_draft,
           'messenger_chats_needing_draft': chats_needing_draft, 'messenger_draft_feedback': draft_feedback,
-          'messenger_wake_me': wake_me,
           'messenger_agent_chat_inbox': agent_chat_inbox, 'messenger_agent_chat_ack': agent_chat_ack,
           'messenger_agent_chat_post': agent_chat_post, 'messenger_agent_chat_done': agent_chat_done,
           'messenger_agent_chat_attachment': agent_chat_attachment,

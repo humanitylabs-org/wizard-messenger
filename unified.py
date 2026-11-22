@@ -573,6 +573,8 @@ class PeopleStore:
 
     def migrate(self):
         with self.db() as db:
+            # Issue 368: the dropped draft wake (issue 223) kept agents' event-inbox urls and secrets here; drop them.
+            db.execute("DELETE FROM kv WHERE key='draft_wake'")
             have = {t: {r[1] for r in db.execute('PRAGMA table_info(' + t + ')')} for t in ('message', 'identity', 'person')}
             missing = [m for m in MIGRATIONS if m[1] not in have[m[0]]]
             if missing and db.execute('SELECT COUNT(*) FROM message').fetchone()[0]:
@@ -1777,10 +1779,9 @@ class UnifiedInbox:
     def close(self):
         self.stop.set()
         self.notify()
-        for name in ('waker', 'agent_chat_waker'):
-            waker = getattr(self, name, None)
-            if waker is not None:
-                waker.close()
+        waker = getattr(self, 'agent_chat_waker', None)
+        if waker is not None:
+            waker.close()
         if self.worker:
             self.worker.join(timeout=2)
 
@@ -2074,10 +2075,8 @@ class UnifiedInbox:
         self.warm_photo(event['event_id'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
         if live:
             self.photo_arrived(identity['network'], msgtype, outgoing, media, event.get('origin_server_ts', 0))
-            if not outgoing:
-                self.draft_wake_incoming(identity.get('person_id'))
-                if inserted:
-                    self.phone_notify_incoming(event['event_id'])
+            if not outgoing and inserted:
+                self.phone_notify_incoming(event['event_id'])
 
     WARM_DAYS = 3
     EDIT_TEXT = ('m.text', 'm.notice', 'm.emote')
@@ -3621,20 +3620,6 @@ class UnifiedInbox:
         """Issue 178: keep what the agent drafted next to what the owner sent, or that he discarded it."""
         import draft_watch
         return draft_watch.closed(self, row, outcome, sent_text)
-
-    def draft_wake_incoming(self, person_id):
-        """Issue 223 (switch agent-wake): a live message from someone else; wake the owner's agent if this chat
-        keeps a draft ready. Nothing happens while the switch is off."""
-        if not self.switch_on('agent-wake'):
-            return
-        waker = getattr(self, 'waker', None)
-        if waker is None:
-            import draft_wake
-            waker = self.__dict__.setdefault('waker', draft_wake.Waker(self))
-        try:
-            waker.incoming(person_id)
-        except Exception:
-            pass  # never let a wake stall the room's sync
 
     def phone_notify_incoming(self, message_id):
         """Issue 308: a new live incoming message goes to Notifications, so it shows on the phone as a Messenger
