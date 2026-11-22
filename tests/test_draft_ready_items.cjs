@@ -1,8 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {draftReadyItems} = require('../static/unified.js');
-// Issue 201: the chat list's right-click / long-press menu offers the same "keeps a draft ready" item as the open
-// chat's ⋯ menu (switch list-draft-ready); one helper builds it for both.
+// Issue 201 (on for everyone): the chat list's right-click / long-press menu offers the "keeps a draft ready" item.
 
 test('off: offers Agent keeps a draft ready and turns it on', () => {
   const calls = [], p = {id: 'james'};

@@ -59,11 +59,6 @@ class SwitchEndpoint(unittest.TestCase):
                                "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
                                'still opens it.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}, {
-                'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
-                'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent '
-                               'keeps a draft ready, or Stop keeping a draft ready, without opening the chat. An open '
-                               'chat shows a Drafts toggle at the top, next to Catch me up.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}, {
                 'id': 'agent-wake', 'name': 'Drafts without a schedule',
                 'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents '
                                'with Draft-only access) to write the draft, so no agent needs a schedule. The wake '
@@ -411,6 +406,21 @@ class SwitchStorage(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
             self.assertNotIn('photo-file-names', json.loads(path.read_text()).get('feedback', {}))
 
+    def test_list_draft_ready_is_gone_and_its_stored_value_cleared(self):
+        # Issue 201: the chat-list draft item and the header Drafts toggle are on for everyone now.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"list-draft-ready": true, "photo-warm": true}, '
+                            '"feedback": {"list-draft-ready": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('list-draft-ready', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('list-draft-ready', store.listing().get('feedback', {}))
+            with self.assertRaises(UnknownSwitch):
+                store.set('list-draft-ready', False)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('list-draft-ready', json.loads(path.read_text()).get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
@@ -430,7 +440,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'reports-notifications', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'reports-notifications', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
 
 
 if __name__ == '__main__':

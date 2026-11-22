@@ -42,12 +42,6 @@ SWITCHES = (
                     '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#182']},
-    {'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
-     'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent keeps a draft '
-                    'ready, or Stop keeping a draft ready, without opening the chat. An open chat shows a Drafts '
-                    'toggle at the top, next to Catch me up.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#201']},
     {'id': 'agent-wake', 'name': 'Drafts without a schedule',
      'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents with '
                     'Draft-only access) to write the draft, so no agent needs a schedule. The wake carries only which '
