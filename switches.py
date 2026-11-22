@@ -73,12 +73,6 @@ SWITCHES = (
                     'Agent chat works as before.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#325']},
-    {'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
-     'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows and '
-                    'changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level is still kept '
-                    'in Messenger, so a change there shows in Settings > Agents too, and the other way round.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#342']},
     {'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
      'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to keep '
                     'deleting), a keyboard button that swaps the panel for the keyboard and back, skin tones on a '

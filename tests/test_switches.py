@@ -87,12 +87,6 @@ class SwitchEndpoint(unittest.TestCase):
                                'the same card as Daily with one-tap answers, and urgent alerts arrive as one-line '
                                'pings. With the inbox off, the Agent chat works as before.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#325']}, {
-                'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
-                'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows '
-                               'and changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level '
-                               'is still kept in Messenger, so a change there shows in Settings > Agents too, and the '
-                               'other way round.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#342']}, {
                 'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
                 'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to '
                                'keep deleting), a keyboard button that swaps the panel for the keyboard and back, '
@@ -441,7 +435,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'agent-wake', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji'])
 
 
 if __name__ == '__main__':
