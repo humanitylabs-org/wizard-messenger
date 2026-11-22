@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.102
+
+Store recipe: pins the image built from main `06b718b`. Ships #380 (Refs humanitylabs-org/wizard-messenger#343): received videos start sooner. The box keeps a received MP4/MOV with its index (moov) in front, moved once on arrival with no re-encode, so the player streams from the first bytes; on Wi-Fi or wired, a video bubble near the screen buffers its first seconds before the tap. Guards: `tests/test_video_faststart.py`, `tests/test_video_preload.cjs`, `tests/video_stream_start_browser.cjs`.
+
 ## 0.2.0-unified.16.101
 
 Store recipe: pins the image built from main `7528425`. Ships #377 (Refs humanitylabs-org/wizard-messenger#342): Agent levels in Connected accounts is on for everyone; `GET/POST /api/agent-levels` always answers (owner only, as before), so Connected accounts' Agent access screen always lists Messenger's chat accounts and each agent's Messenger level, and the `connected-accounts-levels` switch is removed. Guards: `tests/test_agent_levels_route.py`, `tests/test_switches.py`.
