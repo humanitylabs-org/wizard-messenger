@@ -279,7 +279,7 @@
   // while allowed() says no. Each file is kept in Cache Storage (open() gives the cache, or null without one) and
   // listed in index ({load, save}) with its size. Over cap, videos go first, then view copies, oldest first, then
   // thumbnails.
-  function photoPrefetcher({get, open, index, allowed, busy, later, now = () => Date.now(), cap = PREFETCH.cap, concurrency = PREFETCH.concurrency, retryMs = 800}) {
+  function photoPrefetcher({get, open, index, allowed, busy, later, now = () => Date.now(), cap = PREFETCH.cap, concurrency = PREFETCH.concurrency, retryMs = 800, stored = () => {}}) {
     let entries = {}; try { entries = index.load() || {}; } catch { entries = {}; }
     const queue = [], queued = new Set(), failed = new Set();
     let running = 0, waiting = false, epoch = 0;
@@ -321,6 +321,7 @@
       if (mine !== epoch) return;
       entries[item.url] = {kind: item.kind, size: blob.size || 0, at: now()};
       await evict(cache); save();
+      try { stored(item); } catch { /* a listener never stops the queue */ }
     }
     async function evict(cache) {
       let size = total(); if (size <= cap) return;
@@ -3029,16 +3030,24 @@
     // Issue 348: opened in the tap, never after a wait. The view copies this phone already read (viewCopies) go as
     // blob: URLs; one still being read goes as the thumbnail the bubble shows, and the swipe to it finds it ready.
     const near = placeholder ? nearCopies(list, at) : [];
-    const blobs = {};
-    for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
-    viewCopies.prime(near);
-    const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
-    if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
+    const open = () => {
+      const blobs = {};
+      for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
+      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+      if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
+    };
+    const reading = viewCopies.prime(near), mine = placeholder ? photoStages(m, true, mediaURL).sharp : null;
+    // Normally the tapped photo's copy is already read (a chat reads its photos ahead), so it opens in the tap. Only
+    // when this phone has it but it is not read yet does the tap wait for that one read, at most 100 ms: a picture
+    // the viewer can show at once beats a thumbnail it has to fetch.
+    if (!mine || viewCopies.get(mine) || !photoCache.has(mine)) { open(); return; }
+    Promise.race([reading, sleep(100)]).then(open);
   }
   // The view copies of a chat's photo at `at` and the ones either side (photo-instant's screen copies, issue 164).
   const nearCopies = (list, at) => [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(Boolean);
   // Issue 348: this phone's downloaded view copies, held as blob: URLs so a tap hands them over at once. A photo is read
-  // ahead when its chat shows it and decoded ahead on the finger's touch (pointerdown comes before the tap's click).
+  // ahead when its chat shows it (and when the phone stores it later), and on the finger's touch (pointerdown comes
+  // before the tap's click), when Messenger's own view will show it, also decoded ahead.
   const viewCopies = readyCopies({
     match: url => photoCache.match(url),
     has: url => photoCache.has(url),
@@ -3050,15 +3059,19 @@
   function primeChatCopies(messages) {
     if (switchState.on['viewer-placeholder'] !== true) return;
     const list = (messages || []).filter(x => x && !x.pending && !x.deleted && !isSticker(x));
-    viewCopies.prime(list.map(x => photoStages(x, true, mediaURL).sharp).filter(Boolean).slice(-6));
+    const urls = list.map(x => photoStages(x, true, mediaURL).sharp).filter(Boolean).slice(-6);
+    viewWanted = new Set(urls); // one the phone downloads later is read as soon as it is stored
+    viewCopies.prime(urls);
   }
+  let viewWanted = new Set();
   function primeTapped(m, box) {
     if (switchState.on['viewer-placeholder'] !== true) return;
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = list.indexOf(m);
     if (at < 0) return;
     const urls = nearCopies(list, at), mine = photoStages(m, true, mediaURL).sharp;
-    viewCopies.prime(urls.filter(u => u === mine), {decoded: true});
+    // Decoded ahead only for Messenger's own view: Wizard's viewer decodes in its own page, and the work would compete.
+    viewCopies.prime(urls.filter(u => u === mine), {decoded: !hostViewer(window.WizardApp, window.parent !== window)});
     viewCopies.prime(urls.filter(u => u !== mine));
   }
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
@@ -5286,7 +5299,7 @@
   function applySwitches(data) {
     const was = JSON.stringify(switchState.on);
     switchState.on = Object.fromEntries(data.switches.map(x => [x.id, x.on === true]));
-    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (prefetchMode() !== 'off') prefetchSoon(); }
+    if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (prefetchMode() !== 'off') prefetchSoon(); primeChatCopies(store.threads[view.id]?.messages); }
     sendPhoneBase();
   }
   // Messages on your phone (issue 308, switch phone-notifications): the box posts new messages to Notifications with
@@ -5868,6 +5881,7 @@
   const prefetchBusy = {loads: 0, until: 0};
   const onPhone = () => { try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches; } catch { return false; } };
   const photoCache = photoPrefetcher({
+    stored: item => { if (item.kind === 'view' && viewWanted.has(item.url)) viewCopies.prime([item.url]); }, // issue 348
     get: url => fetch(url, {credentials: 'same-origin', priority: 'low'}),
     open: () => { try { return typeof caches === 'undefined' ? null : caches.open(PREFETCH_CACHE).catch(() => null); } catch { return null; } },
     index: {load: () => JSON.parse(localStorage.getItem(PREFETCH_INDEX_KEY) || '{}'), save: e => localStorage.setItem(PREFETCH_INDEX_KEY, JSON.stringify(e))},

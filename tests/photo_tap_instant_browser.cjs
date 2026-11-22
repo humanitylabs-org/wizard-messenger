@@ -58,6 +58,7 @@ async function run(browser, label, viewport, mobile) {
         const pic = !!img && !img.hidden && img.complete && img.naturalWidth > 0;
         const cur = window.__cur || (window.__cur = {tap: window.__tap, black: false, first: {at: Math.round(performance.timeOrigin + performance.now() - window.__tap), src: (img?.src || '').slice(-30), complete: !!img?.complete, w: img?.naturalWidth || 0, op}});
         if (!pic && op > 0.01) cur.black = true; // a frame the owner sees with no picture: black
+        if (window.__debug && window.__log) window.__log.push('f@' + Math.round(performance.timeOrigin + performance.now() - cur.tap) + ':' + op.toFixed(2) + (pic ? 'P' : '-'));
         if (pic && op >= 0.99 && !cur.shown) { cur.shown = performance.timeOrigin + performance.now() - cur.tap; cur.src = img.currentSrc || img.src; window.__opens.push(cur); }
       } else window.__cur = null;
       requestAnimationFrame(watch);
