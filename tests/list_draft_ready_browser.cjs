@@ -1,6 +1,7 @@
-// Draft ready from the chat list (issue 201, switch list-draft-ready): holding a chat row (phone) or right-clicking it
-// (desktop) offers "Agent keeps a draft ready" / "Stop keeping a draft ready" without opening the chat, and the open
-// chat's header has a one-tap Drafts toggle instead of the ⋯ item. Switch off, both menus are as before. Synthetic API only; phone + desktop.
+// Draft ready from the chat list (issue 201, on for everyone; its switch list-draft-ready was removed): holding a chat
+// row (phone) or right-clicking it (desktop) offers "Agent keeps a draft ready" / "Stop keeping a draft ready" without
+// opening the chat, and the open chat's header has a one-tap Drafts toggle instead of the ⋯ item. A box that still
+// lists the old switch as off changes nothing. Synthetic API only; phone + desktop.
 // PLAYWRIGHT_MODULE=... node tests/list_draft_ready_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -13,7 +14,8 @@ const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person',
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 (async () => {
   const browser = await chromium.launch(), summary = [];
-  for (const [label, viewport, on] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['1280-off', {width: 1280, height: 860}, false]]) {
+  const stale = [{id: 'list-draft-ready', name: 'Draft ready from the chat list', on: false, default: false, issues: ['humanitylabs-org/wizard-messenger#201']}];
+  for (const [label, viewport, switches] of [['390', {width: 390, height: 844}, []], ['1280', {width: 1280, height: 860}, []], ['1280-stale-off', {width: 1280, height: 860}, stale]]) {
     const PEOPLE = [person('james', 'James Carter', 'whatsapp', 'Can you do Tuesday at 3?', 2, {unread: 1})];
     let DRAFTS = [{id: 'd1', person_id: 'james', identity_id: 'james-i', state: 'draft', revision: 1, text: 'Tuesday at 3 works for me.', attachments: [], updated: now - 30e3, created_by: {id: 'agent:a', name: 'Oscar'}, agent_text: 'Tuesday at 3 works for me.'}];
     const watch = {watched: [], all_unread: false, stats: {sent_as_drafted: 2, edited: 1, discarded: 0, total: 3}};
@@ -32,7 +34,7 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       const body = () => JSON.parse(req.postData() || '{}');
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       if (/\/send$|\/preview$/.test(p)) { box.sends.push([p, body()]); return ok({state: 'sent', message: null}); }
-      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'list-draft-ready', name: 'Draft ready from the chat list', on, default: false, issues: ['humanitylabs-org/wizard-messenger#201']}]})});
+      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches})});
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
       if (p === 'api/status') return ok({state: 'ready', account_configured: true});
       if (p === 'api/identity') return ok({identity: own});
@@ -83,12 +85,8 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
     };
     const closeMenu = async () => { await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('.u-menu'), null, {timeout: 5000}); };
     let items = await rowMenu();
-    if (!on) {
-      assert.ok(!items.some(t => /draft ready/.test(t)), 'switch off: row menu unchanged ' + JSON.stringify(items));
+    {
       assert.ok(items.includes('Mute'), JSON.stringify(items));
-      await shot('row-menu-off');
-      await closeMenu();
-    } else {
       assert.equal(items.at(-1), 'Agent keeps a draft ready', JSON.stringify(items));
       await shot('row-menu');
       await page.locator('.u-menu .u-act', {hasText: 'Agent keeps a draft ready'}).click();
@@ -104,14 +102,12 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
       assert.deepEqual(box.watch.at(-1), {person_id: 'james', on: false});
       assert.deepEqual(watch.watched, []);
     }
-    // The open chat: switch on, a one-tap Drafts toggle sits in the header next to Catch me up and the ⋯ menu drops
-    // the item; switch off, no toggle and the ⋯ menu keeps it.
+    // The open chat: a one-tap Drafts toggle sits in the header next to Catch me up and the ⋯ menu drops the item.
     // (After a CDP touch hold the first synthetic click can be eaten by swallowRelease, so tap again if needed.)
     for (let i = 0; i < 3 && !(await page.locator('.u-composer textarea').count()); i++) { await row.click(); await page.waitForTimeout(1500); }
     await page.locator('.u-composer textarea').waitFor({timeout: 10000});
     const toggle = page.locator('.u-thread-head .u-draft-toggle').last();
-    if (!on) assert.equal(await toggle.isVisible(), false, 'switch off: no header toggle');
-    else {
+    {
       await toggle.waitFor({state: 'visible', timeout: 5000});
       const order = await page.locator('.u-thread-head').last().evaluate(h => [...h.children].map(c => c.getAttribute('aria-label') || '').filter(Boolean));
       const at = order.indexOf('Agent keeps a draft ready');
@@ -129,8 +125,7 @@ const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: nam
     }
     await page.locator('[aria-label="Chat options"]').last().click(); await page.locator('.u-menu').waitFor();
     items = await page.locator('.u-menu .u-act').allInnerTexts();
-    if (on) assert.ok(!items.some(t => /draft ready/.test(t)), 'switch on: the header toggle replaces the ⋯ item ' + JSON.stringify(items));
-    else assert.ok(items.includes('Agent keeps a draft ready'), JSON.stringify(items));
+    assert.ok(!items.some(t => /draft ready/.test(t)), 'the header toggle replaces the ⋯ item ' + JSON.stringify(items));
     await closeMenu();
     assert.deepEqual(errors, [], 'no page errors');
     summary.push(`${tag}: ok`);
