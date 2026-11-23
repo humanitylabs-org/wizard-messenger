@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.104
+
+Store recipe: pins the image built from main `7c0801d`. Ships #384 (Refs humanitylabs-org/wizard-messenger#353): stacked drafts behind the off-by-default switch `stacked-drafts` ("Several drafts in one chat"). With it on, an agent can line up to 5 drafts in one chat (`draft_stack_full` after that); with two or more, the message box stays empty and they wait as stacked bubbles above it, oldest first, each with Send, Edit and Remove. One draft works as before; switch off keeps one draft per chat (`draft_exists`). Also: the phone-notify worker no longer reads the store (CI sqlite segfault in teardown). Guards: `tests/test_stacked_drafts.py`, `tests/test_stacked_drafts.cjs`, `tests/stacked_drafts_browser.cjs`, `tests/test_switches.py`.
+
 ## 0.2.0-unified.16.103
 
 Store recipe: pins the image built from main `f09aa90`. Ships #382 (Refs humanitylabs-org/wizard-messenger#368, Refs humanitylabs-org/wizard-messenger#223): the dropped draft wake is removed. The `agent-wake` switch, the `messenger_wake_me` agent tool, `draft_wake.py` and the "Drafts paused" line are gone, and the stored wake list (agents' event-inbox urls and secrets) is deleted on start. Agents keep drafts ready by checking `messenger_chats_needing_draft` as before; the Agent chat wake is unchanged. Guards: `tests/test_draft_watch.py`, `tests/test_agent_chat.py`, `tests/test_switches.py`.
