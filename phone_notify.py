@@ -157,6 +157,18 @@ class Notifier:
             self.stats['dropped'] += 1
             return False
 
+    def close(self, timeout=2):
+        # Stop the worker before the store's connection closes (a test teardown closing it under a running
+        # get() crashed CI's sqlite with a segfault).
+        thread = self.thread
+        if thread is None or not thread.is_alive():
+            return
+        try:
+            self.queue.put_nowait(None)
+        except queue.Full:
+            pass
+        thread.join(timeout=timeout)
+
     def run(self):
         while True:
             note = self.queue.get()
