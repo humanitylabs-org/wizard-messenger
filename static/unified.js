@@ -160,15 +160,15 @@
   // to a blob: URL), else the thumbnail the bubble shows. Wizard shows it until the original is in, so the first frame
   // is never black; Save and Share keep the original (url). Off, the items are exactly as before.
   // Issue 348: the tapped photo (at) starts from the thumbnail its bubble already shows, which the viewer can draw in
-  // the tap's frame (a 1600 px screen copy takes too long to decode on a phone), and carries the screen copy as
-  // `preview`, which Wizard's viewer shows next, before the original.
+  // the tap's frame (a 1600 px screen copy takes too long to decode on a phone), held in memory when blobs has it, and
+  // carries the screen copy as `preview`, which Wizard's viewer shows next, before the original.
   function viewerItems(list, {placeholder = false, url, who = () => 'Photo', blobs = {}, at = -1} = {}) {
     return (list || []).map((x, n) => {
       const item = {url: url(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)};
       const stages = placeholder && item.kind === 'image' ? photoStages(x, true, url) : null;
       if (!stages?.sharp) return item;
       const ready = blobs[stages.sharp];
-      if (n === at) { item.placeholder = stages.first; if (ready) item.preview = ready; } else item.placeholder = ready || stages.first;
+      if (n === at) { item.placeholder = blobs[stages.first] || stages.first; if (ready) item.preview = ready; } else item.placeholder = ready || stages.first;
       return item;
     });
   }
@@ -1491,7 +1491,7 @@
     if (n === badgeShown) return; badgeShown = n;
     try { Promise.resolve(window.WizardApp?.badge?.set?.(n)).catch(() => {}); } catch { /* standalone: no shell badge */ }
   }
-  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { photoCache.clear(); } catch { /* not started */ } try { viewCopies.clear(); } catch { /* not started */ } try { for (const b of videoBlobs.values()) URL.revokeObjectURL(b); videoBlobs.clear(); } catch { /* none kept */ } try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
+  function wipeCache() { clearTimeout(saveTimer); savedOrder = []; try { photoCache.clear(); } catch { /* not started */ } try { viewCopies.clear(); thumbCopies.clear(); } catch { /* not started */ } try { for (const b of videoBlobs.values()) URL.revokeObjectURL(b); videoBlobs.clear(); } catch { /* none kept */ } try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem('messenger-unified-cache-v1'); } catch { /* nothing stored */ } }
   let recent = [];
   let csrf = () => '';
   let feedCtl = null;
@@ -3158,9 +3158,11 @@
     // Issue 348: opened in the tap, never after a wait. The view copies this phone already read (viewCopies) go as
     // blob: URLs; one still being read goes as the thumbnail the bubble shows, and the swipe to it finds it ready.
     const near = placeholder ? nearCopies(list, at) : [];
+    const mineThumb = placeholder ? photoStages(m, true, mediaURL).first : null;
     const open = () => {
       const blobs = {};
       for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
+      const t = mineThumb && thumbCopies.get(mineThumb); if (t) blobs[mineThumb] = t;
       const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs, at}), at, item => photoView(item, list, at, tapped));
       if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
     };
@@ -3168,6 +3170,7 @@
     // already read (a chat reads its photos ahead); one still being read is ready for the swipe.
     viewCopies.prime(near);
     open();
+    if (mineThumb) thumbCopies.prime([mineThumb]);
   }
   // The view copies of a chat's photo at `at` and the ones either side (photo-instant's screen copies, issue 164).
   const nearCopies = (list, at) => [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(Boolean);
@@ -3180,6 +3183,15 @@
     decode: blob => { const img = new Image(); img.decoding = 'async'; img.src = blob; return img.decode().then(() => img); },
     revoke: blob => { try { URL.revokeObjectURL(blob); } catch { /* already gone */ } },
   });
+  // The thumbnails the bubbles show, held in memory the same way: the tapped photo's stand-in then never waits on the
+  // browser's disk cache (slow on a busy phone). Read from this phone's photo cache, else from the browser's cache,
+  // where the bubble put it.
+  const thumbCopies = readyCopies({
+    match: url => photoCache.has(url) ? photoCache.match(url) : fetch(url, {credentials: 'same-origin'}).then(r => r.ok ? r.blob() : null).then(b => b ? URL.createObjectURL(b) : null),
+    has: () => true,
+    revoke: blob => { try { URL.revokeObjectURL(blob); } catch { /* already gone */ } },
+    keep: 24,
+  });
   // Read ahead the newest photos of the chat on screen, so the first tap already finds them (only while the shared
   // viewer gets placeholders: viewer-placeholder).
   function primeChatCopies(messages) {
@@ -3188,6 +3200,7 @@
     const urls = list.map(x => photoStages(x, true, mediaURL).sharp).filter(Boolean).slice(-6);
     viewWanted = new Set(urls); // one the phone downloads later is read as soon as it is stored
     viewCopies.prime(urls);
+    thumbCopies.prime(list.map(x => photoStages(x, true, mediaURL)).filter(x => x.sharp).map(x => x.first).slice(-6));
   }
   let viewWanted = new Set();
   function primeTapped(m, box) {
@@ -3199,6 +3212,7 @@
     // Decoded ahead only for Messenger's own view: Wizard's viewer decodes in its own page, and the work would compete.
     viewCopies.prime(urls.filter(u => u === mine), {decoded: !hostViewer(window.WizardApp, window.parent !== window)});
     viewCopies.prime(urls.filter(u => u !== mine));
+    if (mine) thumbCopies.prime([photoStages(m, true, mediaURL).first]);
   }
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
   // zooms natively); Close, Esc or Back closes it.

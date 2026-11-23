@@ -27,7 +27,9 @@ function png(w, h, [r, g, b]) {
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
-const THUMB = png(400, 300, [200, 40, 40]), VIEW = png(1600, 1200, [40, 80, 200]), ORIGINAL = png(4000, 3000, [40, 170, 80]);
+// THUMB_FILE / ORIGINAL_FILE: real JPEGs instead (e.g. a 320 px thumbnail and a 4000 x 3000 camera photo).
+const file = (env, made) => process.env[env] ? fs.readFileSync(process.env[env]) : made();
+const THUMB = file('THUMB_FILE', () => png(400, 300, [200, 40, 40])), VIEW = png(1600, 1200, [40, 80, 200]), ORIGINAL = file('ORIGINAL_FILE', () => png(4000, 3000, [40, 170, 80]));
 const VIEW_MS = Number(process.env.VIEW_MS || 1500), ORIGINAL_MS = Number(process.env.ORIGINAL_MS || 3000);
 const person = {id: 'ann', display_name: 'Ann Lee', identities: [{id: 'ann-i', network: 'telegram', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'Photo', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
 const MESSAGES = [0, 1, 2].map(i => ({id: '$p' + i, identity_id: 'ann-i', network: 'telegram', sender: 'Ann Lee', outgoing: false, original: '', timestamp: now - (3 - i) * min, timeline_order: i + 1, msgtype: 'm.image', media: {w: 1600, h: 1200, mime: 'image/png', thumb: true}, reactions: []}));
