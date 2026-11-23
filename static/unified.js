@@ -749,7 +749,16 @@
     if (!boundId && all.length < 2) return [];
     return all.filter(d => d.id !== boundId);
   }
-  if (typeof module !== 'undefined') module.exports = {draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Forward to Wizard (wizard-ux issue 1745): what the toast says when the shell's Send to Wizard sheet did not send,
+  // named by the receipt instead of one "Sharing unavailable" for all of them. null = sent.
+  function forwardProblem(receipt) {
+    if (receipt === 'sent') return null;
+    if (receipt === 'cancelled') return 'Share cancelled · selection kept';
+    if (receipt === 'unsupported') return 'Send to Wizard can’t open in this window (update Wizard, or close the other share first) · selection kept';
+    if (receipt === 'failed') return 'Couldn’t send to Wizard · selection kept';
+    return 'Not sent to Wizard (' + (typeof receipt === 'string' && receipt ? receipt.slice(0, 40) : 'no answer') + ') · selection kept';
+  }
+  if (typeof module !== 'undefined') module.exports = {forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2870,7 +2879,7 @@
             if (m.original || m.transcript) texts.push(line(m));
           }
           const receipt = await WizardApp.share.wizard({files, text: texts.join('\n\n'), title: 'Forwarded from Messenger'});
-          if (receipt !== 'sent') { toast(receipt === 'cancelled' ? 'Share cancelled · selection kept' : 'Sharing unavailable · selection kept', 4500); return; }
+          if (receipt !== 'sent') { toast(forwardProblem(receipt), 4500); return; }
           toast('Sent to Wizard'); sending = false; clear(); return;
         }
         if (!queue) {
