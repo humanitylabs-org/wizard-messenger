@@ -236,6 +236,17 @@ button { touch-action: manipulation; }
 .u-photo-view img, .u-photo-view video { display: block; width: 100%; height: 100%; object-fit: contain; }
 .u-photo-view .u-photo-view-close { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 8px; width: 44px; height: 44px; }
 .u-photo-view-error { color: var(--ink); }
+/* Full-screen video (issue 379, switch video-fullscreen): black, the video fit to the screen, Messenger's own controls. */
+.u-video-view { position: fixed; inset: 0; z-index: 90; background: color-mix(in srgb, black calc(var(--vv-fade, 1) * 100%), transparent); touch-action: none; color: white; outline: none; }
+.u-video-view video { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.u-video-view .u-vv-close { position: absolute; top: max(.5rem, env(safe-area-inset-top)); right: .5rem; width: 2.75rem; height: 2.75rem; color: white; background: color-mix(in srgb, black 45%, transparent); border-radius: 50%; }
+.u-video-view .u-vv-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: .5rem; padding: 1.5rem .75rem max(.75rem, env(safe-area-inset-bottom)); background: linear-gradient(to top, color-mix(in srgb, black 70%, transparent), transparent); }
+.u-video-view .u-vv-play { width: 2.75rem; height: 2.75rem; color: white; flex: none; }
+.u-video-view .u-vv-time { font-size: .75rem; font-variant-numeric: tabular-nums; min-width: 2.25rem; text-align: center; flex: none; }
+.u-video-view .u-vv-scrub { flex: 1; min-width: 0; accent-color: white; height: 1.75rem; margin: 0; }
+.u-video-view .u-vv-close, .u-video-view .u-vv-bar { transition: opacity .2s; }
+.u-video-view:not(.chrome) .u-vv-close, .u-video-view:not(.chrome) .u-vv-bar { opacity: 0; pointer-events: none; }
+.u-video-view svg { width: 1.375rem; height: 1.375rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .u-media.sticker { background: transparent; width: 160px; }
 .u-media img, .u-media video { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .15s; }
 .u-media img.in, .u-media video { opacity: 1; }
