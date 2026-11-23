@@ -94,6 +94,12 @@ const oscar = {id: 'agent:oscar', name: 'Oscar'};
   await bubbles.nth(1).getByRole('button', {name: 'Edit', exact: true}).click();
   await page.waitForFunction(() => document.querySelectorAll('.u-draft-stack .u-draft-bubble').length === 1, null, {timeout: 5000});
   assert.equal(await box.inputValue(), 'Week update 3/3: next week we hire.', 'Edit moves that draft into the box');
+  // The box's own "Drafted by" note shows too: the bubbles left keep the full width, every button on screen.
+  await page.locator('.u-bar .u-draft-note').waitFor({timeout: 5000});
+  const fit = await page.evaluate(() => [...document.querySelectorAll('.u-draft-stack .u-draft-bubble')].map(b => ({w: b.getBoundingClientRect().width,
+    buttons: [...b.querySelectorAll('button')].map(x => { const r = x.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })})));
+  assert.ok(fit.every(f => f.w > 250 && f.buttons.every(Boolean)), 'after Edit the stack keeps its width: ' + JSON.stringify(fit));
+  await page.screenshot({path: path.join(out, 'edit-note.png')});
   await box.fill('Week update 3/3: next week we hire two people.');
   await page.waitForTimeout(1200); // autosave
   assert.equal(drafts.get('d3').text, 'Week update 3/3: next week we hire two people.', 'editing in the box saves that draft');
