@@ -150,8 +150,10 @@ class Notifier:
             if self.thread is None or not self.thread.is_alive():
                 self.thread = threading.Thread(target=self.run, name='phone-notify', daemon=True)
                 self.thread.start()
+        # The chat link's base is read here, on the caller's thread: the worker never touches the store, so a
+        # store closing under it (a test teardown) can't crash sqlite.
         try:
-            self.queue.put_nowait(note)
+            self.queue.put_nowait((note, self.base()))
             return True
         except queue.Full:
             self.stats['dropped'] += 1
@@ -171,14 +173,14 @@ class Notifier:
 
     def run(self):
         while True:
-            note = self.queue.get()
-            if note is None:
+            item = self.queue.get()
+            if item is None:
                 return
-            self.deliver(note)
+            self.deliver(*item)
 
-    def deliver(self, note):
+    def deliver(self, note, base=None):
         try:
-            ok = self.send(arguments(note, self.base()))
+            ok = self.send(arguments(note, base))
         except Exception:
             ok = False
         self.stats['posted' if ok else 'failed'] += 1
