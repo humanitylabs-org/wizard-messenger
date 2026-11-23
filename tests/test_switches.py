@@ -59,39 +59,12 @@ class SwitchEndpoint(unittest.TestCase):
                                "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
                                'still opens it.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}, {
-                'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
-                'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent '
-                               'keeps a draft ready, or Stop keeping a draft ready, without opening the chat. An open '
-                               'chat shows a Drafts toggle at the top, next to Catch me up.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#201']}, {
-                'id': 'agent-wake', 'name': 'Drafts without a schedule',
-                'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents '
-                               'with Draft-only access) to write the draft, so no agent needs a schedule. The wake '
-                               'carries only which chat, never the words. If no agent can be woken, the chat says '
-                               'Drafts paused.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#223']}, {
-                'id': 'reports-notifications', 'name': 'Notifications in Reports',
-                'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the '
-                               'Morning Report, app alerts) also shows as a message in the pinned Reports chat, newest '
-                               'at the bottom, with its title, text and link. Notifications keeps working as before; '
-                               'Reports stays read-only.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#276']}, {
-                'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
-                'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, '
-                               'and a second tap shows them again. This device remembers your choice.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#291']}, {
                 'id': 'unread-count', 'name': 'Unread count on the phone icon',
                 'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never '
                                'names or messages), so the Messenger icon on your home screen can show it. Muted, '
                                'Medium and Low priority chats never count. Your private Messenger chats count too.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296',
                                                            'humanitylabs-org/wizard-messenger#302']}, {
-                'id': 'phone-notifications', 'name': 'Messages on your phone',
-                'description': 'Each new message (and an urgent ping in the Agent chat) also goes to Notifications, '
-                               'with the chat name and the start of the message, so the Wizard phone app can show it '
-                               'as a Messenger notification. A tap opens that chat. Muted, Medium and Low priority '
-                               'chats stay quiet.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#308']}, {
                 'id': 'share-files', 'name': 'Share files to Messenger',
                 'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers '
                                'Messenger. The file waits in the chosen chat\'s message box as an attachment, like '
@@ -108,18 +81,23 @@ class SwitchEndpoint(unittest.TestCase):
                                'the same card as Daily with one-tap answers, and urgent alerts arrive as one-line '
                                'pings. With the inbox off, the Agent chat works as before.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#325']}, {
-                'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
-                'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows '
-                               'and changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level '
-                               'is still kept in Messenger, so a change there shows in Settings > Agents too, and the '
-                               'other way round.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#342']}, {
                 'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
                 'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to '
                                'keep deleting), a keyboard button that swaps the panel for the keyboard and back, '
                                'skin tones on a long press, a Recent row ranked by how often you use each emoji, and '
                                'on a phone the same height as your keyboard.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}, {
+                'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
+                'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as '
+                               'stacked bubbles above the message box, oldest first, each with Send, Edit and '
+                               'Remove. One draft works as before. Nothing is ever sent on its own.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#353']}, {
+                'id': 'video-fullscreen', 'name': 'Videos open full screen',
+                'description': 'One tap on a video opens it full screen on black, already playing with sound, like '
+                               'Telegram. Tap to show or hide the controls (play, pause, a scrubber, close). Back or '
+                               'a swipe down returns to the chat where you were. GIFs and stickers still loop in the '
+                               'chat.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -411,6 +389,38 @@ class SwitchStorage(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
             self.assertNotIn('photo-file-names', json.loads(path.read_text()).get('feedback', {}))
 
+    def test_list_draft_ready_is_gone_and_its_stored_value_cleared(self):
+        # Issue 201: the chat-list draft item and the header Drafts toggle are on for everyone now.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"list-draft-ready": true, "photo-warm": true}, '
+                            '"feedback": {"list-draft-ready": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('list-draft-ready', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('list-draft-ready', store.listing().get('feedback', {}))
+            with self.assertRaises(UnknownSwitch):
+                store.set('list-draft-ready', False)
+            store.set('photo-instant', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'photo-warm': True, 'photo-instant': True})
+            self.assertNotIn('list-draft-ready', json.loads(path.read_text()).get('feedback', {}))
+
+    def test_phone_notifications_is_gone_and_its_stored_value_cleared(self):
+        # Issue 308: Messages on your phone was approved (switch-default), so it is always on; a stored value and its
+        # feedback from before are ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"phone-notifications": false, "photo-warm": true}, '
+                            '"feedback": {"phone-notifications": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('phone-notifications', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('phone-notifications', store.listing()['feedback'])
+            with self.assertRaises(UnknownSwitch):
+                store.set('phone-notifications', True)
+            store.set('photo-instant', True)
+            saved = json.loads(path.read_text())
+            self.assertNotIn('phone-notifications', saved['switches'])
+            self.assertNotIn('phone-notifications', saved.get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
@@ -430,7 +440,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'list-draft-ready', 'agent-wake', 'reports-notifications', 'agent-rows-toggle', 'unread-count', 'phone-notifications', 'share-files', 'video-prefetch', 'agent-inbox-door', 'connected-accounts-levels', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
 
 
 if __name__ == '__main__':

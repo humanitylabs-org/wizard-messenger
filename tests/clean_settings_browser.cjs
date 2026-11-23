@@ -14,7 +14,7 @@ const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming photos as they arrive.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
-  ['list-draft-ready', 'Draft ready from the chat list', 'Holding a chat also offers Agent keeps a draft ready.']];
+  ['row-tap-menu', 'Tap beside a message for its menu', 'Tapping beside a message opens its menu.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, listed] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['1280-noswitches', {width: 1280, height: 860}, false]]) {
@@ -110,7 +110,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       assert.match(await sheet.locator('.u-agent-draft-stats').innerText(), /2 sent as drafted · 1 edited · 0 discarded/);
       const pick = sheet.locator('.u-more-agent-drafts-pick');
       assert.deepEqual(await pick.locator('.u-view-btn').allInnerTexts(), ['Chats I pick', 'Every unread chat']);
-      assert.match(await pick.innerText(), /Pick chats with a chat’s ⋯ > Agent keeps a draft ready/);
+      assert.match(await pick.innerText(), /Pick chats with Drafts at the top of a chat, or by holding a chat in the list/);
       assert.equal(await pick.locator('[aria-checked="true"]').innerText(), 'Chats I pick');
       await pick.getByRole('radio', {name: 'Every unread chat'}).click();
       await until(async () => await pick.locator('[aria-checked="true"]').innerText() === 'Every unread chat');
@@ -130,11 +130,11 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Photos ready on arrival'}).getAttribute('aria-pressed') === 'true');
       assert.deepEqual(box.votes.at(-1), {id: 'photo-warm', vote: 'up'});
       assert.deepEqual(box.feedback['photo-warm'], {tried: true, vote: 'up'});
-      // With Draft ready from the chat list on, the hint says right-click / hold.
-      await tryBox.locator('[data-try-id="list-draft-ready"]').getByRole('switch').click();
-      await until(async () => /Drafts at the top of a chat, or by holding a chat/.test(await pick.innerText()));
-      const ldr = tryBox.locator('[data-try-id="list-draft-ready"]');
-      assert.equal(await ldr.getByRole('switch').getAttribute('aria-checked'), 'true');
+      // Draft ready from the chat list is on for everyone (issue 201): the hint names the Drafts toggle and the hold.
+      assert.match(await pick.innerText(), /Drafts at the top of a chat, or by holding a chat/);
+      const rtm = tryBox.locator('[data-try-id="row-tap-menu"]');
+      await rtm.getByRole('switch').click();
+      await until(async () => await rtm.getByRole('switch').getAttribute('aria-checked') === 'true');
       const fits = await pick.locator('.u-view-btn').evaluateAll(bs => bs.every(b => b.scrollWidth <= b.clientWidth));
       assert.ok(fits, 'Agent drafts choices are not cut off');
       await page.mouse.move(1, 1); await page.locator('body').evaluate(() => document.activeElement?.blur());

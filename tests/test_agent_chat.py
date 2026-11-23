@@ -1,23 +1,63 @@
 """The owner's agent chat (issue 265, on for everyone): notes to self, Sweep with one-tap answers, urgent pings and
 reports. Runs through the real view server (owner routes) and the real MCP endpoint (agent key)."""
 import base64
+import hashlib
+import hmac
 import io
 import json
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock
 
 import test_web as fixtures
 from drafts import Drafts
 from unified import UnifiedInbox
 import agent_chat
-from test_draft_wake import Inbox as EventInbox, SECRET
 
 TOOLS = ('messenger_agent_chat_inbox', 'messenger_agent_chat_ack', 'messenger_agent_chat_post',
          'messenger_agent_chat_done', 'messenger_agent_chat_attachment', 'messenger_agent_chat_wake_me')
 PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
        b'\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82')
 OGG = b'OggS' + b'\x00' * 60
+
+
+SECRET = 'wake-secret-0123456789abcdef'
+
+
+class EventInbox:
+    """A local stand-in for a Hermes webhook route: 202 for a good signature, 401 otherwise."""
+
+    def __init__(self):
+        self.events, self.bad = [], 0
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                stamp = self.headers.get('X-Webhook-Timestamp', '')
+                want = hmac.new(SECRET.encode(), stamp.encode() + b'.' + body, hashlib.sha256).hexdigest()
+                fresh = stamp.isdigit() and abs(time.time() - int(stamp)) < 300
+                if fresh and hmac.compare_digest(want, self.headers.get('X-Webhook-Signature-V2', '')):
+                    outer.events.append(json.loads(body))
+                    self.send_response(202)
+                else:
+                    outer.bad += 1
+                    self.send_response(401)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+
+        self.httpd = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.url = 'http://127.0.0.1:%d/webhooks/messenger-agent-chat' % self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
 
 
 class AgentChat(unittest.TestCase):
@@ -174,14 +214,14 @@ class AgentChat(unittest.TestCase):
         state = self.ok('POST', '/read', {'reports': True})
         self.assertEqual(state['reports_unread'], 0)
 
-    def test_notes_and_reports_answer_with_notifications_in_reports_off(self):
-        # Issue 265: with the Agent chat always on, the Notifications in Reports switch only adds notifications to
-        # Reports; notes, Sweep and both read marks answer whether it is on or off.
-        for on in (False, True):
-            self.inbox.switches.set('reports-notifications', on)
-            self.ok('POST', '', {'text': 'a note'})
-            self.ok('POST', '/read', {})
-            self.assertGreater(self.ok('POST', '/read', {'reports': True})['reports_read_at'], 0)
+    def test_notes_and_reports_answer_with_a_stale_notifications_in_reports_value(self):
+        # Issue 276: the Notifications in Reports switch was removed (always on). A stale stored value for it is
+        # ignored: it is not listed, and notes, Sweep and both read marks answer as always.
+        self.inbox.switches.path.write_text(json.dumps({'switches': {'reports-notifications': False}}))
+        self.assertNotIn('reports-notifications', [s['id'] for s in self.inbox.switches.listing()['switches']])
+        self.ok('POST', '', {'text': 'a note'})
+        self.ok('POST', '/read', {})
+        self.assertGreater(self.ok('POST', '/read', {'reports': True})['reports_read_at'], 0)
         # An agent key still can't use the owner's routes.
         status, data = self.owner_call('GET', '', headers={'Origin': fixtures.ORIGIN, **self.key})
         self.assertNotEqual(status, 200, data)

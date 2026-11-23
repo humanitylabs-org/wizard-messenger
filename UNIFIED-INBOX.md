@@ -52,7 +52,7 @@ Without an install-form `TINFOIL_API_KEY` (a normal App Store install), Catch me
 
 A tapped **Translate** first uses (issue 199, on for everyone) the browser's own built-in translator (Chrome's `Translator` and `LanguageDetector` APIs, on-device language packs), so that text never leaves the device and is not cached on the box. Where the browser has no built-in translator (Safari, Firefox, phones today), the language is unknown or the pack can't be fetched, Translate falls back to Tinfoil as above. Auto-translate chats and the send preview also translate on the device (issue 204, on for everyone): a browser with a built-in translator opens auto-translate chats with `?translate=device`, so the box queues nothing for Tinfoil, translates incoming messages to English itself (a message it can't read goes to the one-message translate route, i.e. Tinfoil), and sends its own translation of a reply to the preview (`translated`, `on_device: true`), which the box binds to that preview like a Tinfoil result (the mention check still applies). Browsers without one (Safari, Firefox, phones today) use Tinfoil as before.
 
-With the Messenger switch **Draft ready from the chat list** (`list-draft-ready`, off by default, issue 201), holding a chat in the list (or right-clicking it on a computer) also offers **Agent keeps a draft ready** / **Stop keeping a draft ready**, the same item as the open chat's ⋯ menu, for people and groups, without opening the chat. An open chat then shows a one-tap **Drafts** pill next to Catch me up instead of the ⋯ menu item (filled dot = on).
+Holding a chat in the list (or right-clicking it on a computer) offers **Agent keeps a draft ready** / **Stop keeping a draft ready** (issue 201, on for everyone), for people and groups, without opening the chat. An open chat shows a one-tap **Drafts** pill next to Catch me up (filled dot = on), which replaced the old ⋯ menu item.
 
 ### Privacy and MVP limits
 
@@ -121,6 +121,42 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 **LINE photos.** Every LINE photo showed "Photo unavailable". The LINE bridge sends a photo as a bare `m.image` (a url and the name `image.jpg`, no `info` block, so no mimetype; its stickers, files, video and audio do carry one). Messenger's picture route decided "is this a picture?" only from the mimetype, so it answered 404 "No preview" for every LINE photo. The event type now decides when the bridge sent no mimetype (`is_picture` in `unified.py`), for the list row (`media.thumb`) and the thumbnail/full routes alike. The decision is made when a photo is shown, not when it was stored, so photos already received start loading too (while their media is still in Matrix). Photos the bridge could not download from LINE never reached Matrix and are not repaired. Guards: `tests/test_incoming_media.py` `LinePhotoTests`.
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
+
+## 0.2.0-unified.16.105
+
+Store recipe: pins the image built from main `ba32d74`. Ships #386 (Refs humanitylabs-org/wizard-messenger#379): full-screen videos behind the off-by-default switch `video-fullscreen` ("Videos open full screen"). With it on, one tap on a video opens it full screen on black, already playing with sound, with Messenger's own controls (tap to show or hide: play/pause, scrubber, Close); Back, Esc, Close or a swipe down returns to the chat where it was. GIFs and stickers still loop in the chat; switch off keeps playing in the bubble. Tap to first moving frame is timed as `video_first_frame` with Photo timings on. Guards: `tests/video_fullscreen_browser.cjs`, `tests/test_video_swipe.cjs`, `tests/test_switches.py`.
+
+## 0.2.0-unified.16.104
+
+Store recipe: pins the image built from main `7c0801d`. Ships #384 (Refs humanitylabs-org/wizard-messenger#353): stacked drafts behind the off-by-default switch `stacked-drafts` ("Several drafts in one chat"). With it on, an agent can line up to 5 drafts in one chat (`draft_stack_full` after that); with two or more, the message box stays empty and they wait as stacked bubbles above it, oldest first, each with Send, Edit and Remove. One draft works as before; switch off keeps one draft per chat (`draft_exists`). Also: the phone-notify worker no longer reads the store (CI sqlite segfault in teardown). Guards: `tests/test_stacked_drafts.py`, `tests/test_stacked_drafts.cjs`, `tests/stacked_drafts_browser.cjs`, `tests/test_switches.py`.
+
+## 0.2.0-unified.16.103
+
+Store recipe: pins the image built from main `f09aa90`. Ships #382 (Refs humanitylabs-org/wizard-messenger#368, Refs humanitylabs-org/wizard-messenger#223): the dropped draft wake is removed. The `agent-wake` switch, the `messenger_wake_me` agent tool, `draft_wake.py` and the "Drafts paused" line are gone, and the stored wake list (agents' event-inbox urls and secrets) is deleted on start. Agents keep drafts ready by checking `messenger_chats_needing_draft` as before; the Agent chat wake is unchanged. Guards: `tests/test_draft_watch.py`, `tests/test_agent_chat.py`, `tests/test_switches.py`.
+
+## 0.2.0-unified.16.102
+
+Store recipe: pins the image built from main `06b718b`. Ships #380 (Refs humanitylabs-org/wizard-messenger#343): received videos start sooner. The box keeps a received MP4/MOV with its index (moov) in front, moved once on arrival with no re-encode, so the player streams from the first bytes; on Wi-Fi or wired, a video bubble near the screen buffers its first seconds before the tap. Guards: `tests/test_video_faststart.py`, `tests/test_video_preload.cjs`, `tests/video_stream_start_browser.cjs`.
+
+## 0.2.0-unified.16.101
+
+Store recipe: pins the image built from main `7528425`. Ships #377 (Refs humanitylabs-org/wizard-messenger#342): Agent levels in Connected accounts is on for everyone; `GET/POST /api/agent-levels` always answers (owner only, as before), so Connected accounts' Agent access screen always lists Messenger's chat accounts and each agent's Messenger level, and the `connected-accounts-levels` switch is removed. Guards: `tests/test_agent_levels_route.py`, `tests/test_switches.py`.
+
+## 0.2.0-unified.16.100
+
+Store recipe: pins the image built from main `d2e35b5`. Ships #375 (Refs humanitylabs-org/wizard-messenger#308): Messages on your phone is on for everyone; new incoming messages and urgent Agent chat pings always go to the Notifications app, and the `phone-notifications` switch is removed. Guards: `tests/test_phone_notify.py`, `tests/test_switches.py`, `tests/phone_notify_browser.cjs`.
+
+## 0.2.0-unified.16.99
+
+Store recipe: pins the image built from main `246df33`. Ships #373 (Refs humanitylabs-org/wizard-messenger#291): the Hide/Show Agent and Reports button beside My QR codes is on for everyone; the `agent-rows-toggle` switch is removed. Guards: `tests/test_switches.py`, `tests/agent_rows_toggle_browser.cjs`.
+
+## 0.2.0-unified.16.98
+
+Store recipe: pins the image built from main `95e1620`. Ships #371 (Refs humanitylabs-org/wizard-messenger#276): Notifications in Reports is on for everyone; the `reports-notifications` switch is removed. Also fixes the 16.97 image pin, which had a doubled `sha256:` in its digest. Guards: `tests/test_agent_chat.py`, `tests/test_switches.py`, `tests/reports_notifications_browser.cjs`.
+
+## 0.2.0-unified.16.97
+
+Store recipe: pins the image built from main `7b2ba40`. Ships #369 (Refs #201): Draft ready from the chat list is on for everyone (switch `list-draft-ready` removed). Holding or right-clicking a chat offers Agent keeps a draft ready / Stop keeping a draft ready, and an open chat always shows the one-tap Drafts pill next to Catch me up.
 
 ## 0.2.0-unified.16.96 (Saved photos keep their file name for everyone)
 

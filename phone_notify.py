@@ -1,6 +1,6 @@
-"""Messages on the phone (issue 308, switch `phone-notifications`, off by default).
+"""Messages on the phone (issue 308, on for everyone).
 
-With the switch on, Messenger posts one item to the Notifications app for each new incoming message, and one for
+Messenger posts one item to the Notifications app for each new incoming message, and one for
 each urgent Agent chat ping. Each item is tagged `app:messenger` (the Notifications `notify` tool's `app`), so the
 Wizard phone app (wizard-ux switch wizard/phone-app-notifications) shows it as a Messenger notification on its own
 Android channel, and a tap opens the item's link: this Wizard's Messenger at `#chat=<chat id>`.
@@ -13,7 +13,7 @@ Android channel, and a tap opens the item's link: this Wizard's Messenger at `#c
   app's MCP `notify` tool on the box (uses: notifications in wizard.md, so the App Manager links the two apps).
   A failed post is dropped, never retried into a flood.
 - The link needs this Wizard's own https address, which the box can't see: the view tells it (`POST
-  api/unified/phone-notify` {base}) while the switch is on. Until then the item has no link and a tap opens
+  api/unified/phone-notify` {base}) once per page. Until then the item has no link and a tap opens
   Messenger itself.
 """
 from __future__ import annotations
@@ -27,7 +27,6 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-SWITCH = 'phone-notifications'
 APP = 'messenger'
 NOTIFY_URL = os.environ.get('MESSENGER_NOTIFICATIONS_URL', 'http://notifications:8080/mcp')
 KV_BASE = 'phone_notify_base'
@@ -151,23 +150,37 @@ class Notifier:
             if self.thread is None or not self.thread.is_alive():
                 self.thread = threading.Thread(target=self.run, name='phone-notify', daemon=True)
                 self.thread.start()
+        # The chat link's base is read here, on the caller's thread: the worker never touches the store, so a
+        # store closing under it (a test teardown) can't crash sqlite.
         try:
-            self.queue.put_nowait(note)
+            self.queue.put_nowait((note, self.base()))
             return True
         except queue.Full:
             self.stats['dropped'] += 1
             return False
 
+    def close(self, timeout=2):
+        # Stop the worker before the store's connection closes (a test teardown closing it under a running
+        # get() crashed CI's sqlite with a segfault).
+        thread = self.thread
+        if thread is None or not thread.is_alive():
+            return
+        try:
+            self.queue.put_nowait(None)
+        except queue.Full:
+            pass
+        thread.join(timeout=timeout)
+
     def run(self):
         while True:
-            note = self.queue.get()
-            if note is None:
+            item = self.queue.get()
+            if item is None:
                 return
-            self.deliver(note)
+            self.deliver(*item)
 
-    def deliver(self, note):
+    def deliver(self, note, base=None):
         try:
-            ok = self.send(arguments(note, self.base()))
+            ok = self.send(arguments(note, base))
         except Exception:
             ok = False
         self.stats['posted' if ok else 'failed'] += 1
@@ -182,23 +195,19 @@ def notifier(unified):
 
 
 def incoming(unified, message_id):
-    """A live incoming message was stored: post it when the switch is on and the chat isn't quiet."""
-    if not unified.switch_on(SWITCH):
-        return False
+    """A live incoming message was stored: post it when the chat isn't quiet."""
     return notifier(unified).add(message_note(unified.store, message_id))
 
 
 def urgent(unified, entry_id, text, name=None):
     """The agent posted an urgent ping in the Agent chat."""
-    if not unified.switch_on(SWITCH):
-        return False
     return notifier(unified).add(ping_note(text, 'agent-chat:' + str(entry_id), name))
 
 
 def dispatch(unified, method, payload):
     """Owner route api/unified/phone-notify: GET {on, base}; POST {base} remembers the view's own address."""
     if method == 'GET':
-        return {'on': unified.switch_on(SWITCH), 'base': clean_base(unified.store.get(KV_BASE) or '') or None}
+        return {'on': True, 'base': clean_base(unified.store.get(KV_BASE) or '') or None}
     if method == 'POST':
         from engine import EngineError
         base = clean_base((payload or {}).get('base'))

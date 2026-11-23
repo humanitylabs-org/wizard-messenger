@@ -212,13 +212,12 @@ class ViewServer(MessengerServer):
         if self.unified:
             if getattr(self.unified, 'store', None) is not None:
                 self.unified.store.draft_people = self.drafts.waiting_people
-            # Issue 223 (switch agent-wake): what a wake needs from the server, read fresh at every wake.
-            self.unified.wake_drafts = lambda: self.drafts.dispatch('GET', [], {}, self.unified, owner=True)['drafts']
+            # Issue 266: the Agent chat wake reads the owner's current agent levels at every wake.
             self.unified.wake_levels = self.wake_levels
             self.unified.start()
 
     def wake_levels(self):
-        """Issue 223: agent id (as the MCP caller sees it) -> the level the owner picked for it now."""
+        """Agent id (as the MCP caller sees it) -> the level the owner picked for it now."""
         levels = {'wizard-' + r['id']: r['level'] for r in self.wizard_agents.list()}
         levels.update({r['id']: r['level'] for r in self.agent_keys.list()})
         return levels
@@ -573,17 +572,15 @@ class ViewHandler(Handler):
             self.close_connection=True
             return e.status,{'error':e.message,'code':e.code}
     def _agent_levels(self,method):
-        """Issue 342 (switch connected-accounts-levels): Connected accounts' Agent access screen reads Messenger's
+        """Issue 342: Connected accounts' Agent access screen reads Messenger's
         connected chat accounts (network and name only) and each Wizard agent's Messenger level, and sets a level.
         Messenger stays the only place the level is kept and enforced (wizard_agents.py); this is a second door to
         the same Settings > Agents row, never a copy. Same owner boundary as the switches route: the Wizard's owner
         proof on a trusted install, else the owner's view session; never a bearer or the gateway grant. A write
         needs the box's own Origin, JSON and X-Wizard-Agent-Level: 1 (a cross-site page cannot send it without a
         CORS preflight we never answer), which stands in for the Messenger CSRF token the other app does not hold.
-        Switch off: no such route (404), so the screen keeps saying "set in Messenger". Errors are {"error", "code"}."""
+        Always on since the switch was approved (issue 342). Errors are {"error", "code"}."""
         try:
-            if not self.service.switches.is_on('connected-accounts-levels'):
-                raise EngineError('not_found','No such route',404)
             if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
                 raise EngineError('owner_only','Only the owner can see or change agent levels',403)
             proven=False

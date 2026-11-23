@@ -1,4 +1,4 @@
-"""Messages on the phone (issue 308, switch phone-notifications).
+"""Messages on the phone (issue 308, on for everyone: the switch was removed).
 
 A real UnifiedInbox ingests synthetic live messages; a local stand-in for the Notifications app's MCP front records
 each `notify` tools/call the way the real one receives it (title, message, priority, link, app).
@@ -72,8 +72,8 @@ class PhoneNotify(unittest.TestCase):
         self.inbox.phone_notifier = phone_notify.Notifier(self.inbox, send=lambda args: phone_notify.post(args, self.fake.url))
         self.n = 0
 
-    def on(self, value=True):
-        self.inbox.switches.set('phone-notifications', value)
+    def on(self):
+        pass  # issue 308: always on, nothing to switch
 
     def message(self, body='See you at 8?', live=True, ts=None, sender=ME, msgtype='m.text'):
         self.n += 1
@@ -90,10 +90,11 @@ class PhoneNotify(unittest.TestCase):
         time.sleep(0.1)  # nothing more may follow
         return self.fake.args()
 
-    def test_off_by_default_posts_nothing(self):
-        self.assertFalse(self.inbox.switch_on('phone-notifications'))
-        self.message()
-        self.assertEqual(self.wait(0), [])
+    def test_on_without_any_switch_even_with_a_stale_stored_off(self):
+        self.inbox.switches.path.write_text('{"switches": {"phone-notifications": false}}')
+        self.message('See you at 8?')
+        self.assertEqual(self.wait(1), [{'title': 'Alice', 'message': 'See you at 8?', 'priority': 'default',
+                                         'app': 'messenger'}])
 
     def test_a_new_message_goes_to_notifications_as_messenger(self):
         self.on()
@@ -163,10 +164,6 @@ class PhoneNotify(unittest.TestCase):
         self.assertEqual(self.wait(1), [{'title': 'Agent', 'message': 'Your flight moved to 9:40', 'priority': 'high',
                                          'app': 'messenger', 'link': BASE + '#chat=agent:notes'}])
 
-    def test_an_agent_ping_with_the_switch_off_stays_in_messenger(self):
-        agent_chat.post(self.inbox, 'hermes', 'ping', 'Your flight moved')
-        self.assertEqual(self.wait(0), [])
-
     def test_a_failed_post_is_counted_and_never_blocks_the_next(self):
         bad = FakeNotifications(fail=True)
         self.addCleanup(bad.close)
@@ -191,7 +188,7 @@ class PhoneNotify(unittest.TestCase):
                     'https://box/m/#chat=x', '', None, 'https://box/' + 'a' * 600, 'https://bo x/'):
             with self.assertRaises(EngineError, msg=bad):
                 self.inbox.dispatch('POST', '/api/unified/phone-notify', {'base': bad})
-        self.assertEqual(self.inbox.dispatch('GET', '/api/unified/phone-notify', {}), {'on': False, 'base': None})
+        self.assertEqual(self.inbox.dispatch('GET', '/api/unified/phone-notify', {}), {'on': True, 'base': None})
         self.on()
         self.inbox.dispatch('POST', '/api/unified/phone-notify', {'base': 'https://box:8443/messenger/'})
         self.assertEqual(self.inbox.dispatch('GET', '/api/unified/phone-notify', {}),
@@ -202,12 +199,9 @@ class PhoneNotify(unittest.TestCase):
         for method in ('GET', 'POST'):
             self.assertIsNone(permissions.capability_for(method, '/api/unified/phone-notify'))
 
-    def test_the_switch_is_listed_with_its_issue(self):
+    def test_the_switch_is_gone(self):
         from switches import SWITCHES
-        entry = next(s for s in SWITCHES if s['id'] == 'phone-notifications')
-        self.assertFalse(entry['default'])
-        self.assertEqual(entry['issues'], ['humanitylabs-org/wizard-messenger#308'])
-
+        self.assertNotIn('phone-notifications', [s['id'] for s in SWITCHES])
 
 if __name__ == '__main__':
     unittest.main()

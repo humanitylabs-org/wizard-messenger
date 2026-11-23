@@ -1,8 +1,8 @@
-// Issue 291 (switch agent-rows-toggle): a button right beside My QR codes hides the pinned Agent and Reports chats
+// Issue 291: a button right beside My QR codes hides the pinned Agent and Reports chats
 // from the list, and a second tap shows them again. It shows its state (aria-pressed, label saying what a tap does),
 // the choice survives a reload (kept on this device, like the Inbox view), and an open Agent chat stays open. At phone
-// width inside Wizard it rides the shell title bar right after QR. No button when Agent chat and Notifications in
-// Reports are both off, and with the switch off the rows show as before even if the device once hid them.
+// width inside Wizard it rides the shell title bar right after QR. It is on for everyone (the agent-rows-toggle
+// switch is gone): with no switch listed, or a stale stored off, the button is still there and a stored hide holds.
 // Synthetic API, no container:
 //   PLAYWRIGHT_MODULE=... node tests/agent_rows_toggle_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -33,7 +33,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
   const state = () => ({entries, unread: 0, urgent: false, sweep_open: false, read_at: 0, agent: {woken: false, checked: true}, reports_unread: 0, reports_read_at: 0});
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
   const sw = (id, v) => ({id, name: id, description: 'x', on: !!v, default: false, tried: false, vote: null, issues: []});
-  const switches = [sw('reports-notifications', on.notices), sw('agent-rows-toggle', on.toggle)];
+  const switches = on.stale ? [sw('agent-rows-toggle', false)] : [];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -71,7 +71,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
   try {
     // Desktop: the header button right after My QR codes.
     {
-      const t = await open(browser, {toggle: true}, {width: 1280, height: 800});
+      const t = await open(browser, {}, {width: 1280, height: 800});
       assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'desktop: both rows to start with');
       const order = await t.page.locator('.u-head-actions > button:not([hidden])').evaluateAll(els => els.map(e => e.getAttribute('aria-label')));
       assert.equal(order[0], 'My QR codes'); assert.equal(order[1], 'Hide Agent and Reports', 'desktop: toggle right after QR');
@@ -100,7 +100,7 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
     }
     // Phone width inside Wizard: the shell title bar carries the toggle right after QR.
     {
-      const t = await open(browser, {notices: true, toggle: true}, {width: 390, height: 800});
+      const t = await open(browser, {}, {width: 390, height: 800});
       assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'phone: both rows to start with');
       let tools = await t.bar();
       assert.deepEqual(tools.map(x => x.id), ['qr', 'agent-rows', 'search', 'settings'], 'phone: bar tool after QR');
@@ -121,12 +121,13 @@ async function open(browser, on, viewport, {hidden = false} = {}) {
       assert.deepEqual(t.errors, [], 'phone: no page errors');
       await t.ctx.close();
     }
-    // Switch off: rows show as before even with a stored hide, and no toggle anywhere.
+    // A box that still lists the old switch as off changes nothing: the toggle is there and a stored hide holds.
     for (const viewport of [{width: 1280, height: 800}, {width: 390, height: 800}]) {
-      const t = await open(browser, {}, viewport, {hidden: true});
-      assert.deepEqual(await t.pinned(), ['chat', 'reports'], 'switch off: rows as before');
-      assert.equal(await t.btn.isVisible(), false, 'switch off: no header button');
-      assert.equal((await t.bar()).some(x => x.id === 'agent-rows'), false, 'switch off: no bar tool');
+      const t = await open(browser, {stale: true}, viewport, {hidden: true});
+      assert.deepEqual(await t.pinned(), [], 'stale off: the stored hide holds');
+      if (viewport.width > 600) assert.equal(await t.btn.getAttribute('aria-pressed'), 'true', 'stale off: header button shown, pressed');
+      else assert.equal((await t.bar()).find(x => x.id === 'agent-rows')?.label, 'Show Agent and Reports', 'stale off: bar tool shown');
+      assert.deepEqual(t.errors, [], 'stale off: no page errors');
       await t.ctx.close();
     }
     console.log('agent_rows_toggle_browser: ok, shots in', out);

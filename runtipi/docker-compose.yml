@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-8b37f67e2af52d75d45ce1de296496a754db01fa@sha256:38e18150273f9b2a1e68d88428da1de28ce34eb35bc35a3ce0fcc9c5c6b43f49}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ba32d74c3b5255085653b7d1a11cc78278284ed1@sha256:8b6ae816809a0f382d6434b9e060b5fe8282e0e1f4a2e554768eb3911fc5d7c3}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-8b37f67e2af52d75d45ce1de296496a754db01fa@sha256:38e18150273f9b2a1e68d88428da1de28ce34eb35bc35a3ce0fcc9c5c6b43f49}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ba32d74c3b5255085653b7d1a11cc78278284ed1@sha256:8b6ae816809a0f382d6434b9e060b5fe8282e0e1f4a2e554768eb3911fc5d7c3}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -39,7 +39,7 @@ services:
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.96"
+      MESSENGER_VERSION: "0.2.0-unified.16.105"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
@@ -55,7 +55,7 @@ services:
       matrix: {condition: service_healthy}
       connector-init: {condition: service_completed_successfully}
     networks: [matrix-lane, model-lane, relay-egress, signin-lane]
-    # Issue 223 (switch agent-wake): the owner's agent can name its event inbox on this Wizard as host.docker.internal.
+    # Issue 266: for the Agent chat wake, the owner's agent can name its event inbox on this Wizard as host.docker.internal.
     extra_hosts: ["host.docker.internal:host-gateway"]
     # Loopback-only host port for the Wizard gateway, as in 0.1.x.
     ports:
@@ -112,7 +112,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-8b37f67e2af52d75d45ce1de296496a754db01fa@sha256:38e18150273f9b2a1e68d88428da1de28ce34eb35bc35a3ce0fcc9c5c6b43f49}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ba32d74c3b5255085653b7d1a11cc78278284ed1@sha256:8b6ae816809a0f382d6434b9e060b5fe8282e0e1f4a2e554768eb3911fc5d7c3}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -138,7 +138,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-8b37f67e2af52d75d45ce1de296496a754db01fa@sha256:38e18150273f9b2a1e68d88428da1de28ce34eb35bc35a3ce0fcc9c5c6b43f49}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ba32d74c3b5255085653b7d1a11cc78278284ed1@sha256:8b6ae816809a0f382d6434b9e060b5fe8282e0e1f4a2e554768eb3911fc5d7c3}
     user: 0:0
     entrypoint:
     - python3

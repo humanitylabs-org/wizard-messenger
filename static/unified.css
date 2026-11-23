@@ -237,6 +237,17 @@ button { touch-action: manipulation; }
 .u-photo-view img, .u-photo-view video { display: block; width: 100%; height: 100%; object-fit: contain; }
 .u-photo-view .u-photo-view-close { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 8px; width: 44px; height: 44px; }
 .u-photo-view-error { color: var(--ink); }
+/* Full-screen video (issue 379, switch video-fullscreen): black, the video fit to the screen, Messenger's own controls. */
+.u-video-view { position: fixed; inset: 0; z-index: 90; background: color-mix(in srgb, black calc(var(--vv-fade, 1) * 100%), transparent); touch-action: none; color: white; outline: none; }
+.u-video-view video { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.u-video-view .u-vv-close { position: absolute; top: max(.5rem, env(safe-area-inset-top)); right: .5rem; width: 2.75rem; height: 2.75rem; color: white; background: color-mix(in srgb, black 45%, transparent); border-radius: 50%; }
+.u-video-view .u-vv-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: .5rem; padding: 1.5rem .75rem max(.75rem, env(safe-area-inset-bottom)); background: linear-gradient(to top, color-mix(in srgb, black 70%, transparent), transparent); }
+.u-video-view .u-vv-play { width: 2.75rem; height: 2.75rem; color: white; flex: none; }
+.u-video-view .u-vv-time { font-size: .75rem; font-variant-numeric: tabular-nums; min-width: 2.25rem; text-align: center; flex: none; }
+.u-video-view .u-vv-scrub { flex: 1; min-width: 0; accent-color: white; height: 1.75rem; margin: 0; }
+.u-video-view .u-vv-close, .u-video-view .u-vv-bar { transition: opacity .2s; }
+.u-video-view:not(.chrome) .u-vv-close, .u-video-view:not(.chrome) .u-vv-bar { opacity: 0; pointer-events: none; }
+.u-video-view svg { width: 1.375rem; height: 1.375rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .u-media.sticker { background: transparent; width: 160px; }
 .u-media img, .u-media video { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .15s; }
 .u-media img.in, .u-media video { opacity: 1; }
@@ -643,9 +654,6 @@ html:not([data-color-scheme=light]) .u-chips .net-badge.u-chip-icon[data-network
 .u-avatar .u-av-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 /* Merged chats: where the reply goes */
 .u-via-pick { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; min-height: 30px; margin: 0 12px 6px; padding: 0 10px; border-radius: 15px; background: var(--raised); color: var(--ink-2); font-size: 13px; }
-/* Issue 223 (switch agent-wake): one quiet line when no agent could be woken for this chat. */
-.u-drafts-paused { margin: 0 .75rem .375rem; font-size: .8125rem; color: var(--ink-3); }
-.u-drafts-paused[hidden] { display: none; }
 .u-via-pick strong { color: var(--ink); font-weight: 600; }
 .u-via-pick .u-via-icon { width: 18px; height: 18px; }
 .u-via-pick .u-via-caret { font-size: 10px; opacity: .7; }
@@ -820,6 +828,15 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 .u-draft-note span { flex: 1; min-width: 0; }
 .u-draft-note button.secondary { padding: 4px 10px; min-height: 0; font-size: 13px; }
 .u-draft-note.conflict { border-style: solid; }
+/* Issue 353: drafts waiting as stacked bubbles above the box (switch stacked-drafts). */
+.u-bar:has(> .u-draft-stack) { flex-wrap: wrap; }
+.u-draft-stack { flex: 1 0 100%; min-width: 0; display: flex; flex-direction: column; gap: .375rem; max-height: 45vh; overflow-y: auto; }
+.u-draft-bubble { align-self: flex-end; max-width: min(85%, 32rem); padding: .5rem .625rem; border-radius: .875rem; border: 1px dashed var(--accent); background: var(--accent-soft); color: var(--ink); }
+.u-draft-by { font-size: .75rem; color: var(--ink-2); }
+.u-draft-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .125rem; }
+.u-draft-files { font-size: .8125rem; color: var(--ink-2); margin-top: .125rem; }
+.u-draft-actions { display: flex; gap: .375rem; justify-content: flex-end; margin-top: .375rem; }
+.u-draft-actions button { padding: .25rem .75rem; min-height: 0; font-size: .8125rem; }
 .u-snippet.draft .u-snippet-who { color: var(--danger, var(--accent)); font-weight: 600; }
 
 /* ---- Phone-width windows (Miguel, 30 Oct 2026): Inbox controls move to the bottom, in thumb reach. ----
@@ -1162,10 +1179,8 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 
 /* Catch me up (6 Nov 2026): opaque sheet, --wz-* tokens with the standalone fallbacks, 44px+ targets. */
 .u-catchup-btn svg { stroke: currentColor; }
-/* Drafts toggle in the chat header (issue 201, switch list-draft-ready): a pill that shows on/off at a glance. */
+/* Drafts toggle in the chat header (issue 201): a pill that shows on/off at a glance. */
 .u-draft-toggle { display: inline-flex; align-items: center; gap: .375rem; flex: 0 0 auto; min-height: 44px; min-width: 44px; padding: 0 .625rem; border-radius: 22px; border: 1px solid var(--wz-border, var(--line)); background: transparent; color: var(--wz-text-muted, var(--ink-3)); font-size: .8125rem; font-weight: 600; }
-.u-draft-toggle[hidden] { display: none; }
-.u-agent-toggle[hidden] { display: none; }
 .u-agent-toggle[aria-pressed=true] { color: var(--wz-accent, var(--accent)); background: color-mix(in srgb, var(--wz-accent, var(--accent)) 14%, transparent); }
 .u-draft-toggle .u-draft-dot { width: .5rem; height: .5rem; border-radius: 50%; border: 1.5px solid currentColor; }
 .u-draft-toggle.on { color: var(--wz-accent, var(--accent)); border-color: color-mix(in srgb, var(--wz-accent, var(--accent)) 55%, transparent); background: color-mix(in srgb, var(--wz-accent, var(--accent)) 14%, transparent); }

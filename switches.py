@@ -42,41 +42,12 @@ SWITCHES = (
                     '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#182']},
-    {'id': 'list-draft-ready', 'name': 'Draft ready from the chat list',
-     'description': 'Holding a chat in the list (or right-clicking it on a computer) also offers Agent keeps a draft '
-                    'ready, or Stop keeping a draft ready, without opening the chat. An open chat shows a Drafts '
-                    'toggle at the top, next to Catch me up.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#201']},
-    {'id': 'agent-wake', 'name': 'Drafts without a schedule',
-     'description': 'When someone writes in a chat with drafts on, Messenger wakes your agent (only agents with '
-                    'Draft-only access) to write the draft, so no agent needs a schedule. The wake carries only which '
-                    'chat, never the words. If no agent can be woken, the chat says Drafts paused.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#223']},
-    {'id': 'reports-notifications', 'name': 'Notifications in Reports',
-     'description': 'Every notification from the Notifications app (agent notes, scheduled jobs such as the Morning '
-                    'Report, app alerts) also shows as a message in the pinned Reports chat, newest at the bottom, '
-                    'with its title, text and link. Notifications keeps working as before; Reports stays read-only.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#276']},
-    {'id': 'agent-rows-toggle', 'name': 'Hide Agent and Reports button',
-     'description': 'A button beside My QR codes hides the pinned Agent and Reports chats from the list, and a second '
-                    'tap shows them again. This device remembers your choice.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#291']},
     {'id': 'unread-count', 'name': 'Unread count on the phone icon',
      'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
                     'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
                     'priority chats never count. Your private Messenger chats count too.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#296', 'humanitylabs-org/wizard-messenger#302']},
-    {'id': 'phone-notifications', 'name': 'Messages on your phone',
-     'description': 'Each new message (and an urgent ping in the Agent chat) also goes to Notifications, with the '
-                    'chat name and the start of the message, so the Wizard phone app can show it as a Messenger '
-                    'notification. A tap opens that chat. Muted, Medium and Low priority chats stay quiet.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#308']},
     {'id': 'share-files', 'name': 'Share files to Messenger',
      'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers Messenger. '
                     'The file waits in the chosen chat\'s message box as an attachment, like one added with +, '
@@ -96,12 +67,6 @@ SWITCHES = (
                     'Agent chat works as before.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#325']},
-    {'id': 'connected-accounts-levels', 'name': 'Agent levels in Connected accounts',
-     'description': 'Connected accounts\' Agent access screen lists your Messenger chat accounts and shows and '
-                    'changes each agent\'s Messenger level (No access, Read-only, Draft-only). The level is still kept '
-                    'in Messenger, so a change there shows in Settings > Agents too, and the other way round.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#342']},
     {'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
      'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to keep '
                     'deleting), a keyboard button that swaps the panel for the keyboard and back, skin tones on a '
@@ -109,6 +74,18 @@ SWITCHES = (
                     'as your keyboard.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#349']},
+    {'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
+     'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as stacked '
+                    'bubbles above the message box, oldest first, each with Send, Edit and Remove. One draft works '
+                    'as before. Nothing is ever sent on its own.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#353']},
+    {'id': 'video-fullscreen', 'name': 'Videos open full screen',
+     'description': 'One tap on a video opens it full screen on black, already playing with sound, like Telegram. '
+                    'Tap to show or hide the controls (play, pause, a scrubber, close). Back or a swipe down returns '
+                    'to the chat where you were. GIFs and stickers still loop in the chat.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#379']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

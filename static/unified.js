@@ -275,6 +275,16 @@
     if (type === 'cellular' || type === 'bluetooth' || type === 'wimax' || type === 'none') return false;
     return !mobile;
   }
+  // Issue 343: a video bubble near the screen starts buffering its first seconds on Wi-Fi (or a wired desktop), so the
+  // tap plays at once; on mobile data, with Data Saver or an unknown phone network it only reads the video's header.
+  // Issue 379 (switch video-fullscreen): in the full-screen video, a drag that goes clearly down by 90 px or more
+  // closes it, like Telegram and WhatsApp; anything shorter or mostly sideways springs back.
+  function videoSwipe(dx, dy) {
+    return Number.isFinite(dy) && dy >= 90 && Math.abs(dx || 0) < dy ? 'close' : 'stay';
+  }
+  function videoPreload(conn, mobile) {
+    return prefetchAllowed('wifi', conn, mobile) ? 'auto' : 'metadata';
+  }
   // The download queue: one or two at a time, low priority, paused while busy() (the owner is loading something) or
   // while allowed() says no. Each file is kept in Cache Storage (open() gives the cache, or null without one) and
   // listed in index ({load, save}) with its size. Over cap, videos go first, then view copies, oldest first, then
@@ -407,8 +417,8 @@
       return typeof out === 'string' && out.trim() ? {text: out.trim(), source} : null;
     } catch { return null; }
   }
-  // Issue 178/201: the one "keeps a draft ready" item, shared by the open chat's ⋯ menu and (switch list-draft-ready)
-  // the chat list's right-click / long-press menu. Native (shell) chats have no agent drafts.
+  // Issue 178/201: the one "keeps a draft ready" item in the chat list's right-click / long-press menu (an open chat
+  // has the Drafts toggle in its header instead). Native (shell) chats have no agent drafts.
   function draftReadyItems(p, watched, watch) {
     if (!p || p.native) return [];
     return [watched ? {label: 'Stop keeping a draft ready', icon: 'sparkle', run: () => watch(p, false)}
@@ -519,7 +529,7 @@
     const last = agentChatRows(state, 'reports', notices).at(-1);
     return last ? {text: last.text.split('\n')[0], at: last.at, urgent: false} : null;
   }
-  // Issue 276 (switch reports-notifications): the Notifications app's items (GET /notifications/api/items, the list the
+  // Issue 276: the Notifications app's items (GET /notifications/api/items, the list the
   // shell's bell reads) as read-only Reports rows: title on the first line, then the text, then its link. `time` is in
   // seconds there. A link is kept only if it is http(s) or a path on this box (resolved against `origin`).
   function notificationReports(items, origin = '') {
@@ -685,7 +695,7 @@
   }
   // The category bar, in Telegram's order (the shared Wizard set's eight categories, plus Recent).
   const EMOJI_CATEGORY_ICONS = {'Recent': '🕘', 'Smileys & People': '😀', 'Animals & Nature': '🐻', 'Food & Drink': '🍔', 'Activity': '⚽', 'Travel & Places': '🚗', 'Objects': '💡', 'Symbols': '🔣', 'Flags': '🏁'};
-  // Issue 291 (switch agent-rows-toggle): the button beside My QR codes that hides or shows the pinned Agent and
+  // Issue 291: the button beside My QR codes that hides or shows the pinned Agent and
   // Reports chats. `hidden` is this device's choice; the label says what a tap does, aria-pressed says it is hiding.
   function agentRowsToggle(hidden) {
     return hidden
@@ -731,7 +741,15 @@
     function clear() { for (const b of ready.values()) revoke(b); ready.clear(); reading.clear(); warm.length = 0; }
     return {prime, clear, get: url => ready.get(url), size: () => ready.size};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 353 (switch stacked-drafts): the drafts waiting as stacked bubbles above the box, oldest first (the box
+  // lists drafts in creation order). The composer's own draft (boundId) is never in the stack; one draft alone
+  // belongs in the composer, as before.
+  function draftStack(rows, personId, boundId) {
+    const all = (rows || []).filter(d => d && d.person_id === personId && d.state === 'draft');
+    if (!boundId && all.length < 2) return [];
+    return all.filter(d => d.id !== boundId);
+  }
+  if (typeof module !== 'undefined') module.exports = {draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -782,7 +800,7 @@
     send: ['M4 12 20 4l-4 16-4-6.5L4 12z', 'm12 13.5 8-9.5'],
     down: ['M12 5v14', 'm5 12 7 7 7-7'], up: ['M12 19V5', 'm5 12 7-7 7 7'], plus: ['M12 5v14', 'M5 12h14'],
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
-    play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
+    play: ['M7 4.5v15l12-7.5z'], pause: ['M8 5v14', 'M16 5v14'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     forward: ['M15 14l5-5-5-5', 'M20 9H10a6 6 0 0 0-6 6v4'], textsel: ['M5 6h14', 'M5 11h14', 'M5 16h8', 'M17 14v7', 'M15 14h4', 'M15 21h4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'], none: [],
@@ -1059,7 +1077,7 @@
       const label = document.querySelector('.u-settings-btn')?.getAttribute('aria-label') || 'Settings';
       let tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
       // Issue 291: the Agent/Reports toggle rides right after QR. The shell has no eye icon, so it shows as text.
-      if (tools && agentToggleOn()) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
+      if (tools) { const t = agentRowsToggle(agentRowsHidden()); tools.splice(1, 0, {id: 'agent-rows', kind: 'button', icon: '', text: t.text, label: t.label}); }
       const key = JSON.stringify(tools); if (key === bar.key) return; bar.key = key;
       const gen = ++bar.gen;
       let pending; try { pending = Promise.resolve(tb.set(tools, onBarTool)); } catch { pending = Promise.resolve(false); }
@@ -2087,7 +2105,7 @@
       ...(p.native || listKey(p) === 'groups' ? [] : [{label: 'Merge with…', icon: 'merge', run: () => mergePicker(p)}]),
       ...(contacts.ok && !p.native && listKey(p) !== 'groups' && !p.contact && p.accounts?.length ? [{label: 'Add to Contacts', icon: 'compose', run: () => action(async () => { const r = await saveToContacts(p); if (r) { toast('Added to Contacts'); drawList(); } })}] : []),
       ...(p.native || !p.last ? [] : [p.unread ? {label: 'Mark as read', icon: 'check', run: () => setUnread(p, false)} : {label: 'Mark as unread', icon: 'unread', run: () => setUnread(p, true)}]),
-      ...(switchState.on['list-draft-ready'] === true ? draftReadyItems(p, draftWatch.watched.has(p.id), watchChat) : []),
+      ...draftReadyItems(p, draftWatch.watched.has(p.id), watchChat),
     ]);
   }
   // Unread again stays on this Messenger only; opening the chat reads it as usual.
@@ -2503,8 +2521,6 @@
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
       priorityAction(cur, anchor, 'right'),
       ...(cur.native ? [] : [{label: 'Labels', icon: 'tag', run: () => labelsSheet(cur)}]),
-      // Issue 201 (switch list-draft-ready): the header's Drafts toggle replaces this item.
-      ...(switchState.on['list-draft-ready'] === true ? [] : draftReadyItems(cur, draftWatch.watched.has(cur.id), watchChat)),
     ], {side: 'right'}); };
     if (p.id) { // Catch me up: next to the chat options, never replaces them
       const head = root.querySelector('.u-thread-head'), more = head?.querySelector('[aria-label="Chat options"]'), cu = iconButton('sparkle', 'Catch me up', () => catchUp(id), 'u-catchup-btn');
@@ -2894,6 +2910,14 @@
       if (e.isIntersecting && !e.target.dataset.still) v.play().catch(() => {}); else v.pause();
     }
   }, {threshold: 0.15}) : null;
+  const videoNear = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const v = e.target.querySelector('video');
+      if (v && v.paused && !v.currentTime) v.preload = videoPreload(navigator.connection, onPhone());
+      videoNear.unobserve(e.target);
+    }
+  }, {rootMargin: '50% 0px'}) : null;
   function visualMedia(m) {
     const box = node('button', 'u-media'); box.type = 'button';
     const sticker = isSticker(m), loop = m.msgtype === 'm.video' && (m.media?.gif || m.media?.sticker);
@@ -2919,6 +2943,7 @@
         const dur = m.media?.duration ? node('span', 'u-vdur', fmtDur(m.media.duration)) : null;
         if (dur) box.append(dur);
         if (!m.pending) inline = inlineVideo(box, v, dur, m);
+        if (!m.pending && !m.local) videoNear?.observe(box);
       }
     } else {
       const img = node('img'); img.alt = m.original || (sticker ? 'Sticker' : 'Photo'); img.decoding = 'async'; img.loading = 'lazy';
@@ -2931,6 +2956,7 @@
     box.message = m;
     if (!m.pending && !sticker && !v) box.addEventListener('pointerdown', () => primeTapped(m, box), {passive: true});
     if (!m.pending) box.onclick = e => {
+      if (inline && switchState.on['video-fullscreen'] === true) { videoView(m, v); return; }
       if (inline) { inline.tap(e); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
       if (!sticker) viewer(m, box); // stickers are part of the conversation, not photos to open
@@ -3018,6 +3044,103 @@
       if (!v.paused && !v.ended) { v.pause(); return; }
       play();
     }, play, fullScreen};
+  }
+  // Issue 379 (switch video-fullscreen, James): one tap on a received video opens it full screen on black, already
+  // playing with sound, like Telegram and WhatsApp. The poster fills the screen at once while the video starts, and
+  // play() runs inside the tap, so sound is allowed and nothing waits on Wizard. The controls are Messenger's own
+  // (no browser control box): a tap shows or hides them; they are play/pause, a scrubber with times, and Close.
+  // Back, Esc, Close or a swipe down closes it; the chat behind it never moves, so it is where it was.
+  // GIFs and stickers keep looping muted in the bubble.
+  function videoView(m, from) {
+    const tapped = performance.now();
+    view.photo?.close();
+    if (inlinePlaying) { try { inlinePlaying.pause(); } catch {} }
+    const before = document.activeElement;
+    const layer = node('div', 'u-video-view chrome'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true');
+    layer.setAttribute('aria-label', 'Video'); layer.tabIndex = -1;
+    const v = node('video'); v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto'; v.disablePictureInPicture = true;
+    if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
+    v.src = (from?.currentSrc || from?.src || m.local || mediaURL(m.id)).replace(/#t=[0-9.]+$/, '');
+    const playBtn = iconButton('pause', 'Pause video', () => toggle(), 'u-vv-play');
+    const now = node('span', 'u-vv-time', '0:00'), left = node('span', 'u-vv-time', fmtDur(m.media?.duration || 0));
+    const scrub = node('input', 'u-vv-scrub'); scrub.type = 'range'; scrub.min = '0'; scrub.max = '1000'; scrub.step = '1'; scrub.value = '0';
+    scrub.setAttribute('aria-label', 'Position in video');
+    const bar = node('div', 'u-vv-bar'); bar.append(playBtn, now, scrub, left);
+    const closeBtn = iconButton('close', 'Close', () => close(), 'u-vv-close');
+    layer.append(v, closeBtn, bar);
+    const total = () => Number.isFinite(v.duration) && v.duration > 0 ? v.duration : (m.media?.duration || 0) / 1000;
+    let seeking = false, hideTimer = 0;
+    const paint = () => {
+      const on = !v.paused && !v.ended;
+      layer.classList.toggle('playing', on);
+      playBtn.replaceChildren(icon(on ? 'pause' : 'play'));
+      playBtn.setAttribute('aria-label', on ? 'Pause video' : 'Play video'); playBtn.title = playBtn.getAttribute('aria-label');
+      now.textContent = fmtDur(v.currentTime * 1000); left.textContent = fmtDur(total() * 1000);
+      if (!seeking && total() > 0) scrub.value = String(Math.round(1000 * v.currentTime / total()));
+    };
+    const chrome = show => {
+      clearTimeout(hideTimer);
+      layer.classList.toggle('chrome', show);
+      if (show && !v.paused) hideTimer = setTimeout(() => { if (!v.paused && !seeking) layer.classList.remove('chrome'); }, 2500);
+    };
+    for (const name of ['play', 'pause', 'ended', 'timeupdate', 'durationchange', 'loadedmetadata']) v.addEventListener(name, paint);
+    v.addEventListener('pause', () => chrome(true)); v.addEventListener('play', () => chrome(layer.classList.contains('chrome')));
+    scrub.addEventListener('input', () => { seeking = true; if (total() > 0) { v.currentTime = total() * Number(scrub.value) / 1000; now.textContent = fmtDur(v.currentTime * 1000); } });
+    scrub.addEventListener('change', () => { seeking = false; chrome(true); });
+    function play() {
+      if (v.ended) v.currentTime = 0;
+      v.muted = false;
+      const p = v.play(); // inside the tap: sound allowed. A browser that still refuses plays it muted, not not at all.
+      p?.catch?.(() => { if (!layer.isConnected) return; v.muted = true; v.play().catch(() => {}); });
+    }
+    function toggle() { if (v.paused || v.ended) play(); else v.pause(); chrome(true); }
+    // First moving frame after the tap (photo-timings style stage clock): kept on the layer, and sent with photo-timings on.
+    const firstFrame = () => {
+      if (layer.dataset.firstFrame) return;
+      const ms = Math.round(performance.now() - tapped); layer.dataset.firstFrame = String(ms);
+      if (switchState.on['photo-timings'] === true) photoClock.add('video_first_frame', ms);
+    };
+    if (typeof v.requestVideoFrameCallback === 'function') v.requestVideoFrameCallback(firstFrame);
+    else v.addEventListener('playing', firstFrame, {once: true});
+    // Swipe down closes; a short drag springs back. A tap (no drag) on the video shows or hides the controls.
+    let drag = null;
+    layer.addEventListener('pointerdown', e => { if (e.target.closest('.u-vv-bar,.u-vv-close')) return; drag = {x: e.clientX, y: e.clientY, id: e.pointerId, moved: false}; });
+    layer.addEventListener('pointermove', e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) drag.moved = true;
+      if (drag.moved && dy > 0) { v.style.transform = 'translateY(' + dy + 'px)'; layer.style.setProperty('--vv-fade', String(Math.max(0.3, 1 - dy / 400))); }
+    });
+    const release = e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag; drag = null;
+      if (!d.moved) return;
+      layer.dataset.dragged = '1'; setTimeout(() => { delete layer.dataset.dragged; }, 0);
+      if (e.type === 'pointerup' && videoSwipe(e.clientX - d.x, e.clientY - d.y) === 'close') { close(); return; }
+      v.style.transform = ''; layer.style.removeProperty('--vv-fade');
+    };
+    layer.addEventListener('pointerup', release); layer.addEventListener('pointercancel', release);
+    layer.addEventListener('click', e => {
+      if (layer.dataset.dragged || e.target.closest('.u-vv-bar,.u-vv-close')) return;
+      chrome(!layer.classList.contains('chrome'));
+    });
+    layer.onkeydown = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      else if (e.key === ' ' && !e.target.closest('.u-vv-bar')) { e.preventDefault(); toggle(); }
+    };
+    const close = () => {
+      if (!layer.isConnected) return false;
+      clearTimeout(hideTimer); try { v.pause(); } catch {}
+      v.removeAttribute('src'); try { v.load(); } catch {}
+      layer.remove(); if (view.photo?.layer === layer) view.photo = null;
+      if (before?.isConnected) before.focus({preventScroll: true});
+      return true;
+    };
+    ($('messenger') || document.documentElement).append(layer);
+    view.photo = {layer, close, media: v};
+    layer.focus({preventScroll: true});
+    play(); paint(); chrome(true);
+    return layer;
   }
   // Tapping a photo or video opens Wizard's own media viewer, the one Chats uses: pinch and double-tap zoom, pan,
   // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Only when Wizard does not open
@@ -3466,7 +3589,8 @@
     if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
   }
   function serverDraft(id, ui, after = null) {
-    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false, epoch: 0, closing: null, late: null};
+    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false, epoch: 0, closing: null, late: null, all: [], stack: [], pinned: null};
+    const stackOn = () => !!switchState.on['stacked-drafts'];
     const by = row => row?.updated_by || row?.created_by;
     const byAgent = row => by(row) && by(row).id !== 'owner';
     const dirty = () => sd.row ? ui.draft.value !== sd.saved || ui.channel.value !== sd.row.identity_id : !!ui.draft.value.trim();
@@ -3494,6 +3618,68 @@
       }
       return null;
     };
+    // Issue 353: two or more drafts wait as stacked bubbles above the box, each with Send, Edit and Remove.
+    const stackNode = () => {
+      if (!stackOn() || !sd.stack.length) return null;
+      const box = node('div', 'u-draft-stack'); box.setAttribute('role', 'list'); box.setAttribute('aria-label', 'Drafts, not sent');
+      for (const d of sd.stack) {
+        const item = node('div', 'u-draft-bubble'); item.setAttribute('role', 'listitem'); item.dataset.draft = d.id;
+        item.append(node('div', 'u-draft-by', 'Draft' + (byAgent(d) ? ' by ' + (by(d).name || 'your Wizard') : '') + ' · not sent'));
+        if ((d.text || '').trim()) item.append(node('div', 'u-draft-text', d.text));
+        const n = (d.attachments || []).length; if (n) item.append(node('div', 'u-draft-files', n === 1 ? '1 attachment' : n + ' attachments'));
+        const acts = node('div', 'u-draft-actions');
+        acts.append(button('Send', () => action(() => sendStacked(d)), 'primary u-draft-send'),
+          button('Edit', () => action(() => editStacked(d)), 'secondary u-draft-edit'),
+          button('Remove', () => action(() => removeStacked(d)), 'secondary u-draft-remove'));
+        item.append(acts); box.append(item);
+      }
+      return box;
+    };
+    const restack = () => { sd.stack = stackOn() ? draftStack(sd.all, id, sd.row?.id) : []; };
+    // The composer lets go of its draft: it stays on the box and joins the stack. The box empties.
+    function release() {
+      if (!sd.row) return;
+      sd.row = null; sd.saved = null; sd.pinned = null; sd.loadError = false; sd.uploadError = false;
+      attachments = []; view.attach = null; ui.draft.value = ''; s.drafts[id] = ''; saveDrafts();
+      restack(); ui.grow(); ui.paintBar();
+    }
+    const forget = d => { closedDrafts.add(d.id); sd.all = sd.all.filter(x => x.id !== d.id); restack(); ui.paintBar(); };
+    async function closeStacked(d, why) {
+      forget(d); draftWrote();
+      try { await api('api/drafts/' + d.id, {method: 'DELETE', body: {revision: d.revision, ...why}}); }
+      catch (e) {
+        if (e.code === 'draft_changed') closedDrafts.delete(d.id); // changed elsewhere meanwhile: the newer one stays
+        else if (e.code !== 'not_found') { closedDrafts.delete(d.id); error(e); }
+      }
+      draftWrote(); refreshDraftIndex(); check(false);
+    }
+    // Edit moves that draft into the box. Words already in the box stay a draft of their own, in the stack.
+    async function editStacked(d) {
+      if (!alive()) return false;
+      if (sd.timer || dirty()) await save();
+      await sd.busy?.catch(() => {}); await Promise.resolve(sd.uploading).catch(() => {});
+      if (sd.conflict) { toast('Choose which draft to keep first'); return false; }
+      let row; try { row = (await api('api/drafts/' + d.id)).draft; } catch (e) { if (e.code === 'not_found') { forget(d); return false; } throw e; }
+      if (!alive() || row?.state !== 'draft') return false;
+      release();
+      sd.pinned = row.id; await apply(row); restack();
+      ui.grow(); ui.paintBar(); ui.draft.focus();
+      return sd.row?.id === row.id;
+    }
+    // Send sends that draft as it is. Plain words go straight out (the box keeps whatever is in it); a draft with
+    // attachments, or a chat that reviews before sending, goes through the box's own Send.
+    async function sendStacked(d) {
+      const text = (d.text || '').trim();
+      if ((d.attachments || []).length || ui.reviewed || !text) { if (await editStacked(d)) await ui.submit(); return; }
+      const identity_id = [...ui.channel.options].some(o => o.value === d.identity_id) ? d.identity_id : ui.channel.value;
+      const job = {text, photo: null, reply: null, identity_id};
+      queueSend(id, {...job, onFailure: e => restoreSend(id, job, e)});
+      await closeStacked(d, {outcome: 'sent', sent_text: text});
+    }
+    async function removeStacked(d) {
+      if (!await ask({title: 'Remove this draft?', body: 'Nothing is sent.', yes: 'Remove', no: 'Keep'})) return;
+      await closeStacked(d, {outcome: 'discarded'});
+    }
     async function itemFor(a, rid) {
       const r = await fetch('api/drafts/' + rid + '/attachments/' + a.id, {credentials: 'same-origin', cache: 'no-store'});
       if (!r.ok) throw new Error('Could not load ' + a.name);
@@ -3685,8 +3871,27 @@
       if (!alive() || sd.busy || sd.timer || sd.closing || sd.attachmentPending) return;
       if (gen !== draftWrites) return check(first); // this screen wrote meanwhile: that list may predate it
       rows = rows.filter(d => !closedDrafts.has(d.id));
+      if (stackOn()) {
+        // Issue 353: with two or more drafts the box stays empty and they wait as stacked bubbles. An agent's draft
+        // the owner hasn't touched (or picked with Edit) goes back to the stack when another one arrives.
+        const before = sd.stack.map(d => d.id + ':' + d.revision).join();
+        sd.all = rows.filter(d => d.person_id === id && d.state === 'draft');
+        const many = sd.all.length >= 2;
+        const same = sd.row && sd.all.find(d => d.id === sd.row.id);
+        if (many && same && same.revision === sd.row.revision && sd.pinned !== sd.row.id && byAgent(sd.row) && !dirty() && !(view.attach || []).some(it => !it.sid)) release();
+        restack();
+        if (sd.stack.map(d => d.id + ':' + d.revision).join() !== before) ui.paintBar();
+        if (!sd.row && many && !(s.bindDraft && sd.all.some(d => d.id === s.bindDraft))) {
+          if (first && ui.draft.value.trim()) {
+            // The box's copy of a draft that is now in the stack is not new words: drop it, never save it twice.
+            if (sd.all.some(d => d.text === ui.draft.value)) { ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); ui.grow(); }
+            else schedule(); // words kept only on this device become a draft of their own
+          }
+          return;
+        }
+      } else if (sd.stack.length) { sd.all = []; sd.stack = []; ui.paintBar(); }
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
-      const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) s.bindDraft = null;
+      const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) { s.bindDraft = null; sd.pinned = pick.id; }
       const latest = pick || mine || (!sd.row && draftsFor(rows, id)[0]);
       if (!latest) {
         if (sd.loadError) { sd.loadError = false; ui.paintBar(); } // the draft (and the attachment that failed) is gone
@@ -3711,7 +3916,7 @@
       if (sd.loadError && sd.row) await loadItems(sd.row);
       errorsInTray();
     };
-    Object.assign(sd, {schedule, save, attach, detach, clear, closeForSend, afterSend, note, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
+    Object.assign(sd, {schedule, save, attach, detach, clear, closeForSend, afterSend, note, stackNode, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
     setTimeout(() => Promise.resolve(after).catch(() => {}).then(() => check(true)), 0);
     return sd;
   }
@@ -3882,8 +4087,9 @@
     const row = node('div', 'u-compose-row'); row.append(attach, field, send, mic, file);
     const paintBar = () => {
       bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach || [];
+      const stack = view.sd?.stackNode?.(); if (stack) bar.append(stack);
       const note = view.sd?.note?.(); if (note) bar.append(note);
-      bar.hidden = !target && !a.length && !note;
+      bar.hidden = !target && !a.length && !note && !stack;
       if (target) {
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
@@ -4182,10 +4388,9 @@
     };
     Object.assign(view, {draft, grow, paintBar, paintRecording, paintRecordingTick, stageFiles});
     form.append(bar, via, channel, mediaPicker.panel, row, notice); grow(); paintBar(); paintRecording();
-    if (switchState.on['agent-wake'] === true) form.prepend(draftsPausedLine(id));
     // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
     const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.saving || prev?.busy;
-    prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia}, prev?.id === id ? flushing : null);
+    prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia, submit, reviewed}, prev?.id === id ? flushing : null);
     queueMicrotask(() => { if (!form.isConnected) return; if (!view.recording) record(true); recoverVoice(); });
     return form;
   }
@@ -5302,11 +5507,10 @@
     if (was !== JSON.stringify(switchState.on)) { repaintSwitches(); if (prefetchMode() !== 'off') prefetchSoon(); primeChatCopies(store.threads[view.id]?.messages); }
     sendPhoneBase();
   }
-  // Messages on your phone (issue 308, switch phone-notifications): the box posts new messages to Notifications with
-  // a link to the chat, but it can't see this Wizard's own address. The view tells it once per page while it is on.
+  // Messages on your phone (issue 308, on for everyone): the box posts new messages to Notifications with a link to
+  // the chat, but it can't see this Wizard's own address. The view tells it once per page.
   let phoneBaseSent = '';
   function sendPhoneBase() {
-    if (switchState.on['phone-notifications'] !== true) return;
     let base = ''; try { base = new URL('./', location.href).href; } catch { return; }
     if (phoneBaseSent === base || !base.startsWith('https://')) return;
     phoneBaseSent = base;
@@ -5334,8 +5538,7 @@
   const AGENT_IDS = {chat: 'agent:notes', reports: 'agent:reports'};
   function agentMode(id) { return id === AGENT_IDS.chat ? 'chat' : id === AGENT_IDS.reports ? 'reports' : null; }
   const agentChat = {state: null, mode: 'chat', root: null, key: '', loading: null};
-  // Issue 276 (switch reports-notifications): Reports also lists a copy of every notification.
-  function noticesOn() { return switchState.on['reports-notifications'] === true; }
+  // Issue 276: Reports also lists a copy of every notification (always on since its switch was removed).
   // Issue 277: the Agent chat carries the agent's own name and sigil, as the Wizard shows it
   // (the agent with Draft-only access in Settings > Agents). Re-read at most once a minute, at once on open.
   const agentWho = {who: null, at: 0, loading: null};
@@ -5370,14 +5573,13 @@
   const NOTIFICATIONS = new URL('../notifications/', location.href).pathname;
   const notices = {list: [], at: 0, loading: null};
   function loadNotices(force = false) {
-    if (!noticesOn()) { if (notices.list.length) { notices.list = []; notices.at = 0; paintAgentRow(); paintAgentThread(); } return Promise.resolve(); }
     if (notices.loading) return notices.loading;
     if (!force && Date.now() - notices.at < 15000) return Promise.resolve();
     notices.at = Date.now();
     notices.loading = fetch(NOTIFICATIONS + 'api/items?view=all&limit=200', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}})
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (!d || !Array.isArray(d.items) || !noticesOn()) return;
+        if (!d || !Array.isArray(d.items)) return;
         const list = notificationReports(d.items, location.origin);
         if (JSON.stringify(list) === JSON.stringify(notices.list)) return;
         notices.list = list; paintAgentRow(); paintAgentThread();
@@ -5386,7 +5588,7 @@
       .finally(() => { notices.loading = null; });
     return notices.loading;
   }
-  const shownNotices = () => noticesOn() ? notices.list : [];
+  const shownNotices = () => notices.list;
   function applyAgentChat(state) {
     if (!state || !Array.isArray(state.entries)) return;
     agentChat.state = state; paintAgentRow(); paintAgentThread(); syncBadge();
@@ -5397,23 +5599,15 @@
     agentChat.loading = call('agent-chat').then(applyAgentChat).catch(() => { /* off on the box or an older box */ }).finally(() => { agentChat.loading = null; });
     return agentChat.loading;
   }
-  switchState.paints['reports-notifications'] = () => {
-    loadNotices(true);
-    paintAgentRow();
-    paintAgentThread();
-  };
-  // Issue 291 (switch agent-rows-toggle): a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
+  // Issue 291: a tap beside My QR codes hides or shows the pinned Agent and Reports rows.
   // Only the list changes: an open Agent/Reports chat stays open and nothing about notes, Sweep or Reports delivery
   // changes. Remembered on this device, like the Inbox view.
   const AGENT_ROWS_KEY = 'messenger.agentRowsHidden';
-  function agentToggleOn() { return switchState.on['agent-rows-toggle'] === true; }
   function agentRowsHidden() {
-    if (!agentToggleOn()) return false;
     try { return localStorage.getItem(AGENT_ROWS_KEY) === '1'; } catch { return false; }
   }
   function paintAgentToggle(el) {
     const t = agentRowsToggle(agentRowsHidden());
-    el.hidden = !agentToggleOn();
     el.setAttribute('aria-label', t.label); el.title = t.label; el.setAttribute('aria-pressed', String(t.pressed));
     el.replaceChildren(icon(t.icon));
   }
@@ -5423,7 +5617,6 @@
     try { if (hide) localStorage.setItem(AGENT_ROWS_KEY, '1'); else localStorage.removeItem(AGENT_ROWS_KEY); } catch { /* this visit only */ }
     paintAgentToggles(); drawList();
   }
-  switchState.paints['agent-rows-toggle'] = () => { paintAgentToggles(); if (s.ready && s.tab === 'people' && (!s.person || split.on)) drawList(); };
   function agentRows() { return [agentRow('chat'), agentRow('reports')]; }
   function agentRow(mode) {
     const st = agentChat.state, reports = mode === 'reports', id = AGENT_IDS[mode];
@@ -5470,7 +5663,7 @@
     const reportsNew = () => reportsUnread(st, shownNotices()) || (!(st.reports_read_at > 0) && shownNotices().length);
     if (mode === 'reports' ? reportsNew() : st.unread) agentAct('/read', mode === 'reports' ? {reports: true} : {});
   }
-  function reportsSub() { return noticesOn() ? 'Reports and notifications' : 'Longer write-ups from your agent'; }
+  function reportsSub() { return 'Reports and notifications'; }
   // What the header says about the agent: is anyone listening here, and how fast.
   function agentStatus(st) {
     const a = st?.agent;
@@ -5503,12 +5696,12 @@
     head.querySelector('.u-av-wrap')?.replaceChildren(agentFace(agentChat.mode, true));
     view.sub = root.querySelector('.u-who-text span');
     const scroll = node('div', 'u-timeline u-ac-log'); scroll.setAttribute('role', 'log'); scroll.tabIndex = 0;
-    scroll.setAttribute('aria-label', reports ? (noticesOn() ? 'Reports and notifications' : 'Reports from your agent') : agentChatLabel());
+    scroll.setAttribute('aria-label', reports ? 'Reports and notifications' : agentChatLabel());
     scroll.onscroll = () => { if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80) markAgentRead(); };
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll); root.append(wrap);
     Object.assign(view, {root, scroll, pill: null, id: s.person, draft: null});
     agentChat.root = root;
-    if (reports) { const foot = node('p', 'u-ac-readonly', noticesOn() ? 'Read-only: your agent’s reports and a copy of your notifications.' : 'Only your agent writes here.'); root.append(foot); return; }
+    if (reports) { const foot = node('p', 'u-ac-readonly', 'Read-only: your agent’s reports and a copy of your notifications.'); root.append(foot); return; }
     // Telegram-bot style: the chat's own buttons sit above the composer, no typed commands.
     const form = node('form', 'u-composer u-ac-compose');
     const bar = node('div', 'u-ac-bar');
@@ -5697,7 +5890,7 @@
     const box = node('section', 'u-ac-intro'); box.setAttribute('aria-label', 'How this chat works');
     if (reports) {
       box.append(node('h3', '', 'Reports'), node('p', '', 'Your agent’s longer write-ups land here: weekly summaries, stats, research. They stay out of the Agent chat so your notes stay short.'));
-      if (noticesOn()) box.append(node('p', '', 'Every notification also shows here as a copy, newest at the bottom. Notifications keeps them as before; anything that needs an answer comes to the Agent chat.'));
+      box.append(node('p', '', 'Every notification also shows here as a copy, newest at the bottom. Notifications keeps them as before; anything that needs an answer comes to the Agent chat.'));
       return box;
     }
     const list = node('ol');
@@ -5770,15 +5963,15 @@
   }
   // Issue 178: the owner picks chats (header ⋯) or every unread chat; his agent keeps a reply drafted there, never sends.
   // The choices and the sent/edited/discarded counts live on the box (api/unified/draft-watch).
-  const draftWatch = {watched: new Set(), all_unread: false, stats: null, paused: {}, paints: []};
+  const draftWatch = {watched: new Set(), all_unread: false, stats: null, paints: []};
   function paintDraftWatch() { draftWatch.paints = draftWatch.paints.filter(p => p()); }
   async function loadDraftWatch() {
-    try { const r = await call('draft-watch'); Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null, paused: r.paused || {}}); paintDraftWatch(); }
+    try { const r = await call('draft-watch'); Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null}); paintDraftWatch(); }
     catch { /* an older box: no draft watch */ }
   }
-  function applyDraftWatch(r) { Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null, paused: r.paused || {}}); paintDraftWatch(); }
-  // Issue 201 (switch list-draft-ready): a one-tap Drafts toggle in the open chat's header, next to Catch me up. It
-  // shows at a glance whether the agent keeps a draft ready in this chat; hidden while the switch is off.
+  function applyDraftWatch(r) { Object.assign(draftWatch, {watched: new Set(r.watched || []), all_unread: r.all_unread === true, stats: r.stats || null}); paintDraftWatch(); }
+  // Issue 201: a one-tap Drafts toggle in the open chat's header, next to Catch me up. It shows at a glance whether
+  // the agent keeps a draft ready in this chat (it replaces the old item in the chat's ⋯ menu).
   function draftToggle(id, p) {
     const who = () => store.threads[id]?.person || p;
     const b = button('', () => watchChat(who(), !draftWatch.watched.has(who().id)), 'u-draft-toggle');
@@ -5786,29 +5979,16 @@
     b.setAttribute('aria-label', 'Agent keeps a draft ready');
     const paint = () => {
       const on = draftWatch.watched.has(who().id);
-      b.hidden = switchState.on['list-draft-ready'] !== true;
       b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on);
       b.title = on ? 'Your agent keeps a draft ready here. Tap to stop.' : 'Tap so your agent keeps a draft ready here.';
       return b.isConnected || !b.parentNode;
     };
-    draftWatch.paints.push(paint); switchState.paints['header-drafts'] = paint;
+    draftWatch.paints.push(paint);
     paint(); return b;
   }
   async function watchChat(p, on) {
     try { applyDraftWatch(await call('draft-watch', {person_id: p.id, on})); toast(on ? 'Your agent keeps a draft ready here. It never sends.' : 'No more ready drafts here'); }
     catch (e) { toast(e.message || 'Couldn’t save that. Try again.', 3000); }
-  }
-  // Issue 223 (switch agent-wake): Messenger wakes the owner's agent when this chat needs a draft. When the last wake
-  // found no agent to wake, one quiet line above the composer says so, until a wake gets through again.
-  function draftsPausedLine(id) {
-    const line = node('p', 'u-drafts-paused'); line.setAttribute('role', 'status'); line.hidden = true;
-    const paint = () => {
-      const why = draftWatch.paused?.[id];
-      line.hidden = !why; line.textContent = why ? 'Drafts paused: ' + why : '';
-      return line.isConnected || !line.parentNode;
-    };
-    draftWatch.paints.push(paint); paint(); loadDraftWatch();
-    return line;
   }
   // Issue 202: one Agent drafts choice, Chats I pick or Every unread chat (the box's all_unread draft-watch setting).
   // Chats are picked from a chat's menu.
@@ -5823,10 +6003,10 @@
     row.append(hint);
     const paint = () => {
       for (const b of group.children) { const pick = (b.dataset.on === '1') === draftWatch.all_unread; b.setAttribute('aria-checked', String(pick)); b.classList.toggle('on', pick); }
-      hint.textContent = switchState.on['list-draft-ready'] === true ? 'Pick chats with Drafts at the top of a chat, or by holding a chat in the list.' : 'Pick chats with a chat’s ⋯ > Agent keeps a draft ready.';
+      hint.textContent = 'Pick chats with Drafts at the top of a chat, or by holding a chat in the list.';
       return row.isConnected || !row.parentNode;
     };
-    draftWatch.paints.push(paint); switchState.paints['drafts-choice'] = paint;
+    draftWatch.paints.push(paint);
     loadDraftWatch();
     paint(); return row;
   }
@@ -6339,6 +6519,7 @@
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
   // Turning share-files on or off tells the share sheet at once (it re-offers a waiting file once it is on).
+  switchState.paints['stacked-drafts'] = () => view.sd?.check?.(false);
   switchState.paints['share-files'] = () => { if (shareKinds().join() !== sharedKinds) listenForShares(); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
