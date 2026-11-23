@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.106
+
+Store recipe: pins the image built from main `7763fb7`. Ships #367 (Refs humanitylabs-org/wizard-messenger#348): a tapped photo is handed to Wizard's shared viewer in the tap itself. The screen copies this phone already downloaded are kept ready in memory (read ahead when a chat shows its photos and on the finger's touch), so there is no wait on the phone's photo cache first; hand-over is 2-3x faster, and Messenger's own full-size view never shows a black first frame. Bug fix, no switch. Guards: `tests/test_ready_copies.cjs`, `tests/photo_tap_instant_browser.cjs`.
+
 ## 0.2.0-unified.16.105
 
 Store recipe: pins the image built from main `ba32d74`. Ships #386 (Refs humanitylabs-org/wizard-messenger#379): full-screen videos behind the off-by-default switch `video-fullscreen` ("Videos open full screen"). With it on, one tap on a video opens it full screen on black, already playing with sound, with Messenger's own controls (tap to show or hide: play/pause, scrubber, Close); Back, Esc, Close or a swipe down returns to the chat where it was. GIFs and stickers still loop in the chat; switch off keeps playing in the bubble. Tap to first moving frame is timed as `video_first_frame` with Photo timings on. Guards: `tests/video_fullscreen_browser.cjs`, `tests/test_video_swipe.cjs`, `tests/test_switches.py`.
