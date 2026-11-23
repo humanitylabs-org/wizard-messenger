@@ -816,6 +816,14 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 .u-draft-note span { flex: 1; min-width: 0; }
 .u-draft-note button.secondary { padding: 4px 10px; min-height: 0; font-size: 13px; }
 .u-draft-note.conflict { border-style: solid; }
+/* Issue 353: drafts waiting as stacked bubbles above the box (switch stacked-drafts). */
+.u-draft-stack { display: flex; flex-direction: column; gap: .375rem; max-height: 45vh; overflow-y: auto; }
+.u-draft-bubble { align-self: flex-end; max-width: min(85%, 32rem); padding: .5rem .625rem; border-radius: .875rem; border: 1px dashed var(--accent); background: var(--accent-soft); color: var(--ink); }
+.u-draft-by { font-size: .75rem; color: var(--ink-2); }
+.u-draft-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .125rem; }
+.u-draft-files { font-size: .8125rem; color: var(--ink-2); margin-top: .125rem; }
+.u-draft-actions { display: flex; gap: .375rem; justify-content: flex-end; margin-top: .375rem; }
+.u-draft-actions button { padding: .25rem .75rem; min-height: 0; font-size: .8125rem; }
 .u-snippet.draft .u-snippet-who { color: var(--danger, var(--accent)); font-weight: 600; }
 
 /* ---- Phone-width windows (Miguel, 30 Oct 2026): Inbox controls move to the bottom, in thumb reach. ----

@@ -86,7 +86,12 @@ class SwitchEndpoint(unittest.TestCase):
                                'keep deleting), a keyboard button that swaps the panel for the keyboard and back, '
                                'skin tones on a long press, a Recent row ranked by how often you use each emoji, and '
                                'on a phone the same height as your keyboard.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}, {
+                'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
+                'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as '
+                               'stacked bubbles above the message box, oldest first, each with Send, Edit and '
+                               'Remove. One draft works as before. Nothing is ever sent on its own.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#353']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -429,7 +434,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts'])
 
 
 if __name__ == '__main__':

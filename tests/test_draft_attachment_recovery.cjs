@@ -54,7 +54,7 @@ async function fixture(saved = []) {
     fetchDrafts: async () => row ? [copy(row)] : [], closedDrafts: new Set(), agentName: () => 'Owner',
     SD_SAVE_MS: 500000, SD_POLL_MS: 500000, setTimeout: (fn, ms) => ms === 0 ? setTimeout(fn, 0) : 0,
     clearTimeout, setInterval: () => 0, clearInterval() {}, document: {hidden: false},
-    node: (tag, cls, text) => ({tag, cls, text, append() {}}), button: () => ({}),
+    node: (tag, cls, text) => ({tag, cls, text, append() {}}), button: () => ({}), switchState: {on: {}}, // issue 353: stacked-drafts off
   });
   vm.runInContext(controller + '\nthis.sd = serverDraft("alice", ui);', context);
   view.sd = context.sd;

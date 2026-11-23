@@ -74,6 +74,12 @@ SWITCHES = (
                     'as your keyboard.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#349']},
+    {'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
+     'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as stacked '
+                    'bubbles above the message box, oldest first, each with Send, Edit and Remove. One draft works '
+                    'as before. Nothing is ever sent on its own.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#353']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
