@@ -7,9 +7,9 @@
 // where the viewer is fully opaque and its picture is decoded.
 // SHELL_DIR=<wizard-ux checkout> PLAYWRIGHT_MODULE=... node tests/photo_tap_instant_browser.cjs [outdir]
 // STATIC_DIR=<another static dir> measures that build instead (the before numbers); LIMIT_MS (default 100) is the p50
-// bar, 0 to only report. DEBUG=1 logs when the viewer opened, its picture loaded and was decoded.
+// bar, 0 to only report; EXPECT_PREVIEW=1 also checks the shell sharpened to the screen copy. DEBUG=1 logs when the viewer opened, its picture loaded and was decoded.
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict'), zlib = require('node:zlib');
+const http = require('node:http'), fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict'), zlib = require('node:zlib');
 const root = path.resolve(process.env.STATIC_DIR || path.join(__dirname, '../static')), out = path.resolve(process.argv[2] || 'photo-tap-instant-shots');
 const SHELL = process.env.SHELL_DIR; assert.ok(SHELL, 'SHELL_DIR (a wizard-ux checkout) is required');
 const L = require(path.join(__dirname, '../static/app.js'));
@@ -32,6 +32,7 @@ const VIEW_MS = Number(process.env.VIEW_MS || 1500), ORIGINAL_MS = Number(proces
 const person = {id: 'ann', display_name: 'Ann Lee', identities: [{id: 'ann-i', network: 'telegram', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'Photo', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
 const MESSAGES = [0, 1, 2].map(i => ({id: '$p' + i, identity_id: 'ann-i', network: 'telegram', sender: 'Ann Lee', outgoing: false, original: '', timestamp: now - (3 - i) * min, timeline_order: i + 1, msgtype: 'm.image', media: {w: 1600, h: 1200, mime: 'image/png', thumb: true}, reactions: []}));
 const SWITCHES = ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings'].map(id => ({id, name: id, on: true}));
+const servers = [];
 const stats = list => { const v = [...list].sort((a, b) => a - b); return {n: v.length, p50: v[Math.floor(v.length / 2)], p90: v[Math.min(v.length - 1, Math.ceil(v.length * 0.9) - 1)], max: v[v.length - 1]}; };
 
 async function run(browser, label, viewport, mobile) {
@@ -48,7 +49,7 @@ async function run(browser, label, viewport, mobile) {
     if (window.__debug) {
       const t = () => Math.round(performance.timeOrigin + performance.now() - (window.__tap || 0));
       window.__log = [];
-      const wrap = () => { const v = window.WosChat?.viewer; if (!v || v.__w) return setTimeout(wrap, 50); v.__w = 1; const o = v.open; v.open = (...a) => { window.__log.push('open@' + t()); const r = o(...a); const img = document.querySelector('.mv-stage img'); img?.decode?.().then(() => window.__log.push('decoded@' + t()), () => {}); img?.addEventListener('load', () => window.__log.push('load@' + t())); return r; }; };
+      const wrap = () => { const v = window.WosChat?.viewer; if (!v || v.__w) return setTimeout(wrap, 50); v.__w = 1; const o = v.open; v.open = (...a) => { window.__log.push('open@' + t() + JSON.stringify(a[0].map(x => [x.placeholder, x.preview].map(u => String(u).slice(-14))).concat([a[1]]))); const r = o(...a); const img = document.querySelector('.mv-stage img'); img?.decode?.().then(() => window.__log.push('decoded@' + t()), () => {}); img?.addEventListener('load', () => window.__log.push('load@' + t())); return r; }; };
       wrap();
     }
     const watch = () => {
@@ -65,10 +66,12 @@ async function run(browser, label, viewport, mobile) {
     };
     requestAnimationFrame(watch);
   });
-  const page = await ctx.newPage(), errors = [], posted = [], media = [];
+  const page = await ctx.newPage(), errors = [], posted = [], media = [], sharp = [];
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  await page.route('https://messenger.test/**', async route => {
+  // A real local HTTP server, not page.route: Playwright turns the browser's HTTP cache off while it routes, and the
+  // thumbnail a bubble shows is on the phone from the browser's cache when it is tapped.
+  const handle = async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
     if (p === '__shell/') return route.fulfill({status: 200, contentType: 'text/html', body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -101,8 +104,18 @@ async function run(browser, label, viewport, mobile) {
     const file = path.join(root, p || 'index.html');
     if (!file.startsWith(root) || !fs.existsSync(file)) return route.fulfill({status: 404, body: ''});
     return route.fulfill({status: 200, contentType: TYPES[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file)});
+  };
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => handle({
+      request: () => ({url: () => 'http://' + req.headers.host + req.url, postData: () => Buffer.concat(chunks).toString()}),
+      fulfill: async ({status, contentType, headers = {}, body}) => { if (res.destroyed) throw new Error('gone'); res.writeHead(status, {'Content-Type': contentType || 'text/plain', ...headers}); res.end(body); },
+    }).catch(() => {}));
   });
-  await page.goto('https://messenger.test/__shell/');
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  servers.push(server);
+  await page.goto(`http://127.0.0.1:${server.address().port}/__shell/`);
   const app = page.frameLocator('#frame'), frame = () => page.frames().find(f => f !== page.mainFrame());
   // This phone already downloaded every photo's screen copy in the background (issue 166's cache and its index).
   await app.locator('.u-person').first().waitFor({timeout: 20000});
@@ -137,6 +150,10 @@ async function run(browser, label, viewport, mobile) {
     });
     if (n === 0) await page.screenshot({path: path.join(out, `open-${label}.png`)});
     await page.waitForTimeout(400);
+    // Sharpened past the thumbnail by now: to the screen copy on the phone (a blob: URL) while the original is still on
+    // its way, or to the original itself when the browser already has it from an earlier open.
+    sharp.push(await page.evaluate(() => { const src = document.querySelector('.mv-stage img')?.src || ''; return !!src && !/kind=thumb/.test(src); }));
+    if (process.env.DEBUG) console.error('src@400', await page.evaluate(() => document.querySelector('.mv-stage img')?.src));
     if (process.env.DEBUG) console.error(label, JSON.stringify(await page.evaluate(() => [window.__opens.at(-1)?.shown, window.__log.splice(0)])));
     assert.equal(await page.evaluate(() => window.WosChat.viewer.isOpen()), true, 'Wizard\'s shared viewer opened it');
     await page.evaluate(() => window.WosChat.viewer.close());
@@ -148,18 +165,21 @@ async function run(browser, label, viewport, mobile) {
   assert.deepEqual(errors, [], 'no page errors');
   await ctx.close();
   const viewHits = media.slice(before).filter(k => k === 'view').length;
-  return {label, tap: stats(opens.map(o => o.ms)), black: opens.filter(o => o.black).length, opens, viewFetches: viewHits, timings: posted.filter(x => x.name === 'photo_wizard').map(x => x.ms)};
+  return {label, tap: stats(opens.map(o => o.ms)), black: opens.filter(o => o.black).length, sharpened: sharp.filter(Boolean).length, opens, viewFetches: viewHits, timings: posted.filter(x => x.name === 'photo_wizard').map(x => x.ms)};
 }
 
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, mobile] of [['412', {width: 412, height: 915}, true], ['1280', {width: 1280, height: 860}, false]]) summary.push(await run(browser, label, viewport, mobile));
   await browser.close();
+  for (const sv of servers) { sv.closeAllConnections?.(); sv.close(); }
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary, null, 2));
   if (LIMIT > 0) for (const s of summary) {
     // p50: this test box shares its CPUs with other work, so single opens can be slow for reasons outside the page.
     assert.ok(s.tap.p50 < LIMIT, `${s.label}: tap to full-screen picture p50 ${s.tap.p50} ms (bar ${LIMIT} ms)`);
     assert.equal(s.black, 0, `${s.label}: no black first frame`);
+    // A shell whose viewer takes a `preview` (wizard-ux, issue 348) shows the screen copy 0.4 s after the tap.
+    if (process.env.EXPECT_PREVIEW === '1') assert.equal(s.sharpened, s.opens.length, `${s.label}: sharpened to the screen copy`);
   }
 })().catch(e => { console.error(e); process.exit(1); });

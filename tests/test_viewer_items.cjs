@@ -31,3 +31,28 @@ test('on: a view copy this phone already downloaded wins over the thumbnail', ()
   assert.equal(items[1].placeholder, 'blob:http://x/view-b');
   assert.equal(items[1].url, url('$b'));
 });
+
+// Issue 348: the tapped photo starts from the thumbnail its bubble already shows (it draws in the tap's frame) and
+// carries its screen copy as `preview`, which Wizard's viewer shows next; the others keep the screen copy as before.
+test('on: the tapped photo opens from its thumbnail with the screen copy as preview', () => {
+  const blobs = {[url('$a', 'view')]: 'blob:http://x/view-a', [url('$b', 'view')]: 'blob:http://x/view-b'};
+  const items = viewerItems(list, {placeholder: true, url, who, blobs, at: 1});
+  assert.equal(items[1].placeholder, url('$b', 'thumb'));
+  assert.equal(items[1].preview, 'blob:http://x/view-b');
+  assert.equal(items[1].url, url('$b'), 'Save and Share keep the original');
+  assert.equal(items[0].placeholder, 'blob:http://x/view-a');
+  assert.equal('preview' in items[0], false);
+});
+
+test('on: a tapped photo whose screen copy is not read yet opens from its thumbnail, with no preview', () => {
+  const items = viewerItems(list, {placeholder: true, url, who, at: 0});
+  assert.equal(items[0].placeholder, url('$a', 'thumb'));
+  assert.equal('preview' in items[0], false);
+});
+
+test('a tapped GIF, video or unsent photo gets neither', () => {
+  for (const at of [2, 3, 4]) {
+    const item = viewerItems(list, {placeholder: true, url, who, at})[at];
+    assert.equal('placeholder' in item || 'preview' in item, false, list[at].id);
+  }
+});

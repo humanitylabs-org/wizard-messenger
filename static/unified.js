@@ -159,11 +159,16 @@
   // still photo also carries a placeholder: the screen-size view copy this phone already downloaded (blobs maps its URL
   // to a blob: URL), else the thumbnail the bubble shows. Wizard shows it until the original is in, so the first frame
   // is never black; Save and Share keep the original (url). Off, the items are exactly as before.
-  function viewerItems(list, {placeholder = false, url, who = () => 'Photo', blobs = {}} = {}) {
-    return (list || []).map(x => {
+  // Issue 348: the tapped photo (at) starts from the thumbnail its bubble already shows, which the viewer can draw in
+  // the tap's frame (a 1600 px screen copy takes too long to decode on a phone), and carries the screen copy as
+  // `preview`, which Wizard's viewer shows next, before the original.
+  function viewerItems(list, {placeholder = false, url, who = () => 'Photo', blobs = {}, at = -1} = {}) {
+    return (list || []).map((x, n) => {
       const item = {url: url(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)};
       const stages = placeholder && item.kind === 'image' ? photoStages(x, true, url) : null;
-      if (stages?.sharp) item.placeholder = blobs[stages.sharp] || stages.first;
+      if (!stages?.sharp) return item;
+      const ready = blobs[stages.sharp];
+      if (n === at) { item.placeholder = stages.first; if (ready) item.preview = ready; } else item.placeholder = ready || stages.first;
       return item;
     });
   }
@@ -3156,15 +3161,13 @@
     const open = () => {
       const blobs = {};
       for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
-      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs, at}), at, item => photoView(item, list, at, tapped));
       if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
     };
-    const reading = viewCopies.prime(near), mine = placeholder ? photoStages(m, true, mediaURL).sharp : null;
-    // Normally the tapped photo's copy is already read (a chat reads its photos ahead), so it opens in the tap. Only
-    // when this phone has it but it is not read yet does the tap wait for that one read, at most 100 ms: a picture
-    // the viewer can show at once beats a thumbnail it has to fetch.
-    if (!mine || viewCopies.get(mine) || !photoCache.has(mine)) { open(); return; }
-    Promise.race([reading, sleep(100)]).then(open);
+    // Never a wait: the tapped photo opens from its bubble's thumbnail, and its screen copy rides along when it is
+    // already read (a chat reads its photos ahead); one still being read is ready for the swipe.
+    viewCopies.prime(near);
+    open();
   }
   // The view copies of a chat's photo at `at` and the ones either side (photo-instant's screen copies, issue 164).
   const nearCopies = (list, at) => [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(Boolean);
