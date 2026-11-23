@@ -91,7 +91,13 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as '
                                'stacked bubbles above the message box, oldest first, each with Send, Edit and '
                                'Remove. One draft works as before. Nothing is ever sent on its own.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#353']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#353']}, {
+                'id': 'video-fullscreen', 'name': 'Videos open full screen',
+                'description': 'One tap on a video opens it full screen on black, already playing with sound, like '
+                               'Telegram. Tap to show or hide the controls (play, pause, a scrubber, close). Back or '
+                               'a swipe down returns to the chat where you were. GIFs and stickers still loop in the '
+                               'chat.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -434,7 +440,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
 
 
 if __name__ == '__main__':

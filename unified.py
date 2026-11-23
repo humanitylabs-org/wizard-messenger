@@ -3664,7 +3664,7 @@ class UnifiedInbox:
         if isinstance(size, (int, float)) and size > 0:
             self.sample('photo_kb.' + str(network), size / 1024)
 
-    PHOTO_CLIENT_TIMINGS = ('photo_thumb', 'photo_tap', 'photo_sharp', 'photo_black', 'photo_wizard')
+    PHOTO_CLIENT_TIMINGS = ('photo_thumb', 'photo_tap', 'photo_sharp', 'photo_black', 'photo_wizard', 'video_first_frame')
 
     def photo_client_timings(self, payload):
         """The view's own photo timings (switch photo-timings): thumbnail load, tap to first picture, tap to sharp

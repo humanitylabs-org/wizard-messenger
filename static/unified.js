@@ -277,6 +277,11 @@
   }
   // Issue 343: a video bubble near the screen starts buffering its first seconds on Wi-Fi (or a wired desktop), so the
   // tap plays at once; on mobile data, with Data Saver or an unknown phone network it only reads the video's header.
+  // Issue 379 (switch video-fullscreen): in the full-screen video, a drag that goes clearly down by 90 px or more
+  // closes it, like Telegram and WhatsApp; anything shorter or mostly sideways springs back.
+  function videoSwipe(dx, dy) {
+    return Number.isFinite(dy) && dy >= 90 && Math.abs(dx || 0) < dy ? 'close' : 'stay';
+  }
   function videoPreload(conn, mobile) {
     return prefetchAllowed('wifi', conn, mobile) ? 'auto' : 'metadata';
   }
@@ -704,7 +709,7 @@
     if (!boundId && all.length < 2) return [];
     return all.filter(d => d.id !== boundId);
   }
-  if (typeof module !== 'undefined') module.exports = {draftStack, agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {draftStack, agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -755,7 +760,7 @@
     send: ['M4 12 20 4l-4 16-4-6.5L4 12z', 'm12 13.5 8-9.5'],
     down: ['M12 5v14', 'm5 12 7 7 7-7'], up: ['M12 19V5', 'm5 12 7-7 7 7'], plus: ['M12 5v14', 'M5 12h14'],
     mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
-    play: ['M7 4.5v15l12-7.5z'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
+    play: ['M7 4.5v15l12-7.5z'], pause: ['M8 5v14', 'M16 5v14'], reply: ['M9 14 4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v4'],
     forward: ['M15 14l5-5-5-5', 'M20 9H10a6 6 0 0 0-6 6v4'], textsel: ['M5 6h14', 'M5 11h14', 'M5 16h8', 'M17 14v7', 'M15 14h4', 'M15 21h4'],
     copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'], trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 13h10l1-13', 'M9 7V4h6v3'],
     download: ['M12 4v11', 'm7 10 5 5 5-5', 'M5 20h14'], check: ['m5 12.5 4.5 4.5L19 7'], none: [],
@@ -2909,6 +2914,7 @@
     }
     box.message = m;
     if (!m.pending) box.onclick = e => {
+      if (inline && switchState.on['video-fullscreen'] === true) { videoView(m, v); return; }
       if (inline) { inline.tap(e); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
       if (!sticker) viewer(m, box); // stickers are part of the conversation, not photos to open
@@ -2996,6 +3002,103 @@
       if (!v.paused && !v.ended) { v.pause(); return; }
       play();
     }, play, fullScreen};
+  }
+  // Issue 379 (switch video-fullscreen, James): one tap on a received video opens it full screen on black, already
+  // playing with sound, like Telegram and WhatsApp. The poster fills the screen at once while the video starts, and
+  // play() runs inside the tap, so sound is allowed and nothing waits on Wizard. The controls are Messenger's own
+  // (no browser control box): a tap shows or hides them; they are play/pause, a scrubber with times, and Close.
+  // Back, Esc, Close or a swipe down closes it; the chat behind it never moves, so it is where it was.
+  // GIFs and stickers keep looping muted in the bubble.
+  function videoView(m, from) {
+    const tapped = performance.now();
+    view.photo?.close();
+    if (inlinePlaying) { try { inlinePlaying.pause(); } catch {} }
+    const before = document.activeElement;
+    const layer = node('div', 'u-video-view chrome'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true');
+    layer.setAttribute('aria-label', 'Video'); layer.tabIndex = -1;
+    const v = node('video'); v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto'; v.disablePictureInPicture = true;
+    if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
+    v.src = (from?.currentSrc || from?.src || m.local || mediaURL(m.id)).replace(/#t=[0-9.]+$/, '');
+    const playBtn = iconButton('pause', 'Pause video', () => toggle(), 'u-vv-play');
+    const now = node('span', 'u-vv-time', '0:00'), left = node('span', 'u-vv-time', fmtDur(m.media?.duration || 0));
+    const scrub = node('input', 'u-vv-scrub'); scrub.type = 'range'; scrub.min = '0'; scrub.max = '1000'; scrub.step = '1'; scrub.value = '0';
+    scrub.setAttribute('aria-label', 'Position in video');
+    const bar = node('div', 'u-vv-bar'); bar.append(playBtn, now, scrub, left);
+    const closeBtn = iconButton('close', 'Close', () => close(), 'u-vv-close');
+    layer.append(v, closeBtn, bar);
+    const total = () => Number.isFinite(v.duration) && v.duration > 0 ? v.duration : (m.media?.duration || 0) / 1000;
+    let seeking = false, hideTimer = 0;
+    const paint = () => {
+      const on = !v.paused && !v.ended;
+      layer.classList.toggle('playing', on);
+      playBtn.replaceChildren(icon(on ? 'pause' : 'play'));
+      playBtn.setAttribute('aria-label', on ? 'Pause video' : 'Play video'); playBtn.title = playBtn.getAttribute('aria-label');
+      now.textContent = fmtDur(v.currentTime * 1000); left.textContent = fmtDur(total() * 1000);
+      if (!seeking && total() > 0) scrub.value = String(Math.round(1000 * v.currentTime / total()));
+    };
+    const chrome = show => {
+      clearTimeout(hideTimer);
+      layer.classList.toggle('chrome', show);
+      if (show && !v.paused) hideTimer = setTimeout(() => { if (!v.paused && !seeking) layer.classList.remove('chrome'); }, 2500);
+    };
+    for (const name of ['play', 'pause', 'ended', 'timeupdate', 'durationchange', 'loadedmetadata']) v.addEventListener(name, paint);
+    v.addEventListener('pause', () => chrome(true)); v.addEventListener('play', () => chrome(layer.classList.contains('chrome')));
+    scrub.addEventListener('input', () => { seeking = true; if (total() > 0) { v.currentTime = total() * Number(scrub.value) / 1000; now.textContent = fmtDur(v.currentTime * 1000); } });
+    scrub.addEventListener('change', () => { seeking = false; chrome(true); });
+    function play() {
+      if (v.ended) v.currentTime = 0;
+      v.muted = false;
+      const p = v.play(); // inside the tap: sound allowed. A browser that still refuses plays it muted, not not at all.
+      p?.catch?.(() => { if (!layer.isConnected) return; v.muted = true; v.play().catch(() => {}); });
+    }
+    function toggle() { if (v.paused || v.ended) play(); else v.pause(); chrome(true); }
+    // First moving frame after the tap (photo-timings style stage clock): kept on the layer, and sent with photo-timings on.
+    const firstFrame = () => {
+      if (layer.dataset.firstFrame) return;
+      const ms = Math.round(performance.now() - tapped); layer.dataset.firstFrame = String(ms);
+      if (switchState.on['photo-timings'] === true) photoClock.add('video_first_frame', ms);
+    };
+    if (typeof v.requestVideoFrameCallback === 'function') v.requestVideoFrameCallback(firstFrame);
+    else v.addEventListener('playing', firstFrame, {once: true});
+    // Swipe down closes; a short drag springs back. A tap (no drag) on the video shows or hides the controls.
+    let drag = null;
+    layer.addEventListener('pointerdown', e => { if (e.target.closest('.u-vv-bar,.u-vv-close')) return; drag = {x: e.clientX, y: e.clientY, id: e.pointerId, moved: false}; });
+    layer.addEventListener('pointermove', e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) drag.moved = true;
+      if (drag.moved && dy > 0) { v.style.transform = 'translateY(' + dy + 'px)'; layer.style.setProperty('--vv-fade', String(Math.max(0.3, 1 - dy / 400))); }
+    });
+    const release = e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag; drag = null;
+      if (!d.moved) return;
+      layer.dataset.dragged = '1'; setTimeout(() => { delete layer.dataset.dragged; }, 0);
+      if (e.type === 'pointerup' && videoSwipe(e.clientX - d.x, e.clientY - d.y) === 'close') { close(); return; }
+      v.style.transform = ''; layer.style.removeProperty('--vv-fade');
+    };
+    layer.addEventListener('pointerup', release); layer.addEventListener('pointercancel', release);
+    layer.addEventListener('click', e => {
+      if (layer.dataset.dragged || e.target.closest('.u-vv-bar,.u-vv-close')) return;
+      chrome(!layer.classList.contains('chrome'));
+    });
+    layer.onkeydown = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      else if (e.key === ' ' && !e.target.closest('.u-vv-bar')) { e.preventDefault(); toggle(); }
+    };
+    const close = () => {
+      if (!layer.isConnected) return false;
+      clearTimeout(hideTimer); try { v.pause(); } catch {}
+      v.removeAttribute('src'); try { v.load(); } catch {}
+      layer.remove(); if (view.photo?.layer === layer) view.photo = null;
+      if (before?.isConnected) before.focus({preventScroll: true});
+      return true;
+    };
+    ($('messenger') || document.documentElement).append(layer);
+    view.photo = {layer, close, media: v};
+    layer.focus({preventScroll: true});
+    play(); paint(); chrome(true);
+    return layer;
   }
   // Tapping a photo or video opens Wizard's own media viewer, the one Chats uses: pinch and double-tap zoom, pan,
   // swipe through every photo in this chat, Save/Share, Back closes (James, 26 Oct 2026). Only when Wizard does not open

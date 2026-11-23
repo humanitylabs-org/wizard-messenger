@@ -878,10 +878,10 @@ class SignalMvpTests(unittest.TestCase):
         self.inbox.warm_photo_now('$on')
         samples = [{'name': 'photo_tap', 'ms': 40}, {'name': 'photo_tap', 'ms': 60}, {'name': 'photo_black', 'ms': 1},
                    {'name': 'photo_black', 'ms': 0}, {'name': 'photo_thumb', 'ms': 120.6},
-                   {'name': 'photo_wizard', 'ms': 15},
+                   {'name': 'photo_wizard', 'ms': 15}, {'name': 'video_first_frame', 'ms': 180},
                    {'name': 'evil', 'ms': 1}, {'name': 'photo_tap', 'ms': -1}, {'name': 'photo_tap', 'ms': True},
                    {'name': 'photo_tap', 'ms': 'x'}, {'name': 'photo_tap', 'ms': 10 ** 9}, 'junk']
-        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/photos/timings', {'samples': samples}), {'ok': True, 'kept': 6})
+        self.assertEqual(self.inbox.dispatch('POST', '/api/unified/photos/timings', {'samples': samples}), {'ok': True, 'kept': 7})
         t = self.inbox.dispatch('GET', '/api/unified/status', {})['timings']
         self.assertEqual(t['photo_handover.telegram']['n'], 1)
         self.assertGreaterEqual(t['photo_handover.telegram']['p50'], 2000)
@@ -891,6 +891,7 @@ class SignalMvpTests(unittest.TestCase):
         self.assertEqual(t['photo_tap'], {'n': 2, 'p50': 60, 'p90': 60, 'max': 60, 'sum': 100})
         self.assertEqual(t['photo_black']['sum'], 1)
         self.assertEqual(t['photo_thumb']['p50'], 120)
+        self.assertEqual(t['video_first_frame']['p50'], 180)  # issue 379
         self.assertNotIn('evil', t)
 
     def test_photo_warm_retry_gives_up_after_the_last_backoff(self):

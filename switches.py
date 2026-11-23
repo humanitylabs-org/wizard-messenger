@@ -80,6 +80,12 @@ SWITCHES = (
                     'as before. Nothing is ever sent on its own.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#353']},
+    {'id': 'video-fullscreen', 'name': 'Videos open full screen',
+     'description': 'One tap on a video opens it full screen on black, already playing with sound, like Telegram. '
+                    'Tap to show or hide the controls (play, pause, a scrubber, close). Back or a swipe down returns '
+                    'to the chat where you were. GIFs and stickers still loop in the chat.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#379']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
