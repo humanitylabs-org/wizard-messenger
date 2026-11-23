@@ -1783,6 +1783,9 @@ class UnifiedInbox:
         waker = getattr(self, 'agent_chat_waker', None)
         if waker is not None:
             waker.close()
+        notifier = self.__dict__.get('phone_notifier')
+        if notifier is not None:
+            notifier.close()
         if self.worker:
             self.worker.join(timeout=2)
 

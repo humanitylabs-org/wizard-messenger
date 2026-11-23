@@ -696,7 +696,15 @@
       ? {label: 'Show Agent and Reports', text: 'Show Agent', pressed: true, icon: 'eyeoff'}
       : {label: 'Hide Agent and Reports', text: 'Hide Agent', pressed: false, icon: 'eye'};
   }
-  if (typeof module !== 'undefined') module.exports = {agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 353 (switch stacked-drafts): the drafts waiting as stacked bubbles above the box, oldest first (the box
+  // lists drafts in creation order). The composer's own draft (boundId) is never in the stack; one draft alone
+  // belongs in the composer, as before.
+  function draftStack(rows, personId, boundId) {
+    const all = (rows || []).filter(d => d && d.person_id === personId && d.state === 'draft');
+    if (!boundId && all.length < 2) return [];
+    return all.filter(d => d.id !== boundId);
+  }
+  if (typeof module !== 'undefined') module.exports = {draftStack, agentRowsToggle, mergeRows, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -3391,7 +3399,8 @@
     if (key !== s.draftKey) { s.draftKey = key; s.draftIndex = next; if ((!s.person || split.on) && s.tab === 'people') drawList(); }
   }
   function serverDraft(id, ui, after = null) {
-    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false, epoch: 0, closing: null, late: null};
+    const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false, epoch: 0, closing: null, late: null, all: [], stack: [], pinned: null};
+    const stackOn = () => !!switchState.on['stacked-drafts'];
     const by = row => row?.updated_by || row?.created_by;
     const byAgent = row => by(row) && by(row).id !== 'owner';
     const dirty = () => sd.row ? ui.draft.value !== sd.saved || ui.channel.value !== sd.row.identity_id : !!ui.draft.value.trim();
@@ -3419,6 +3428,68 @@
       }
       return null;
     };
+    // Issue 353: two or more drafts wait as stacked bubbles above the box, each with Send, Edit and Remove.
+    const stackNode = () => {
+      if (!stackOn() || !sd.stack.length) return null;
+      const box = node('div', 'u-draft-stack'); box.setAttribute('role', 'list'); box.setAttribute('aria-label', 'Drafts, not sent');
+      for (const d of sd.stack) {
+        const item = node('div', 'u-draft-bubble'); item.setAttribute('role', 'listitem'); item.dataset.draft = d.id;
+        item.append(node('div', 'u-draft-by', 'Draft' + (byAgent(d) ? ' by ' + (by(d).name || 'your Wizard') : '') + ' · not sent'));
+        if ((d.text || '').trim()) item.append(node('div', 'u-draft-text', d.text));
+        const n = (d.attachments || []).length; if (n) item.append(node('div', 'u-draft-files', n === 1 ? '1 attachment' : n + ' attachments'));
+        const acts = node('div', 'u-draft-actions');
+        acts.append(button('Send', () => action(() => sendStacked(d)), 'primary u-draft-send'),
+          button('Edit', () => action(() => editStacked(d)), 'secondary u-draft-edit'),
+          button('Remove', () => action(() => removeStacked(d)), 'secondary u-draft-remove'));
+        item.append(acts); box.append(item);
+      }
+      return box;
+    };
+    const restack = () => { sd.stack = stackOn() ? draftStack(sd.all, id, sd.row?.id) : []; };
+    // The composer lets go of its draft: it stays on the box and joins the stack. The box empties.
+    function release() {
+      if (!sd.row) return;
+      sd.row = null; sd.saved = null; sd.pinned = null; sd.loadError = false; sd.uploadError = false;
+      attachments = []; view.attach = null; ui.draft.value = ''; s.drafts[id] = ''; saveDrafts();
+      restack(); ui.grow(); ui.paintBar();
+    }
+    const forget = d => { closedDrafts.add(d.id); sd.all = sd.all.filter(x => x.id !== d.id); restack(); ui.paintBar(); };
+    async function closeStacked(d, why) {
+      forget(d); draftWrote();
+      try { await api('api/drafts/' + d.id, {method: 'DELETE', body: {revision: d.revision, ...why}}); }
+      catch (e) {
+        if (e.code === 'draft_changed') closedDrafts.delete(d.id); // changed elsewhere meanwhile: the newer one stays
+        else if (e.code !== 'not_found') { closedDrafts.delete(d.id); error(e); }
+      }
+      draftWrote(); refreshDraftIndex(); check(false);
+    }
+    // Edit moves that draft into the box. Words already in the box stay a draft of their own, in the stack.
+    async function editStacked(d) {
+      if (!alive()) return false;
+      if (sd.timer || dirty()) await save();
+      await sd.busy?.catch(() => {}); await Promise.resolve(sd.uploading).catch(() => {});
+      if (sd.conflict) { toast('Choose which draft to keep first'); return false; }
+      let row; try { row = (await api('api/drafts/' + d.id)).draft; } catch (e) { if (e.code === 'not_found') { forget(d); return false; } throw e; }
+      if (!alive() || row?.state !== 'draft') return false;
+      release();
+      sd.pinned = row.id; await apply(row); restack();
+      ui.grow(); ui.paintBar(); ui.draft.focus();
+      return sd.row?.id === row.id;
+    }
+    // Send sends that draft as it is. Plain words go straight out (the box keeps whatever is in it); a draft with
+    // attachments, or a chat that reviews before sending, goes through the box's own Send.
+    async function sendStacked(d) {
+      const text = (d.text || '').trim();
+      if ((d.attachments || []).length || ui.reviewed || !text) { if (await editStacked(d)) await ui.submit(); return; }
+      const identity_id = [...ui.channel.options].some(o => o.value === d.identity_id) ? d.identity_id : ui.channel.value;
+      const job = {text, photo: null, reply: null, identity_id};
+      queueSend(id, {...job, onFailure: e => restoreSend(id, job, e)});
+      await closeStacked(d, {outcome: 'sent', sent_text: text});
+    }
+    async function removeStacked(d) {
+      if (!await ask({title: 'Remove this draft?', body: 'Nothing is sent.', yes: 'Remove', no: 'Keep'})) return;
+      await closeStacked(d, {outcome: 'discarded'});
+    }
     async function itemFor(a, rid) {
       const r = await fetch('api/drafts/' + rid + '/attachments/' + a.id, {credentials: 'same-origin', cache: 'no-store'});
       if (!r.ok) throw new Error('Could not load ' + a.name);
@@ -3610,8 +3681,27 @@
       if (!alive() || sd.busy || sd.timer || sd.closing || sd.attachmentPending) return;
       if (gen !== draftWrites) return check(first); // this screen wrote meanwhile: that list may predate it
       rows = rows.filter(d => !closedDrafts.has(d.id));
+      if (stackOn()) {
+        // Issue 353: with two or more drafts the box stays empty and they wait as stacked bubbles. An agent's draft
+        // the owner hasn't touched (or picked with Edit) goes back to the stack when another one arrives.
+        const before = sd.stack.map(d => d.id + ':' + d.revision).join();
+        sd.all = rows.filter(d => d.person_id === id && d.state === 'draft');
+        const many = sd.all.length >= 2;
+        const same = sd.row && sd.all.find(d => d.id === sd.row.id);
+        if (many && same && same.revision === sd.row.revision && sd.pinned !== sd.row.id && byAgent(sd.row) && !dirty() && !(view.attach || []).some(it => !it.sid)) release();
+        restack();
+        if (sd.stack.map(d => d.id + ':' + d.revision).join() !== before) ui.paintBar();
+        if (!sd.row && many && !(s.bindDraft && sd.all.some(d => d.id === s.bindDraft))) {
+          if (first && ui.draft.value.trim()) {
+            // The box's copy of a draft that is now in the stack is not new words: drop it, never save it twice.
+            if (sd.all.some(d => d.text === ui.draft.value)) { ui.draft.value = ''; s.drafts[id] = ''; saveDrafts(); ui.grow(); }
+            else schedule(); // words kept only on this device become a draft of their own
+          }
+          return;
+        }
+      } else if (sd.stack.length) { sd.all = []; sd.stack = []; ui.paintBar(); }
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
-      const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) s.bindDraft = null;
+      const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) { s.bindDraft = null; sd.pinned = pick.id; }
       const latest = pick || mine || (!sd.row && draftsFor(rows, id)[0]);
       if (!latest) {
         if (sd.loadError) { sd.loadError = false; ui.paintBar(); } // the draft (and the attachment that failed) is gone
@@ -3636,7 +3726,7 @@
       if (sd.loadError && sd.row) await loadItems(sd.row);
       errorsInTray();
     };
-    Object.assign(sd, {schedule, save, attach, detach, clear, closeForSend, afterSend, note, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
+    Object.assign(sd, {schedule, save, attach, detach, clear, closeForSend, afterSend, note, stackNode, check, retry, stop: () => { sd.alive = false; clearInterval(sd.poll); clearTimeout(sd.timer); sd.timer = null; }});
     setTimeout(() => Promise.resolve(after).catch(() => {}).then(() => check(true)), 0);
     return sd;
   }
@@ -3807,8 +3897,9 @@
     const row = node('div', 'u-compose-row'); row.append(attach, field, send, mic, file);
     const paintBar = () => {
       bar.replaceChildren(); const target = view.edit || view.reply; const a = view.attach || [];
+      const stack = view.sd?.stackNode?.(); if (stack) bar.append(stack);
       const note = view.sd?.note?.(); if (note) bar.append(note);
-      bar.hidden = !target && !a.length && !note;
+      bar.hidden = !target && !a.length && !note && !stack;
       if (target) {
         const q = node('div', 'u-quote in-bar'); q.append(node('strong', '', view.edit ? 'Edit message' : target.outgoing ? 'Reply to yourself' : 'Reply to ' + (nameOf(target.sender) || p.display_name)), node('span', '', target.original || snippet({msgtype: target.msgtype, voice: target.media?.voice, text: ''})));
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
@@ -4109,7 +4200,7 @@
     form.append(bar, via, channel, mediaPicker.panel, row, notice); grow(); paintBar(); paintRecording();
     // Switching chats in the split (or redrawing on resize) must not drop a save that is still waiting.
     const prev = view.sd, flushing = prev?.timer ? prev.save() : prev?.saving || prev?.busy;
-    prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia}, prev?.id === id ? flushing : null);
+    prev?.stop?.(); view.sd = serverDraft(id, {form, draft, channel, grow, paintBar, paintVia, submit, reviewed}, prev?.id === id ? flushing : null);
     queueMicrotask(() => { if (!form.isConnected) return; if (!view.recording) record(true); recoverVoice(); });
     return form;
   }
@@ -6237,6 +6328,7 @@
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
   // Turning share-files on or off tells the share sheet at once (it re-offers a waiting file once it is on).
+  switchState.paints['stacked-drafts'] = () => view.sd?.check?.(false);
   switchState.paints['share-files'] = () => { if (shareKinds().join() !== sharedKinds) listenForShares(); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
