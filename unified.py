@@ -2335,6 +2335,38 @@ class UnifiedInbox:
         except Exception:
             self.retry_photo(message_id, attempt)
 
+    def warm_shown(self, message_id):
+        """Issue 392: a photo whose thumbnail the owner's phone just asked for is queued for the photo workers (its
+        original and, with photo-instant, its screen copy), whatever its age or sender, so a tap on it finds the screen
+        copy ready instead of waiting for the box to fetch and shrink it. photo-warm alone only covered photos that
+        arrived live from other people in the last WARM_DAYS. Each message is queued once per run."""
+        switches = getattr(self, 'switches', None)  # some tests build a bare inbox
+        if not switches or not (switches.is_on('photo-instant') or switches.is_on('photo-warm')):
+            return
+        shown = self.__dict__.setdefault('_warm_shown', {})
+        if message_id in shown:
+            return
+        try:
+            message = self.store.message(message_id)
+            media = json.loads(message['media']) if message.get('media') else {}
+        except Exception:
+            return
+        if not isinstance(media, dict) or not media.get('mxc') or not is_picture(message.get('msgtype'), media):
+            return
+        size = media.get('size')
+        if isinstance(size, (int, float)) and size > PHOTO_WARM_MAX:
+            return
+        if len(shown) >= 5000:
+            shown.clear()
+        shown[message_id] = True
+        queue_ = getattr(self, 'photo_queue', None)
+        if queue_ is None:
+            return
+        try:
+            queue_.put_nowait((message_id, 0))
+        except queue.Full:
+            shown.pop(message_id, None)
+
     def retry_photo(self, message_id, attempt):
         if attempt >= len(PHOTO_WARM_RETRY) or self.stop.is_set():
             return
@@ -3749,7 +3781,11 @@ class UnifiedInbox:
         if suffix and suffix[0] == 'picker' and method == 'GET':
             return self.picker(suffix[1:], q)
         if len(suffix) == 2 and suffix[0] == 'media' and method == 'GET':
-            return self.media(text(suffix[1], 300), q('kind') if q('kind') in ('thumb', 'view', 'link0', 'link1') else 'full')
+            message_id, kind = text(suffix[1], 300), q('kind') if q('kind') in ('thumb', 'view', 'link0', 'link1') else 'full'
+            blob = self.media(message_id, kind)
+            if kind == 'thumb':
+                self.warm_shown(message_id)
+            return blob
         if len(suffix) >= 3 and suffix[0] == 'people' and suffix[2] == 'catch-up':
             # Owner session only: no agent capability maps to these routes (permissions.capability_for -> None).
             pid = suffix[1]

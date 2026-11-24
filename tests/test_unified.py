@@ -1003,6 +1003,28 @@ class SignalMvpTests(unittest.TestCase):
         calls.clear(); self.inbox.warm_photo_now('$pic')
         self.assertEqual(calls, ['thumb', None, 'view'])
 
+    def test_a_shown_thumbnail_queues_its_photo_for_warming_whatever_its_age_or_sender(self):
+        # Issue 392: photo-warm only took photos arriving live from others in the last days, so an older photo (or
+        # one from before the switch) made a tap wait for the box to fetch and shrink it. Now the phone asking for
+        # its thumbnail queues it once (original + screen copy), with photo-instant or photo-warm on.
+        pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}
+        doc = {'msgtype': 'm.file', 'body': 'a.pdf', 'url': 'mxc://messenger.internal/d', 'info': {'mimetype': 'application/pdf'}}
+        self.ingest(self.event('$old', pic, ts=1000), self.event('$mine', pic, sender='@owner:messenger.internal', ts=1000), self.event('$doc', doc))
+        self.inbox.media = lambda mid, kind: 'blob-%s-%s' % (mid, kind)
+        while not self.inbox.photo_queue.empty():
+            self.inbox.photo_queue.get_nowait()
+        thumb = lambda mid: self.inbox.dispatch('GET', '/api/unified/media/' + mid, {}, {'kind': ['thumb']})
+        self.assertEqual(thumb('$old'), 'blob-$old-thumb')
+        self.assertTrue(self.inbox.photo_queue.empty(), 'both switches off: nothing changes')
+        self.inbox.switches.set('photo-instant', True)
+        for mid in ('$old', '$old', '$mine', '$doc'):
+            thumb(mid)
+        self.inbox.dispatch('GET', '/api/unified/media/$old', {}, {'kind': ['full']})
+        queued = []
+        while not self.inbox.photo_queue.empty():
+            queued.append(self.inbox.photo_queue.get_nowait())
+        self.assertEqual(queued, [('$old', 0), ('$mine', 0)])
+
     def test_cache_drops_originals_then_view_copies_then_thumbnails(self):
         cache = Path(self.tmp.name) / 'cache3'
         cache.mkdir()

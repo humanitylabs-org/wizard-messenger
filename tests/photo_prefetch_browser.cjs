@@ -1,6 +1,7 @@
 // Issue 166: with "Background photo download" on, the phone quietly fetches thumbnails and the box's view copies of
 // the newest photos in the most recent chats after the list loads, keeps them in Cache Storage, and a tapped photo
-// sharpens from that copy. "Wi-Fi only" on cellular, and the switch off, download nothing in the background.
+// sharpens from that copy. The switch off, and "Wi-Fi only" on cellular, download nothing in the background. Since
+// issue 392 a phone downloads on any network unless the device chose Wi-Fi only (localStorage messenger.photoPrefetch).
 // Synthetic API only, no container and no shell: PLAYWRIGHT_MODULE=... node tests/photo_prefetch_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -15,15 +16,16 @@ const PEOPLE = [chat('ann', 'Ann Lee', now - min), chat('bob', 'Bob Ray', now - 
 const photos = id => [0, 1, 2].map(i => ({id: '$' + id + i, identity_id: id + '-i', network: 'telegram', sender: id, outgoing: false, original: '', timestamp: now - (10 - i) * min, timeline_order: i + 1, msgtype: 'm.image', media: {w: 1600, h: 1200, mime: 'image/jpeg', thumb: true}, reactions: []}));
 const PHONE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36';
 
-async function run(browser, {label, on, network, viewport, phone}) {
+async function run(browser, {label, on, network, viewport, phone, mode}) {
   const ctx = await browser.newContext({viewport, deviceScaleFactor: 2, isMobile: phone, hasTouch: phone, colorScheme: 'dark', ...(phone ? {userAgent: PHONE_UA} : {})});
-  await ctx.addInitScript(net => {
+  await ctx.addInitScript(({net, mode}) => {
     const noop = () => {};
     window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}};
     Object.defineProperty(Navigator.prototype, 'connection', {configurable: true, get: () => ({type: net, saveData: false, addEventListener: noop})});
     const mark = () => { const r = document.documentElement; if (!r) return false; r.dataset.wzHosted = ''; return true; };
     if (!mark()) new MutationObserver((_, o) => { if (mark()) o.disconnect(); }).observe(document, {childList: true});
-  }, network);
+    if (mode) { try { localStorage.setItem('messenger.photoPrefetch', mode); } catch {} }
+  }, {net: network, mode});
   const page = await ctx.newPage(), errors = [], media = [], threads = [];
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
@@ -64,7 +66,7 @@ async function run(browser, {label, on, network, viewport, phone}) {
   const kept = await page.evaluate(async () => { const c = await caches.open('messenger-photos-v1'); return (await c.keys()).map(r => new URL(r.url).pathname.split('/').pop() + new URL(r.url).search).sort(); });
   const result = {label, on, network, threads: threads.slice(), background: media.slice(), kept};
   await page.screenshot({path: path.join(out, `${label}-list.png`)});
-  const expect = on && (network === 'wifi' || !phone);
+  const expect = on && (mode !== 'wifi' || network === 'wifi' || !phone);
   if (expect) {
     assert.deepEqual(threads.sort(), ['ann:40', 'bob:40'], 'each recent chat read once: ' + threads);
     for (const id of ['ann0', 'ann1', 'ann2', 'bob0', 'bob1', 'bob2']) {
@@ -129,7 +131,8 @@ async function run(browser, {label, on, network, viewport, phone}) {
   const phone = {width: 390, height: 844}, desk = {width: 1280, height: 860};
   summary.push(await run(browser, {label: 'phone-wifi-on', on: true, network: 'wifi', viewport: phone, phone: true}));
   summary.push(await run(browser, {label: 'phone-cellular-on', on: true, network: 'cellular', viewport: phone, phone: true}));
-  summary.push(await run(browser, {label: 'phone-unknown-on', on: true, network: undefined, viewport: phone, phone: true}));
+  summary.push(await run(browser, {label: 'phone-cellular-wifi-only', on: true, network: 'cellular', viewport: phone, phone: true, mode: 'wifi'}));
+  summary.push(await run(browser, {label: 'phone-unknown-wifi-only', on: true, network: undefined, viewport: phone, phone: true, mode: 'wifi'}));
   summary.push(await run(browser, {label: 'phone-wifi-off', on: false, network: 'wifi', viewport: phone, phone: true}));
   summary.push(await run(browser, {label: 'desktop-on', on: true, network: undefined, viewport: desk, phone: false}));
   await browser.close();

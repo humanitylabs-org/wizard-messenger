@@ -159,11 +159,18 @@
   // still photo also carries a placeholder: the screen-size view copy this phone already downloaded (blobs maps its URL
   // to a blob: URL), else the thumbnail the bubble shows. Wizard shows it until the original is in, so the first frame
   // is never black; Save and Share keep the original (url). Off, the items are exactly as before.
-  function viewerItems(list, {placeholder = false, url, who = () => 'Photo', blobs = {}} = {}) {
+  // Issue 392 (sharp: "Photos open instantly" on): the picture Wizard loads is the screen-size copy (this phone's own
+  // when it has it), not the original, and the stand-in is the thumbnail the bubble shows (this phone's own when kept).
+  // Wizard's loading wheel shows until its picture is in, and the original is several MB: on mobile data that was 5-10 s
+  // of wheel over a photo already on screen. Save and Share then keep the screen copy (1600 px).
+  function viewerItems(list, {placeholder = false, sharp = false, url, who = () => 'Photo', blobs = {}} = {}) {
     return (list || []).map(x => {
       const item = {url: url(x.id), kind: x.msgtype === 'm.video' ? 'video' : 'image', name: who(x)};
-      const stages = placeholder && item.kind === 'image' ? photoStages(x, true, url) : null;
-      if (stages?.sharp) item.placeholder = blobs[stages.sharp] || stages.first;
+      const stages = (placeholder || sharp) && item.kind === 'image' ? photoStages(x, true, url) : null;
+      if (sharp && stages?.sharp) {
+        item.url = blobs[stages.sharp] || stages.sharp;
+        item.placeholder = blobs[stages.first] || stages.first;
+      } else if (placeholder && stages?.sharp) item.placeholder = blobs[stages.sharp] || stages.first;
       return item;
     });
   }
@@ -2957,8 +2964,12 @@
     } else {
       const img = node('img'); img.alt = m.original || (sticker ? 'Sticker' : 'Photo'); img.decoding = 'async'; img.loading = 'lazy';
       img.onload = () => { img.classList.add('in'); if (!w && view.scroll && nearBottom()) view.scroll.scrollTop = view.scroll.scrollHeight; };
-      img.onerror = () => { box.classList.add('broken'); box.append(node('span', 'u-broken', 'Photo unavailable')); };
-      img.src = m.local || mediaURL(m.id, 'thumb'); box.append(img);
+      img.onerror = () => {
+        if (img.dataset.kept) { delete img.dataset.kept; img.src = mediaURL(m.id, 'thumb'); return; } // the phone's copy failed: ask the box
+        box.classList.add('broken'); box.append(node('span', 'u-broken', 'Photo unavailable'));
+      };
+      if (m.local) img.src = m.local; else thumbSource(img, mediaURL(m.id, 'thumb'));
+      box.append(img);
       if (sticker) box.classList.add('sticker');
       else if (m.media?.mime === 'image/gif') { box.classList.add('gif'); box.append(node('span', 'u-gif-tag', 'GIF')); }
     }
@@ -3161,11 +3172,13 @@
     const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
     // Issue 348: opened in the tap, never after a wait. The view copies this phone already read (viewCopies) go as
     // blob: URLs; one still being read goes as the thumbnail the bubble shows, and the swipe to it finds it ready.
-    const near = placeholder ? nearCopies(list, at) : [];
+    const near = placeholder ? nearCopies(list, at) : [], sharp = switchState.on['photo-instant'] === true;
     const open = () => {
       const blobs = {};
       for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
-      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+      // Issue 392: the thumbnails this phone keeps (the ones the bubbles show) are the stand-ins.
+      for (const x of list) { const u = mediaURL(x.id, 'thumb'), b = thumbCopies.get(u); if (b) blobs[u] = b; }
+      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, sharp, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
       if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
     };
     const reading = viewCopies.prime(near), mine = placeholder ? photoStages(m, true, mediaURL).sharp : null;
@@ -3186,9 +3199,30 @@
     decode: blob => { const img = new Image(); img.decoding = 'async'; img.src = blob; return img.decode().then(() => img); },
     revoke: blob => { try { URL.revokeObjectURL(blob); } catch { /* already gone */ } },
   });
+  // Issue 392: the thumbnails this phone downloaded (issue 166), as blob: URLs, so a bubble paints from the phone and
+  // never waits on the box, and Wizard's viewer gets the same picture as its stand-in.
+  const thumbCopies = readyCopies({
+    match: url => photoCache.match(url),
+    has: url => photoCache.has(url),
+    revoke: blob => { try { URL.revokeObjectURL(blob); } catch { /* already gone */ } },
+    keep: 120, hot: 0,
+  });
+  // A bubble's thumbnail: the phone's copy when it keeps one (read from Cache Storage in a few ms), else the box's.
+  function thumbSource(img, url) {
+    const kept = thumbCopies.get(url);
+    if (kept) { img.dataset.kept = '1'; img.src = kept; return; }
+    if (!photoCache.has(url)) { img.src = url; return; }
+    thumbCopies.prime([url]).then(() => {
+      if (img.getAttribute('src')) return;
+      const b = thumbCopies.get(url); if (b) img.dataset.kept = '1';
+      img.src = b || url;
+    }, () => { if (!img.getAttribute('src')) img.src = url; });
+  }
   // Read ahead the newest photos of the chat on screen, so the first tap already finds them (only while the shared
-  // viewer gets placeholders: viewer-placeholder).
+  // viewer gets placeholders: viewer-placeholder). Issue 392: the open chat's photos also go first in this phone's
+  // background download, so a chat outside the newest 15 gets its screen copies too.
   function primeChatCopies(messages) {
+    if (prefetchMode() !== 'off' && messages?.length) photoCache.add(prefetchPlan([{id: 'open'}], () => messages, mediaURL, PREFETCH, prefetchWant()), true);
     if (switchState.on['viewer-placeholder'] !== true) return;
     const list = (messages || []).filter(x => x && !x.pending && !x.deleted && !isSticker(x));
     const urls = list.map(x => photoStages(x, true, mediaURL).sharp).filter(Boolean).slice(-6);
@@ -6065,8 +6099,13 @@
   // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher). The switch lives
   // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
-  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: switchState.on['video-prefetch'] === true});
-  const prefetchMode = () => { const want = prefetchWant(); if (!want.photos && !want.videos) return 'off'; try { return localStorage.getItem(PREFETCH_MODE_KEY) === 'always' ? 'always' : 'wifi'; } catch { return 'wifi'; } };
+  // Issue 392: photos download on any network; videos (up to 25 MB each) only on Wi-Fi unless this device chose Always.
+  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: switchState.on['video-prefetch'] === true
+    && (storedPrefetchMode() === 'always' || prefetchAllowed('wifi', navigator.connection, onPhone()))});
+  const storedPrefetchMode = () => { try { return localStorage.getItem(PREFETCH_MODE_KEY) || ''; } catch { return ''; } };
+  // Issue 392: on any network unless this device chose Wi-Fi only (James is on mobile data a lot, and Settings has had
+  // no row to choose Always since issue 202). The 300 MB cap still bounds what is kept.
+  const prefetchMode = () => { if (switchState.on['photo-prefetch'] !== true && switchState.on['video-prefetch'] !== true) return 'off'; return storedPrefetchMode() === 'wifi' ? 'wifi' : 'always'; };
   const prefetchBusy = {loads: 0, until: 0};
   const onPhone = () => { try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches; } catch { return false; } };
   const photoCache = photoPrefetcher({
@@ -6095,14 +6134,15 @@
   function prefetchSoon() {
     clearTimeout(prefetchTimer);
     prefetchTimer = setTimeout(async () => {
-      if (prefetchMode() === 'off' || !s.ready) return;
+      const wanted = () => { const w = prefetchWant(); return w.photos || w.videos; }; // issue 392: videos can wait for Wi-Fi
+      if (prefetchMode() === 'off' || !s.ready || !wanted()) return;
       const chats = [...(store.lists.people || []), ...(store.lists.groups || [])].sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, PREFETCH.chats);
       const fetched = Object.create(null);
       const messagesOf = id => store.threads[id]?.messages || fetched[id] || [];
       photoCache.add(prefetchPlan(chats, messagesOf, mediaURL, PREFETCH, prefetchWant()));
       for (const p of chats) {
         if (store.threads[p.id] || prefetchLoaded.has(p.id) || !(rawApi || api)) continue;
-        if (prefetchMode() === 'off' || !prefetchAllowed(prefetchMode(), navigator.connection, onPhone())) return;
+        if (prefetchMode() === 'off' || !wanted() || !prefetchAllowed(prefetchMode(), navigator.connection, onPhone())) return;
         while (prefetchBusy.loads > 0 || Date.now() < prefetchBusy.until) await sleep(800);
         prefetchLoaded.add(p.id);
         try { fetched[p.id] = (await (rawApi || api)('api/unified/people/' + encodeURIComponent(p.id) + '?limit=' + PREFETCH.messages, {})).messages || []; } catch { continue; }
