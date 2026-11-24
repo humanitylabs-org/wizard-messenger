@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.108
+
+Store recipe: pins the image built from main `5cd635b`. Ships #393 (Refs humanitylabs-org/wizard-messenger#392, #348): photos are on the phone on mobile data too. Background photo download now runs on any network unless the device chose Wi-Fi only (videos still wait for Wi-Fi), inside the 300 MB cap, and the chat you open goes first; a bubble paints from the phone's kept thumbnail; with "Photos open instantly" on, Wizard's viewer loads the 1600 px screen copy (the phone's when kept) with the on-screen thumbnail as stand-in instead of the original, so no loading wheel waits on a several-MB file; and the box warms the original and screen copy of any photo whose thumbnail the phone asks for. Bug fix, no switch. Guards: `tests/photos_ready_mobile_browser.cjs`, `tests/test_viewer_items.cjs`, `tests/test_unified.py`.
+
 ## 0.2.0-unified.16.107
 
 Store recipe: pins the image built from main `58a3ed9`. Ships #390 (Refs humanitylabs-org/wizard-ux#1745): when Forward to Wizard does not send, the toast says why instead of "Sharing unavailable" for every case: Send to Wizard can't open in this window (an older Wizard, or another share still open), couldn't send, or the receipt by name; the selection is always kept. The cause of the failure itself, the Send to Wizard sheet never opening in Messenger opened from its own home-screen icon, is fixed in the Wizard shell (humanitylabs-org/wizard-ux#1770). Bug fix, no switch. Guard: `tests/test_forward_problem.cjs`.
