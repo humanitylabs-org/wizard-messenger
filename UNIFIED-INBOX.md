@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.115
+
+- Messenger opens with Wizard's browser boundary on behind an owner ingress (issue 413): the App Manager's owner edge (wizard-app-manager#1045) and Messenger's own `tools/owner_ingress.py` let the sandboxed window's own page files and media through unsigned, a ticketed photo/video/avatar read no longer needs the owner proof on a trusted Wizard, and the own ingress keeps `X-Messenger-CSRF` so drafts save through it. Image `sha-e709f19bf966197695b67df3fd7c484c3273c36e@sha256:77409c8f9e127c02fbcc209a5703b6bd8657dcf82c565c435ae23c846c6a0632`.
+
 ## 0.2.0-unified.16.114
 
 Videos you send go out as real videos (issue 402): a video picked with + → "Photo or video" shows its first frame, a play badge and its length in the tray, sends as a video (with that frame as its thumbnail) on LINE, WhatsApp, Signal, Telegram and the other networks and in Wizard chats, and plays inline in the thread. "File" still sends a video as a file. Image built from main 162407e (PR #412).
