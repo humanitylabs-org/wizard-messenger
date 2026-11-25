@@ -20,6 +20,13 @@ def photo(url='mxc://messenger.internal/abc', body='image.jpg', **extra):
     return dict({'msgtype': 'm.image', 'body': body, 'url': url, 'info': {'mimetype': 'image/jpeg', 'w': 640, 'h': 480, 'size': 1000}}, **extra)
 
 
+
+def jpeg_blob(folder):
+    """What media_blob hands back for a photo: a file of JPEG bytes (issue 404 checks a photo is one phones draw)."""
+    path = Path(folder) / ('fake-%d.jpg' % time.time_ns())
+    path.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 60)
+    return unified.Blob(path, 'image/jpeg', 'image.jpg', True)
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -57,7 +64,7 @@ class EditToMediaTests(Base):
         self.assertNotIn('unavailable', row)
         self.assertFalse(row['edited'])  # the bridge finishing delivery is not an edit by the sender
         # The media endpoint serves the new picture.
-        with patch.object(self.inbox, 'media_blob', return_value=('blob', 'image/jpeg')) as blob:
+        with patch.object(self.inbox, 'media_blob', return_value=jpeg_blob(self.tmp.name)) as blob:
             self.inbox.media('$n', 'full')
         self.assertEqual(blob.call_args.args[0], 'mxc://messenger.internal/abc')
         # The chat list shows a photo, not the bridge sentence.
@@ -195,7 +202,7 @@ class GifTests(Base):
         self.assertEqual(blob.call_args.kwargs.get('thumb', False), False)
         self.assertEqual(blob.call_args.kwargs.get('raw_thumb', False), False)
         self.ingest(self.event('$j', photo(url='mxc://messenger.internal/jpg')))
-        with patch.object(self.inbox, 'media_blob', return_value=('blob', 'image/jpeg')) as blob:
+        with patch.object(self.inbox, 'media_blob', return_value=jpeg_blob(self.tmp.name)) as blob:
             self.inbox.media('$j', 'thumb')
         self.assertTrue(blob.call_args.kwargs['thumb'])
 
@@ -292,8 +299,9 @@ class LinePhotoTests(Base):
         self.assertNotIn('mxc', row['media'])
 
     def test_line_photo_thumbnail_and_full_routes_serve(self):
-        with patch.object(self.inbox, 'media_blob', return_value=('blob', 'image/jpeg')) as blob:
-            self.assertEqual(self.inbox.media('$p', 'thumb'), ('blob', 'image/jpeg'))
+        served = jpeg_blob(self.tmp.name)
+        with patch.object(self.inbox, 'media_blob', return_value=served) as blob:
+            self.assertIs(self.inbox.media('$p', 'thumb'), served)
             self.inbox.media('$p', None)
         self.assertEqual(blob.call_args_list[0].args[0], self.LINE)
         self.assertTrue(blob.call_args_list[0].kwargs['thumb'])

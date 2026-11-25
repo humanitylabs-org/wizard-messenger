@@ -260,6 +260,8 @@ button { touch-action: manipulation; }
 .u-vfull[hidden] { display: none; }
 .u-vfull svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .u-broken { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 13px; }
+.u-media.broken .u-broken { place-content: center; gap: .25rem; text-align: center; padding: .5rem; }
+.u-media.broken .u-broken small { font-size: .75rem; color: var(--ink-3); opacity: .8; }
 .u-spin { position: absolute; inset: 0; margin: auto; width: 28px; height: 28px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .9s linear infinite; }
 .u-file { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; padding: 4px 0; }
 .u-file-icon { width: 36px; height: 36px; border-radius: 10px; background: rgba(0,0,0,.2); display: grid; place-items: center; }

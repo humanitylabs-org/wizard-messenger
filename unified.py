@@ -227,8 +227,8 @@ def photo_cache_max():
     return max(mb, 300) * 1024 * 1024
 
 
-def shrink_photo(source, target):
-    """Write a JPEG copy of the photo at source, longest side at most PHOTO_VIEW_SIDE, to target. None when Pillow is
+def shrink_photo(source, target, side=PHOTO_VIEW_SIDE):
+    """Write a JPEG copy of the photo at source, longest side at most `side`, to target. None when Pillow is
     missing, the file is not a still image, it is too large to decode safely, or it is already that small."""
     try:
         from PIL import Image, ImageOps
@@ -238,9 +238,9 @@ def shrink_photo(source, target):
         with Image.open(source) as img:
             if getattr(img, 'n_frames', 1) > 1 or img.width * img.height > PHOTO_VIEW_MAX_PIXELS:
                 return None
-            if max(img.size) <= PHOTO_VIEW_SIDE and img.format == 'JPEG':
+            if max(img.size) <= side and img.format == 'JPEG':
                 return None
-            img.draft('RGB', (PHOTO_VIEW_SIDE, PHOTO_VIEW_SIDE))
+            img.draft('RGB', (side, side))
             img = ImageOps.exif_transpose(img)
             if img.mode in ('RGBA', 'LA', 'P'):
                 img = img.convert('RGBA')
@@ -249,11 +249,58 @@ def shrink_photo(source, target):
                 img = flat
             else:
                 img = img.convert('RGB')
-            img.thumbnail((PHOTO_VIEW_SIDE, PHOTO_VIEW_SIDE))
+            img.thumbnail((side, side))
             img.save(target, 'JPEG', quality=PHOTO_VIEW_QUALITY, optimize=True)
         return target
     except Exception:
         Path(target).unlink(missing_ok=True)
+        return None
+
+
+# Issue 404: picture formats every phone browser shows. Anything else a chat sends as a photo (LINE uploads every
+# photo as image.jpg whatever it is, so an iPhone's HEIC original arrives that way) is turned into a JPEG on the box.
+SHOWN_PHOTO = ('image/jpeg', 'image/png', 'image/gif', 'image/webp')
+PHOTO_THUMB_SIDE = 800
+HEIF_CONVERT_SECONDS = 60
+
+
+def photo_as_jpeg(source, target):
+    """Write the picture at source as a JPEG (quality 90, upright) to target; None when nothing on the box can read
+    it. Pillow reads the common still formats; HEIF/HEIC/AVIF go through libheif's heif-convert."""
+    target = Path(target)
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(source) as img:
+            if img.width * img.height > PHOTO_VIEW_MAX_PIXELS:
+                return None
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGBA')
+                flat = Image.new('RGB', img.size, (255, 255, 255))
+                flat.paste(img, mask=img.getchannel('A'))
+                img = flat
+            else:
+                img = img.convert('RGB')
+            img.save(target, 'JPEG', quality=90)
+        return target
+    except Exception:
+        target.unlink(missing_ok=True)
+    tool = shutil.which('heif-convert')
+    if not tool:
+        return None
+    out = target.with_name(target.name + '.jpg')  # heif-convert picks the format from the name
+    try:
+        import subprocess
+        subprocess.run([tool, '-q', '90', str(source), str(out)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=HEIF_CONVERT_SECONDS, check=True)
+        with out.open('rb') as f:
+            if sniff(f.read(64)) != 'image/jpeg':
+                raise ValueError('not a JPEG')
+        os.replace(out, target)
+        return target
+    except Exception:
+        out.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
         return None
 
 
@@ -3490,7 +3537,70 @@ class UnifiedInbox:
         if thumb and not media.get('thumb') and mime == 'image/gif' and (media.get('size') or 0) <= 12 * 1024 * 1024:
             # The homeserver's thumbnailer turns an animated GIF into a still picture: send the GIF itself.
             return self.media_blob(mxc, mime, media.get('filename') or 'media')
+        if message.get('msgtype') == 'm.image' and mime != 'image/gif':
+            return self.photo(media, thumb)
         return self.media_blob(mxc, mime, media.get('filename') or 'media', thumb=thumb and not media.get('thumb'), raw_thumb=thumb)
+
+    def photo(self, media, thumb):
+        """A received photo, always in a form a phone shows (issue 404). The homeserver's thumbnail when it made one,
+        else one made on the box from the photo; a photo in a format browsers can't show (HEIC from an iPhone, sent
+        on by LINE as image.jpg) is served as a JPEG. One nothing here can read is honestly unavailable (410)."""
+        name, mime = media.get('filename') or 'media', media.get('mime') or 'image/jpeg'
+        if thumb:
+            try:
+                if media.get('thumb'):
+                    blob = self.media_blob(media['thumb'], mime, name, raw_thumb=True)
+                else:
+                    blob = self.media_blob(media['mxc'], mime, name, thumb=True, raw_thumb=True)
+                if self.shown(blob):
+                    return blob
+            except EngineError as e:
+                # The homeserver could not make a thumbnail (its thumbnailer can't read the photo): make one here.
+                if e.code != 'upstream_unavailable':
+                    raise
+            return self.photo_thumb(self.photo_full(media))
+        return self.photo_full(media)
+
+    @staticmethod
+    def shown(blob):
+        with blob.path.open('rb') as f:
+            return sniff(f.read(64)) in SHOWN_PHOTO
+
+    def photo_full(self, media):
+        name = media.get('filename') or 'media'
+        full = self.media_blob(media['mxc'], media.get('mime') or 'image/jpeg', name)
+        if self.shown(full):
+            return full
+        path = full.path.with_name(hashlib.sha256((full.path.name + '|jpeg').encode()).hexdigest())
+        with _MEDIA_LOCKS[int(path.name[:8], 16) % len(_MEDIA_LOCKS)]:
+            if path.exists():
+                os.utime(path)
+                return Blob(path, 'image/jpeg', name, True)
+            started = time.time()
+            made = photo_as_jpeg(full.path, path.with_name(path.name + '.part-' + secrets.token_hex(4)))
+            if not made:
+                fail('media_unavailable', "This photo can't be shown", 410)
+            Path(str(path) + '.type').write_text('image/jpeg')
+            os.replace(made, path)
+            self.timing('photo_jpeg', started)
+            self.evict(path.parent)
+        return Blob(path, 'image/jpeg', name, True)
+
+    def photo_thumb(self, full):
+        """An 800 px thumbnail made on the box from a photo the homeserver could not make one for (issue 404)."""
+        path = full.path.with_name(hashlib.sha256((full.path.name + '|thumb%d' % PHOTO_THUMB_SIDE).encode()).hexdigest())
+        with _MEDIA_LOCKS[int(path.name[:8], 16) % len(_MEDIA_LOCKS)]:
+            if path.exists():
+                os.utime(path)
+                return Blob(path, 'image/jpeg', full.filename, True)
+            made = shrink_photo(full.path, path.with_name(path.name + '.part-' + secrets.token_hex(4)), PHOTO_THUMB_SIDE)
+            if not made:
+                return full  # already small, or one Pillow won't shrink: the photo itself is its thumbnail
+            Path(str(path) + '.type').write_text('image/jpeg')
+            Path(str(path) + '.thumb').touch()
+            os.replace(made, path)
+            self.evict(path.parent)
+        return Blob(path, 'image/jpeg', full.filename, True)
 
     def view_copy(self, message, media):
         """A still photo's screen-size copy (longest side PHOTO_VIEW_SIDE, JPEG q80), made once from the cached original

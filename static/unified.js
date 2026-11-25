@@ -323,6 +323,11 @@
   // while allowed() says no. Each file is kept in Cache Storage (open() gives the cache, or null without one) and
   // listed in index ({load, save}) with its size. Over cap, videos go first, then view copies, oldest first, then
   // thumbnails.
+  // Issue 404: a photo's thumbnail or view copy is kept on the phone only when it is a picture the phone can draw.
+  function keepable(kind, type) {
+    if (kind !== 'thumb' && kind !== 'view') return true;
+    return /^image\/(jpeg|png|gif|webp)\b/i.test(String(type || ''));
+  }
   function photoPrefetcher({get, open, index, allowed, busy, later, now = () => Date.now(), cap = PREFETCH.cap, concurrency = PREFETCH.concurrency, retryMs = 800, stored = () => {}}) {
     let entries = {}; try { entries = index.load() || {}; } catch { entries = {}; }
     const queue = [], queued = new Set(), failed = new Set();
@@ -360,6 +365,7 @@
       if (!res?.ok) { failed.add(item.url); return; }
       const blob = await res.blob();
       if (mine !== epoch) return;
+      if (!keepable(item.kind, blob.type || res.headers?.get?.('Content-Type'))) { failed.add(item.url); return; }
       const cache = await open();
       if (cache) await cache.put(item.url, new Response(blob, {headers: {'Content-Type': blob.type || res.headers?.get?.('Content-Type') || 'application/octet-stream'}}));
       if (mine !== epoch) return;
@@ -380,7 +386,13 @@
     // A blob: URL for a file kept here, or null. The caller revokes it.
     async function match(url) {
       if (!entries[url]) return null;
-      try { const cache = await open(); const hit = await cache?.match(url); return hit ? URL.createObjectURL(await hit.blob()) : null; } catch { return null; }
+      try {
+        const cache = await open(), hit = await cache?.match(url); if (!hit) return null;
+        const blob = await hit.blob();
+        // Issue 404: a photo copy kept before the box served it as a picture (an iPhone HEIC) is let go, not shown.
+        if (!keepable(entries[url].kind, blob.type)) { delete entries[url]; save(); try { await cache.delete(url); } catch { /* gone */ } return null; }
+        return URL.createObjectURL(blob);
+      } catch { return null; }
     }
     // Lock: forget every kept file.
     async function clear() {
@@ -807,7 +819,7 @@
     for (const p of current || []) if (!seen.has(p.id) && newer(p.id)) out.push(p);
     return out.sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
   }
-  if (typeof module !== 'undefined') module.exports = {attachKind, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -3018,7 +3030,15 @@
       img.onload = () => { img.classList.add('in'); if (!w && view.scroll && nearBottom()) view.scroll.scrollTop = view.scroll.scrollHeight; };
       img.onerror = () => {
         if (img.dataset.kept) { delete img.dataset.kept; img.src = mediaURL(m.id, 'thumb'); return; } // the phone's copy failed: ask the box
-        box.classList.add('broken'); box.append(node('span', 'u-broken', 'Photo unavailable'));
+        // Issue 404: say so honestly; a tap asks the box again instead of opening a viewer with nothing to show or save.
+        box.classList.add('broken'); box.setAttribute('aria-label', 'Photo not available. Tap to try again');
+        box.querySelector('.u-broken')?.remove();
+        const said = node('span', 'u-broken'); said.append(node('span', '', '📷 Photo not available'), node('small', '', 'Tap to try again'));
+        box.append(said);
+      };
+      box.retryPhoto = () => {
+        box.classList.remove('broken'); box.querySelector('.u-broken')?.remove(); box.setAttribute('aria-label', 'Open photo');
+        img.removeAttribute('src'); img.src = mediaURL(m.id, 'thumb') + '&retry=' + Date.now();
       };
       if (m.local) img.src = m.local; else thumbSource(img, mediaURL(m.id, 'thumb'));
       box.append(img);
@@ -3031,6 +3051,8 @@
       if (inline && switchState.on['video-fullscreen'] === true) { videoView(m, v); return; }
       if (inline) { inline.tap(e); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
+      // After this click has finished: the bubble's own handler must still see the tap landed on the photo.
+      if (box.classList.contains('broken') && box.retryPhoto) { setTimeout(box.retryPhoto); return; }
       if (!sticker) viewer(m, box); // stickers are part of the conversation, not photos to open
     }; else {
       box.append(node('span', 'u-spin'));
