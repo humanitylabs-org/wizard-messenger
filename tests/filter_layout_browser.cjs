@@ -134,7 +134,8 @@ const CASES = [
       if (bar) { assert.ok(await page.evaluate(() => document.documentElement.hasAttribute('data-bar-tools'))); assert.ok(L1.host.bottom - L1.filters.bottom <= 8, 'flush on the dock: ' + (L1.host.bottom - L1.filters.bottom)); }
     } else {
       assert.equal(L1.more, '', 'every network fits at ' + label);
-      assert.ok(L1.filters.bottom <= L1.list.top + 1, 'filters on top of the list on desktop');
+      // Issue 409: at every width the rows sit at the bottom, under the list (they never jump top/bottom on resize).
+      assert.ok(L1.filters.top >= L1.list.bottom - 1, 'filters below the list on desktop');
     }
     // ---- 16.3 split from 640px: with a chat open the filter rows still fit the narrow list pane (no sideways scroll,
     // no clipped segment label), the chat keeps >= 380px and its ✕ returns to the full-width list. ----
@@ -232,8 +233,9 @@ const CASES = [
       return {m: [m.left, m.top, m.right, m.bottom], p: [p.left, p.top, p.right, p.bottom], b: [b.left, b.top, b.right, b.bottom]};
     });
     assert.ok(place.p[0] >= place.m[0] - 1 && place.p[2] <= place.m[2] + 1 && place.p[1] >= place.m[1] - 1 && place.p[3] <= place.m[3] + 1, 'menu inside Messenger: ' + JSON.stringify(place));
-    if (viewport.width < 600) assert.ok(place.p[3] <= place.b[1] + 2, 'phone: the menu opens above the Filters button, not over it: ' + JSON.stringify(place));
-    else { assert.ok(Math.abs(place.p[2] - place.b[2]) < 24 || Math.abs(place.p[0] - place.b[0]) < 24, 'desktop: lined up with the button ' + JSON.stringify(place)); assert.ok(place.p[1] >= place.b[3] - 2 && place.p[1] - place.b[3] < 24, 'desktop: just under the button ' + JSON.stringify(place)); }
+    // Issue 409: the rows are at the bottom at every width, so the menu opens above the Filters button everywhere.
+    assert.ok(place.p[3] <= place.b[1] + 2, 'the menu opens above the Filters button, not over it: ' + JSON.stringify(place));
+    if (viewport.width >= 600) { assert.ok(Math.abs(place.p[2] - place.b[2]) < 24 || Math.abs(place.p[0] - place.b[0]) < 24, 'desktop: lined up with the button ' + JSON.stringify(place)); assert.ok(place.b[1] - place.p[3] < 24, 'desktop: just above the button ' + JSON.stringify(place)); }
     await shot('filters-menu');
     await menu.getByRole('menuitemradio', {name: 'Groups', exact: true}).click();
     assert.equal(await dot(), true, 'dot once a Type is on');

@@ -847,6 +847,13 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
 .u-draft-actions button { padding: .25rem .75rem; min-height: 0; font-size: .8125rem; }
 .u-snippet.draft .u-snippet-who { color: var(--danger, var(--accent)); font-weight: 600; }
 
+/* Issue 409 (James): the filter rows (All / Unread / ... and the network icons) sit at the bottom of the chat list at
+   every width, in the one-pane Inbox and in the desktop split's list, so nothing jumps when the window is resized.
+   unified.js keeps --u-filters-h on #messenger at their real height, so the compose button and toasts clear them. */
+:is(#unified-inbox, .u-pane-list)[data-view=list] > .u-list { order: 1; }
+:is(#unified-inbox, .u-pane-list)[data-view=list] > #u-filters { order: 2; padding: .5rem .75rem .25rem; border-top: 1px solid var(--line); }
+:is(#unified-inbox, .u-pane-list)[data-view=list] > .u-fab { bottom: calc(var(--u-filters-h, 0rem) + 1.125rem); }
+html:not([data-in-chat]) .u-toast { bottom: max(9.375rem, calc(var(--u-filters-h, 0rem) + 5.25rem)); }
 /* ---- Phone-width windows (Miguel, 30 Oct 2026): Inbox controls move to the bottom, in thumb reach. ----
    Sized by Messenger's own window width (a Wizard window or a browser tab), never by device. Desktop is unchanged. */
 .u-head-actions { display: flex; align-items: center; gap: 2px; }
@@ -855,15 +862,16 @@ a.u-story-tag:hover .u-story-open { text-decoration: underline; }
   #unified-inbox[data-view=list], #unified-inbox[data-view=search] { display: flex; flex-direction: column; }
   #unified-inbox[data-view=list] > .u-list, #unified-inbox[data-view=search] > .u-list { order: 1; padding-top: 6px; padding-bottom: 88px; }
   #unified-inbox[data-view=list] > #u-filters { order: 2; padding: 8px 12px 4px; border-top: 1px solid var(--line); }
-  #unified-inbox[data-view=list] > .u-header, #unified-inbox[data-view=search] > .u-header { order: 3; flex: 0 0 auto; height: auto;
+  /* Issue 409: on the desktop shell (html[data-desktop-shell]) the Inbox row stays on top at every width. */
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-header, html:not([data-desktop-shell]) #unified-inbox[data-view=search] > .u-header { order: 3; flex: 0 0 auto; height: auto;
     min-height: 56px; padding: 4px 8px max(4px, env(safe-area-inset-bottom)); }
-  #unified-inbox[data-view=search] > .u-header { border-top: 1px solid var(--line); }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=search] > .u-header { border-top: 1px solid var(--line); }
   /* No "Inbox" word on a phone: just the three controls, at the right in thumb reach. */
-  #unified-inbox[data-view=list] > .u-header h1 { display: none; }
-  #unified-inbox[data-view=list] > .u-header { justify-content: flex-end; }
-  #unified-inbox[data-view=list] > .u-header .u-head-actions { gap: 6px; }
-  #unified-inbox[data-view=list] > .u-header .icon-button { width: 48px; height: 48px; }
-  #unified-inbox[data-view=list] > .u-fab { bottom: calc(124px + env(safe-area-inset-bottom)); right: 16px; }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-header h1 { display: none; }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-header { justify-content: flex-end; }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-header .u-head-actions { gap: 6px; }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-header .icon-button { width: 48px; height: 48px; }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-fab { bottom: calc(124px + env(safe-area-inset-bottom)); right: 16px; }
   /* Inside Wizard those controls live in the window's title bar (WizardApp.titlebar.set, unified.js syncBar):
    * the toolbar row goes and the filter chips are the last row, straight on top of the Wizard dock. */
   html[data-bar-tools] #unified-inbox[data-view=list] > .u-header { display: none; }
@@ -1050,9 +1058,9 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-act.checked svg { color: var(--accent); }
 @container messenger (max-width: 599px) {
   #unified-inbox[data-view=list] > #u-filters.u-filter-rows { gap: .375rem; padding-top: .5rem; }
-  #unified-inbox[data-view=list] > .u-fab { bottom: calc(10.5rem + env(safe-area-inset-bottom)); }
+  html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-fab { bottom: calc(10.5rem + env(safe-area-inset-bottom)); }
   html[data-bar-tools] #unified-inbox[data-view=list] > .u-fab { bottom: calc(7rem + env(safe-area-inset-bottom)); }
-  html:not([data-in-chat]) .u-toast { bottom: calc(10.75rem + env(safe-area-inset-bottom)); }
+  html:not([data-in-chat]):not([data-desktop-shell]) .u-toast { bottom: calc(10.75rem + env(safe-area-inset-bottom)); }
   html[data-bar-tools]:not([data-in-chat]) .u-toast { bottom: calc(7.75rem + env(safe-area-inset-bottom)); }
 }
 /* 16.14 friendliness pass (Miguel: "extremely friendly, easy to use, intuitive, and also mobile friendly").
@@ -1067,9 +1075,9 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 }
 @container messenger (max-width: 599px) {
   @media (pointer: coarse) {
-    #unified-inbox[data-view=list] > .u-fab { bottom: calc(11.75rem + env(safe-area-inset-bottom)); }
+    html:not([data-desktop-shell]) #unified-inbox[data-view=list] > .u-fab { bottom: calc(11.75rem + env(safe-area-inset-bottom)); }
     html[data-bar-tools] #unified-inbox[data-view=list] > .u-fab { bottom: calc(8.25rem + env(safe-area-inset-bottom)); }
-    html:not([data-in-chat]) .u-toast { bottom: calc(12rem + env(safe-area-inset-bottom)); }
+    html:not([data-in-chat]):not([data-desktop-shell]) .u-toast { bottom: calc(12rem + env(safe-area-inset-bottom)); }
     html[data-bar-tools]:not([data-in-chat]) .u-toast { bottom: calc(9rem + env(safe-area-inset-bottom)); }
   }
 }
