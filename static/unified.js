@@ -819,7 +819,15 @@
     for (const p of current || []) if (!seen.has(p.id) && newer(p.id)) out.push(p);
     return out.sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
   }
-  if (typeof module !== 'undefined') module.exports = {attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 409: which Wizard shell Messenger runs in. On the desktop shell the window bar already holds the width
+  // buttons, so the Inbox tools never move there and the Inbox row stays on top at every window width. The Wizard
+  // page says it itself (html data-shell); when Messenger can't read it (a plain tab, the browser boundary) a phone
+  // is a touch-first device with a small screen, and everything else counts as desktop.
+  function desktopShell(shell, coarse, screenMin) {
+    if (shell === 'desktop' || shell === 'phone') return shell === 'desktop';
+    return !(coarse && screenMin > 0 && screenMin < 600);
+  }
+  if (typeof module !== 'undefined') module.exports = {desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1119,10 +1127,20 @@
   // Phone-width Inbox inside Wizard: QR, Search and Settings ride the window's own title bar
   // (WizardApp.titlebar.set), so the Inbox drops its bottom toolbar and the filter chips sit right on the
   // Wizard dock. Published only on the plain list (no chat, search or sheet open); a host without title-bar
-  // tools (a browser tab, an older Wizard) keeps Messenger's own compact toolbar. Desktop widths are unchanged.
+  // tools (a browser tab, an older Wizard) keeps Messenger's own compact toolbar. Never on the desktop shell (issue
+  // 409): its window bar holds the width buttons, so there the Inbox row keeps them at every width.
   const bar = {key: null, gen: 0, ok: false, queued: false};
   const BAR_TOOLS = [['qr', 'My QR codes', 'QR'], ['search', 'Search', 'Search'], ['settings', 'Settings', 'Settings']];
   const narrow = () => { const m = $('messenger'); return (m?.clientWidth || innerWidth) < 600; };
+  const onDesktop = (() => {
+    let shell = '', coarse = false, small = 0;
+    try { shell = window.parent?.document?.documentElement?.dataset?.shell || ''; } catch { /* another origin: guess below */ }
+    try { coarse = matchMedia('(pointer: coarse)').matches; } catch { /* no media queries */ }
+    try { small = Math.min(screen.width, screen.height) || 0; } catch { /* no screen */ }
+    const on = desktopShell(shell, coarse, small);
+    document.documentElement.toggleAttribute('data-desktop-shell', on); // unified.css keeps the Inbox row on top
+    return on;
+  })();
   function onBarTool({id} = {}) {
     if (!wantBar()) return;
     if (id === 'qr') myCodes();
@@ -1132,7 +1150,7 @@
   }
   function wantBar() {
     const inbox = $('unified-inbox');
-    return !!(s.ready && narrow() && inbox && !inbox.hidden && inbox.dataset.view === 'list' && !s.person && s.search == null && !s.overlay && !$('u-overlay') && !('privateView' in document.documentElement.dataset));
+    return !!(s.ready && !onDesktop && narrow() && inbox && !inbox.hidden && inbox.dataset.view === 'list' && !s.person && s.search == null && !s.overlay && !$('u-overlay') && !('privateView' in document.documentElement.dataset));
   }
   function barMode(on) { document.documentElement.toggleAttribute('data-bar-tools', on); }
   function syncBar() {
@@ -1143,7 +1161,7 @@
       if (!tb?.set) { barMode(false); return; }
       const want = wantBar(), warn = !!document.querySelector('.u-settings-btn.warn');
       // The own toolbar stays hidden under a sheet or menu on the list, so nothing jumps behind it.
-      barMode(bar.ok && narrow());
+      barMode(bar.ok && !onDesktop && narrow());
       const label = document.querySelector('.u-settings-btn')?.getAttribute('aria-label') || 'Settings';
       let tools = want ? BAR_TOOLS.map(([id, name, text]) => ({id, kind: 'button', icon: id, text, label: id === 'settings' ? label : name, ...(id === 'settings' && warn ? {dot: true} : {})})) : null;
       // Issue 291: the Agent/Reports toggle rides right after QR. The shell has no eye icon, so it shows as text.
@@ -1155,7 +1173,7 @@
         if (gen !== bar.gen) return;
         if (tools || !ok) bar.ok = ok;
         if (!ok) bar.key = null; // try again on the next change (a host that connects late)
-        barMode(bar.ok && narrow());
+        barMode(bar.ok && !onDesktop && narrow());
       });
     });
   }
@@ -1759,6 +1777,8 @@
     filters.append(node('span', 'u-filter-text', 'Filters'), node('span', 'u-filter-dot'));
     row.append(nets, more, filters); box.append(seg, row);
     try { new ResizeObserver(() => fitNets(box)).observe(row); } catch { /* old browsers: fitNets runs on every paint */ }
+    // Issue 409: the rows sit at the bottom; the compose button and toasts stand on their real height (unified.css).
+    try { new ResizeObserver(() => { if (box.isConnected) $('messenger')?.style.setProperty('--u-filters-h', box.offsetHeight + 'px'); }).observe(box); } catch { /* old browsers: the CSS fallback */ }
     return box;
   }
   const isMedium = p => !!p.medium_priority && !p.low_priority;
