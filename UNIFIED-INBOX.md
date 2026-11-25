@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.110
+
+Store recipe: pins the image built from main `b5701f5`. Ships #400 (Refs humanitylabs-org/wizard-messenger#282, #283): a passkey prompt no longer freezes a network's sign-in page. Each sign-in window in Messenger's own Chromium now runs Chromium's WebAuthn test environment (no hidden native passkey window) with an empty key on every transport whose user check always fails, so a passkey request (Facebook's "confirm it's you", Google's "Verifying it's you") ends at once with NotAllowedError, like a person cancelling the prompt; the site then offers its other ways to sign in, and the page keeps taking taps. Nothing is created or signed. Bug fix, no switch. Guard: `tests/test_signin_passkeys.py`.
+
 ## 0.2.0-unified.16.109
 
 Store recipe: pins the image built from main `3c033fb`. Ships #396 (Refs humanitylabs-org/wizard-os#634): the Agent chat wakes the owner's agent through the box. When the Wizard offers app wake events (wizard-os spec/APP_WAKE.md, `wizard.app-wake/1`, the Agent Service's switch `wizard/app-wake`), a note, a Sweep tap or an answer wakes every Wizard agent the owner gives Draft-only access, with no Hermes webhook subscription and no `messenger_agent_chat_wake_me` setup; the event carries counts only, never the words. The Agent chat header then reads "Your agent hears about each note within seconds". With the box's switch off (404) the wake is exactly as before. No Messenger switch. Guards: `tests/test_agent_chat.py`.
