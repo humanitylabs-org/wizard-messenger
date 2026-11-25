@@ -54,11 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'video-prefetch', 'name': 'Background video download',
-                'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your '
-                               'newest chats, on Wi-Fi only unless you chose Always for photos, so a tapped video plays '
-                               'at once from the phone. Bigger videos still stream on tap.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#320']}, {
                 'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
                 'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: '
                                'each note becomes a background task there (the tick shows once it is in), Sweep shows '
@@ -444,12 +439,12 @@ class SwitchStorage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             store = SwitchStore(path)
-            store.vote('video-prefetch', 'down')
-            store.set('video-prefetch', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'video-prefetch': True},
-                                                            'feedback': {'video-prefetch': {'tried': True, 'vote': 'down'}}})
-            store.set('video-prefetch', False)
-            self.assertEqual(SwitchStore(path).listing()['feedback'], {'video-prefetch': {'tried': True, 'vote': 'down'}})
+            store.vote('photo-timings', 'down')
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-timings': True},
+                                                            'feedback': {'photo-timings': {'tried': True, 'vote': 'down'}}})
+            store.set('photo-timings', False)
+            self.assertEqual(SwitchStore(path).listing()['feedback'], {'photo-timings': {'tried': True, 'vote': 'down'}})
             with self.assertRaises(UnknownSwitch):
                 store.vote('gone', 'up')
 
@@ -459,7 +454,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
 
 
 if __name__ == '__main__':

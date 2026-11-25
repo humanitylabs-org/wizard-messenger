@@ -1,7 +1,8 @@
-// Issue 320: with "Background video download" on, the phone quietly downloads videos up to 25 MB from the newest
-// messages of the newest chats (after the photos), keeps them in Cache Storage, and the bubble plays from that copy:
-// one tap starts it with no network request. Bigger videos stream on tap; GIFs still loop on their own, muted.
-// "Wi-Fi only" on cellular, a phone that cannot tell its network, and the switch off download nothing.
+// Issue 320 (on for everyone, its video-prefetch switch is gone): the phone quietly downloads videos up to 25 MB from
+// the newest messages of the newest chats (after the photos), keeps them in Cache Storage, and the bubble plays from
+// that copy: one tap starts it with no network request. Bigger videos stream on tap; GIFs still loop on their own,
+// muted. On cellular, or on a phone that cannot tell its network, nothing downloads. A box that still lists the old
+// switch as off (a stale stored value) changes nothing.
 // Synthetic API only, no container and no shell:
 // PLAYWRIGHT_MODULE=... [FFMPEG=ffmpeg] node tests/video_prefetch_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -22,7 +23,7 @@ const msg = (id, order, media) => ({id, identity_id: 'ann-i', network: 'telegram
 const MESSAGES = [msg('$big', 1, {size: 40 * 1024 * 1024, duration: 4000, thumb: true}), msg('$gif', 2, {gif: true, size: 50000}), msg('$video', 3, {size: 10 * 1024 * 1024, duration: 4000, thumb: true})];
 const PHONE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36';
 
-async function run(browser, {label, on, network}) {
+async function run(browser, {label, stale, network}) {
   const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: 'dark', userAgent: PHONE_UA});
   await ctx.addInitScript(net => {
     const noop = () => {};
@@ -34,7 +35,7 @@ async function run(browser, {label, on, network}) {
   const page = await ctx.newPage(), errors = [], media = [], threads = [];
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = {'photo-prefetch': false, 'video-prefetch': on};
+  const switches = {'photo-prefetch': false, ...(stale ? {'video-prefetch': false} : {})};
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -64,8 +65,8 @@ async function run(browser, {label, on, network}) {
   await page.locator('.u-person', {hasText: 'Ann Lee'}).first().waitFor({timeout: 20000});
   await page.waitForTimeout(5000);
   const kept = await page.evaluate(async () => { const c = await caches.open('messenger-photos-v1'); return (await c.keys()).map(r => decodeURIComponent(new URL(r.url).pathname.split('/').pop()) + new URL(r.url).search).sort(); });
-  const result = {label, on, network, threads: threads.slice(), background: media.slice(), kept};
-  const expect = on && network === 'wifi';
+  const result = {label, stale: !!stale, network, threads: threads.slice(), background: media.slice(), kept};
+  const expect = network === 'wifi';
   if (expect) {
     assert.deepEqual(threads, ['ann:40'], 'the recent chat read once');
     assert.deepEqual(media, ['$video:full'], 'only the 10 MB video downloads (not the 40 MB one, not the GIF, no photos): ' + media);
@@ -105,10 +106,10 @@ async function run(browser, {label, on, network}) {
 
 (async () => {
   const browser = await chromium.launch(), summary = [];
-  summary.push(await run(browser, {label: 'phone-wifi-on', on: true, network: 'wifi'}));
-  summary.push(await run(browser, {label: 'phone-cellular-on', on: true, network: 'cellular'}));
-  summary.push(await run(browser, {label: 'phone-unknown-on', on: true, network: undefined}));
-  summary.push(await run(browser, {label: 'phone-wifi-off', on: false, network: 'wifi'}));
+  summary.push(await run(browser, {label: 'phone-wifi', network: 'wifi'}));
+  summary.push(await run(browser, {label: 'phone-cellular', network: 'cellular'}));
+  summary.push(await run(browser, {label: 'phone-unknown', network: undefined}));
+  summary.push(await run(browser, {label: 'phone-wifi-stale-off', stale: true, network: 'wifi'}));
   await browser.close();
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary, null, 2));

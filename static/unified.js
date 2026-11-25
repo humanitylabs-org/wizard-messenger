@@ -261,7 +261,7 @@
   // of the last messages of the most recent chats, then the box's view copies of the newest photos in each, so a
   // tapped photo is already on the device. PREFETCH holds the sizes; prefetchPlan() lists what to fetch, in order.
   const PREFETCH = {chats: 15, messages: 40, views: 10, cap: 300 * 1024 * 1024, concurrency: 2};
-  // Background video download (issue 320, switch video-prefetch, off by default): after the photos, the newest videos
+  // Background video download (issue 320, on for everyone): after the photos, the newest videos
   // of each chat up to 25 MB each are kept on the phone too, so the bubble plays from there. GIFs and stickers (which
   // loop on their own) and bigger videos are left to stream.
   const VIDEO_PREFETCH = {perChat: 3, maxBytes: 25 * 1024 * 1024};
@@ -3085,7 +3085,7 @@
   // anything has played; a few kept blob: URLs are reused across repaints and the oldest are let go.
   const videoBlobs = new Map();
   function keptVideo(v, url, frag) {
-    if (switchState.on['video-prefetch'] !== true || !photoCache.has(url)) return;
+    if (!photoCache.has(url)) return;
     const use = blob => { if (blob && v.paused && !v.currentTime && !v.closest?.('.started')) { v.src = blob + frag; v.dataset.kept = '1'; } };
     if (videoBlobs.has(url)) { use(videoBlobs.get(url)); return; }
     photoCache.match(url).then(blob => {
@@ -5694,7 +5694,7 @@
   async function setSwitch(id, on) {
     const before = switchState.on[id] === true;
     switchState.on[id] = on; repaintSwitches(); drawList();
-    try { applySwitches(await switchCall({id, on})); if ((id === 'photo-prefetch' || id === 'video-prefetch') && on) prefetchSoon(); }
+    try { applySwitches(await switchCall({id, on})); if (id === 'photo-prefetch' && on) prefetchSoon(); }
     catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
   // ---------- Agent chat (issue 265, on for everyone) ----------
@@ -6225,12 +6225,12 @@
   // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
   // Issue 392: photos download on any network; videos (up to 25 MB each) only on Wi-Fi unless this device chose Always.
-  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: switchState.on['video-prefetch'] === true
-    && (storedPrefetchMode() === 'always' || prefetchAllowed('wifi', navigator.connection, onPhone()))});
+  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: (storedPrefetchMode() === 'always' || prefetchAllowed('wifi', navigator.connection, onPhone()))});
   const storedPrefetchMode = () => { try { return localStorage.getItem(PREFETCH_MODE_KEY) || ''; } catch { return ''; } };
   // Issue 392: on any network unless this device chose Wi-Fi only (James is on mobile data a lot, and Settings has had
   // no row to choose Always since issue 202). The 300 MB cap still bounds what is kept.
-  const prefetchMode = () => { if (switchState.on['photo-prefetch'] !== true && switchState.on['video-prefetch'] !== true) return 'off'; return storedPrefetchMode() === 'wifi' ? 'wifi' : 'always'; };
+  // Issue 320: videos download for everyone, so the queue always runs; prefetchWant() says what goes in it.
+  const prefetchMode = () => storedPrefetchMode() === 'wifi' ? 'wifi' : 'always';
   const prefetchBusy = {loads: 0, until: 0};
   const onPhone = () => { try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches; } catch { return false; } };
   const photoCache = photoPrefetcher({

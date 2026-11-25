@@ -37,12 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'video-prefetch', 'name': 'Background video download',
-     'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your newest chats, '
-                    'on Wi-Fi only unless you chose Always for photos, so a tapped video plays at once from the phone. '
-                    'Bigger videos still stream on tap.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#320']},
     {'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
      'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: each note '
                     'becomes a background task there (the tick shows once it is in), Sweep shows the same card as '
