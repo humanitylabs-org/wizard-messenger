@@ -348,5 +348,78 @@ class AgentChat(unittest.TestCase):
         self.assertEqual(len(events.events), 2)
 
 
+    def box(self, on=True, agents=('hermes',), answer=202):
+        """wizard-os issue 634: a stand-in for the Agent Service's wake route (wizard.app-wake/1)."""
+        calls = []
+
+        def call(method, path, body):
+            calls.append((method, path, body))
+            if not on():
+                return 404, {'error': 'not_found'}
+            if method == 'GET':
+                return 200, {'on': True, 'contract': 'wizard.app-wake/1', 'app': 'messenger', 'agents': list(agents)}
+            return answer, {'woken': answer in (200, 202), 'event': 'messenger.' + body['event'], 'agent': body['agent']}
+        self.inbox.agent_chat_box = agent_chat.BoxWake(call=call)
+        self.inbox.agent_chat_waker = agent_chat.Waker(self.inbox, delay=0.1)
+        self.server.unified.wake_levels = self.server.wake_levels
+        return calls
+
+    def test_the_box_wakes_a_draft_agent_with_no_setup(self):
+        # No messenger_agent_chat_wake_me at all: the box wakes the owner's Wizard agent once it has Draft-only.
+        on = {'v': True}
+        calls = self.box(on=lambda: on['v'])
+        self.server.wizard_agents.set_level('hermes', 'draft_only')
+        self.assertTrue(self.ok('GET')['agent']['woken'], 'the header says the agent hears about each note')
+        self.ok('POST', '', {'text': 'Buy dog food'})
+        posts = lambda: [c for c in calls if c[0] == 'POST']
+        self.assertTrue(self.wait_for(lambda: posts()), 'no box wake')
+        time.sleep(0.3)
+        self.assertEqual(len(posts()), 1)  # a burst is one wake
+        method, path, body = posts()[0]
+        self.assertEqual(path, '/wizard/v1/agent-events')
+        self.assertEqual(body, {'event': 'agent_chat', 'agent': 'hermes',
+                                'data': {'reason': 'note', 'waiting': {'notes': 1, 'sweep_requests': 0, 'answers': 0}}})
+        self.assertNotIn('Buy dog food', json.dumps(body))  # never the words
+        got, _ = self.mcp('messenger_agent_chat_wake_me', {'check': True})
+        self.assertNotIn('box', got, 'a key agent is not one of the box\'s agents')
+        # Read-only: the box is not asked to wake it.
+        self.server.wizard_agents.set_level('hermes', 'read_only')
+        self.ok('POST', '', {'text': 'another'})
+        time.sleep(0.4)
+        self.assertEqual(len(posts()), 1)
+        self.assertFalse(self.ok('GET')['agent']['woken'])
+
+    def test_box_off_keeps_the_agents_own_subscription(self):
+        # The box's switch off (404): exactly the wake as before, through the agent's own subscription only.
+        calls = self.box(on=lambda: False)
+        self.server.wizard_agents.set_level('hermes', 'draft_only')
+        events = EventInbox()
+        self.addCleanup(events.close)
+        self.assertFalse(self.ok('GET')['agent']['woken'])
+        self.mcp('messenger_agent_chat_wake_me', {'url': events.url, 'secret': SECRET})
+        self.ok('POST', '', {'text': 'Buy dog food'})
+        self.assertTrue(self.wait_for(lambda: events.events), 'no wake')
+        self.assertEqual([c[0] for c in calls if c[0] == 'POST'], [])
+        self.assertEqual(events.events[0]['event'], 'messenger.agent_chat')
+
+    def test_a_box_wake_replaces_that_agents_own_subscription(self):
+        # An agent the box wakes is not woken twice; one the box would not take still gets its own event.
+        for answer, own in ((202, 0), (503, 1)):
+            with self.subTest(answer=answer):
+                calls = self.box(on=lambda: True, agents=('oscar',), answer=answer)
+                self.server.wizard_agents.caller('oscar', 'Oscar')
+                self.server.wizard_agents.set_level('oscar', 'draft_only')
+                events = EventInbox()
+                self.addCleanup(events.close)
+                with self.inbox.store.lock:
+                    self.inbox.store.put(agent_chat.WAKE_KEY, json.dumps({'subs': {'wizard-oscar': {
+                        'url': events.url, 'secret': SECRET, 'name': 'Oscar', 'at': 1}}}))
+                self.ok('POST', '', {'text': 'n %d' % answer})
+                self.assertTrue(self.wait_for(lambda: [c for c in calls if c[0] == 'POST']))
+                time.sleep(0.3)
+                self.assertEqual(len(events.events), own)
+                self.inbox.agent_chat_waker.close()
+
+
 if __name__ == '__main__':
     unittest.main()
