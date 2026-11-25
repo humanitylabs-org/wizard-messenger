@@ -77,6 +77,27 @@ class MediaTicket(unittest.TestCase):
         self.assertEqual(self.request('GET', '/api/unified/media/%24photo?t=' + ticket, headers=CROSS)[0], 403)
         unified.dispatch.assert_not_called()
 
+    def test_ticket_opens_media_on_a_trusted_wizard_without_a_proof(self):
+        """Issue 413: on a trusted Wizard the owner edge passes the sandboxed window's own media loads on unsigned
+        (cross-site, no cookie). The ticket alone opens them; everything else still needs the edge's proof."""
+        unified = self.unified()
+        _, ticket = self.owner_ticket()
+        refused = []
+        class Edge:   # a trusted Wizard; any request reaching require() carries no valid proof here
+            enabled = True
+            def require(self, handler):
+                refused.append(handler.path)
+                raise fx.EngineError('trusted_gateway_required', 'Open Messenger through your authenticated Wizard', 403)
+        self.server.trusted_owner = Edge()
+        for path in ('/api/unified/media/%24photo?t=' + ticket + '&kind=thumb', '/api/unified/people/p1/avatar?t=' + ticket):
+            self.assertEqual(self.request('GET', path, headers=CROSS)[0], 200, path)
+        self.assertEqual(refused, [])
+        self.assertEqual(unified.dispatch.call_count, 2)
+        for path in ('/api/unified/media/%24photo', '/api/unified/people?t=' + ticket, '/api/drafts?t=' + ticket):
+            self.assertEqual(self.request('GET', path, headers=CROSS)[0], 403, path)
+        self.assertEqual(self.request('GET', '/api/unified/media/%24photo?t=' + ticket, headers={**CROSS, 'Origin': 'https://evil.example'})[0], 403)
+        self.assertEqual(unified.dispatch.call_count, 2)
+
     def test_setup_only_sessions_get_no_ticket(self):
         token, session = self.server.auth.create(owner_setup=True)
         self.assertIsNone(self.server.auth.media_ticket(session))

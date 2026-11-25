@@ -32,6 +32,21 @@ def tailscaled_peer(conn):
     proc = Path('/proc') / str(pid)
     return str(pid) == expected and proc.stat().st_uid == 0 and (proc/'comm').read_text().strip() == 'tailscaled'
 
+# A file Messenger's own page loads inside Wizard's sandboxed window (browser boundary, wizard-os issue 133): the
+# window has an opaque origin, so its <script>, stylesheet, <img> and <video> loads arrive cross-site with no Origin
+# and no cookie. Refusing them left Messenger on "Opening your messages…" (issue 413). They go through UNSIGNED and
+# without cookies: Messenger then serves only what anyone gets (its page files) or what the session's media ticket
+# opens. fetch()/XHR (cors), navigations and writes from another site stay refused. Same rule as the App Manager's
+# owner edge (wizard-app-manager wam/owner_edge.py).
+SANDBOXED_FILE_DESTS = frozenset({'script','style','image','video','audio','track'})
+
+def sandboxed_file_load(method, headers):
+    def one(name):
+        values = headers.get_all(name, [])
+        return values[0].strip().lower() if len(values) == 1 else ''
+    return (method in ('GET','HEAD') and headers.get_all('Origin') is None and one('Sec-Fetch-Site') == 'cross-site'
+            and one('Sec-Fetch-Mode') == 'no-cors' and one('Sec-Fetch-Dest') in SANDBOXED_FILE_DESTS)
+
 class UnixHTTP(http.client.HTTPConnection):
     def __init__(self, path):
         super().__init__('localhost', timeout=30)
@@ -89,8 +104,11 @@ class Gateway(BaseHTTPRequestHandler):
             return self.deny(403,'origin_forbidden')
         if self.command not in ('GET','HEAD') and origin != 'https://' + host:
             return self.deny(403,'origin_required')
+        unsigned = False
         if len(self.headers.get_all('Sec-Fetch-Site', [])) > 1 or one('Sec-Fetch-Site') not in (None,'same-origin','none'):
-            return self.deny(403,'cross_site_forbidden')
+            if not sandboxed_file_load(self.command, self.headers):
+                return self.deny(403,'cross_site_forbidden')
+            unsigned = True
         raw_target = self.raw_requestline.split(b' ', 2)[1]
         if not raw_target.startswith(b'/') or raw_target.startswith(b'//') or not self.path.startswith('/') or self.path.startswith('//') or '#' in self.path or '\\' in self.path:
             return self.deny(400,'invalid_target')
@@ -105,13 +123,14 @@ class Gateway(BaseHTTPRequestHandler):
         headers = {}
         for k,v in self.headers.items():
             low = k.lower()
-            if low in HOP | connection_tokens or low.startswith(('tailscale-','x-messenger-','x-wizard-','cf-access-','x-forwarded-')) or low in {'forwarded','x-real-ip','remote-user','proxy'}:
+            if low in HOP | connection_tokens or low.startswith(('tailscale-','x-messenger-','x-wizard-','cf-access-','x-forwarded-')) or low in {'forwarded','x-real-ip','remote-user','proxy'} or (unsigned and low == 'cookie'):
                 continue
             headers[k] = v
         headers['Host'] = host
-        timestamp, nonce = str(int(time.time())), secrets.token_hex(24)
-        message = '\n'.join((DOMAIN,timestamp,nonce,self.command,self.path)).encode()
-        headers['X-Messenger-Owner-Proof'] = '.'.join((timestamp,nonce,hmac.new(self.server.key,message,hashlib.sha256).hexdigest()))
+        if not unsigned:
+            timestamp, nonce = str(int(time.time())), secrets.token_hex(24)
+            message = '\n'.join((DOMAIN,timestamp,nonce,self.command,self.path)).encode()
+            headers['X-Messenger-Owner-Proof'] = '.'.join((timestamp,nonce,hmac.new(self.server.key,message,hashlib.sha256).hexdigest()))
         headers['Connection'] = 'close'
         body = self.rfile.read(length) if length else None
         if body is not None and len(body) != length:

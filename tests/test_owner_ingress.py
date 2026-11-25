@@ -94,6 +94,24 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(self.request(headers=h)[0],403)
         self.assertEqual(self.request('POST')[0],403)
         self.assertEqual(self.request('POST',headers={'Origin':'https://wizard.example:8444'})[0],200)
+    def test_sandboxed_window_files_pass_unsigned_without_cookies(self):
+        """Issue 413: with Wizard's browser boundary on, Messenger's window is an opaque frame, so its own scripts,
+        stylesheets and media arrive cross-site. They pass with no owner proof and no cookie (an anonymous visitor)."""
+        for dest in ('script','style','image','video','audio','track'):
+            with self.subTest(dest=dest):
+                code,data=self.request(path='/app.js',headers={'Sec-Fetch-Site':'cross-site','Sec-Fetch-Mode':'no-cors','Sec-Fetch-Dest':dest,'Cookie':'wizard_messenger_session=abc','X-Messenger-Owner-Proof':'forged'})
+                self.assertEqual(code,200)
+                names={k.lower() for k in data['headers']}
+                self.assertNotIn('x-messenger-owner-proof',names); self.assertNotIn('cookie',names)
+                self.assertEqual(data['headers']['Host'],'wizard.example:8444')
+    def test_other_cross_site_requests_stay_refused(self):
+        base={'Sec-Fetch-Site':'cross-site','Sec-Fetch-Mode':'no-cors','Sec-Fetch-Dest':'script'}
+        for method,over in (('GET',{'Sec-Fetch-Mode':'cors','Sec-Fetch-Dest':'empty','Origin':'null'}),('GET',{'Sec-Fetch-Mode':'cors'}),
+                            ('GET',{'Sec-Fetch-Mode':'navigate','Sec-Fetch-Dest':'document'}),('GET',{'Sec-Fetch-Mode':'navigate','Sec-Fetch-Dest':'iframe'}),
+                            ('GET',{'Sec-Fetch-Site':'same-site'}),('GET',{'Origin':'https://evil.invalid'}),('GET',{'Origin':'null'}),
+                            ('GET',{'Sec-Fetch-Dest':'empty'}),('POST',{}),('GET',{'Tailscale-User-Login':'stranger@example.invalid'})):
+            with self.subTest(method=method,over=over):
+                self.assertEqual(self.request(method,'/app.js',headers={**base,**over})[0],403)
     def test_kernel_peer_denied_before_headers(self):
         self.assertEqual(self.request(peer=False)[0],403)
     def test_ambiguous_framing_and_target(self):
