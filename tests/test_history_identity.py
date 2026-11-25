@@ -400,7 +400,116 @@ class SignalDmLabelTests(Base):
         self.assertEqual(inbox.store.person(a['person_id'])['display_name'], '+44 7700 900123')
         self.assertEqual(inbox.store.person(b['person_id'])['display_name'], 'Bob')
         self.assertEqual(inbox.store.person(g['person_id'])['display_name'], 'Signal conversation')
-        self.assertEqual(len(reads), 1)  # only the stuck one-to-one chat is re-read, and only once
+        # only the stuck one-to-one chat and the group an older release cached without a room type are re-read,
+        # and not again on the next sync (the group is a real group now that its type is known)
+        self.assertEqual(len(reads), 2)
+
+    def test_weaker_sources_name_a_chat_the_room_does_not(self):
+        inbox = self.inbox()
+        inbox.store.remember_own_names('signal', ['Me Myself'])
+        topic = {'type': 'm.room.topic', 'content': {'topic': 'Signal private chat with +44 7700 900222'}}
+        ghost = '@signal_7c1e2f0a-3b4d-4e5f-8a9b-0c1d2e3f4a5b:' + SERVER
+        cases = [
+            ([member(self.PEER, 'Ann', 'invite')], 'Ann'),  # the ghost's join never landed
+            ([member(self.PEER), topic], '+44 7700 900222'),  # no name anywhere but the bridge's topic
+            ([{'type': 'm.room.name', 'content': {'name': 'Unknown user'}}, member(self.PEER, 'Unknown user'), topic], '+44 7700 900222'),
+            ([member(ghost, ghost[1:].split(':')[0]), topic], '+44 7700 900222'),  # Synapse's localpart default
+            ([member(self.PEER, 'Ann', 'invite'), member('@signal_b:' + SERVER, 'Bea')], 'Bea'),  # joined wins
+            ([{'type': 'm.room.name', 'content': {'name': 'Signal Conversation'}}], 'Signal conversation'),
+            ([member(self.PEER, 'Me Myself', 'leave')], 'Signal conversation'),
+        ]
+        for i, (extra, want) in enumerate(cases):
+            state = self.state(*extra)
+            state[1] = member(inbox.owner, 'owner')
+            with patch.object(inbox, 'mx', return_value=state):
+                self.assertEqual(inbox.room_meta('!w%d' % i, {})['label'], want, extra)
+
+    def stuck_box(self, state, contacts=None):
+        inbox = self.inbox()
+        inbox.learn_me = lambda: None
+        room = '!s:' + SERVER
+        a = inbox.store.identity('signal', room, 'Signal conversation')
+        inbox.store.put('sync_token', 'previous')
+        for marker in ('meta_members_v4', 'meta_rescan_v4', 'meta_status_channel_v1', 'dm_labels_v1'):
+            inbox.store.put(marker, '1')  # a box that already ran the first repair (16.113)
+
+        def matrix(path, *args, **kw):
+            if path.startswith('/sync?'):
+                return {'next_batch': 'next', 'rooms': {'join': {}}}
+            if path.endswith('/state'):
+                return self.state(member(inbox.owner, 'owner'), *state)
+            raise AssertionError(path)
+
+        def bridge_api(network, path, *args, **kw):
+            if contacts is None:
+                raise EngineError('bridge_down', 'down', 503)
+            self.assertEqual((network, path), ('signal', '/contacts'))
+            return {'contacts': contacts}
+        return inbox, a, matrix, bridge_api
+
+    def test_bridge_contact_names_a_chat_with_nothing_in_the_room(self):
+        contacts = [{'id': 'x', 'name': 'Unknown user', 'identifiers': ['tel:+44 7700 900333', 'signal:cara.42'],
+                     'mxid': self.PEER, 'dm_room_mxid': '!s:' + SERVER}]
+        inbox, a, matrix, bridge_api = self.stuck_box([member(self.PEER, 'Unknown user')], contacts)
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=bridge_api):
+            inbox.sync()
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], 'cara.42')  # username, before the number
+
+    def test_bridge_contact_found_by_the_ghost_when_it_has_no_room(self):
+        contacts = [{'id': 'x', 'name': '', 'identifiers': ['tel:+44 7700 900333'], 'mxid': self.PEER}]
+        inbox, a, matrix, bridge_api = self.stuck_box([member(self.PEER)], contacts)
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=bridge_api):
+            inbox.sync()
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], '+44 7700 900333')  # matched by the ghost
+
+    def test_a_chat_still_stuck_is_reported_without_names_and_retried(self):
+        import contextlib, io
+        inbox, a, matrix, bridge_api = self.stuck_box([member(self.PEER, 'Ann Secret', 'leave'), member('@signal_q:' + SERVER)])
+        inbox.store.remember_own_names('signal', ['Ann Secret'])
+        out = io.StringIO()
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=bridge_api), \
+                contextlib.redirect_stdout(out):
+            inbox.sync()
+            inbox.sync()  # within DM_REPAIR_EVERY: no second pass, no second line
+        lines = [l for l in out.getvalue().splitlines() if 'dm-label stuck' in l]
+        self.assertEqual(len(lines), 1, out.getvalue())
+        self.assertIn('network=signal', lines[0])
+        for part in ('room_name=absent', 'peers=[absent]', 'others=[leave:own]', 'topic=absent', 'contact=unavailable'):
+            self.assertIn(part, lines[0])
+        self.assertNotIn('Ann', lines[0])
+        self.assertNotIn('!s', lines[0])
+        # later the bridge names the contact: the next pass (after DM_REPAIR_EVERY) retitles it, no message needed
+        inbox.dm_labels_checked -= 16 * 60
+        named = lambda path, *a, **k: [bridge('signal', 'signal', **{'com.beeper.room_type.v2': 'dm'}), member(inbox.owner, 'owner'),
+                                       member('@signal_q:' + SERVER, '+1 555 010 2222')] if path.endswith('/state') else matrix(path)
+        with patch.object(inbox, 'mx', side_effect=named), patch.object(inbox.connectors, 'request', side_effect=bridge_api):
+            inbox.sync()
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], '+1 555 010 2222')
+
+    def test_a_dm_filed_as_a_group_and_a_stale_list_title_are_repaired(self):
+        inbox, a, matrix, bridge_api = self.stuck_box([member(self.PEER, 'Erin')])
+        room = '!s:' + SERVER
+        with inbox.store.db() as db:
+            db.execute("UPDATE identity SET kind='group' WHERE id=?", (a['id'],))
+        b = inbox.store.identity('whatsapp', '!wa:' + SERVER, 'Finn')
+        with inbox.store.db() as db:  # an older merge left the list title on the stand-in
+            db.execute("UPDATE person SET display_name='WhatsApp conversation' WHERE id=?", (b['person_id'],))
+        reads = []
+        def matrix2(path, *args, **kw):
+            if path.endswith('/state'):
+                reads.append(path)
+                if 'wa' in path:
+                    return [bridge('whatsapp', 'whatsapp', **{'com.beeper.room_type.v2': 'dm'}), member(inbox.owner, 'owner'), member('@whatsapp_1:' + SERVER, 'Finn')]
+            return matrix(path, *args, **kw)
+        with patch.object(inbox, 'mx', side_effect=matrix2), patch.object(inbox.connectors, 'request', side_effect=bridge_api):
+            inbox.sync()
+        with inbox.store.db() as db:
+            kind = db.execute('SELECT kind FROM identity WHERE address=?', (room,)).fetchone()[0]
+        self.assertEqual((kind, inbox.store.person(a['person_id'])['display_name']), ('person', 'Erin'))
+        self.assertEqual(inbox.store.person(b['person_id'])['display_name'], 'Finn')
+        with inbox.store.db() as db:
+            db.execute("UPDATE person SET display_name='Signal conversation', name_locked=1 WHERE id=?", (a['person_id'],))
+        self.assertEqual(inbox.store.repair_person_titles(), 0)  # a title the owner set is never touched
 
 
 class BackfillConfigTests(Base):
