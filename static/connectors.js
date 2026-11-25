@@ -182,13 +182,26 @@
         await step(network, flow, result, mine);
       } catch (e) { if (mine !== generation) return; failure(e, network, flow, mine); }
     }
-    function failure(error, network, flow, mine) {
+    function failure(error, network, flow, mine, wait = 0) {
       if (mine !== generation) return;
       root.classList.remove('c-viewer'); resizeCleanup?.(); resizeCleanup = null;
       problem(error);
-      button(root, 'Start again', async () => start(network, flow), 'primary wide');
-      if (network === 'instagram' && flow !== 'browser') button(root, 'Use browser sign-in', () => start(network, 'browser:instagram'));
+      const again = button(root, 'Start again', async () => start(network, flow), 'primary wide');
+      // Issue 284: after a site's “too many requests”, Start again waits a little so retrying can't add to the limit.
+      if (wait > 0) holdButton(again, 'Start again', wait, mine);
+      if (network === 'instagram' && wait > 0) button(root, FLOW_LABEL.android, () => start(network, 'android'), 'secondary wide c-other-way');
+      else if (network === 'instagram' && flow !== 'browser') button(root, 'Use browser sign-in', () => start(network, 'browser:instagram'));
       button(root, 'Back to accounts', async () => show());
+    }
+    function holdButton(b, text, seconds, mine) {
+      let left = Math.ceil(seconds);
+      const tick = () => {
+        if (mine !== generation || !root.contains(b)) return;
+        if (left <= 0) { b.disabled = false; b.textContent = text; return; }
+        b.disabled = true; b.textContent = text + ' in ' + left + ' s'; left -= 1;
+        global.setTimeout(tick, 1000);
+      };
+      tick();
     }
     async function advance(network, payload, fields, mine) {
       let result = await request(network, 'step', {...payload, fields});
@@ -547,7 +560,11 @@
           if (f.state === 'done') {
             root.replaceChildren(heading(network, label(network) + ' connected'), element('p', 'helper', (f.message || '') + '. Your chats appear in the Inbox over the next few minutes.' + (f.result?.failed?.length ? ' Not connected: ' + f.result.failed.join(', ') + '.' : '')));
             button(root, 'Done', async () => show(), 'primary wide'); options.onChange?.(network);
-          } else failure(new Error(f.message || 'The sign-in window closed. Start again.'), network, 'browser', mine);
+          } else {
+            // The window is gone: drop its last picture (for a refused page, Chrome's own “This page isn’t working”).
+            root.replaceChildren(heading(network, 'Sign in to ' + label(network)));
+            failure(new Error(f.message || 'The sign-in window closed. Start again.'), network, 'browser', mine, f.state === 'rate_limited' ? Number(f.retry_in) || 30 : 0);
+          }
           return;
         }
       }
