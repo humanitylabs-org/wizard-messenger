@@ -26,6 +26,15 @@ from engine import EngineError
 
 BROWSER = os.environ.get('MESSENGER_BROWSER_DEVTOOLS', 'http://signin-browser:9222')
 IDLE_SECONDS = 15 * 60
+# After a site's "too many requests" answer, the view holds Start again this long so a retry can't hammer the site.
+RETRY_SECONDS = 30
+
+
+def rate_limit_message(title):
+    return (title + ' is not letting this Wizard open its sign-in page right now (it answered \u201ctoo many requests\u201d). '
+            'This is a short limit on ' + title + '\u2019s side for this Wizard\u2019s internet connection, not a problem with your '
+            'account. Wait a few minutes and start again' +
+            (', or sign in with your username and password instead.' if title == 'Instagram' else '.'))
 
 
 def fail(code, message, status=400):
@@ -193,6 +202,7 @@ class Session:
         self.touched = time.time()
         self.width, self.height = width, height
         self.step, self.requests, self.ids, self.extracted, self.last_extract = step, [], {}, {}, 0.0
+        self.refused = None
         # Chrome's DevTools only accepts an IP or localhost in the Host header: resolve the app name first.
         b = urlsplit(BROWSER)
         ip = socket.gethostbyname(b.hostname)
@@ -234,6 +244,15 @@ class Session:
             threading.Thread(target=lambda: self._ack(p['sessionId']), daemon=True).start()
         elif msg['method'] == 'Page.frameNavigated' and not msg['params']['frame'].get('parentId'):
             self.url = msg['params']['frame'].get('url', '')
+        elif msg['method'] == 'Network.responseReceived':
+            # Issue 284: the site itself can refuse the page (Instagram answers its login page with 429 "too many
+            # requests" for some internet addresses). Chrome then draws its own opaque error page; remember the
+            # answer so the watcher can close the window and say what happened instead.
+            p = msg['params']
+            if p.get('type') == 'Document' and p.get('frameId') == getattr(self, 'target', None):
+                r = p.get('response') or {}
+                if r.get('status') == 429:
+                    self.refused = {'status': 429, 'host': urlsplit(r.get('url', '')).hostname or ''}
         elif msg['method'] == 'Network.requestWillBeSent':
             r = msg['params'].get('request') or {}
             self.ids[msg['params'].get('requestId')] = r.get('url', '')
@@ -262,8 +281,11 @@ class Session:
             if self.frame_seq <= after and self.state == 'signing_in':
                 self.cond.wait(hold)
             host = urlsplit(self.url).hostname or ''
-            return {'seq': self.frame_seq, 'frame': self.frame if self.frame_seq > after else None, 'state': self.state,
-                    'message': self.message, 'host': host, 'result': self.result}
+            out = {'seq': self.frame_seq, 'frame': self.frame if self.frame_seq > after else None, 'state': self.state,
+                   'message': self.message, 'host': host, 'result': self.result}
+            if self.state == 'rate_limited':
+                out['retry_in'] = RETRY_SECONDS
+            return out
 
     def input(self, payload):
         self.touched = time.time()
@@ -431,6 +453,12 @@ class BrowserSignIn:
                     if sess.state != 'signing_in':
                         if time.time() - sess.touched > 120:
                             self.sessions.pop(sess.id, None)
+                        continue
+                    if sess.refused:
+                        title = (NETWORKS.get(sess.network) or {}).get('title') or GENERIC.get(sess.network, ('', sess.network))[1]
+                        print('browser sign-in %s: page refused with %d' % (sess.network, sess.refused['status']), flush=True)
+                        sess.state, sess.message = 'rate_limited', rate_limit_message(title)
+                        sess.close()
                         continue
                     if time.time() - sess.touched > IDLE_SECONDS or sess.cdp.closed:
                         sess.state, sess.message = 'expired', 'The sign-in window closed. Start again.'
