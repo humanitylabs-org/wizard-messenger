@@ -26,14 +26,23 @@ PAGE = '''<!doctype html><meta charset=utf-8><body>
 <script>
 document.getElementById('go').onclick = async () => {
   const out = document.getElementById('out'); out.textContent = 'spinning';
+  // Like Facebook's: names the account's saved passkey, which lives on the owner's phone.
   try { await navigator.credentials.get({publicKey: {challenge: new Uint8Array(32), rpId: 'localhost',
-          userVerification: 'required', timeout: 300000}}); out.textContent = 'got' }
+          userVerification: 'required', timeout: 300000, allowCredentials: [{type: 'public-key',
+          id: new Uint8Array(16).fill(7), transports: ['internal', 'hybrid']}]}}); out.textContent = 'got' }
   catch (e) { out.textContent = 'rejected ' + e.name }
 };
-window.tryCreate = async () => {
+window.tryGet = async (uv, transports) => {
+  const allow = transports === null ? [] : [{type: 'public-key', id: new Uint8Array(16).fill(7), transports}];
+  try { await navigator.credentials.get({publicKey: {challenge: new Uint8Array(32), rpId: 'localhost',
+          userVerification: uv, timeout: 20000, allowCredentials: allow}}); return 'got' }
+  catch (e) { return 'rejected ' + e.name }
+};
+window.tryCreate = async (uv, attachment) => {
   try { await navigator.credentials.create({publicKey: {challenge: new Uint8Array(32), rp: {name: 'x', id: 'localhost'},
           user: {id: new Uint8Array(8), name: 'a', displayName: 'a'}, pubKeyCredParams: [{type: 'public-key', alg: -7}],
-          authenticatorSelection: {userVerification: 'discouraged', residentKey: 'discouraged'}, timeout: 20000}}); return 'created' }
+          authenticatorSelection: {userVerification: uv, residentKey: 'preferred', authenticatorAttachment: attachment},
+          timeout: 20000}}); return 'created' }
   catch (e) { return 'rejected ' + e.name }
 };
 </script>'''
@@ -81,12 +90,15 @@ class PasskeyRefusalTests(unittest.TestCase):
         self.assertLess(enable, add)
         self.assertLess(add, nav)
         self.assertEqual(calls[enable][1], {'enableUI': False})
+        added = [c[1]['options'] for c in calls if c[0] == 'WebAuthn.addVirtualAuthenticator']
+        self.assertEqual({o['transport'] for o in added}, {'usb', 'nfc', 'ble', 'cable', 'hybrid', 'smart-card', 'internal'})
+        self.assertLess(max(i for i, n in enumerate(names) if n == 'WebAuthn.addVirtualAuthenticator'), nav)
         options = calls[add][1]['options']
-        # A key whose user check always fails: it can neither sign in nor be registered on the account.
-        self.assertTrue(options['hasUserVerification'])
-        self.assertFalse(options['isUserVerified'])
-        self.assertTrue(options['automaticPresenceSimulation'])
-        self.assertNotEqual(options['transport'], 'internal')  # never claims a fingerprint/face sensor
+        # Keys whose user check always fails: they can neither sign in nor be registered on the account.
+        for options in added:
+            self.assertTrue(options['hasUserVerification'])
+            self.assertFalse(options['isUserVerified'])
+            self.assertTrue(options['automaticPresenceSimulation'])
         self.assertEqual(calls[enable][2], 's1')
         self.assertEqual(calls[add][2], 's1')
         self.assertNotIn('WebAuthn.addCredential', names)
@@ -146,8 +158,16 @@ class RealBrowserPasskeyTests(unittest.TestCase):
             time.sleep(0.5)
             self.assertEqual(ev("document.getElementById('out2').textContent"), 'other')
             self.assertEqual(ev("document.getElementById('field').value"), 'hello')
-            # No passkey can be registered on the owner's account from here.
-            self.assertEqual(ev("tryCreate()"), 'rejected NotAllowedError')
+            # Every kind of request ends at once: saved passkey on any transport, any user check.
+            for uv in ('required', 'preferred', 'discouraged'):
+                for transports in (['internal'], ['hybrid'], ['internal', 'hybrid'], ['usb'], ['nfc'], ['ble'],
+                                   ['smart-card'], [], None):
+                    started = time.time()
+                    self.assertEqual(ev("tryGet(%s, %s)" % (json.dumps(uv), json.dumps(transports))), 'rejected NotAllowedError', (uv, transports))
+                    self.assertLess(time.time() - started, 3, (uv, transports))
+                # No passkey can be registered on the owner's account from here.
+                for attachment in (None, 'platform', 'cross-platform'):
+                    self.assertEqual(ev("tryCreate(%s, %s)" % (json.dumps(uv), json.dumps(attachment))), 'rejected NotAllowedError', (uv, attachment))
         finally:
             sess.close()
 

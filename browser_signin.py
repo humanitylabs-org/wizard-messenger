@@ -156,21 +156,32 @@ SLACK_APP_PROMPT = re.compile(r'^https://[a-z0-9-]+\.slack\.com/(?:ssb/redirect|
 # Issue 282/283: a passkey request (navigator.credentials.get/create) makes Chromium open its own passkey window.
 # That window is browser chrome, not page, so the owner's live picture never shows it, there is no passkey in this
 # throw-away browser to finish it, and while it is open the page ignores every tap and key ("Try another way" is
-# dead). Chromium's WebAuthn test environment drops that window, and one empty security key whose user check
-# always fails refuses every request at once with NotAllowedError, the answer a person gets when they cancel the
-# passkey prompt. The site then offers its other ways to sign in. Nothing is created or signed.
+# dead). Chromium's WebAuthn test environment drops that window, and empty keys whose user check always fails
+# refuse every request at once with NotAllowedError, the answer a person gets when they cancel the passkey prompt.
+# The site then offers its other ways to sign in. Nothing is created or signed (no passkey is added to the account).
+# A request that names the account's saved passkey lists where it lives (this device, a phone, a key); Chromium
+# only asks keys on those transports and otherwise waits out the site's own timeout (minutes), so one refusing key
+# sits on every transport.
 PASSKEY_REFUSER = {'protocol': 'ctap2', 'transport': 'usb', 'hasResidentKey': True, 'hasUserVerification': True,
                    'isUserVerified': False, 'automaticPresenceSimulation': True}
+PASSKEY_TRANSPORTS = ('usb', 'nfc', 'ble', 'cable', 'hybrid', 'smart-card', 'internal')
 
 
 def refuse_passkeys(cdp, session):
     try:
         cdp.send('WebAuthn.enable', {'enableUI': False}, session=session)
-        cdp.send('WebAuthn.addVirtualAuthenticator', {'options': PASSKEY_REFUSER}, session=session)
-        return True
     except OSError:
         # An engine without the WebAuthn domain still signs in as before.
         return False
+    added = 0
+    for transport in PASSKEY_TRANSPORTS:
+        options = dict(PASSKEY_REFUSER, transport=transport)
+        try:
+            cdp.send('WebAuthn.addVirtualAuthenticator', {'options': options}, session=session)
+            added += 1
+        except OSError:
+            continue
+    return added > 0
 
 
 class Session:
