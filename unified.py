@@ -490,6 +490,30 @@ def weak_label(label, own=()):
             or bool(_PHONE.fullmatch(label)) or bool(_RAW_ID.fullmatch(label)))
 
 
+def label_rank(label, own=()):
+    """2 = a real name, 1 = a phone number (a contact with no profile name, e.g. on Signal), 0 = nothing usable:
+    the '<Network> conversation' stand-in, a raw protocol ID or the owner's own name (issue 401)."""
+    if not weak_label(label, own):
+        return 2
+    return 1 if isinstance(label, str) and label.strip() not in own and bool(_PHONE.fullmatch(label.strip())) else 0
+
+
+def dm_label(kind, label, peers, own, fallback):
+    """The one title rule for a bridged room (issue 401). A one-to-one chat is titled by the other person:
+    the room name or the single peer's name, else their number, else `fallback` ('<Network> conversation');
+    never the owner's own name. Groups keep their room name, else the fallback."""
+    if kind != 'person':
+        return label if isinstance(label, str) and label.strip() else fallback
+    names = [n for n in {p for p in peers if isinstance(p, str) and p.strip()}]
+    for rank in (2, 1):
+        if label_rank(label, own) == rank:
+            return label
+        found = [n for n in names if label_rank(n, own) == rank]
+        if len(found) == 1:
+            return found[0]
+    return label if isinstance(label, str) and label.strip() and label not in own else fallback
+
+
 class PeopleStore:
     def __init__(self, path):
         self.path = Path(path)
@@ -719,8 +743,10 @@ class PeopleStore:
         if not isinstance(label, str) or label == current or label in own:
             return False
         # A real name always wins; a generic fallback only replaces the owner's own
-        # name (a DM must be titled by the other participant, never by "me").
-        if weak_label(label, own) and not (current in own and identity['kind'] == 'person'):
+        # name (a DM must be titled by the other participant, never by "me"). A number
+        # replaces only a stand-in ('Signal conversation', a raw ID), never a real name (issue 401).
+        rank, was = label_rank(label, own), label_rank(current, own)
+        if rank < 2 and not (rank > was) and not (current in own and identity['kind'] == 'person'):
             return False
         label = label.strip()[:160]
         changed = False
@@ -1995,7 +2021,9 @@ class UnifiedInbox:
             room_type = info.get('com.beeper.room_type.v2') or channel.get('fi.mau.' + network + '.type') or info.get('com.beeper.room_type')
             meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state)
             meta['kind'] = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
-            meta['label'] = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname') or network.title() + ' conversation'
+            label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
+            meta['label'] = dm_label(meta['kind'], label, [(e.get('content') or {}).get('displayname') for e in members],
+                                     self.store.own_names(), network.title() + ' conversation')
             meta['names'] = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member' and (e.get('content') or {}).get('displayname')}
             if network == 'whatsapp' and isinstance(channel.get('id'), str):
                 meta['channel_id'] = channel['id']  # the portal jid: tells the Status Broadcast chat apart
