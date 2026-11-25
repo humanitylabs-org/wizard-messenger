@@ -319,6 +319,90 @@ class DmLabelTests(Base):
             self.assertTrue(inbox.room_meta('!space', {})['space'])
 
 
+class SignalDmLabelTests(Base):
+    """Issue 401: a Signal one-to-one chat is titled by the other person (profile name, else number)."""
+    PEER = '@signal_0f0e:' + SERVER
+
+    def state(self, *extra, kind='dm'):
+        return [bridge('signal', 'signal', **{'com.beeper.room_type.v2': kind}), member('@owner:' + SERVER, 'owner')] + list(extra)
+
+    def test_both_naming_paths_use_the_peer_when_the_room_has_no_name(self):
+        from unified import UnifiedInbox
+        inbox = self.inbox()
+        state = self.state(member(self.PEER, 'Alice'))
+        state[1] = member(inbox.owner, 'owner')
+        for path, run in (('connector', lambda r: inbox.room_meta(r, {})), ('unified', lambda r: UnifiedInbox.room_meta(inbox, r, {}))):
+            with patch.object(inbox, 'mx', return_value=state):
+                self.assertEqual(run('!a-' + path)['label'], 'Alice', path)
+
+    def test_no_profile_name_falls_back_to_the_number_never_the_owner(self):
+        inbox = self.inbox()
+        inbox.store.remember_own_names('signal', ['Me Myself'])
+        cases = [
+            ([{'type': 'm.room.name', 'content': {'name': '+44 7700 900123'}}, member(self.PEER, '+44 7700 900123')], '+44 7700 900123'),
+            ([{'type': 'm.room.name', 'content': {'name': 'Me Myself'}}, member(self.PEER, '+44 7700 900123')], '+44 7700 900123'),
+            ([{'type': 'm.room.name', 'content': {'name': '+44 7700 900123'}}, member(self.PEER, 'Alice')], 'Alice'),
+            ([{'type': 'm.room.name', 'content': {'name': 'Me Myself'}}], 'Signal conversation'),
+            ([member(self.PEER)], 'Signal conversation'),
+        ]
+        for i, (extra, want) in enumerate(cases):
+            state = self.state(*extra)
+            state[1] = member(inbox.owner, 'owner')
+            with patch.object(inbox, 'mx', return_value=state):
+                self.assertEqual(inbox.room_meta('!n%d' % i, {})['label'], want, extra)
+
+    def test_number_replaces_the_stand_in_but_never_a_real_name(self):
+        store = self.inbox().store
+        first = store.identity('signal', '!r', 'Signal conversation')
+        self.assertEqual(store.identity('signal', '!r', '+44 7700 900123')['label'], '+44 7700 900123')
+        self.assertEqual(store.person(first['person_id'])['display_name'], '+44 7700 900123')
+        store.identity('signal', '!r', 'Signal conversation')  # never back down
+        self.assertEqual(store.person(first['person_id'])['display_name'], '+44 7700 900123')
+        store.identity('signal', '!r', 'Alice')
+        store.identity('signal', '!r', '+44 7700 900123')
+        self.assertEqual(store.person(first['person_id'])['display_name'], 'Alice')
+
+    def test_group_without_a_name_keeps_the_stand_in(self):
+        inbox = self.inbox()
+        state = self.state(member('@signal_d:' + SERVER, '+1 555 0100'), member('@signal_e:' + SERVER, 'E'), kind='group')
+        state[1] = member(inbox.owner, 'owner')
+        with patch.object(inbox, 'mx', return_value=state):
+            self.assertEqual(inbox.room_meta('!g', {})['label'], 'Signal conversation')
+
+    def test_chats_stuck_on_the_stand_in_are_retitled_after_the_update(self):
+        inbox = self.inbox()
+        inbox.learn_me = lambda: None
+        stuck, named, group = '!stuck:' + SERVER, '!named:' + SERVER, '!grp:' + SERVER
+        old = {'network': 'signal', 'telegram': False, 'v': 4, 'kind': 'person', 'label': 'Signal conversation', 'names': {}}
+        with inbox.store.db() as db:  # what an older release left behind
+            db.execute('INSERT INTO room_meta VALUES (?,?)', (stuck, json.dumps(old)))
+            db.execute('INSERT INTO room_meta VALUES (?,?)', (group, json.dumps(dict(old, kind='group'))))
+        a = inbox.store.identity('signal', stuck, 'Signal conversation')
+        b = inbox.store.identity('signal', named, 'Bob')
+        g = inbox.store.identity('signal', group, 'Signal conversation', 'group')
+        inbox.store.put('sync_token', 'previous')
+        for marker in ('meta_members_v4', 'meta_rescan_v4', 'meta_status_channel_v1'):
+            inbox.store.put(marker, '1')
+        reads = []
+
+        def matrix(path, *args, **kw):
+            if path.startswith('/sync?'):
+                return {'next_batch': 'next', 'rooms': {'join': {}}}  # no new message in any of them
+            if path.endswith('/state'):
+                reads.append(path)
+                if 'stuck' in path:
+                    return self.state(member(inbox.owner, 'owner'), member(self.PEER, '+44 7700 900123'))
+                return self.state(member(inbox.owner, 'owner'), kind='group')
+            raise AssertionError(path)
+        with patch.object(inbox, 'mx', side_effect=matrix):
+            inbox.sync()
+            inbox.sync()  # once only
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], '+44 7700 900123')
+        self.assertEqual(inbox.store.person(b['person_id'])['display_name'], 'Bob')
+        self.assertEqual(inbox.store.person(g['person_id'])['display_name'], 'Signal conversation')
+        self.assertEqual(len(reads), 1)  # only the stuck one-to-one chat is re-read, and only once
+
+
 class BackfillConfigTests(Base):
     def test_templates_enable_forward_backfill_and_keep_secrets_on_rerun(self):
         setup_connectors(self.root, EXTRA_NETWORKS)

@@ -6,7 +6,7 @@ own-name learning and silent first-discovery history import.
 """
 from unified import *
 from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
-from unified import weak_label, MXC
+from unified import dm_label, label_rank, MXC
 
 # Cached room_meta written before this version may have dropped a bridged room
 # (protocol.id aliases): re-read room state once for those.
@@ -144,16 +144,9 @@ class ConnectorInbox(UnifiedInbox):
                 room_pic = meta['avatars'].get(members[0].get('state_key'))
             meta['avatar'] = room_pic
             label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
-            own = self.store.own_names()
-            if meta['kind'] == 'person' and weak_label(label, own):
-                # A DM is titled by the other participant, never the owner or a raw number.
-                peers = {(e.get('content') or {}).get('displayname') for e in members} - {None}
-                peers = [n for n in peers if not weak_label(n, own)]
-                if len(peers) == 1:
-                    label = peers[0]
-            if not label or (meta['kind'] == 'person' and label in own):
-                label = PROVIDERS[network].label + ' conversation'
-            meta['label'] = label
+            # A DM is titled by the other participant (name, else number), never the owner (issue 401: one rule).
+            meta['label'] = dm_label(meta['kind'], label, [(e.get('content') or {}).get('displayname') for e in members],
+                                     self.store.own_names(), PROVIDERS[network].label + ' conversation')
         old = self.rooms.get(room)
         if old is None:
             with self.store.db() as db:
@@ -342,6 +335,37 @@ class ConnectorInbox(UnifiedInbox):
         self.store.put(marker, '1')
         self.store.changed()
 
+    def refresh_dm_labels(self):
+        """Once (issue 401): one-to-one chats an older release left titled with a stand-in ('Signal conversation')
+        because a number could never replace it. Re-read each one's room state and retitle it now (name, else
+        number), without waiting for a new message. A room that can't be read keeps its title."""
+        marker = 'dm_labels_v1'
+        if self.store.get(marker):
+            return
+        try:
+            with self.store.db() as db:
+                rows = [dict(r) for r in db.execute(
+                    "SELECT network,address,label FROM identity WHERE kind='person' AND network NOT IN ('messenger','private')")]
+            own = self.store.own_names()
+            for row in rows:
+                if row['network'] not in MATRIX_NETWORKS or label_rank(row['label'], own) > 0:
+                    continue
+                room = row['address']
+                with self.store.db() as db:
+                    cached = db.execute('SELECT json FROM room_meta WHERE room=?', (room,)).fetchone()
+                self.rooms[room] = dict(json.loads(cached[0]) if cached else {}, v=0)  # an outdated copy re-reads state
+                try:
+                    meta = self.room_meta(room, {})
+                except Exception:
+                    self.rooms.pop(room, None)
+                    continue
+                if meta.get('network') == row['network'] and not meta.get('space'):
+                    self.store.identity(row['network'], room, meta['label'], meta['kind'])
+        except Exception:
+            return  # retried after the next sync; the old title stays meanwhile
+        self.store.put(marker, '1')
+        self.store.changed()
+
     def rescan_dropped(self):
         """Once per META_VERSION: rooms an older release cached as non-bridged (LINE,
         Instagram) only reappear in an incremental /sync when they get new activity.
@@ -439,6 +463,7 @@ class ConnectorInbox(UnifiedInbox):
             self.rescan_dropped()
             self.refresh_pictures()
             self.refresh_status_rooms()
+            self.refresh_dm_labels()
             self.repair_rows()
             return {'state': 'ready'}
         except EngineError as error:
