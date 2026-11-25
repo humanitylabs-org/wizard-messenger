@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.113
+
+Store recipe: pins the image built from main `6a949e9`. Ships #410 (Refs humanitylabs-org/wizard-messenger#401). Signal one-to-one chats are now titled with the contact's name, or their number when they have no Signal profile name, and never "Signal conversation" or the owner's own name. A chat first seen before the bridge had a name for the contact used to keep the stand-in for good, because a number was never allowed to replace it. Both room-naming paths now share one rule (`dm_label`), and a one-time pass after the update retitles chats that are already stuck. Groups are unchanged. Bug fix, no switch. Guard: `tests/test_history_identity.py` SignalDmLabelTests.
+
 ## 0.2.0-unified.16.112
 
 Store recipe: pins the image built from main `0f55939`. Ships #407 (Refs humanitylabs-org/wizard-messenger#336): the Unread list no longer changes on its own. Each refresh Wizard sends (focus, coming back, every minute) reloads the whole chat list, and an answer that arrived after the live feed had moved some chats on put their older copies back, so chats, previews, badges and the Unread count stepped back and then forward again, and a chat just read could show as unread for a moment. A reload now keeps the newer copy of every chat the feed or this device changed after the reload was asked, and the box reads the list position before the list. Bug fix, no switch. Guard: `tests/test_list_snapshot.cjs`, `tests/unread_list_steady_browser.cjs`.
