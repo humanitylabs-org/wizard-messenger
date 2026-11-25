@@ -3514,7 +3514,7 @@
       e.preventDefault(); cancel();
       if (!selection()?.active) (onMedia(e) ? openMedia : open)();
     });
-    // Issue 182 (switch row-tap-menu): a clean finger tap on the row's empty space right of a received bubble opens
+    // Issue 182 (on for everyone since James's yes): a clean finger tap on the row's empty space right of a received bubble opens
     // the same menu a hold opens (media gets the media menu). A drag (scroll) never does; selection mode's own
     // capture click handler on the thread runs first and keeps its toggle.
     if (!rowTap) return;
@@ -3523,7 +3523,7 @@
     row.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - rx, e.clientY - ry) > 8) rmoved = true; });
     row.addEventListener('pointercancel', () => { rmoved = true; });
     row.addEventListener('click', e => {
-      if (e.target !== row || !rowTap() || !rtouch || rmoved || selection()?.active || textMode()) return;
+      if (e.target !== row || !rtouch || rmoved || selection()?.active || textMode()) return;
       const box = bubble.getBoundingClientRect();
       if (e.clientX <= box.right || e.clientY < box.top || e.clientY > box.bottom) return;
       e.stopPropagation(); touch = true;
@@ -3532,7 +3532,7 @@
   }
   function gestures(row, b, m) {
     messageGestures(row, b, {selection: () => view.selection, id: m.id, album: !!m.album, menu: o => menu(m, b, o), reply: () => startReply(m),
-      rowTap: m.outgoing ? null : () => switchState.on['row-tap-menu'] === true});
+      rowTap: !m.outgoing});
   }
   function menu(m, b, opts = {}) {
     const t = store.threads[view.id]; if (!t) return;
