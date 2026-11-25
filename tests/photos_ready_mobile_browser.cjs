@@ -33,7 +33,7 @@ const PHONE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (K
 const person = {id: 'ann', display_name: 'Ann Lee', identities: [{id: 'ann-i', network: 'line', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'Photo', timestamp: now - min, outgoing: false, msgtype: 'm.image'}, language: '', peer_read_ts: 0};
 const N = 10;
 const MESSAGES = Array.from({length: N}, (_, i) => ({id: '$p' + i, identity_id: 'ann-i', network: 'line', sender: 'Ann Lee', outgoing: false, original: '', timestamp: now - (N + 1 - i) * min, timeline_order: i + 1, msgtype: 'm.image', media: {w: 1600, h: 1200, mime: 'image/jpeg', thumb: true, size: 900000}, reactions: []}));
-const SWITCHES = ['photo-warm', 'photo-instant', 'photo-prefetch', 'photo-timings', 'viewer-placeholder', 'video-prefetch', 'video-fullscreen'].map(id => ({id, name: id, on: true}));
+const SWITCHES = ['photo-warm', 'photo-instant', 'photo-prefetch', 'photo-timings', 'viewer-placeholder', 'video-fullscreen'].map(id => ({id, name: id, on: true}));
 
 (async () => {
   const browser = await chromium.launch();
