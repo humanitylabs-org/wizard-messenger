@@ -6654,11 +6654,10 @@
     const had = (s.drafts[id] || '').trim();
     s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
   }
-  // Issue 314 (switch share-files): a shared file that is not a photo (a PDF, an .md from a chat) lands in the
+  // Issue 314 (on for everyone): a shared file that is not a photo (a PDF, an .md from a chat) lands in the
   // composer's attachment tray like one added with +, so the owner reviews and taps Send. The shell hands a Blob plus
   // name and mime; Messenger's own cap is 25 MB, so a bigger file is answered with a plain "too big" and not kept.
   const SHARE_FILE_MAX = 25 * 1048576;
-  const shareFilesOn = () => switchState.on['share-files'] === true;
   function sharedFile(item) {
     const blob = item.file; if (!blob || typeof blob.size !== 'number' || typeof blob.slice !== 'function') return null;
     const name = String(item.name || blob.name || 'File').slice(0, 255), type = item.mime || blob.type || 'application/octet-stream';
@@ -6666,7 +6665,7 @@
   }
   async function receiveShare(item) {
     const text = sharedText(item), image = item.kind === 'image' && item.file?.type?.startsWith('image/');
-    const file = item.kind === 'file' && shareFilesOn() ? sharedFile(item) : null;
+    const file = item.kind === 'file' ? sharedFile(item) : null;
     if (!s.ready || (!text && !image && !file) || (item.kind === 'file' && !file)) return false; // stays pending in Wizard; check() runs again once unlocked
     if (file && file.size > SHARE_FILE_MAX) { toast((file.name || 'That file') + ' is too big to send (over 25 MB)', 4500); return true; }
     if (s.overlay) closeOverlay();
@@ -6686,15 +6685,12 @@
     if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
     return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
   }
-  const shareKinds = () => ['text', 'url', 'image', ...(shareFilesOn() ? ['file'] : [])];
-  let sharedKinds = '';
+  const SHARE_KINDS = ['text', 'url', 'image', 'file'];
   function listenForShares() {
-    const accepts = shareKinds(); sharedKinds = accepts.join();
+    const accepts = [...SHARE_KINDS];
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
-  // Turning share-files on or off tells the share sheet at once (it re-offers a waiting file once it is on).
   switchState.paints['stacked-drafts'] = () => view.sd?.check?.(false);
-  switchState.paints['share-files'] = () => { if (shareKinds().join() !== sharedKinds) listenForShares(); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
     // Issue 341: the Wizard chats view is on screen with no chat or sheet of its own (the Inbox list is hidden). Back then
