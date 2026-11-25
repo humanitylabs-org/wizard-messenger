@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.117
+
+- Desktop Inbox row and bottom filter rows (issue 409): on the desktop, QR, Search and Settings stay in Messenger's own Inbox row at every window width (they no longer move into the window title bar, which holds the width buttons), and the filter rows (All / Unread / Medium / Low and the network icons) always sit at the bottom of the chat list, so nothing jumps when the window is resized. The phone keeps its title-bar tools. Image built from main 1416772 (PR #419): `sha-14167729efeaa6abac847cc46dc985e1d67110fd@sha256:ba37cf9059501c2ec1946bf668f38a7a4eebb575e9612cb66ee2cb68dee69539`.
+
 ## 0.2.0-unified.16.116
 
 - Received photos always show and open (issue 404): a photo in a format phones can't show (an iPhone HEIC photo that LINE passes on as image.jpg) is turned into a JPEG on the box, and the box makes the thumbnail itself when the homeserver can't. A photo nothing can read says "📷 Photo not available · Tap to try again" in its bubble, and a tap asks the box again instead of opening an empty viewer. The image now carries libheif-examples (heif-convert). Image built from main 5b1fbb4 (PR #417): `sha-5b1fbb479cc4ce797df9c91f97c09b1a2f43865c@sha256:373086717b04b89b7865aba64ae5191f06a41e9945c9839a5ea0bb3407d14475`.
