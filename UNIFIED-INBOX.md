@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.111
+
+Store recipe: pins the image built from main `7b629b9`. Ships #405 (Refs humanitylabs-org/wizard-messenger#284): a sign-in page the network refuses with HTTP 429 ("too many requests", as Instagram does for its login page from some server addresses) no longer leaves the owner on Chrome's "This page isn't working" picture. Messenger closes that sign-in window at once and says in plain words that the network is limiting sign-ins from this Wizard's connection for now, that it is not a problem with the account, and offers Start again (held for 30 seconds so it can't hammer the network) or Username and password. Nothing retries on its own. Bug fix, no switch.
+
 ## 0.2.0-unified.16.110
 
 Store recipe: pins the image built from main `b5701f5`. Ships #400 (Refs humanitylabs-org/wizard-messenger#282, #283): a passkey prompt no longer freezes a network's sign-in page. Each sign-in window in Messenger's own Chromium now runs Chromium's WebAuthn test environment (no hidden native passkey window) with an empty key on every transport whose user check always fails, so a passkey request (Facebook's "confirm it's you", Google's "Verifying it's you") ends at once with NotAllowedError, like a person cancelling the prompt; the site then offers its other ways to sign in, and the page keeps taking taps. Nothing is created or signed. Bug fix, no switch. Guard: `tests/test_signin_passkeys.py`.
