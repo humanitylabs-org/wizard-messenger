@@ -6,7 +6,7 @@ own-name learning and silent first-discovery history import.
 """
 from unified import *
 from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
-from unified import dm_label, label_rank, MXC
+from unified import dm_label, dm_more, label_kind, label_rank, topic_number, MXC
 
 # Cached room_meta written before this version may have dropped a bridged room
 # (protocol.id aliases): re-read room state once for those.
@@ -14,6 +14,37 @@ META_VERSION = 4  # 4: exact joined-member IDs for identity-safe mention autocom
 # Bridged history (bridgev2 backfill on stock Synapse) arrives through /sync with
 # its original timestamps; only recent lines may notify.
 LIVE_WINDOW_MS = 15 * 60 * 1000
+# Issue 401: one-to-one chats still on a stand-in title are re-read this often (only those, at most a batch a pass).
+DM_REPAIR_EVERY = 15 * 60
+DM_REPAIR_BATCH = 40
+
+
+def dm_sources(state, room_name, channel, members, other, own):
+    """Which title sources a one-to-one chat has and what kind each is (issue 401's naming report). Only kinds
+    (absent, empty, number, raw, standin, own, name) are kept, never a name or a number."""
+    topic = next(((e.get('content') or {}).get('topic') for e in state if e.get('type') == 'm.room.topic'), None)
+    names = next(((e.get('content') or {}).get('name') for e in state if e.get('type') == 'm.room.name'), None)
+    return {'room_name': label_kind(names, own), 'channel': label_kind(channel.get('displayname'), own),
+            'peers': [label_kind((e.get('content') or {}).get('displayname'), own) for e in members],
+            'others': ['%s:%s' % ((e.get('content') or {}).get('membership') or '?', label_kind((e.get('content') or {}).get('displayname'), own))
+                       for e in state if e.get('type') == 'm.room.member' and other(e.get('state_key'))
+                       and (e.get('content') or {}).get('membership') != 'join'],
+            'topic': 'number' if topic_number(topic) else ('present' if isinstance(topic, str) and topic.strip() else 'absent')}
+
+
+def contact_label(entry, own):
+    """A title from the bridge's own contact entry (provisioning /contacts): its name, else a username, else the
+    number (tel:), never a stand-in or the owner's own name."""
+    if not isinstance(entry, dict):
+        return None
+    ids = [i for i in entry.get('identifiers') or [] if isinstance(i, str) and ':' in i]
+    found = [entry.get('name')] + [i.split(':', 1)[1] for i in ids if not i.startswith('tel:')] + \
+            [i.split(':', 1)[1] for i in ids if i.startswith('tel:')]
+    for rank in (2, 1):
+        for name in found:
+            if label_rank(name, own) == rank:
+                return name.strip()
+    return None
 # WhatsApp fetches a contact's profile photo once, when the bridge first meets them. If that one request
 # fails the bridge stores the photo as unknown and does not ask again until something else resyncs that
 # contact, so the chat keeps its initials although WhatsApp has a photo (Parinda, 31 Oct 2026). The
@@ -126,11 +157,13 @@ class ConnectorInbox(UnifiedInbox):
             bot = '@' + network + 'bot:messenger.internal'
             joined = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join']
             # The owner's own ghost (no double puppeting yet) is not another participant.
-            members = [e for e in joined if e.get('state_key') not in (self.owner, bot) and not self.is_me(e.get('state_key'))]
+            other = lambda user: user not in (self.owner, bot) and not self.is_me(user)
+            members = [e for e in joined if other(e.get('state_key'))]
             # bridgev2 emits room_type in bridge info; fallback counts real participants.
             room_type = info.get('com.beeper.room_type.v2') or channel.get('fi.mau.' + network + '.type') or info.get('com.beeper.room_type')
             meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state) or room_type in ('space', 'personal_filtering_space')
             meta['kind'] = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
+            meta['room_type'] = room_type if isinstance(room_type, str) else None
             meta['joined'] = [e.get('state_key') for e in joined]
             meta['names'] = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member' and (e.get('content') or {}).get('displayname')}
             if network == 'whatsapp' and isinstance(channel.get('id'), str):
@@ -146,7 +179,9 @@ class ConnectorInbox(UnifiedInbox):
             label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
             # A DM is titled by the other participant (name, else number), never the owner (issue 401: one rule).
             meta['label'] = dm_label(meta['kind'], label, [(e.get('content') or {}).get('displayname') for e in members],
-                                     self.store.own_names(), PROVIDERS[network].label + ' conversation')
+                                     self.store.own_names(), PROVIDERS[network].label + ' conversation', dm_more(state, other))
+            if meta['kind'] == 'person':
+                meta['sources'] = dm_sources(state, label, channel, members, other, self.store.own_names())
         old = self.rooms.get(room)
         if old is None:
             with self.store.db() as db:
@@ -336,35 +371,96 @@ class ConnectorInbox(UnifiedInbox):
         self.store.changed()
 
     def refresh_dm_labels(self):
-        """Once (issue 401): one-to-one chats an older release left titled with a stand-in ('Signal conversation')
-        because a number could never replace it. Re-read each one's room state and retitle it now (name, else
-        number), without waiting for a new message. A room that can't be read keeps its title."""
-        marker = 'dm_labels_v1'
-        if self.store.get(marker):
+        """Issue 401: one-to-one chats still titled with a stand-in ('Signal conversation', 'Unknown user', a raw id).
+        After every start, then every DM_REPAIR_EVERY seconds while any is left, re-read only those chats and retitle
+        them from the room (name, peer, invited peer, topic number) or from the bridge's own contact entry, without
+        waiting for a new message. A DM an older sync filed as a group becomes a one-to-one chat once the bridge says
+        dm, and a list title left on a stand-in takes its chat's name. Each chat that is still stuck gets one log line
+        saying which sources exist and what kind each is: never a name or a number."""
+        now = time.time()
+        if now - getattr(self, 'dm_labels_checked', 0) < DM_REPAIR_EVERY:
             return
+        self.dm_labels_checked = now
         try:
+            self.store.repair_person_titles()
+            own = self.store.own_names()
             with self.store.db() as db:
                 rows = [dict(r) for r in db.execute(
-                    "SELECT network,address,label FROM identity WHERE kind='person' AND network NOT IN ('messenger','private')")]
-            own = self.store.own_names()
+                    "SELECT i.id,i.network,i.address,i.label,i.kind,r.json AS meta FROM identity i "
+                    "LEFT JOIN room_meta r ON r.room=i.address WHERE i.network NOT IN ('messenger','private')")]
+            stuck = []
             for row in rows:
-                if row['network'] not in MATRIX_NETWORKS or label_rank(row['label'], own) > 0:
+                if row['network'] not in MATRIX_NETWORKS:
                     continue
+                try:
+                    cached = json.loads(row['meta']) if row['meta'] else {}
+                except ValueError:
+                    cached = {}
+                if cached.get('space'):
+                    continue
+                if row['kind'] == 'person' and label_rank(row['label'], own) == 0:
+                    stuck.append((row, cached))
+                elif row['kind'] == 'group' and ('room_type' not in cached or cached.get('room_type') in ('dm', 'private')):
+                    stuck.append((row, cached))  # maybe a DM an older sync filed as a group; a real group is read once
+            stuck.sort(key=lambda item: item[0]['kind'] != 'person')  # stuck one-to-one chats first
+            contacts = {}
+            for row, cached in stuck[:DM_REPAIR_BATCH]:
                 room = row['address']
-                with self.store.db() as db:
-                    cached = db.execute('SELECT json FROM room_meta WHERE room=?', (room,)).fetchone()
-                self.rooms[room] = dict(json.loads(cached[0]) if cached else {}, v=0)  # an outdated copy re-reads state
+                self.rooms[room] = dict(cached, v=0)  # an outdated copy re-reads state
                 try:
                     meta = self.room_meta(room, {})
                 except Exception:
                     self.rooms.pop(room, None)
                     continue
-                if meta.get('network') == row['network'] and not meta.get('space'):
-                    self.store.identity(row['network'], room, meta['label'], meta['kind'])
-        except Exception:
-            return  # retried after the next sync; the old title stays meanwhile
-        self.store.put(marker, '1')
-        self.store.changed()
+                if meta.get('network') != row['network'] or meta.get('space'):
+                    continue
+                kind, label = meta.get('kind'), meta.get('label')
+                if row['kind'] == 'group' and kind == 'person' and meta.get('room_type') in ('dm', 'private'):
+                    self.store.set_identity_kind(row['id'], 'person')
+                elif row['kind'] == 'group':
+                    continue  # a real group keeps today's behaviour
+                entry = None
+                if label_rank(label, own) == 0:
+                    entry = self.bridge_contact(row['network'], room, meta, contacts)
+                    label = contact_label(entry, own) or label
+                self.store.identity(row['network'], room, label, 'person')
+                if label_rank(label, own) == 0:
+                    self.report_dm_label(row['network'], room, meta, entry, contacts.get(row['network']))
+            if stuck:
+                self.store.changed()
+        except Exception as error:
+            print('messenger: dm-label repair failed: %s' % type(error).__name__, flush=True)
+
+    def bridge_contact(self, network, room, meta, contacts):
+        """The bridge's own contact entry for a one-to-one chat (provisioning GET /contacts, read-only, once a pass)."""
+        if network not in contacts:
+            try:
+                listed = self.connectors.request(network, '/contacts', timeout=20).get('contacts')
+                contacts[network] = [c for c in listed if isinstance(c, dict)] if isinstance(listed, list) else []
+            except Exception:
+                contacts[network] = None
+        people = set(meta.get('joined') or []) | set(meta.get('names') or {})
+        bot = '@' + network + 'bot:messenger.internal'
+        people = {p for p in people if p not in (self.owner, bot) and not self.is_me(p)}
+        for entry in contacts[network] or []:
+            if entry.get('dm_room_mxid') == room:
+                return entry
+        found = [e for e in contacts[network] or [] if e.get('mxid') in people]
+        return found[0] if len(found) == 1 else None
+
+    def report_dm_label(self, network, room, meta, entry, listed):
+        """One privacy-safe log line per chat still on a stand-in title (issue 401), repeated only when it changes."""
+        sources = meta.get('sources') or {}
+        contact = 'unavailable' if listed is None else ('none' if entry is None else
+                                                        label_kind(contact_label(entry, ()) or entry.get('name'), ()))
+        line = ('network=%s room=%s room_type=%s room_name=%s channel=%s peers=[%s] others=[%s] topic=%s contact=%s'
+                % (network, hashlib.sha256(room.encode()).hexdigest()[:8], meta.get('room_type') or 'none',
+                   sources.get('room_name', '?'), sources.get('channel', '?'), ','.join(sources.get('peers') or []),
+                   ','.join(sources.get('others') or []), sources.get('topic', '?'), contact))
+        reported = self.__dict__.setdefault('dm_label_reports', {})
+        if reported.get(room) != line:
+            reported[room] = line
+            print('messenger: dm-label stuck ' + line, flush=True)
 
     def rescan_dropped(self):
         """Once per META_VERSION: rooms an older release cached as non-bridged (LINE,

@@ -527,14 +527,24 @@ _PHONE = re.compile(r'\+?[\d\s().-]{5,}\Z')
 _RAW_ID = re.compile(r'(@[^\s:]+:\S+|[uUcCrR][0-9a-f]{32})\Z')
 
 
+# A bridge ghost's own id as a name (Synapse gives a ghost nobody named its localpart, e.g. signal_7c1e...).
+_GHOST_ID = re.compile(r'(?:' + '|'.join(('telegram', 'whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'meta',
+                                          'twitter', 'linkedin', 'gmessages', 'dots')) + r')_(?=\S*\d)[\w=.+-]{6,}\Z')
+# Bridges' own stand-ins for "no name known" (mautrix displayname templates end with "Unknown user").
+STAND_INS = frozenset(('messenger contact', 'direct message', 'unknown user'))
+# mautrix-signal's DM topic with number_in_topic on: "Signal private chat with +44 7700 900123".
+_TOPIC_NUMBER = re.compile(r'private chat with (\+?[\d][\d\s().-]{4,})\s*\Z', re.I)
+
+
 def weak_label(label, own=()):
     """Labels that must never replace a real name: generic fallbacks, phone
     numbers, raw protocol IDs and the owner's own names."""
     if not isinstance(label, str) or not label.strip():
         return True
     label = label.strip()
-    return (label in own or label.endswith(' conversation') or label in ('Messenger contact', 'Direct message')
-            or bool(_PHONE.fullmatch(label)) or bool(_RAW_ID.fullmatch(label)))
+    low = label.lower()
+    return (label in own or low.endswith(' conversation') or low in STAND_INS
+            or bool(_PHONE.fullmatch(label)) or bool(_RAW_ID.fullmatch(label)) or bool(_GHOST_ID.fullmatch(label)))
 
 
 def label_rank(label, own=()):
@@ -545,10 +555,43 @@ def label_rank(label, own=()):
     return 1 if isinstance(label, str) and label.strip() not in own and bool(_PHONE.fullmatch(label.strip())) else 0
 
 
-def dm_label(kind, label, peers, own, fallback):
+def label_kind(label, own=()):
+    """What kind of title a value is, for the privacy-safe naming report (issue 401): never the value itself."""
+    if label is None:
+        return 'absent'
+    if not isinstance(label, str) or not label.strip():
+        return 'empty'
+    label = label.strip()
+    if label in own:
+        return 'own'
+    if _PHONE.fullmatch(label):
+        return 'number'
+    if _RAW_ID.fullmatch(label) or _GHOST_ID.fullmatch(label):
+        return 'raw'
+    return 'standin' if weak_label(label, own) else 'name'
+
+
+def topic_number(topic):
+    """The contact's number from a bridge's DM topic ("Signal private chat with +44 7700 900123"), else None."""
+    found = _TOPIC_NUMBER.search(topic.strip()) if isinstance(topic, str) else None
+    return found.group(1).strip() if found else None
+
+
+def dm_more(state, other):
+    """Weaker title sources for a one-to-one chat, in order (issue 401): the display names of other members that are
+    only invited or have left (a ghost whose join never landed), then the number in the bridge's DM topic."""
+    names = [(e.get('content') or {}).get('displayname') for e in state
+             if e.get('type') == 'm.room.member' and other(e.get('state_key'))
+             and (e.get('content') or {}).get('membership') != 'join']
+    number = topic_number(next(((e.get('content') or {}).get('topic') for e in state if e.get('type') == 'm.room.topic'), None))
+    return [n for n in names if isinstance(n, str) and n.strip()] + ([number] if number else [])
+
+
+def dm_label(kind, label, peers, own, fallback, more=()):
     """The one title rule for a bridged room (issue 401). A one-to-one chat is titled by the other person:
     the room name or the single peer's name, else their number, else `fallback` ('<Network> conversation');
-    never the owner's own name. Groups keep their room name, else the fallback."""
+    never the owner's own name. `more` are weaker sources, in order (a peer that is only invited or left,
+    the number in the bridge's topic, the bridge's contact entry). Groups keep their room name, else the fallback."""
     if kind != 'person':
         return label if isinstance(label, str) and label.strip() else fallback
     names = [n for n in {p for p in peers if isinstance(p, str) and p.strip()}]
@@ -558,7 +601,10 @@ def dm_label(kind, label, peers, own, fallback):
         found = [n for n in names if label_rank(n, own) == rank]
         if len(found) == 1:
             return found[0]
-    return label if isinstance(label, str) and label.strip() and label not in own else fallback
+        found = [n for n in more if label_rank(n, own) == rank]
+        if found:
+            return found[0]
+    return fallback
 
 
 class PeopleStore:
@@ -807,6 +853,35 @@ class PeopleStore:
             changed = True
         self.changed()
         return changed
+
+    def set_identity_kind(self, identity_id, kind):
+        """The bridge says what a room is (issue 401: a DM an older sync filed as a group)."""
+        with self.db() as db:
+            db.execute('UPDATE identity SET kind=?,seq=? WHERE id=?', (kind, self.next_seq(), identity_id))
+        self.changed()
+
+    def repair_person_titles(self):
+        """A list title still on a stand-in ('Signal conversation') while one of that person's chats already has a
+        name or a number takes that name (issue 401). A title the owner set is never touched."""
+        own, fixed = self.own_names(), 0
+        with self.db() as db:
+            rows = db.execute('SELECT p.id,p.display_name,i.label,i.last_used FROM person p JOIN identity i ON i.person_id=p.id '
+                              'WHERE p.name_locked=0').fetchall()
+            best = {}
+            for row in rows:
+                if label_rank(row['display_name'], own) > 0:
+                    continue
+                rank = label_rank(row['label'], own)
+                if rank and (row['id'] not in best or (rank, row['last_used'] or 0) > best[row['id']][:2]):
+                    best[row['id']] = (rank, row['last_used'] or 0, row['label'].strip()[:160])
+            for person_id, (_, _, label) in best.items():
+                seq = self.next_seq()
+                db.execute('UPDATE person SET display_name=? WHERE id=?', (label, person_id))
+                db.execute('UPDATE identity SET seq=? WHERE person_id=?', (seq, person_id))
+                fixed += 1
+        if fixed:
+            self.changed()
+        return fixed
 
     def mark_history_read(self, identity_id, timestamp):
         """Historical lines older than the unread window never create unread badges."""
@@ -2043,7 +2118,7 @@ class UnifiedInbox:
             return {'state': 'unavailable', 'message': error.message, 'logins': [], 'flows': []}
 
     # ---------- Matrix ingest ----------
-    META_TYPES = ('m.room.member', 'm.room.name', 'm.room.avatar', 'm.bridge', 'uk.half-shot.bridge', 'm.room.create')
+    META_TYPES = ('m.room.member', 'm.room.name', 'm.room.avatar', 'm.room.topic', 'm.bridge', 'uk.half-shot.bridge', 'm.room.create')
 
     def room_meta(self, room, data):
         """Room kind/label/member names, cached; full state is fetched only for new rooms or state changes."""
@@ -2063,14 +2138,15 @@ class UnifiedInbox:
         meta = {'network': network, 'telegram': network == 'telegram'}
         if network:
             channel = info.get('channel', {})
-            members = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join' and e.get('state_key') not in (self.owner, '@' + network + 'bot:messenger.internal') and not self.is_me(e.get('state_key'))]
+            other = lambda user: user not in (self.owner, '@' + network + 'bot:messenger.internal') and not self.is_me(user)
+            members = [e for e in state if e['type'] == 'm.room.member' and e.get('content', {}).get('membership') == 'join' and other(e.get('state_key'))]
             # bridgev2 emits room_type in bridge info; fallback counts real participants.
             room_type = info.get('com.beeper.room_type.v2') or channel.get('fi.mau.' + network + '.type') or info.get('com.beeper.room_type')
             meta['space'] = any(e['type'] == 'm.room.create' and e.get('content', {}).get('type') == 'm.space' for e in state)
             meta['kind'] = 'person' if room_type in ('dm', 'private') or (room_type is None and len(members) == 1) else 'group'
             label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
             meta['label'] = dm_label(meta['kind'], label, [(e.get('content') or {}).get('displayname') for e in members],
-                                     self.store.own_names(), network.title() + ' conversation')
+                                     self.store.own_names(), network.title() + ' conversation', dm_more(state, other))
             meta['names'] = {e.get('state_key'): (e.get('content') or {}).get('displayname') for e in state if e['type'] == 'm.room.member' and (e.get('content') or {}).get('displayname')}
             if network == 'whatsapp' and isinstance(channel.get('id'), str):
                 meta['channel_id'] = channel['id']  # the portal jid: tells the Status Broadcast chat apart
