@@ -80,9 +80,9 @@ async function settle(page, before, want) {
   await page.waitForTimeout(600);
 }
 
-async function sentBubble(page) {
+async function sentBubble(page, clips) {
   const row = page.locator('.u-row:has(.u-media video)').last();
-  const r = {videoBubble: await row.count(), paperclip: await page.locator('.u-row .u-file').count()};
+  const r = {videoBubble: Math.min(1, await row.count()), paperclip: await page.locator('.u-row .u-file').count() - clips};
   if (!r.videoBubble) return r;
   r.poster = await row.locator('video').evaluate(v => v.poster || '');
   r.label = await row.locator('.u-media').getAttribute('aria-label');
@@ -98,7 +98,7 @@ async function sentBubble(page) {
   for (const network of ['line', 'telegram', 'whatsapp', 'signal', 'wizard']) {
     const t = await setup(browser);
     await openChat(t.page, network);
-    const before = sends().length + lines(st.marmot).length;
+    const before = sends().length + lines(st.marmot).length, clips = await t.page.locator('.u-row .u-file').count();
     await pick(t.page, 'Photo or video', [clip]);
     await t.page.locator('.u-attach-strip .ch-att').first().waitFor({timeout: 10000});
     await t.page.waitForTimeout(800);
@@ -109,7 +109,7 @@ async function sentBubble(page) {
     r.uploads = t.uploads; r.post = t.posts[0] && {upload_id: !!t.posts[0].upload_id, thumb: !!t.posts[0].thumb_upload_id, media: t.posts[0].media};
     if (network === 'wizard') r.marmot = lines(st.marmot).slice(-1)[0];
     else { const b = sends().slice(-1)[0]; r.event = b && {msgtype: b.msgtype, mimetype: b.info?.mimetype, size: b.info?.size, w: b.info?.w, h: b.info?.h, duration: b.info?.duration, thumb: b.info?.thumbnail_url, thumbInfo: b.info?.thumbnail_info, body: b.body}; }
-    r.bubble = await sentBubble(t.page);
+    r.bubble = await sentBubble(t.page, clips);
     await t.page.screenshot({path: path.join(out, network + '-sent.png')});
     // Opened again later (no phone copy any more): the box's thumbnail is the frame, and it loads.
     await t.page.reload(); await t.page.locator('.u-person, .u-thread-body').first().waitFor({timeout: 20000}); await t.page.waitForTimeout(500); await openChat(t.page, network);
