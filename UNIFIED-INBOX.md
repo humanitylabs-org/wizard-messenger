@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.122
+
+- Background video download is on for everyone (issue 320): the phone downloads videos up to 25 MB (3 per chat, after the photos) from the newest chats while Messenger is open, on Wi-Fi only unless this device chose Always, and the bubble plays the kept copy, so one tap starts it at once. Bigger videos stream on tap; GIFs and stickers are left alone. The `video-prefetch` switch is removed and a stored value for it is ignored. Guard: `tests/video_prefetch_browser.cjs`. Image built from main 3ede32d (PR #429): `sha-3ede32d8db1c4c83949debf21931ab5008c12ede@sha256:25bd89b6191ab115075dc6b6e8f13f0fd59de0d10b6d42516282bd51146545ea`.
+
 ## 0.2.0-unified.16.121
 
 - Share files to Messenger is on for everyone (issue 314): Messenger always tells Wizard's share sheet it takes files as well as text, links and photos. A shared file (a PDF, an .md from a chat) opens the chosen chat, or the Send to… picker, with the file as an attachment in the message box, kept in the chat's draft until you tap Send; over 25 MB says it is too big. The `share-files` switch is removed and a stored value for it is ignored. Image built from main fe4a584 (PR #427): `sha-fe4a5846b057178afe2c16992ceea72b7b899ef1@sha256:057308d4f4427243e3c40e253f44ac6fb036c53ae59928a0e914bf00ff292a0c`.
