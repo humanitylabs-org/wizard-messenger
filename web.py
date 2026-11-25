@@ -309,9 +309,12 @@ class ViewHandler(Handler):
             return
         if self.headers.get('Authorization'):
             return super()._authorize()
+        # A ticketed photo/video/avatar load from Wizard's sandboxed window (wizard-os issue 133) comes cross-site with
+        # no cookie, and the owner edge passes it on unsigned (issue 413). The ticket, minted only for a live owner
+        # session, is the proof here, also on a trusted Wizard; it opens nothing but MEDIA_TICKET_ROUTES reads.
+        if self._media_ticket(): return
         if self.service.trusted_owner.enabled:
             self._trusted_owner()
-        if self._media_ticket(): return
         self._origin(required=self.command in ['POST','DELETE','PUT','PATCH'])
         session=self._session()
         if session is None: raise EngineError('unauthorized','Open Messenger from Wizard to reconnect',401)
@@ -637,7 +640,7 @@ class ViewHandler(Handler):
             return self._agent_levels(method)
         if self.service.trusted_owner.enabled and self.headers.get('Authorization') and path in ('/api/view/session','/api/view/unlock','/api/view/trusted-owner'):
             raise EngineError('owner_only','Owner browser access is required',403)
-        if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/'):
+        if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/') and not self._media_ticket():
             self._trusted_owner()
         if path=='/api/view/trusted-owner' and method=='GET':
             self._trusted_owner()
