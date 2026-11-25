@@ -54,11 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'share-files', 'name': 'Share files to Messenger',
-                'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers '
-                               'Messenger. The file waits in the chosen chat\'s message box as an attachment, like '
-                               'one added with +, until you tap Send. Files over 25 MB are too big.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#314']}, {
                 'id': 'video-prefetch', 'name': 'Background video download',
                 'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your '
                                'newest chats, on Wi-Fi only unless you chose Always for photos, so a tapped video plays '
@@ -427,16 +422,34 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('row-tap-menu', saved['switches'])
             self.assertNotIn('row-tap-menu', saved.get('feedback', {}))
 
+    def test_share_files_is_gone_and_its_stored_value_cleared(self):
+        # Issue 314: Share files to Messenger was approved (switch-default), so it is always on; a stored value and
+        # its feedback from before are ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"share-files": false, "photo-warm": true}, '
+                            '"feedback": {"share-files": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('share-files', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('share-files', store.listing()['feedback'])
+            with self.assertRaises(UnknownSwitch):
+                store.set('share-files', True)
+            store.set('photo-instant', True)
+            saved = json.loads(path.read_text())
+            self.assertNotIn('share-files', saved['switches'])
+            self.assertNotIn('share-files', saved.get('feedback', {}))
+            self.assertTrue(saved['switches']['photo-warm'])
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             store = SwitchStore(path)
-            store.vote('share-files', 'down')
-            store.set('share-files', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'share-files': True},
-                                                            'feedback': {'share-files': {'tried': True, 'vote': 'down'}}})
-            store.set('share-files', False)
-            self.assertEqual(SwitchStore(path).listing()['feedback'], {'share-files': {'tried': True, 'vote': 'down'}})
+            store.vote('video-prefetch', 'down')
+            store.set('video-prefetch', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'video-prefetch': True},
+                                                            'feedback': {'video-prefetch': {'tried': True, 'vote': 'down'}}})
+            store.set('video-prefetch', False)
+            self.assertEqual(SwitchStore(path).listing()['feedback'], {'video-prefetch': {'tried': True, 'vote': 'down'}})
             with self.assertRaises(UnknownSwitch):
                 store.vote('gone', 'up')
 
@@ -446,7 +459,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
 
 
 if __name__ == '__main__':

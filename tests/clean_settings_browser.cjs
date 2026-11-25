@@ -14,7 +14,7 @@ const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming photos as they arrive.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
-  ['share-files', 'Share files to Messenger', 'Sharing a file from another Wizard app offers Messenger.']];
+  ['video-prefetch', 'Background video download', 'The phone also quietly downloads videos.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, listed] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['1280-noswitches', {width: 1280, height: 860}, false]]) {
@@ -132,7 +132,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       assert.deepEqual(box.feedback['photo-warm'], {tried: true, vote: 'up'});
       // Draft ready from the chat list is on for everyone (issue 201): the hint names the Drafts toggle and the hold.
       assert.match(await pick.innerText(), /Drafts at the top of a chat, or by holding a chat/);
-      const rtm = tryBox.locator('[data-try-id="share-files"]');
+      const rtm = tryBox.locator('[data-try-id="video-prefetch"]');
       await rtm.getByRole('switch').click();
       await until(async () => await rtm.getByRole('switch').getAttribute('aria-checked') === 'true');
       const fits = await pick.locator('.u-view-btn').evaluateAll(bs => bs.every(b => b.scrollWidth <= b.clientWidth));

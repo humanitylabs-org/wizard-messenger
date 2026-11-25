@@ -1,18 +1,17 @@
-// Issue 314 (switch share-files): a file shared from another Wizard app (an .md from a chat, a PDF) lands in the
+// Issue 314 (on for everyone): a file shared from another Wizard app (an .md from a chat, a PDF) lands in the
 // chosen chat's composer as an attachment chip, exactly like one added with +, and is never sent on its own.
 // Synthetic API, no container and no shell (WizardApp.share and attachChip are stubs):
 //   PLAYWRIGHT_MODULE=... node tests/share_file_receive_browser.cjs [outdir]
-// OFF=1 serves the switch off and checks Messenger neither offers itself for files nor takes one.
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const root = path.resolve(process.env.STATIC_DIR || path.join(__dirname, '../static')), out = path.resolve(process.argv[2] || 'share-file-shots');
 const L = require(path.join(root, 'app.js'));
 fs.mkdirSync(out, {recursive: true});
 const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'};
-const now = Date.now(), min = 60e3, ON = !process.env.OFF;
+const now = Date.now(), min = 60e3;
 const person = {id: 'ann', display_name: 'Ann Lee', avatar: null, identities: [{id: 'ann-i', network: 'whatsapp', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false,
   low_priority: false, last: {text: 'Hi', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
-const switches = [{id: 'share-files', name: 'Share files to Messenger', description: 'x', on: ON, default: false, tried: ON, vote: null, issues: ['humanitylabs-org/wizard-messenger#314']}];
+const switches = []; // no switch: files are always taken
 
 (async () => {
   const browser = await chromium.launch();
@@ -70,14 +69,7 @@ const switches = [{id: 'share-files', name: 'Share files to Messenger', descript
   await page.waitForTimeout(1200); // switches load at 300 ms
   const accepts = await page.evaluate(() => window.__accepts);
   const share = extra => page.evaluate(x => window.__receive({id: 's1', kind: 'file', file: new Blob(['# Plan\n\nShip it.\n'], {type: 'text/markdown'}), name: 'plan.md', mime: 'text/markdown', size: 17, ...x}), extra);
-  if (!ON) {
-    assert.ok(accepts.every(a => a === 'text,url,image'), 'switch off: Messenger never offers itself for files: ' + accepts);
-    assert.equal(await share({target: 'ann'}), false, 'switch off: a shared file stays pending in Wizard');
-    assert.equal(await page.locator('.wz-attach-chip').count(), 0);
-    console.log(JSON.stringify({accepts, errors}, null, 2)); assert.deepEqual(errors, []);
-    await browser.close(); return;
-  }
-  assert.equal(accepts.at(-1), 'text,url,image,file', 'switch on: Messenger tells the share sheet it takes files: ' + accepts);
+  assert.ok(accepts.length && accepts.every(a => a === 'text,url,image,file'), 'Messenger tells the share sheet it takes files: ' + accepts);
 
   // 1. A person picked in the share sheet: the chat opens with the file as a chip in the composer, nothing sent.
   assert.equal(await share({target: 'ann'}), true);
