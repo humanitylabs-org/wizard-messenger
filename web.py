@@ -496,10 +496,9 @@ class ViewHandler(Handler):
             self.close_connection=True
             return e.status,{'ok':False,'error':e.message,'code':e.code}
     def _unread(self,method):
-        """Issue 296 (switch unread-count): the unread chat count for the phone's home-screen icon. Read-only and
-        a number only. Owner only on the inbox feed's boundary: the Wizard ingress proof on a trusted install (the
-        phone's native call sends Origin only), else the owner's view session; never a bearer. Switch off: no
-        such route (404), so the phone leaves its icon alone."""
+        """Issue 296: the unread chat count for the phone's home-screen icon (on for everyone since James's yes).
+        Read-only and a number only. Owner only on the inbox feed's boundary: the Wizard ingress proof on a trusted
+        install (the phone's native call sends Origin only), else the owner's view session; never a bearer."""
         if self.headers.get('Authorization'):
             raise EngineError('owner_only','Only the owner can read the unread count',403)
         if self.service.trusted_owner.enabled:
@@ -507,8 +506,6 @@ class ViewHandler(Handler):
             self._origin()
         else:
             self._authorize()
-        if not self.service.switches.is_on('unread-count'):
-            raise EngineError('not_found','No such route',404)
         if method!='GET':
             raise EngineError('method_not_allowed','Use GET /api/unread',405)
         store=getattr(self.service.unified,'store',None)
@@ -518,13 +515,11 @@ class ViewHandler(Handler):
         private=self.service.private_unread.count(self.service.engine)
         return 200,{'ok':True,'result':{'unread_total':store.unread_total()+private}}
     def _private_seen(self,method):
-        """Issue 302 (switch unread-count): the view hands the box its private chats' seen marks (one message id and
+        """Issue 302: the view hands the box its private chats' seen marks (one message id and
         a quiet flag per chat, nothing else), so the phone icon count includes them. Owner session + CSRF only."""
         if self.headers.get('Authorization'):
             raise EngineError('owner_only','Only the owner can mark private chats seen',403)
         self._authorize()
-        if not self.service.switches.is_on('unread-count'):
-            raise EngineError('not_found','No such route',404)
         if method!='POST':
             raise EngineError('method_not_allowed','Use POST /api/view/private-seen',405)
         from engine import group_id
