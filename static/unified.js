@@ -4985,7 +4985,8 @@
   // size and length, all from the file itself. A video this browser can't decode (an HEVC .mov on some phones) still
   // goes as a video, only without a preview; the box sends whatever it has.
   async function prepareVideo(f) {
-    const local = URL.createObjectURL(f), v = node('video'), out = {video: true, blob: f, local, url: '', thumb: null};
+    // A Blob view of the file (no copy): only its bytes play here, never its name.
+    const local = URL.createObjectURL(new Blob([f], {type: f.type || 'video/mp4'})), v = node('video'), out = {video: true, blob: f, local, url: '', thumb: null};
     v.muted = true; v.playsInline = true; v.preload = 'auto'; v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
     const once = (ok, ms) => new Promise(resolve => { const t = setTimeout(() => resolve(false), ms); const done = r => { clearTimeout(t); v.onloadeddata = v.onseeked = v.onerror = null; resolve(r); }; v.onerror = () => done(false); if (ok === 'loaded') v.onloadeddata = () => done(true); else v.onseeked = () => done(true); });
     try {
