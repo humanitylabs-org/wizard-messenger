@@ -50,6 +50,8 @@ async function fixture(saved = []) {
     fetch: async url => { const id = url.split('/').pop(); if (holdGet) { const gate = holdGet; holdGet = null; await gate.promise; }
       return {ok: !failGet.has(id), blob: async () => new Blob(['synthetic'], {type: 'image/png'})}; },
     preparePhoto: async f => ({blob: f, albumBlob: f, url: 'blob:synthetic', w: 1, h: 1}),
+    // Issue 402: restored attachments are sorted photo / video / file by the view's own rule.
+    attachKind: require(path.join(__dirname, '../static/unified.js')).attachKind, prepareVideo: async f => ({video: true, blob: f, local: 'blob:synthetic', url: ''}),
     draftWrites: writes, draftWrote() { context.draftWrites++; }, refreshDraftIndex() {},
     fetchDrafts: async () => row ? [copy(row)] : [], closedDrafts: new Set(), agentName: () => 'Owner',
     SD_SAVE_MS: 500000, SD_POLL_MS: 500000, setTimeout: (fn, ms) => ms === 0 ? setTimeout(fn, 0) : 0,

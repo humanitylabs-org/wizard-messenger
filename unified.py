@@ -2885,7 +2885,10 @@ class UnifiedInbox:
     def send(self, person_id, payload):
         # Serialize duplicate taps, including the local rows after the Matrix receipt.
         with self.lock:
-            return self._send(person_id, payload)
+            result = self._send(person_id, payload)
+            if isinstance(payload.get('thumb_upload_id'), str):
+                self.drop_upload(payload['thumb_upload_id'])  # a video's first frame, sent with it (issue 402)
+            return result
 
     def _send(self, person_id, payload):
         """One-call send for chats that need no translation review; the client id is the Matrix
@@ -2934,7 +2937,7 @@ class UnifiedInbox:
         mentions = find_mentions(body, self.store.members(identity))
         reply_to = self.reply_target(identity, payload.get('reply_to'))
         caption = None
-        if identity['network'] in CAPTIONLESS_PHOTOS and body and upload and upload['kind'] == 'image':
+        if identity['network'] in CAPTIONLESS_PHOTOS and body and upload and upload['kind'] in ('image', 'video'):
             caption, body, mentions = (body, mentions), '', []
         if identity['network'] not in MATRIX_NETWORKS:
             if upload:
@@ -2953,7 +2956,7 @@ class UnifiedInbox:
         if any(not u.get('mxc') for u in (gallery or ([upload] if upload else []))):
             fail('upload_expired', 'Attach the file again', 409)
         if upload:
-            msgtype, content, media = self.media_content(upload, body, {} if gallery else payload)
+            msgtype, content, media = self.media_content(upload, body, {} if gallery else payload, self.video_thumb(person_id, upload, payload))
         else:
             content = {'msgtype': 'm.text', 'body': body}
         if gallery and identity['network'] == 'line':
@@ -3133,7 +3136,14 @@ class UnifiedInbox:
                                        reply_to=reply_to if i == 0 else None, client_id=client_id if i == 0 else None,
                                        album='matrix:' + event_id, source_event=event_id)
 
-    def media_content(self, upload, caption, payload):
+    def video_thumb(self, person_id, upload, payload):
+        """The first-frame JPEG the view made for a video (issue 402), uploaded as its own image; None if there is none."""
+        thumb = self.uploads.get(payload.get('thumb_upload_id')) if upload['kind'] == 'video' and isinstance(payload.get('thumb_upload_id'), str) else None
+        if not thumb or thumb['person_id'] != person_id or thumb['kind'] != 'image' or thumb['expires'] <= time.time() or not thumb.get('mxc'):
+            return None
+        return thumb
+
+    def media_content(self, upload, caption, payload, thumb=None):
         info = {'mimetype': upload['mime'], 'size': upload['size']}
         if upload['kind'] == 'file':
             media = {k: upload[k] for k in ('mxc', 'mime', 'size', 'filename')}
@@ -3164,13 +3174,26 @@ class UnifiedInbox:
                 step = max(1, len(wave) / 48)
                 media['waveform'] = [int(100 * wave[int(i * step)] / top) for i in range(min(48, len(wave)))]
             return 'm.audio', content, {k: v for k, v in media.items() if v is not None}
+        if upload['kind'] == 'video':
+            # Issue 402: a picked video goes as a video (bridges send it to LINE, WhatsApp, Signal, Telegram... as one),
+            # with the first frame the phone drew as its thumbnail, so the sent bubble shows it and plays inline.
+            if thumb:
+                info['thumbnail_url'] = thumb['mxc']
+                info['thumbnail_info'] = {'mimetype': thumb['mime'], 'size': thumb['size']}
+                for key in ('thumb_w', 'thumb_h'):
+                    if isinstance(meta.get(key), int) and 0 < meta[key] < 10 ** 5:
+                        info['thumbnail_info'][key[-1]] = meta[key]
+                media['thumb'] = thumb['mxc']
+            media['filename'] = upload['filename']
+            content = {'msgtype': 'm.video', 'body': caption or upload['filename'], 'filename': upload['filename'], 'url': upload['mxc'], 'info': info}
+            return 'm.video', content, {k: v for k, v in media.items() if v is not None}
         content = {'msgtype': 'm.image', 'body': caption or upload['filename'], 'filename': upload['filename'], 'url': upload['mxc'], 'info': info}
         return 'm.image', content, {k: v for k, v in media.items() if v is not None}
 
     def upload(self, person_id, kind, data, name=''):
         """Owner upload → Synapse media repo. Returns an opaque, person-bound id."""
-        if kind not in ('image', 'voice', 'file'):
-            fail('invalid_upload', 'Choose a photo, voice note or file')
+        if kind not in ('image', 'voice', 'file', 'video'):
+            fail('invalid_upload', 'Choose a photo, video, voice note or file')
         person, identity = self.channel(person_id)
         # A merged chat can reply on either side, so keep what each side needs: a Synapse copy for the
         # bridges, a private local copy for Wizard chats (encrypted and sent to Blossom only at send time).
@@ -3181,9 +3204,18 @@ class UnifiedInbox:
         if kind == 'voice' and not bridged:
             fail('media_unsupported', 'Voice notes are not available in Wizard chats yet', 409)
         if not 0 < len(data) <= UPLOAD_MAX:
-            fail('too_large', 'Files up to 25 MB can be sent', 413)
+            fail('too_large', ('Videos' if kind == 'video' else 'Files') + ' up to 25 MB can be sent', 413)
         mime = sniff(data)
-        if kind == 'file':
+        if kind == 'video':
+            # Issue 402: MP4 (phones), QuickTime (iPhone .mov) and WebM. The sniffer reads their containers as audio
+            # or as MP4; the picker said video, so the container decides the video type.
+            mime = {'video/mp4': 'video/quicktime' if data[8:12] == b'qt  ' else 'video/mp4', 'audio/mp4': 'video/mp4', 'audio/webm': 'video/webm'}.get(mime)
+            if not mime:
+                fail('invalid_upload', 'That video type is not supported here. Send it as a file.', 415)
+            ext = {'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm'}[mime]
+            stem = Path(file_name(name)).stem if name else ''
+            filename = (stem if stem and stem != 'file' else 'video') + '.' + ext
+        elif kind == 'file':
             # Original names stay in the message, not the upload URL (James, 26 Oct 2026).
             mime, filename = mime or 'application/octet-stream', file_name(name)
         else:
@@ -3203,7 +3235,8 @@ class UnifiedInbox:
         mxc = path = None
         if bridged:
             started = time.time()
-            mxc = self.matrix_upload(data, 'attachment' if kind == 'file' else filename, mime)['content_uri']
+            # Fixed neutral upload names: the owner's own file name stays in the message, never in the upload URL.
+            mxc = self.matrix_upload(data, 'attachment' if kind == 'file' else 'video.' + ext if kind == 'video' else filename, mime)['content_uri']
             self.timing('upload', started)
         upload_id = secrets.token_hex(16)
         now = time.time()
@@ -3254,9 +3287,10 @@ class UnifiedInbox:
         items = []
         for i, u in enumerate(uploads):
             sent = attachments[i] if i < len(attachments) else {}
-            item = {'sha256': sent.get('sha256'), 'mime': u['mime'], 'filename': u['filename'], 'size': u['size'], 'image': u['kind'] == 'image'}
+            item = {'sha256': sent.get('sha256'), 'mime': u['mime'], 'filename': u['filename'], 'size': u['size'], 'image': u['kind'] == 'image',
+                    'video': u['kind'] == 'video'}
             m = meta[i] if i < len(meta) and isinstance(meta[i], dict) else {}
-            for key in ('w', 'h'):
+            for key in ('w', 'h', 'duration'):
                 if isinstance(m.get(key), int) and 0 < m[key] < 10 ** 8:
                     item[key] = m[key]
             items.append(item)
@@ -3274,13 +3308,15 @@ class UnifiedInbox:
             for i, item in enumerate(items):
                 mime = item.get('mime') or 'application/octet-stream'
                 photo = mime in ('image/jpeg', 'image/png', 'image/gif', 'image/webp') and item.get('image', True)
+                # Issue 402: a video sent as a video (or received in a Wizard chat) plays inline like a bridged one.
+                video = mime in ('video/mp4', 'video/quicktime', 'video/webm') and item.get('video', True)
                 media = {'marmot': {'group': identity['address'], 'sha256': item.get('sha256')}, 'mime': mime,
                          'filename': item.get('filename') or ('photo' if photo else 'file')}
-                for key in ('size', 'w', 'h'):
+                for key in ('size', 'w', 'h', 'duration'):
                     if item.get(key):
                         media[key] = item[key]
                 self.store.add_message(event if i == 0 else event + '#photo:%02d' % i, identity, sender, outgoing, body if i == 0 else '', stamp,
-                                       msgtype='m.image' if photo else 'm.file', media=media, client_id=client_id if i == 0 else None,
+                                       msgtype='m.image' if photo else 'm.video' if video else 'm.file', media=media, client_id=client_id if i == 0 else None,
                                        album=album, source_event=event if album else None, push_live=push_live and i == 0)
         return event
 

@@ -354,6 +354,12 @@ button { touch-action: manipulation; }
 .u-bar .u-quote { flex: 1; min-width: 0; margin: 0; background: var(--surface); }
 .u-attach-strip { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
 .u-attach-strip .u-attach-open { cursor: zoom-in; }
+/* Issue 402: a staged video shows its first frame with a play badge and its length, like a sent one. */
+.u-attach-strip .u-attach-video { position: relative; cursor: pointer; }
+.u-attach-video .u-attach-play { position: absolute; inset: 0; margin: auto; width: 2.25rem; height: 2.25rem; border-radius: 50%; background: color-mix(in srgb, black 55%, transparent); color: white; display: grid; place-items: center; font-size: .875rem; pointer-events: none; z-index: 1; }
+.u-attach-video .u-attach-dur { position: absolute; left: .375rem; bottom: .375rem; font-size: .6875rem; color: white; background: color-mix(in srgb, black 50%, transparent); padding: .125rem .375rem; border-radius: .5rem; pointer-events: none; z-index: 1; }
+.u-attach-video:not(.ch-attimg) .u-attach-play { position: static; margin: 0; width: 1.75rem; height: 1.75rem; flex: none; }
+.u-attach-video:not(.ch-attimg) .u-attach-dur { position: static; }
 .u-recording { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 2px 0 4px; }
 .u-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; animation: u-pulse 1s infinite; }
 .u-rec-time { font-size: 15px; min-width: 40px; }
