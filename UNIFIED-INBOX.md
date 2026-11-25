@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.119
+
+- Signal chat names, second round (issue 401): one-to-one chats no longer stay on "Signal conversation". Besides the room name and the joined contact, Messenger now also reads a contact who is only invited, the number in the bridge's topic and the bridge's own contact list (name, else username, else number). It treats the bridge's "Unknown user" and a contact's raw id as stand-ins, not names. Chats that are still stuck are re-read after every start and then every 15 minutes. A one-to-one chat an older version filed as a group moves back. Each chat that is still stuck writes one log line (`messenger: dm-label stuck ...`) that lists which name sources exist and what kind each is, with no names or numbers. Image built from main 738dfb9 (PR #423): `sha-738dfb959258e627d25165782b0ac772695b3041@sha256:fe74572031fbea0c9c521a8265dd85958d90bd5794f8d6e832f4b5c0b33565db`.
+
 ## 0.2.0-unified.16.118
 
 - Tap beside a message for its menu, on for everyone (issue 182): James said yes at show-and-tell, so the `row-tap-menu` switch is gone. On a phone, tapping the empty space to the right of someone's photo, video, album or text opens that message's menu (the same one holding it opens); tapping the photo still opens the viewer, and dragging still scrolls. A stored value for the old switch is ignored and cleared. Image built from main 127b1fa (PR #421): `sha-127b1fa3e262383d875d2d01f018f666deb542dd@sha256:8ac412b1b62524760af28afffb20ff7330b21feb55ea0f91043484626e6b3a71`.
