@@ -54,11 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'row-tap-menu', 'name': 'Tap beside a message for its menu',
-                'description': "On a phone, tapping the empty space to the right of someone's message opens that "
-                               "message's menu (Reply, react, Select), the same one holding it opens. Tapping a photo "
-                               'still opens it.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#182']}, {
                 'id': 'unread-count', 'name': 'Unread count on the phone icon',
                 'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never '
                                'names or messages), so the Messenger icon on your home screen can show it. Muted, '
@@ -421,16 +416,33 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('phone-notifications', saved['switches'])
             self.assertNotIn('phone-notifications', saved.get('feedback', {}))
 
+    def test_row_tap_menu_is_gone_and_its_stored_value_cleared(self):
+        # Issue 182: Tap beside a message for its menu was approved (switch-default), so it is always on; a stored
+        # value and its feedback from before are ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"row-tap-menu": false, "photo-warm": true}, '
+                            '"feedback": {"row-tap-menu": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('row-tap-menu', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('row-tap-menu', store.listing()['feedback'])
+            with self.assertRaises(UnknownSwitch):
+                store.set('row-tap-menu', True)
+            store.set('photo-instant', True)
+            saved = json.loads(path.read_text())
+            self.assertNotIn('row-tap-menu', saved['switches'])
+            self.assertNotIn('row-tap-menu', saved.get('feedback', {}))
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             store = SwitchStore(path)
-            store.vote('row-tap-menu', 'down')
-            store.set('row-tap-menu', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'row-tap-menu': True},
-                                                            'feedback': {'row-tap-menu': {'tried': True, 'vote': 'down'}}})
-            store.set('row-tap-menu', False)
-            self.assertEqual(SwitchStore(path).listing()['feedback'], {'row-tap-menu': {'tried': True, 'vote': 'down'}})
+            store.vote('share-files', 'down')
+            store.set('share-files', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'share-files': True},
+                                                            'feedback': {'share-files': {'tried': True, 'vote': 'down'}}})
+            store.set('share-files', False)
+            self.assertEqual(SwitchStore(path).listing()['feedback'], {'share-files': {'tried': True, 'vote': 'down'}})
             with self.assertRaises(UnknownSwitch):
                 store.vote('gone', 'up')
 
@@ -440,7 +452,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'row-tap-menu', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
 
 
 if __name__ == '__main__':

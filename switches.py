@@ -37,11 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'row-tap-menu', 'name': 'Tap beside a message for its menu',
-     'description': "On a phone, tapping the empty space to the right of someone's message opens that message's menu "
-                    '(Reply, react, Select), the same one holding it opens. Tapping a photo still opens it.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#182']},
     {'id': 'unread-count', 'name': 'Unread count on the phone icon',
      'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
                     'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
