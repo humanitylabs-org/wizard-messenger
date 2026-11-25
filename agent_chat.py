@@ -222,15 +222,15 @@ def state(unified):
 
 
 def owner_state(unified):
-    """The owner's view of the chat. Issue 325: with switch agent-inbox-door on, it also says whether the chat is a door
-    to the box's agent inbox right now, and starts a background pass (resends, pings, the card's state)."""
+    """The owner's view of the chat. Issue 325: when Messenger has its app token, it also says whether the chat is a
+    door to the box's agent inbox right now, and starts a background pass (resends, pings, the card's state)."""
     out = state(unified)
     door = _door(unified)
-    if door is not None and door.switched():
+    if door is not None and door.enabled():
         door.kick()
         out['door'] = {'on': door.opened()}
     elif any(e.get('door') == 'pending' for e in out['entries']):
-        door_release(unified, switched_off=True)   # switched off with notes still unsent: they go to the agent as before
+        door_release(unified, switched_off=True)   # token gone with notes still unsent: they go to the agent as before
         out = state(unified)
     return out
 
@@ -348,7 +348,7 @@ def transcript(unified, payload):
 
 def sweep(unified):
     door = _door(unified)
-    if door is not None and door.switched() and door.probe():
+    if door is not None and door.enabled() and door.probe():
         card = door.sweep()
         if card is not None:
             return _door_sweep(unified, card)
@@ -368,7 +368,7 @@ def sweep(unified):
     return owner_state(unified)
 
 
-# ---- issue 325 (switch agent-inbox-door): the box's agent inbox does the work ----
+# ---- issue 325: the box's agent inbox does the work (when it is on) ----
 def _door_sweep(unified, card):
     """The box drew the card: the owner's Sweep and the card are kept as a pair, like a sweep the agent answered."""
     store = unified.store
@@ -530,7 +530,7 @@ def door_release(unified, switched_off=False):
     """The door closed (inbox off, no answer) with notes still unsent: they go to the agent as before. A note whose
     capture already went out stays pending and is sent again with the same item id once the door opens (the box may
     already have it, so handing it to Messenger's agent too would do the work twice). Only the owner turning the
-    switch off hands those back as well, so no note is ever stuck."""
+    box inbox off (or the app token going away) hands those back as well, so no note is ever stuck."""
     store = unified.store
     with store.lock:
         data = _load(store)
@@ -611,7 +611,7 @@ def read(unified, payload=None):
 
 def _door_on(unified):
     door = _door(unified)
-    return door is not None and door.switched()
+    return door is not None and door.enabled()
 
 
 def dispatch(unified, method, suffix, payload, query=None, raw=None):

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {agentChatRows, agentChatSnippet, doorCard} = require('../static/unified.js');
-// Issue 325 (switch agent-inbox-door): the box's agent inbox card as the Agent chat draws it.
+// Issue 325: the box's agent inbox card as the Agent chat draws it.
 
 const card = {schema: 'wizard.agent-sweep/1', id: 'sweep_' + 'a'.repeat(24), at: 1,
   waiting: {items: [

@@ -534,7 +534,7 @@
         })};
     });
   }
-  // Issue 325 (switch agent-inbox-door): the box's agent inbox card (wizard-agent-service agent-sweep.mjs composeCard /
+  // Issue 325: the box's agent inbox card (wizard-agent-service agent-sweep.mjs composeCard /
   // cardView), as the Agent chat draws it: Waiting items with their recommendation and up to 4 answer buttons, Done,
   // and the counts. Only record fields, never free text. A `confirm` item is never answered here ("Open to confirm").
   function doorCard(card) {

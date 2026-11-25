@@ -1,7 +1,8 @@
-"""Messenger's Agent chat as a door to the box's one agent inbox (issue 325, switch `agent-inbox-door`, off by default).
+"""Messenger's Agent chat as a door to the box's one agent inbox (issue 325, on for everyone).
 
 The Agent Service keeps one agent inbox on the box (wizard-agent-service docs/agent-inbox.md, "App doors", issue 569).
-With this switch on and that inbox on, the Agent chat stops keeping its own task list:
+When that inbox is on (the box switch `wizard/agent-inbox`, the only off switch), the Agent chat stops keeping its own
+task list:
 
 - Probe: `GET /wizard/v1/agent-inbox/doors` with Messenger's own app token, at most every PROBE_EVERY seconds.
   200 = door mode. 404 (the owner's inbox is off), a refusal, no token or no answer = the Agent chat as it was.
@@ -15,8 +16,8 @@ With this switch on and that inbox on, the Agent chat stops keeping its own task
 - Pings: urgent alerts the box already decided (`GET .../pings?keep=1`, after `POST .../doors {pings: true}`) arrive
   as the Agent chat's one-line ping. Each is acked (`POST .../pings {ack}`) only after it is stored here.
 
-Every call is best effort and bounded by TIMEOUT: the Service is on the same box. With the switch off nothing here
-runs, and the Agent chat state is exactly what it was.
+Every call is best effort and bounded by TIMEOUT: the Service is on the same box. Without an app token nothing here
+runs, and with the box inbox off (any answer but 200 `on: true`) the Agent chat is exactly what it was.
 """
 from __future__ import annotations
 
@@ -28,7 +29,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-SWITCH = 'agent-inbox-door'
 APP = 'messenger'
 BASE = 'http://wizard-agent-service:8787'
 PATH = '/wizard/v1/agent-inbox'
@@ -89,6 +89,7 @@ class Door:
         self.pings = False
         self.passed_at = 0.0
         self.running = False
+        self.box_off = False
 
     # ---- the Service ----
     def call(self, method, path, body=None):
@@ -99,20 +100,24 @@ class Door:
             return 0, None
         return http_call(self.base, token, method, PATH + path, body)
 
-    def switched(self):
-        on = getattr(self.unified, 'switch_on', None)
-        return bool(on(SWITCH)) if callable(on) else False
+    def enabled(self):
+        """Can this door reach the Service at all (Messenger has its app token)? Without one nothing here runs."""
+        if self.call_fn is not None:
+            return True
+        return bool(self.token if self.token is not None else _token())
 
     def probe(self, force=False):
-        """Door mode right now (cached for PROBE_EVERY seconds). Never true with the switch off."""
-        if not self.switched():
-            self.is_open = False
+        """Door mode right now (cached for PROBE_EVERY seconds). Never true without a token."""
+        if not self.enabled():
+            self.is_open, self.box_off = False, False
             return False
         if not force and time.time() - self.probed_at < PROBE_EVERY:
             return self.is_open
         status, body = self.call('GET', '/doors')
         self.probed_at = time.time()
         self.is_open = status == 200 and isinstance(body, dict) and body.get('on') is True
+        # The box said clearly that its inbox is off (the owner's wizard/agent-inbox switch): 404, or 200 without on.
+        self.box_off = not self.is_open and status in (200, 404)
         if self.is_open and body.get('pings') is not True:
             status, body = self.call('POST', '/doors', {'pings': True})
             self.pings = status == 200 and isinstance(body, dict) and body.get('pings') is True
@@ -122,11 +127,11 @@ class Door:
 
     def opened(self):
         """Door mode as last probed, without a call (for the owner's state and the agent's own inbox)."""
-        return self.switched() and self.is_open
+        return self.enabled() and self.is_open
 
     # ---- background pass: resend notes, take pings, read the card again ----
     def kick(self, force=False):
-        if not self.switched():
+        if not self.enabled():
             return
         with self.lock:
             if self.running or (not force and time.time() - self.passed_at < REFRESH_EVERY):
@@ -147,7 +152,9 @@ class Door:
     def run_pass(self):
         import agent_chat
         if not self.probe():
-            agent_chat.door_release(self.unified, switched_off=not self.switched())
+            # The owner turned the box inbox off: every waiting note goes back to Messenger's agent, also one whose
+            # capture already went out. No answer or an unclear one: a tried note waits to be sent again.
+            agent_chat.door_release(self.unified, switched_off=self.box_off or not self.enabled())
             return
         for entry in agent_chat.door_pending(self.unified):
             self.capture(entry)
