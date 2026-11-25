@@ -122,6 +122,10 @@ Messenger already cleared a chat when the network reported the owner's read (Tel
 
 **Shared photos.** Messenger now tells the Wizard share sheet it takes images as well as text and links. A photo shared to Messenger opens the chosen chat (or asks who to send it to), stages it in the same photo tray as the + picker, paste and drop, and puts any caption in the message box. It never sends by itself and is only marked as received once it is really in the tray; chats that cannot take photos, a full tray, plain files and a locked Messenger leave it waiting. Ported from #8 (written against 16.11) onto the current composer. Guard: `tests/share_image_receive.test.cjs`.
 
+## 0.2.0-unified.16.118
+
+- Tap beside a message for its menu, on for everyone (issue 182): James said yes at show-and-tell, so the `row-tap-menu` switch is gone. On a phone, tapping the empty space to the right of someone's photo, video, album or text opens that message's menu (the same one holding it opens); tapping the photo still opens the viewer, and dragging still scrolls. A stored value for the old switch is ignored and cleared. Image built from main 127b1fa (PR #421): `sha-127b1fa3e262383d875d2d01f018f666deb542dd@sha256:8ac412b1b62524760af28afffb20ff7330b21feb55ea0f91043484626e6b3a71`.
+
 ## 0.2.0-unified.16.117
 
 - Desktop Inbox row and bottom filter rows (issue 409): on the desktop, QR, Search and Settings stay in Messenger's own Inbox row at every window width (they no longer move into the window title bar, which holds the width buttons), and the filter rows (All / Unread / Medium / Low and the network icons) always sit at the bottom of the chat list, so nothing jumps when the window is resized. The phone keeps its title-bar tools. Image built from main 1416772 (PR #419): `sha-14167729efeaa6abac847cc46dc985e1d67110fd@sha256:ba37cf9059501c2ec1946bf668f38a7a4eebb575e9612cb66ee2cb68dee69539`.
