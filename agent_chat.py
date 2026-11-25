@@ -14,7 +14,9 @@ One pinned chat with the owner's own agent, kept on the box (people store kv `ag
   `unified/agent-chat/`, dropped with its entry) and the agent fetches it with messenger_agent_chat_attachment.
 - Wake (issue 266): a note, a Sweep tap or a button answer wakes every agent that asked with
   messenger_agent_chat_wake_me (a signed event to its own event inbox, never the words), so the tick comes within
-  seconds instead of on the agent's schedule.
+  seconds instead of on the agent's schedule. When the box offers its own wake (wizard-os issue 634, spec/APP_WAKE.md,
+  the Agent Service's switch wizard/app-wake), every Wizard agent with Draft-only access is woken through the box
+  instead, with no setup by the agent; off, it is exactly as before.
 
 Quiet-mode guarantee: there is no reply kind. A ping is one short line, a sweep needs an open Sweep request (and
 answers it), a report goes to Reports. So a note can never get a text reply in the chat.
@@ -63,6 +65,12 @@ WAKE_DELAY = 1.5   # seconds: a burst (a photo, then a note) becomes one wake
 WAKE_SUBS_MAX = 16
 WAKE_LEVELS = ('draft_only', 'draft_and_send')   # ticking a note needs Draft-only, so only those are woken
 WAKE_TIMEOUT = 10
+# wizard-os issue 634 (spec/APP_WAKE.md, wizard.app-wake/1): the box itself can wake the owner's agents. With the
+# box's switch on, the Agent Service answers BOX_PATH with the agents Messenger may wake, and a POST there wakes one;
+# no agent has to set anything up. Off (404), no token or no answer: the wake stays as it was (self-made subscriptions).
+BOX_PATH = '/wizard/v1/agent-events'
+BOX_EVENT = 'agent_chat'
+BOX_PROBE_EVERY = 180   # seconds between probes; a refused wake probes again at the next one
 
 
 def _now():
@@ -209,7 +217,7 @@ def state(unified):
             'sweep_open': _open_sweep(data) is not None, 'read_at': data['read_at'],
             # Is anyone listening (Miguel on issue 265: "how exactly do I use this?"): woken = an agent asked to be
             # woken here; checked = an agent has ever ticked a note or posted.
-            'agent': {'woken': bool(_wake_load(unified.store)['subs']),
+            'agent': {'woken': bool(_wake_load(unified.store)['subs']) or _box_woken(unified),
                       'checked': any(e.get('seen') or e.get('by') == 'agent' for e in entries)}}
 
 
@@ -799,6 +807,81 @@ def signed_post(url, secret, payload):
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
+class BoxWake:
+    """Messenger's door to the box's wake (one per UnifiedInbox, `unified.agent_chat_box`). `call(method, path, body)`
+    -> (status, json) is swappable for tests; it uses Messenger's own Agent Service app token (agent_inbox_door)."""
+
+    def __init__(self, call=None, now=time.monotonic):
+        self.call, self.now = call, now
+        self.lock, self.at, self.agents = threading.Lock(), None, None
+
+    def _call(self, method, path, body=None):
+        if self.call is not None:
+            return self.call(method, path, body)
+        import agent_inbox_door
+        token = agent_inbox_door._token()
+        if not token:
+            return 0, None
+        base = os.environ.get('MESSENGER_AGENT_SERVICE', '').strip() or agent_inbox_door.BASE
+        return agent_inbox_door.http_call(base, token, method, path, body)
+
+    def possible(self):
+        """Cheap: could the box wake anyone at all (a test call, or Messenger holds its app token)?"""
+        if self.call is not None:
+            return True
+        import agent_inbox_door
+        return bool(agent_inbox_door._token())
+
+    def wakeable(self, fresh=False):
+        """The Agent Service agent ids the box lets Messenger wake, or None when the box offers no wake."""
+        with self.lock:
+            if not fresh and self.at is not None and self.now() - self.at < BOX_PROBE_EVERY:
+                return self.agents
+        status, body = self._call('GET', BOX_PATH)
+        agents = None
+        if status == 200 and isinstance(body, dict) and body.get('on') is True and isinstance(body.get('agents'), list):
+            agents = {a for a in body['agents'] if isinstance(a, str)}
+        with self.lock:
+            self.at, self.agents = self.now(), agents
+        return agents
+
+    def wake(self, agent, data):
+        """True when the box took the wake (a new turn, or merged into the one it just started)."""
+        status, body = self._call('POST', BOX_PATH, {'event': BOX_EVENT, 'agent': agent, 'data': data})
+        if status in (200, 202) and isinstance(body, dict) and body.get('woken') is True:
+            return True
+        if status in (0, 403, 404):
+            with self.lock:
+                self.at = None   # switched off, grant taken away or no answer: ask again next time
+        return False
+
+
+def _box(unified):
+    box = unified.__dict__.get('agent_chat_box')
+    if box is None:
+        box = unified.__dict__.setdefault('agent_chat_box', BoxWake())
+    return box
+
+
+def _box_agent(ident):
+    """Messenger's id for a Wizard agent ('wizard-<id>') -> the Agent Service agent id, else None (keys, other agents)."""
+    return ident[len('wizard-'):] if isinstance(ident, str) and ident.startswith('wizard-') else None
+
+
+def _box_woken(unified):
+    """True when the box wakes at least one Wizard agent the owner gives Draft-only or higher (wizard-os issue 634)."""
+    try:
+        box = _box(unified)
+        if not box.possible():
+            return False
+        levels_fn = getattr(unified, 'wake_levels', None)
+        levels = levels_fn() if callable(levels_fn) else {}
+        wakeable = box.wakeable() or set()
+        return any(level in WAKE_LEVELS and _box_agent(ident) in wakeable for ident, level in levels.items())
+    except Exception:
+        return False
+
+
 def _wake_public(sub):
     return {'url': sub.get('url'), 'since': sub.get('at'), 'last_wake': sub.get('last_wake'),
             'last_error': sub.get('last_error')}
@@ -832,8 +915,18 @@ def wake_register(unified, agent, url=None, secret=None, off=False):
 
 
 def wake_status(unified, agent):
-    sub = _wake_load(unified.store)['subs'].get(str((agent or {}).get('id') or ''))
-    return {'woken': bool(sub), 'wake': _wake_public(sub) if sub else None}
+    ident = str((agent or {}).get('id') or '')
+    sub = _wake_load(unified.store)['subs'].get(ident)
+    out = {'woken': bool(sub), 'wake': _wake_public(sub) if sub else None}
+    try:
+        box = _box(unified)
+        on = box.possible() and _box_agent(ident) in (box.wakeable() or set())
+    except Exception:
+        on = False
+    if on:
+        out.update(woken=True, box=True, note='The box wakes you (wizard.app-wake/1) while you have Draft-only access: '
+                   'no setup needed.')
+    return out
 
 
 class Waker:
@@ -872,15 +965,24 @@ class Waker:
         levels_fn = getattr(unified, 'wake_levels', None)
         levels = levels_fn() if callable(levels_fn) else {}
         subs = _wake_load(unified.store)['subs']
+        # The box's wake (wizard-os issue 634) for every Wizard agent the owner gives Draft-only or higher, when the
+        # box offers it; the agent's own subscription stays for the rest (and for a wake the box did not take).
+        box = _box(unified) if levels else None
+        boxable = box.wakeable() if box is not None and box.possible() else None
+        box_targets = [ident for ident, level in levels.items() if level in WAKE_LEVELS
+                       and boxable is not None and _box_agent(ident) in boxable]
         targets = [(ident, sub) for ident, sub in subs.items() if levels.get(ident) in WAKE_LEVELS]
-        if not targets:
+        if not targets and not box_targets:
             return 0
         waiting = inbox(unified)
         counts = {k: len(waiting[k]) for k in ('notes', 'sweep_requests', 'answers')}
         if not any(counts.values()):
             return 0
         now = _now()
-        payload = {'event': WAKE_EVENT, 'reason': (reasons or ['note'])[0], 'reasons': reasons or ['note'],
+        reason = (reasons or ['note'])[0]
+        boxed = {ident for ident in box_targets if box.wake(_box_agent(ident), {'reason': reason, 'waiting': counts})}
+        targets = [(ident, sub) for ident, sub in targets if ident not in boxed]
+        payload = {'event': WAKE_EVENT, 'reason': reason, 'reasons': reasons or ['note'],
                    'waiting': counts, 'at': now}
         results = {ident: bool(self.post(sub['url'], sub['secret'], payload)) for ident, sub in targets}
         store = unified.store
@@ -891,13 +993,13 @@ class Waker:
                 if sub is not None:
                     sub.update({'last_wake': now, 'last_error': None} if ok else {'last_error': 'unreachable'})
             store.put(WAKE_KEY, json.dumps(data))
-        return sum(results.values())
+        return sum(results.values()) + len(boxed)
 
 
 def wake(unified, reason):
     """Something now waits for the agent. Cheap when nobody asked to be woken."""
     try:
-        if not _wake_load(unified.store)['subs']:
+        if not _wake_load(unified.store)['subs'] and not _box(unified).possible():
             return
         waker = unified.__dict__.get('agent_chat_waker')
         if waker is None:

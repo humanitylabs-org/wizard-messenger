@@ -120,8 +120,9 @@ TOOLS = [
           'with messenger_agent_chat_ack (the owner sees a check) and then act on it in the background. '
           '`sweep_requests`: the owner tapped Sweep; answer with ONE messenger_agent_chat_post kind sweep listing only what '
           'needs the owner since `since`. `answers`: the owner tapped a button on a sweep item; ack it, carry it out, then '
-          'messenger_agent_chat_done. Call messenger_agent_chat_wake_me once so Messenger wakes you when something waits '
-          'here; otherwise check it on your schedule. Needs Read-only or higher.'),
+          'messenger_agent_chat_done. A turn that starts "App wake: ... messenger.agent_chat" means something waits '
+          'here: call this first. Call messenger_agent_chat_wake_me once so Messenger wakes you when something waits '
+          'here (no setup when its check says `box`); otherwise check it on your schedule. Needs Read-only or higher.'),
     # Issue 266: photos and voice notes in the Agent chat, and waking the agent.
     _tool('messenger_agent_chat_attachment', 'The photo or voice note of one Agent chat note (note_id from '
           'messenger_agent_chat_inbox). A photo comes back as an image; a voice note as an audio file, plus its '
@@ -136,7 +137,8 @@ TOOLS = [
           '"waiting": {"notes": n, "sweep_requests": n, "answers": n}} there within seconds, signed with '
           'X-Webhook-Timestamp and X-Webhook-Signature-V2 (hex HMAC-SHA256 of "<timestamp>.<body>"). Never the '
           'words. Only while the owner gives you Draft-only access. Call with only `check: true` to see your current '
-          'wake, or `off: true` to stop. Needs Draft-only or higher.',
+          'wake, or `off: true` to stop; when it says `box: true` the box already wakes you and you need no '
+          'subscription. Needs Draft-only or higher.',
           {'url': _string('Your event inbox, e.g. http://host.docker.internal:8644/webhooks/messenger-agent-chat'),
            'secret': _string('The secret of that subscription (16..256 characters)'),
            'check': {'type': 'boolean', 'description': 'Only report the current wake'},
