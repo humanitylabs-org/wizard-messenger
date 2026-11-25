@@ -3763,7 +3763,9 @@ class UnifiedInbox:
             return self.updates(since, hold)
         if suffix in (['people'], ['groups']) and method == 'GET':
             kind = 'group' if suffix[0] == 'groups' else 'person'
-            return {suffix[0]: self.store.people(kind), 'seq': self.store.seq}
+            # Issue 336: the position is read before the list, so the answer never claims a change it does not hold.
+            seq = self.store.seq
+            return {suffix[0]: self.store.people(kind), 'seq': seq}
         if suffix == ['search'] and method == 'GET':
             if set(query) - {'q', 'network', 'thread', 'limit', 'cursor'} or any(len(v) != 1 for v in query.values()):
                 fail('invalid_search', 'Invalid search scope')

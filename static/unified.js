@@ -765,7 +765,21 @@
     if (receipt === 'failed') return 'Couldn’t send to Wizard · selection kept';
     return 'Not sent to Wizard (' + (typeof receipt === 'string' && receipt ? receipt.slice(0, 40) : 'no answer') + ') · selection kept';
   }
-  if (typeof module !== 'undefined') module.exports = {forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 336: a full list reload (Wizard's refresh on focus, on return, every minute) answers with the list as it
+  // stood when the box read it. Chats the change feed (or this device) moved on after that keep their newer copy, and
+  // chats the feed removed stay removed, so the Unread list never steps back and forth on its own.
+  // marks: Map id -> {seq, local}; seq = feed position of the chat's last change, local = when this device changed it.
+  function listSnapshot(current, rows, snapSeq, asked, marks) {
+    const newer = id => { const m = marks.get(id); return !!m && ((m.seq || 0) > snapSeq || (m.local || 0) >= asked); };
+    const mine = new Map((current || []).map(p => [p.id, p])), out = [], seen = new Set();
+    for (const p of rows || []) {
+      seen.add(p.id);
+      if (!newer(p.id)) out.push(p); else if (mine.has(p.id)) out.push(mine.get(p.id));
+    }
+    for (const p of current || []) if (!seen.has(p.id) && newer(p.id)) out.push(p);
+    return out.sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
+  }
+  if (typeof module !== 'undefined') module.exports = {listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -1476,6 +1490,9 @@
   }
   // App badge: the total unread across chats and groups goes on Messenger's desk mark, like the phone's app badge.
   const unreadById = {}, kindById = {}, mutedById = {}, lowById = {}, mediumById = {}; let nativeUnread = 0;
+  // Issue 336: per chat, when the feed or this device last changed it (see listSnapshot).
+  const listMarks = new Map();
+  const markLocal = id => listMarks.set(id, {...listMarks.get(id), local: Date.now()});
   let badgeShown = -1;
   function noteUnread(rows) { for (const p of rows || []) { unreadById[p.id] = Math.max(0, p.unread | 0); kindById[p.id] = listKey(p); mutedById[p.id] = !!p.muted; lowById[p.id] = !!p.low_priority; mediumById[p.id] = !!p.medium_priority; } }
   // Each bottom tab carries its own unread count (Chats, Groups, Messenger), like Signal's tab badges.
@@ -1554,14 +1571,16 @@
     mergeRows(t.messages, rows.map(incoming => pendingReactions(pid, incoming)), t.has_more);
   }
   function apply(r) {
-    if (r.reset) { for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = Object.create(null); if (s.person) { openPerson(s.person); if (split.on) renderList(); } else renderList(); return; } // desktop: the list beside the chat reloads too
+    if (r.reset) { listMarks.clear(); for (const k in unreadById) delete unreadById[k]; store.seq = r.seq; store.lists = {people: null, groups: null}; store.threads = Object.create(null); if (s.person) { openPerson(s.person); if (split.on) renderList(); } else renderList(); return; } // desktop: the list beside the chat reloads too
     store.seq = Math.max(store.seq, r.seq);
     if (typeof r.labels_rev === 'number' && labelCat.ok && r.labels_rev !== labelCat.rev) loadLabelCatalog(true);
     for (const id of r.removed || []) {
+      listMarks.set(id, {seq: r.seq});
       for (const k of ['people', 'groups']) if (store.lists[k]) store.lists[k] = store.lists[k].filter(p => p.id !== id);
       delete unreadById[id]; delete mutedById[id]; delete lowById[id]; delete mediumById[id]; delete kindById[id];
     }
     if (r.removed?.length) syncBadge();
+    for (const p of r.people || []) listMarks.set(p.id, {seq: r.seq});
     if (r.people?.length) { noteUnread(r.people); mergeList(r.people); }
     for (const p of r.people || []) store.typing[p.id] = (r.typing || {})[p.id] || [];
     for (const [pid, rows] of Object.entries(r.messages || {})) mergeMessages(pid, rows);
@@ -1594,9 +1613,12 @@
   function skeleton(rows, cls) { const box = node('div', 'u-skeleton ' + cls); for (let i = 0; i < rows; i++) { const r = node('div', 'u-sk-row'); r.append(node('span', 'u-sk-av'), node('span', 'u-sk-lines')); box.append(r); } return box; }
   // One Inbox for every network (like Beeper): direct chats and groups together, narrowed by filter chips.
   async function loadLists(force = false) {
-    const keys = ['people', 'groups'].filter(k => force || !store.lists[k]);
+    const keys = ['people', 'groups'].filter(k => force || !store.lists[k]), asked = Date.now();
     const rows = await Promise.all(keys.map(k => call(k)));
-    keys.forEach((k, i) => { store.lists[k] = rows[i][k] || []; });
+    keys.forEach((k, i) => { store.lists[k] = store.lists[k] ? listSnapshot(store.lists[k], rows[i][k] || [], rows[i].seq || 0, asked, listMarks) : rows[i][k] || []; });
+    // Marks the newest reload already covers are no longer needed.
+    const covered = Math.min(...rows.map(r => r.seq || 0));
+    if (keys.length === 2) for (const [id, m] of listMarks) if ((m.seq || 0) <= covered && !((m.local || 0) >= asked)) listMarks.delete(id);
     // The older of the two cursors, so the change feed cannot skip anything between the two reads.
     if (!store.seq && rows.length) { store.seq = Math.min(...rows.map(r => r.seq || 0)); feed(); }
     prefetchSoon();
@@ -2126,7 +2148,7 @@
   }
   // Unread again stays on this Messenger only; opening the chat reads it as usual.
   async function setUnread(p, on) {
-    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.unread = v; p.unread = v; drawList(); syncBadge(); };
+    const flip = v => { markLocal(p.id); for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.unread = v; p.unread = v; drawList(); syncBadge(); };
     const before = p.unread; flip(on ? Math.max(1, before || 0) : 0);
     try { await call('people/' + encodeURIComponent(p.id) + (on ? '/unread' : '/read'), on ? {} : {timestamp: p.last?.timestamp || Date.now()}); }
     catch (e) { flip(before); error(e); }
@@ -2138,14 +2160,14 @@
     const said = low ? 'Moved to Low priority' : medium ? 'Medium priority: listed, never notifies' : before === 'low' ? 'Moved to Inbox' : 'Normal priority';
     if (p.twin) { if (!!p.twin.low_priority !== low) p.twin.setLowPriority(low); if (!!p.twin.medium_priority !== medium) p.twin.setMediumPriority?.(medium); Object.assign(p.twin, {low_priority: low, medium_priority: medium}); }
     if (p.native) { p.setLowPriority(low); p.setMediumPriority?.(medium); Object.assign(p, {low_priority: low, medium_priority: medium}); syncBadge(); drawList(); toast(said); return; }
-    const flip = v => { const set = {low_priority: v === 'low', medium_priority: v === 'medium'}; for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) Object.assign(x, set); Object.assign(p, set); drawList(); syncBadge(); };
+    const flip = v => { markLocal(p.id); const set = {low_priority: v === 'low', medium_priority: v === 'medium'}; for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) Object.assign(x, set); Object.assign(p, set); drawList(); syncBadge(); };
     flip(level);
     try { await call('people/' + encodeURIComponent(p.id), {low_priority: low, medium_priority: medium}); toast(said); persist(); }
     catch (e) { flip(before); toast(e.message || 'Could not change priority', 3000); }
   }
   async function setMuted(p, muted) {
     if (p.twin && !!p.twin.muted !== muted) { p.twin.setMuted(); p.twin.muted = muted; }
-    const flip = v => { for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
+    const flip = v => { markLocal(p.id); for (const k of ['people', 'groups']) for (const x of store.lists[k] || []) if (x.id === p.id) x.muted = v; p.muted = v; drawList(); syncBadge(); };
     flip(muted);
     try { await call('people/' + encodeURIComponent(p.id), {muted}); toast(muted ? 'Muted' : 'Unmuted'); persist(); }
     catch (e) { flip(!muted); toast(e.message || 'Could not change mute', 3000); }
@@ -2679,6 +2701,7 @@
     if (!last || (last.timestamp <= mark && !counted) || view.reading === reading) return;
     view.reading = reading; t.person.last_read_ts = Math.max(mark, last.timestamp); if (row) row.last_read_ts = t.person.last_read_ts;
     if (row) row.unread = 0;
+    if (typeof markLocal === 'function') markLocal(view.id);
     unreadById[view.id] = 0; syncBadge(); if (split.on && s.tab !== 'messenger') drawList();
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
     // A test slice of markRead may not carry chatReadNotices.
@@ -6598,6 +6621,6 @@
       if (!store.lists.groups) call('groups').then(r => { if (s.ready && !store.lists.groups) { store.lists.groups = r.groups || []; persist(); } }).catch(() => {});
     },
     active: () => s.ready && (!s.native || !!s.overlay), canGoBack: () => !!(view.photo || s.overlay || s.person || s.search != null || s.low || s.seg === 'medium' || detailOpen()), back,
-    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; syncBadge(); $('inbox-tabs').hidden = true; split.threadGen++; split.listGen++; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
+    signout(wipe = false) { clearTimeout(searchTimer); searchGeneration++; s.search = null; Object.assign(searchView, {query: null, rows: [], cursor: null, loading: false}); nativeUnread = 0; nativeRows = []; sharedTargetsKey = ''; Promise.resolve(window.WizardApp?.share?.targets?.([])).catch(() => {}); s.native = false; s.nativeGroup = null; s.resumeNative = null; delete document.documentElement.dataset.privateView; if (wipe) wipeCache(); feedCtl?.abort(); closeOverlay(); s.ready = false; s.epoch++; inChat(false); Object.assign(store, {seq: 0, lists: {people: null, groups: null}, threads: {}, typing: {}}); for (const k in unreadById) delete unreadById[k]; listMarks.clear(); syncBadge(); $('inbox-tabs').hidden = true; split.threadGen++; split.listGen++; $('unified-inbox').hidden = true; $('unified-inbox').replaceChildren(); delete document.documentElement.dataset.inboxTab; }
   };
 })();

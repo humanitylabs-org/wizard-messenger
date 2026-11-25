@@ -684,6 +684,24 @@ class SignalMvpTests(unittest.TestCase):
         self.engine.dms.assert_not_called()
         self.engine.identity.assert_not_called()
 
+    def test_list_position_is_read_before_the_list(self):
+        # Issue 336: a message landing while the list is read must not be covered by the answer's seq, or the view
+        # would trust the older list over the feed's newer copy of that chat.
+        self.ingest(self.event('$1', {'msgtype': 'm.text', 'body': 'hi'}))
+        before, real = self.inbox.store.seq, self.inbox.store.people
+        def people(*a, **k):
+            rows = real(*a, **k)
+            self.ingest(self.event('$2', {'msgtype': 'm.text', 'body': 'during the read'}, ts=2000))
+            return rows
+        self.inbox.store.people = people
+        try:
+            result = self.inbox.dispatch('GET', '/api/unified/people', {})
+        finally:
+            self.inbox.store.people = real
+        self.assertEqual(result['seq'], before)
+        self.assertGreater(self.inbox.store.seq, before)
+        self.assertEqual(result['people'][0]['last']['text'], 'hi')
+
     def test_updates_feed_returns_new_rows_and_wakes_waiters(self):
         seq = self.inbox.store.seq
         self.assertEqual(self.inbox.updates(seq, 0)['messages'], {})
