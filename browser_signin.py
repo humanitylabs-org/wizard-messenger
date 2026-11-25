@@ -153,6 +153,26 @@ GENERIC = {'instagram': ('instagram', 'Instagram'), 'twitter': ('cookies', 'X'),
 SLACK_APP_PROMPT = re.compile(r'^https://[a-z0-9-]+\.slack\.com/(?:ssb/redirect|checkcookie|signin/confirmed|workspace-signin.*redir)', re.I)
 
 
+# Issue 282/283: a passkey request (navigator.credentials.get/create) makes Chromium open its own passkey window.
+# That window is browser chrome, not page, so the owner's live picture never shows it, there is no passkey in this
+# throw-away browser to finish it, and while it is open the page ignores every tap and key ("Try another way" is
+# dead). Chromium's WebAuthn test environment drops that window, and one empty security key whose user check
+# always fails refuses every request at once with NotAllowedError, the answer a person gets when they cancel the
+# passkey prompt. The site then offers its other ways to sign in. Nothing is created or signed.
+PASSKEY_REFUSER = {'protocol': 'ctap2', 'transport': 'usb', 'hasResidentKey': True, 'hasUserVerification': True,
+                   'isUserVerified': False, 'automaticPresenceSimulation': True}
+
+
+def refuse_passkeys(cdp, session):
+    try:
+        cdp.send('WebAuthn.enable', {'enableUI': False}, session=session)
+        cdp.send('WebAuthn.addVirtualAuthenticator', {'options': PASSKEY_REFUSER}, session=session)
+        return True
+    except OSError:
+        # An engine without the WebAuthn domain still signs in as before.
+        return False
+
+
 class Session:
     def __init__(self, network, width, height, mobile, url=None, user_agent=None, step=None):
         self.id = secrets.token_urlsafe(18)
@@ -176,6 +196,7 @@ class Session:
         s = self.session
         self.cdp.send('Page.enable', session=s)
         self.cdp.send('Network.enable', {}, session=s)
+        refuse_passkeys(self.cdp, s)
         # A normal Chromium already presents its own, self-consistent identity: leave it alone. Only a bridge's
         # explicit user agent, or an engine that still says "HeadlessChrome", is overridden.
         if not user_agent:
