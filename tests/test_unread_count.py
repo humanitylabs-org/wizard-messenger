@@ -1,4 +1,4 @@
-"""Issue 296 (switch unread-count): GET /api/unread gives the phone one number for Messenger's home-screen icon.
+"""Issue 296 (on for everyone, the switch is gone): GET /api/unread gives the phone one number for Messenger's home-screen icon.
 
 Synthetic chats only: no real contacts, nothing leaves the process."""
 import http.client
@@ -126,17 +126,22 @@ class HTTPBase(Chats):
         return {'Cookie': 'wizard_messenger_session=' + token, 'Origin': ORIGIN}
 
     def switch(self, on):
-        self.server.switches.set('unread-count', on)
+        pass  # the unread-count switch is gone (James said yes): the count is always served
+
+    def stale_off(self):
+        # A box that had the old switch stored off: that value is ignored now.
+        self.server.switches.path.write_text(json.dumps({'switches': {'unread-count': False}}))
 
 
 class UnreadHTTP(HTTPBase):
     """Route boundary on a trusted-owner install."""
 
-    def test_off_by_default_is_no_route(self):
+    def test_served_without_a_switch_even_with_a_stale_off(self):
+        self.stale_off()
         self.three_unread(self.inbox)
         status, body = self.request(headers={'Origin': ORIGIN})
-        self.assertEqual((status, body['error']['code']), (404, 'not_found'))
-        self.assertNotIn('result', body)
+        self.assertEqual((status, body), (200, {'ok': True, 'result': {'unread_total': 3}}))
+        self.assertNotIn('unread-count', [s['id'] for s in self.server.switches.listing()['switches']])
 
     def test_number_only(self):
         self.switch(True)
@@ -256,10 +261,9 @@ class PrivateChats(HTTPBase):
         self.server.private_unread = PrivateUnread(self.data / 'private-seen.json')
         self.assertEqual(self.total(), 2)
 
-    def test_marks_route_is_owner_only_and_switched(self):
+    def test_marks_route_is_owner_only(self):
         good = [{'group': self.G1, 'seen': mid(1), 'quiet': False}]
-        self.assertEqual(self.seen(good)[0], 404)  # switch off: no such route
-        self.switch(True)
+        self.stale_off()  # a stored old switch value no longer hides the route
         self.assertEqual(self.seen(good, csrf=False)[0], 403)
         self.assertEqual(self.seen(good, extra={'Authorization': 'Bearer ' + TOKEN})[0], 403)
         self.assertEqual(self.seen(good, extra={'Origin': 'https://evil.example'})[0], 403)

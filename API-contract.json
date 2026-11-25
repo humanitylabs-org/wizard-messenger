@@ -845,14 +845,14 @@
       "method": "GET",
       "path": "/api/unread",
       "auth": "owner cookie + allowed Origin (a GET with Origin only is accepted, like every owner GET); trusted ingress proof when enabled; all bearers refused",
-      "result": "{\"unread_total\": N}: the number of chats and groups with an unread incoming message (box-side read mark, moved when a chat is opened); muted, Medium and Low priority chats never count. Since issue 302 it also counts Messenger's own private chats whose newest message was received and is not the seen one (marks from POST /api/view/private-seen; a locked engine keeps the last count worked out while unlocked). A number only: no ids, names or text. Switch unread-count off: 404 not_found (issue 296)"
+      "result": "{\"unread_total\": N}: the number of chats and groups with an unread incoming message (box-side read mark, moved when a chat is opened); muted, Medium and Low priority chats never count. Since issue 302 it also counts Messenger's own private chats whose newest message was received and is not the seen one (marks from POST /api/view/private-seen; a locked engine keeps the last count worked out while unlocked). A number only: no ids, names or text (issue 296)"
     },
     {
       "method": "POST",
       "path": "/api/view/private-seen",
       "auth": "owner session + X-Messenger-CSRF (trusted ingress proof when enabled); all bearers refused",
       "body": {"marks": [{"group": "private chat group id", "seen": "64-hex message id or null", "quiet": "boolean: muted, Medium or Low priority"}]},
-      "result": "{\"saved\": N}: the view hands the box its private chats' seen marks (merged per chat, nothing else stored) so GET /api/unread can count them. Switch unread-count off: 404 not_found (issue 302)"
+      "result": "{\"saved\": N}: the view hands the box its private chats' seen marks (merged per chat, nothing else stored) so GET /api/unread can count them (issue 302)"
     }
   ],
   "models": {

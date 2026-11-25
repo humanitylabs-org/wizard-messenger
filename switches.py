@@ -37,12 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'unread-count', 'name': 'Unread count on the phone icon',
-     'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
-                    'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
-                    'priority chats never count. Your private Messenger chats count too.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#296', 'humanitylabs-org/wizard-messenger#302']},
     {'id': 'share-files', 'name': 'Share files to Messenger',
      'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers Messenger. '
                     'The file waits in the chosen chat\'s message box as an attachment, like one added with +, '
