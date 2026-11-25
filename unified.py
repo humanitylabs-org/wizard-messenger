@@ -1924,6 +1924,12 @@ class UnifiedInbox:
                 self.warm_photo_now(*item)
         for n in range(2):
             threading.Thread(target=photos, name='photo-warm-%d' % n, daemon=True).start()
+        try:
+            # Issue 325: the Agent chat's door to the box's agent inbox runs with Messenger closed too.
+            import agent_inbox_door
+            agent_inbox_door.watch(self)
+        except Exception:
+            pass
 
     def close(self):
         self.stop.set()

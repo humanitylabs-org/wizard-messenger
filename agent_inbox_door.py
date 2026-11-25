@@ -13,6 +13,8 @@ task list:
 - Sweep: the Sweep button asks the box for the card (`POST .../sweep {door: 'messenger'}`) and keeps it as the sweep
   post. A button answers that record on the box (`PATCH .../<record id>`), Yes to all posts to the card. Answers
   given in Daily show here when the card is read again (`GET .../sweep`).
+- Background: `watch()` runs a pass every REFRESH_EVERY seconds on the box itself, so none of this waits for the
+  page to be open (an urgent alert must not sit unread while Messenger is closed).
 - Pings: urgent alerts the box already decided (`GET .../pings?keep=1`, after `POST .../doors {pings: true}`) arrive
   as the Agent chat's one-line ping. Each is acked (`POST .../pings {ack}`) only after it is stored here.
 
@@ -222,6 +224,31 @@ class Door:
     def card(self):
         status, body = self.call('GET', '/sweep')
         return body.get('card') if status == 200 and isinstance(body, dict) and isinstance(body.get('card'), dict) else None
+
+
+def watch(unified):
+    """The door's own loop on the box (started with the inbox), so notes go out and urgent alerts arrive as pings,
+    with their unread badge and phone notification, while Messenger is closed too: the first pass probes at start,
+    then a pass every REFRESH_EVERY seconds (the probe itself is cached for PROBE_EVERY). Without a token it does
+    nothing."""
+    stop = getattr(unified, 'stop', None)
+
+    def loop():
+        while not (stop is not None and stop.is_set()):
+            try:
+                found = door(unified)
+                if found is not None:
+                    found.kick()
+            except Exception:
+                pass
+            if stop is not None:
+                stop.wait(REFRESH_EVERY)
+            else:
+                time.sleep(REFRESH_EVERY)
+
+    thread = threading.Thread(target=loop, name='agent-inbox-door-watch', daemon=True)
+    thread.start()
+    return thread
 
 
 def door(unified):

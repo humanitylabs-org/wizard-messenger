@@ -378,6 +378,42 @@ class AgentInboxDoor(AgentChat):
         entry = agent_chat._find(agent_chat._load(self.inbox.store), long)
         self.assertEqual((len(entry['text']), entry['link']), (200, None))
 
+    def watching(self):
+        stop = threading.Event()
+        old = self.inbox.stop
+        self.inbox.stop = stop
+        self.addCleanup(setattr, self.inbox, 'stop', old)
+        self.addCleanup(stop.set)
+        agent_inbox_door.watch(self.inbox)
+        return stop
+
+    def test_urgent_alerts_arrive_with_messenger_closed(self):
+        # Nobody has the page open: the box's own loop probes at start and takes the ping, so the unread badge and
+        # the phone notification come at once instead of the next time Messenger is opened.
+        self.switch(True)
+        self.service.pings.append({'id': 'ping_1', 'title': 'Card payment failed', 'ask': 'Netflix could not charge your card',
+                                   'severity': 'urgent', 'link': 'https://bank.example/card', 'at': 1})
+        del self.door.kick   # the real kick, as on a box
+        stop = self.watching()
+        stored = lambda: any(e.get('door_ping') == 'ping_1' for e in agent_chat._load(self.inbox.store)['entries'])
+        for _ in range(100):
+            if stored() and 'ping_1' in self.service.acked:
+                break
+            stop.wait(0.05)
+        stop.set()
+        self.assertTrue(stored())
+        self.assertIn('ping_1', self.service.acked)
+        self.assertEqual(self.service.calls[0][1], '/doors')
+
+    def test_the_loop_does_nothing_without_a_token(self):
+        door = agent_inbox_door.Door(self.inbox, token='')
+        self.inbox.agent_inbox_door = door
+        stop = self.watching()
+        stop.wait(0.2)
+        stop.set()
+        self.assertFalse(door.running)
+        self.assertEqual(door.passed_at, 0.0)
+
     def test_a_ping_is_acked_only_after_it_is_stored(self):
         self.opened()
         alert = {'id': 'inbox_a9', 'title': 'Server down', 'severity': 'urgent', 'at': 1}
