@@ -141,9 +141,36 @@
   // Issue 354: a photo staged in the composer (picked, pasted, shared in, or restored from a saved draft) opens full
   // size on a tap, like a sent one. The items are the tray's photos (files and voice takes stay out), with the tapped
   // one's index; at is -1 when the tapped item is not a photo with a preview.
+  // Issue 402: a staged video opens too (its own phone copy, played in the viewer).
   function trayPhotos(attach, tapped) {
-    const photos = (attach || []).filter(it => it && !it.file && it.url);
-    return {items: photos.map(it => ({url: it.url, kind: 'image', name: it.name || 'Photo'})), at: photos.indexOf(tapped)};
+    const photos = (attach || []).filter(it => it && !it.file && (it.video ? it.local : it.url));
+    return {items: photos.map(it => it.video ? {url: it.local, kind: 'video', name: it.name || 'Video'} : {url: it.url, kind: 'image', name: it.name || 'Photo'}), at: photos.indexOf(tapped)};
+  }
+  // Issue 402: what a picked, pasted, dropped or shared file becomes in the tray. "File" in the + menu (asFile) keeps
+  // everything a file; otherwise still photos are photos and phone videos (MP4, iPhone MOV, WebM) are videos.
+  const VIDEO_TYPES = /^video\/(mp4|quicktime|webm)$/, VIDEO_NAMES = /\.(mp4|m4v|mov|webm)$/i;
+  function attachKind(f, asFile = false) {
+    const type = String(f?.type || '').split(';')[0].toLowerCase();
+    if (asFile) return 'file';
+    if (/^image\/(jpeg|png|gif|webp)$/.test(type)) return 'photo';
+    if (VIDEO_TYPES.test(type) || ((!type || type === 'application/octet-stream') && VIDEO_NAMES.test(f?.name || ''))) return 'video';
+    return 'file';
+  }
+  // Issue 402: the messages one Send makes from the tray. Photos stay one post (an album when several), each video is
+  // its own video message, files go one by one. The words ride on the first photo post, else the first video, else
+  // the first file; in a LINE chat (apart) they go after the photos and videos as their own message, because LINE
+  // refuses words on a photo or a video.
+  function sendJobs(attach, text, {reply = null, identity_id = null, apart = false} = {}) {
+    const a = attach || [], photos = a.filter(x => !x.file && !x.video), videos = a.filter(x => x.video), files = a.filter(x => x.file && !x.video);
+    const jobs = [], words = apart ? '' : text;
+    let first = true; const take = () => { const was = first; first = false; return was; };
+    if (!a.length) return [{text, photo: null, reply, identity_id}];
+    if (photos.length === 1) { take(); jobs.push({text: words, photo: photos[0], reply, identity_id}); }
+    else if (photos.length) { take(); jobs.push({text: words, photos, reply, identity_id}); }
+    for (const v of videos) { const lead = take(); jobs.push({text: lead ? words : '', video: v, reply: lead ? reply : null, identity_id}); }
+    if (apart && (photos.length || videos.length)) jobs.push({text, photo: null, reply: null, identity_id});
+    for (const f of files) { const lead = take(); jobs.push({text: lead ? text : '', file: f, reply: lead ? reply : null, identity_id}); }
+    return jobs;
   }
   // With "Photos open instantly" on (issue 164), Messenger's own viewer shows a still photo in stages: the thumbnail the
   // bubble already shows (so the first frame is never black), then the box's screen-size view copy, then the original
@@ -441,8 +468,9 @@
       const same = x => x.id === m.id || (m.client_id && x.client_id === m.client_id);
       const i = messages.findIndex(same);
       if (i >= 0) {
-        const local = messages.filter(same).map(x => x.local).find(Boolean);
+        const local = messages.filter(same).map(x => x.local).find(Boolean), poster = messages.filter(same).map(x => x.poster).find(Boolean);
         messages[i] = m; if (local) m.local = local;
+        if (local && poster) m.poster = poster; // issue 402: a sent video keeps the first frame the phone drew
         for (let j = messages.length - 1; j > i; j--) if (same(messages[j])) messages.splice(j, 1);
       } else if (!hasMore || m.timestamp >= oldest) messages.push(m);
     }
@@ -641,7 +669,7 @@
   }
   // Points the one hidden input at a choice, then opens it (still inside the tap, so the browser allows it).
   function aimPicker(input, choice) {
-    input.accept = choice.accept; input.multiple = !!choice.multiple;
+    input.accept = choice.accept; input.multiple = !!choice.multiple; input.setAttribute('data-pick', choice.id || '');
     if (choice.capture) input.setAttribute('capture', choice.capture); else input.removeAttribute('capture');
     input.click();
   }
@@ -779,7 +807,7 @@
     for (const p of current || []) if (!seen.has(p.id) && newer(p.id)) out.push(p);
     return out.sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0));
   }
-  if (typeof module !== 'undefined') module.exports = {listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {attachKind, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2967,6 +2995,7 @@
     if (m.msgtype === 'm.video') {
       v = node('video'); v.playsInline = true; v.muted = true; v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
       if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
+      else if (m.local && m.poster) v.poster = m.poster; // issue 402: a video still sending shows the frame the phone drew
       if (loop) {
         const still = stillMotion();
         v.loop = true; v.preload = 'auto'; v.disablePictureInPicture = true; v.autoplay = !still;
@@ -3750,7 +3779,10 @@
       const r = await fetch('api/drafts/' + rid + '/attachments/' + a.id, {credentials: 'same-origin', cache: 'no-store'});
       if (!r.ok) throw new Error('Could not load ' + a.name);
       const blob = await r.blob(); const f = new File([blob], a.name, {type: a.mime});
-      return /^image\/(jpeg|png|gif|webp)$/.test(a.mime) ? {...await preparePhoto(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id}
+      // Issue 402: the box keeps videos as plain bytes, so a video comes back by its name (MP4, MOV, WebM).
+      const kind = attachKind(f);
+      return kind === 'photo' ? {...await preparePhoto(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id}
+        : kind === 'video' ? {...await prepareVideo(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id}
         : {file: true, blob: f, key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id};
     }
     async function apply(row) {
@@ -4161,9 +4193,11 @@
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
       // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
-      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) { const chip = WizardApp.attachChip.node({key: it.key, name: it.name || 'Photo', bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }});
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) { const chip = WizardApp.attachChip.node({key: it.key, name: it.name || (it.video ? 'Video' : 'Photo'), bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url || ''}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); if (it.local) URL.revokeObjectURL(it.local); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }});
+        // Issue 402: a staged video shows its first frame (the chip's picture) with a play badge and its length.
+        if (it.video) { chip.classList.add('u-attach-video'); chip.prepend(node('span', 'u-attach-play', '▶')); if (it.duration) chip.append(node('span', 'u-attach-dur', fmtDur(it.duration))); }
         // Issue 354: tapping a staged photo opens it full size (Wizard's viewer, else Messenger's own), never the Remove button.
-        if (!it.file && it.url) { chip.classList.add('u-attach-open'); chip.setAttribute('role', 'button'); chip.tabIndex = 0; chip.setAttribute('aria-label', 'Open ' + (it.name || 'photo') + ' full size');
+        if (!it.file && (it.url || it.local)) { chip.classList.add('u-attach-open'); chip.setAttribute('role', 'button'); chip.tabIndex = 0; chip.setAttribute('aria-label', (it.video ? 'Play ' + (it.name || 'video') : 'Open ' + (it.name || 'photo') + ' full size'));
           const open = e => { if (e.target?.closest?.('.ch-attrm')) return; e.preventDefault(); const t = trayPhotos(view.attach, it); if (t.at >= 0) openMedia(hostViewer(window.WizardApp, window.parent !== window), t.items, t.at, item => photoView(item)); };
           chip.addEventListener('click', open); chip.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === chip) open(e); }); }
         strip.append(chip); } bar.append(strip); }
@@ -4198,8 +4232,8 @@
     // Several selected photos are one post and one Telegram media group (up to 10).
     // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
     const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
-    const addFiles = async picked => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB'); continue; } ready.push(PHOTO.test(f.type) ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); if (view.sd) view.sd.uploading = view.sd.attach(ready); } catch (e) { error(e); } };
-    file.onchange = () => { const picked = [...file.files]; file.value = ''; if (!canAttach) return toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats'); addFiles(picked); };
+    const addFiles = async (picked, asFile = false) => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { const kind = attachKind(f, asFile); if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB. ' + (kind === 'video' ? 'Videos' : kind === 'photo' ? 'Photos' : 'Files') + ' up to 25 MB can be sent.', 4000); continue; } ready.push(kind === 'photo' ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : kind === 'video' ? {...await prepareVideo(f), key: 'a' + uid(), name: f.name || 'Video', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); if (view.sd) view.sd.uploading = view.sd.attach(ready); } catch (e) { error(e); } };
+    file.onchange = () => { const picked = [...file.files], asFile = file.dataset.pick === 'file'; file.value = ''; if (!canAttach) return toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats'); addFiles(picked, asFile); };
     const takeFiles = files => {
       if (!files.length || view.edit) return;
       if (!canAttach) return toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats');
@@ -4245,16 +4279,11 @@
       // A voice notice is about a recording; once the owner sends a message with none open it is old news (wizard-ux issue 1503).
       if (view.voiceNotice && !view.recording) voiceNotice('');
       const sendingDraft = view.sd; sendingDraft?.closeForSend(text);
-      const photos = a.filter(x => !x.file), files = a.filter(x => x.file);
-      // Issue 186: LINE carries no words on a photo, so photos plus text go as the photos, then the text as its own
-      // message (the way LINE sends them), each with its own sent / failed + Retry bubble.
-      const apart = !!(photos.length && text && !reviewed && (p.identities || []).find(i => i.id === channel.value)?.network === 'line');
-      const jobs = [], words = apart ? '' : text;
-      if (!a.length) jobs.push({text, photo: null, reply, identity_id: channel.value});
-      else if (photos.length === 1) jobs.push({text: words, photo: photos[0], reply, identity_id: channel.value});
-      else if (photos.length) jobs.push({text: words, photos, reply, identity_id: channel.value});
-      if (apart) jobs.push({text, photo: null, reply: null, identity_id: channel.value});
-      files.forEach((f, i) => jobs.push({text: !photos.length && !i ? text : '', file: f, reply: !photos.length && !i ? reply : null, identity_id: channel.value}));
+      // Issue 186: LINE carries no words on a photo (or a video, issue 402), so they go as the pictures, then the text
+      // as its own message (the way LINE sends them), each with its own sent / failed + Retry bubble.
+      const visual = a.some(x => !x.file || x.video);
+      const apart = !!(visual && text && !reviewed && (p.identities || []).find(i => i.id === channel.value)?.network === 'line');
+      const jobs = sendJobs(a, text, {reply, identity_id: channel.value, apart});
       let delivered = 0;
       for (const job of jobs) queueSend(id, {...job, onDelivered: () => { if (++delivered === jobs.length) sendingDraft?.afterSend(); }, onFailure: e => restoreSend(id, job, e)});
     }
@@ -4952,6 +4981,29 @@
     const original = f.type === 'image/gif' ? f : blob;
     return {blob: original, albumBlob: blob, url: URL.createObjectURL(original), w, h};
   }
+  // Issue 402: a picked video is staged as a video: this phone draws its first frame (long edge 800, JPEG) and reads its
+  // size and length, all from the file itself. A video this browser can't decode (an HEVC .mov on some phones) still
+  // goes as a video, only without a preview; the box sends whatever it has.
+  async function prepareVideo(f) {
+    // A Blob view of the file (no copy): only its bytes play here, never its name.
+    const local = URL.createObjectURL(new Blob([f], {type: f.type || 'video/mp4'})), v = node('video'), out = {video: true, blob: f, local, url: '', thumb: null};
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+    const once = (ok, ms) => new Promise(resolve => { const t = setTimeout(() => resolve(false), ms); const done = r => { clearTimeout(t); v.onloadeddata = v.onseeked = v.onerror = null; resolve(r); }; v.onerror = () => done(false); if (ok === 'loaded') v.onloadeddata = () => done(true); else v.onseeked = () => done(true); });
+    try {
+      const loaded = once('loaded', 8000); v.src = local; v.load?.();
+      if (!await loaded) return out;
+      if (Number.isFinite(v.duration) && v.duration > 0) out.duration = Math.round(v.duration * 1000);
+      if (v.videoWidth && v.videoHeight) { out.w = v.videoWidth; out.h = v.videoHeight; }
+      const seeked = once('seeked', 4000); v.currentTime = Math.min(0.1, (v.duration || 0) / 2 || 0); await seeked;
+      if (!out.w) return out;
+      const scale = Math.min(1, 800 / Math.max(out.w, out.h)), w = Math.max(1, Math.round(out.w * scale)), h = Math.max(1, Math.round(out.h * scale));
+      const canvas = node('canvas'); canvas.width = w; canvas.height = h; canvas.getContext('2d').drawImage(v, 0, 0, w, h);
+      const thumb = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.8));
+      if (thumb) { out.thumb = thumb; out.thumbW = w; out.thumbH = h; out.url = URL.createObjectURL(thumb); }
+    } catch { /* no preview: still a video */ }
+    finally { v.removeAttribute('src'); v.load?.(); }
+    return out;
+  }
   async function saveVoiceRecording(blob, take) {
     // Start sharing inside the tap: no fetch/conversion before shared gesture handling.
     try {
@@ -4989,26 +5041,34 @@
     const t = store.threads[id]; if (!t) return;
     const client_id = 'w' + uid();
     const m = {id: 'pending:' + client_id, client_id, outgoing: true, pending: true, original: job.text || '', timestamp: Date.now(), network: t.person.identities?.[0]?.network || 'telegram',
-      msgtype: job.pick ? (job.pick.kind === 'sticker' ? 'm.sticker' : 'm.image') : job.photo || job.photos ? 'm.image' : job.voice ? 'm.audio' : job.file ? 'm.file' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
+      msgtype: job.pick ? (job.pick.kind === 'sticker' ? 'm.sticker' : 'm.image') : job.photo || job.photos ? 'm.image' : job.video ? 'm.video' : job.voice ? 'm.audio' : job.file ? 'm.file' : 'm.text', reactions: [], reply_to: job.reply?.id || null,
       reply: job.reply ? {id: job.reply.id, sender: job.reply.sender, outgoing: job.reply.outgoing, text: job.reply.original, msgtype: job.reply.msgtype, voice: job.reply.media?.voice} : null};
     if (job.photos) { m.album = 'pending:' + client_id; m.photos = job.photos.map((photo, i) => ({...m, photos: undefined, id: m.id + ':' + i, original: i ? '' : m.original, local: photo.url, media: {w: photo.w, h: photo.h, mime: 'image/jpeg'}})); m.media = m.photos[0].media; }
     if (job.photo) { m.local = job.photo.url; m.media = {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'}; }
     // A picked sticker or GIF shows its preview while Telegram receives the real one.
     if (job.pick) { m.local = job.pick.preview || null; m.media = {w: job.pick.w, h: job.pick.h, mime: job.pick.kind === 'gif' ? 'image/gif' : 'image/webp'}; }
     if (job.file) m.media = {filename: job.file.name, size: job.file.bytes, mime: job.file.blob.type || 'application/octet-stream'};
+    if (job.video) { m.local = job.video.local; m.poster = job.video.url || null; m.media = {w: job.video.w, h: job.video.h, duration: job.video.duration, mime: job.video.blob.type || 'video/mp4'}; }
     if (job.voice) { m.saveRecording = () => saveVoiceRecording(job.voice.blob, job.voice.take); m.local = job.voice.url; m.media = {voice: true, duration: job.voice.duration, waveform: job.voice.waveform.map(v => Math.round(v / 10.24))}; }
     t.messages.push(m); store.pending++; hold();
     if (s.person === id) paintThread(true);
     const run = async () => {
       m.pending = true; m.failed = false; if (s.person === id) paintThread();
       try {
-        let upload_id, upload_ids, media;
+        let upload_id, upload_ids, media, thumb_upload_id;
         if (job.photos) {
           upload_ids = []; media = [];
           for (const photo of job.photos) { upload_ids.push((await upload(id, 'image', photo.albumBlob || photo.blob)).upload_id); media.push({w: photo.w, h: photo.h}); }
         }
         if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
         if (job.file) upload_id = (await upload(id, 'file', job.file.blob, job.file.name)).upload_id;
+        if (job.video) {
+          // Issue 402: the video itself, then the first frame this phone drew, which the box sends as its thumbnail.
+          const v = job.video;
+          upload_id = (await upload(id, 'video', v.blob, v.name)).upload_id;
+          if (v.thumb) thumb_upload_id = (await upload(id, 'image', v.thumb)).upload_id;
+          media = Object.fromEntries(Object.entries({w: v.w, h: v.h, duration: v.duration, thumb_w: v.thumbW, thumb_h: v.thumbH}).filter(([, x]) => Number.isInteger(x) && x > 0));
+        }
         if (job.voice) {
           // Bounded steps (issue 273): a stall shows Retry and frees the chat's queue for the next message.
           const v = job.voice, size = v.blob.size || 0;
@@ -5017,7 +5077,7 @@
           media = {duration: v.duration, waveform: v.waveform};
         }
         const r = await call('people/' + id + '/send', job.pick ? {pick: job.pick.id, client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null}
-          : {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media});
+          : {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media, thumb_upload_id});
         if (r.message) mergeMessages(id, r.messages || [r.message]);
         job.onDelivered?.();
         if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
@@ -5049,7 +5109,7 @@
     // Refused (4xx) or an upload that never finished: certainly not sent. Restarts and 5xx may still land, so they keep
     // the Retry bubble, which resends with the same client id.
     if (offline(e) || e?.status >= 500) return false;
-    const items = job.photos || (job.photo ? [job.photo] : job.file ? [job.file] : []);
+    const items = job.photos || (job.photo ? [job.photo] : job.video ? [job.video] : job.file ? [job.file] : []);
     const text = job.text || '', who = store.threads[id]?.person?.display_name || 'this chat';
     const reason = e?.message && e.message.length < 80 ? e.message : 'Not sent';
     const here = s.person === id && view.draft?.isConnected && view.sd?.id === id && !view.edit;
