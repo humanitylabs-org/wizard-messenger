@@ -76,6 +76,12 @@ class GatewayTests(unittest.TestCase):
         expected=hmac.new(self.key,'\n'.join(('wizard-messenger-owner-v1',timestamp,nonce,'GET',data['path'])).encode(),hashlib.sha256).hexdigest()
         self.assertEqual(signature,expected)
         self.assertFalse(any(k.lower().startswith(('tailscale-','x-wizard-','cf-access-','x-forwarded-')) for k in headers))
+    def test_messengers_own_csrf_header_reaches_messenger(self):
+        # Issue 413: a write (a draft save) needs X-Messenger-CSRF; only the owner proof is the ingress's to set.
+        code,data=self.request('POST',headers={'Origin':'https://wizard.example:8444','X-Messenger-CSRF':'tok','X-Messenger-Owner-Proof':'forged'})
+        self.assertEqual(code,200)
+        self.assertEqual(data['headers'].get('X-Messenger-CSRF'),'tok')
+        self.assertNotEqual(data['headers'].get('X-Messenger-Owner-Proof'),'forged')
     def test_unix_serve_authority_is_restored_and_scrubbed(self):
         code,data=self.request(headers={'Host':'localhost','X-Forwarded-Host':'wizard.example:8444'})
         self.assertEqual(code,200)

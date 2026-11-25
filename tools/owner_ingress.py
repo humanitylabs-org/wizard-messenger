@@ -118,12 +118,13 @@ class Gateway(BaseHTTPRequestHandler):
         except ValueError: return self.deny(400,'invalid_length')
         if not 0 <= length <= 32*1024*1024:
             return self.deny(413,'body_too_large')
-        # Consume exactly one request; never forward hop-by-hop or asserted identity.
+        # Consume exactly one request; never forward hop-by-hop or asserted identity. Messenger's own X-Messenger-CSRF
+        # passes (stripping every x-messenger-* header refused every write with csrf_forbidden, issue 413).
         connection_tokens = {x.strip().lower() for x in (one('Connection') or '').split(',')}
         headers = {}
         for k,v in self.headers.items():
             low = k.lower()
-            if low in HOP | connection_tokens or low.startswith(('tailscale-','x-messenger-','x-wizard-','cf-access-','x-forwarded-')) or low in {'forwarded','x-real-ip','remote-user','proxy'} or (unsigned and low == 'cookie'):
+            if low in HOP | connection_tokens or low.startswith(('tailscale-','x-wizard-','cf-access-','x-forwarded-')) or low in {'forwarded','x-real-ip','remote-user','proxy','x-messenger-owner-proof'} or (unsigned and low == 'cookie'):
                 continue
             headers[k] = v
         headers['Host'] = host
