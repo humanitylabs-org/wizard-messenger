@@ -1,6 +1,6 @@
 {
   "network": {
-    "displayname_template": "{{or .ProfileName .PhoneNumber .Username \"Unknown user\"}}",
+    "displayname_template": "{{or .Nickname .ContactName .ProfileName .PhoneNumber .Username \"Unknown user\"}}",
     "use_contact_avatars": false,
     "sync_contacts_on_startup": true,
     "use_outdated_profiles": false,

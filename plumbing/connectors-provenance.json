@@ -37,8 +37,8 @@
     "image": "sha256:14f0f9454b11cb334dc165abe55c6ac30af896abd2ddb5c2e1ed137a8027f6ba",
     "binary_sha256": "a5993d2b530c07bcae345674294aa5b7416a785c910ec1566a28c0945f198759",
     "upstream_template_sha256": "b35d306cc63d4522adbbe7ede4cc0214d918088127f173319d7f5f30bde0dc76",
-    "template_overrides": "Pairing/device label changed to Wizard; converter publishes explicit native album identity/ordinal/count; configuration unchanged",
-    "template_sha256": "ca06b82c8d01a5ea44417247a52828f70a6d49f6584f12fd869c3904a8504d91",
+    "template_overrides": "Pairing/device label changed to Wizard; converter publishes explicit native album identity/ordinal/count; displayname_template names contacts like the Signal app (nickname, phone-book name, profile name, then number; single-owner box, issue 401)",
+    "template_sha256": "2fb8e1ede596b0e144bf8ad81b7f90cf84632a3f8ddf5d84e0f9b94aea51d518",
     "source": "https://github.com/mautrix/signal/tree/v0.2610.0",
     "upstream_image": "dock.mau.dev/mautrix/signal@sha256:39afa721aa69472b2e91c75bd7d81a739e47f7e480fc0ff5ac8247af28eb2d0a",
     "upstream_manifest": {

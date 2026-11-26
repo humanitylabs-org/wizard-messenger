@@ -512,6 +512,98 @@ class SignalDmLabelTests(Base):
         self.assertEqual(inbox.store.repair_person_titles(), 0)  # a title the owner set is never touched
 
 
+class SignalNumberTitleTests(Base):
+    """Issue 401 (26 Nov): a chat titled with the contact's number while Signal knows their name."""
+    ACI = '7c1e2f0a-3b4d-4e5f-8a9b-0c1d2e3f4a5b'
+    PEER = '@signal_' + ACI + ':' + SERVER
+    NUMBER = '+44 7700 900555'
+
+    def test_bridge_names_contacts_like_the_signal_app(self):
+        # Nickname, then the phone-book name, then the profile name; the number only when there is no name.
+        setup_connectors(self.root, ['signal'])
+        conf = json.loads((self.root / 'signal' / 'config.yaml').read_text())
+        self.assertEqual(conf['network']['displayname_template'],
+                         '{{or .Nickname .ContactName .ProfileName .PhoneNumber .Username "Unknown user"}}')
+
+    def box(self, looked_up):
+        inbox = self.inbox()
+        inbox.learn_me = lambda: None
+        room = '!n:' + SERVER
+        a = inbox.store.identity('signal', room, self.NUMBER)  # what 16.119 left on the box
+        inbox.store.put('sync_token', 'previous')
+        for marker in ('meta_members_v4', 'meta_rescan_v4', 'meta_status_channel_v1'):
+            inbox.store.put(marker, '1')
+        state = [bridge('signal', 'signal', **{'com.beeper.room_type.v2': 'dm'}), member(inbox.owner, 'owner'),
+                 member(self.PEER, self.NUMBER), {'type': 'm.room.name', 'content': {'name': self.NUMBER}},
+                 {'type': 'm.room.topic', 'content': {'topic': 'Signal private chat with ' + self.NUMBER}}]
+        calls = []
+
+        def matrix(path, *args, **kw):
+            if path.startswith('/sync?'):
+                return {'next_batch': 'next', 'rooms': {'join': {}}}  # no new message
+            if path.endswith('/state'):
+                return state
+            raise AssertionError(path)
+
+        def bridge_api(network, path, *args, **kw):
+            calls.append((network, path, kw.get('method', args[0] if args else 'GET')))
+            if path == '/contacts':
+                return {'contacts': [{'id': self.ACI, 'name': self.NUMBER, 'identifiers': ['tel:' + self.NUMBER],
+                                      'mxid': self.PEER, 'dm_room_mxid': room}]}
+            if path == '/resolve_identifier/' + self.ACI:
+                return {'id': self.ACI, 'name': looked_up, 'identifiers': ['tel:' + self.NUMBER], 'mxid': self.PEER}
+            raise AssertionError(path)
+        return inbox, a, matrix, bridge_api, calls
+
+    def test_a_number_title_takes_the_name_the_bridge_knows_without_a_message(self):
+        inbox, a, matrix, bridge_api, calls = self.box('Dana Phonebook')
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=bridge_api):
+            inbox.sync()
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], 'Dana Phonebook')
+        self.assertIn(('signal', '/resolve_identifier/' + self.ACI, 'GET'), calls)  # a read, never a write
+        # later the room still says the number (the bridge has not renamed the room yet): the name stays
+        inbox.store.identity('signal', '!n:' + SERVER, self.NUMBER)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], 'Dana Phonebook')
+
+    def test_a_contact_with_no_name_keeps_the_number_and_is_reported_without_it(self):
+        import contextlib, io
+        inbox, a, matrix, bridge_api, calls = self.box(self.NUMBER)
+        out = io.StringIO()
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=bridge_api), \
+                contextlib.redirect_stdout(out):
+            inbox.sync()
+            inbox.dm_labels_checked -= 16 * 60  # the next 15-minute pass: a number is rechecked at most hourly
+            inbox.sync()
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NUMBER)
+        self.assertEqual(sum(1 for c in calls if c[1].startswith('/resolve_identifier/')), 1)
+        lines = [l for l in out.getvalue().splitlines() if 'dm-label' in l]
+        self.assertEqual(len(lines), 1, out.getvalue())
+        self.assertIn('dm-label number network=signal', lines[0])
+        for part in ('room_name=number', 'peers=[number]', 'topic=number', 'contact=number', 'lookup=number'):
+            self.assertIn(part, lines[0])
+        self.assertNotIn('7700', lines[0])
+        self.assertNotIn(self.ACI, lines[0])
+        # an hour later the contact has a name on Signal: the next check finds it
+        inbox.dm_labels_checked -= 16 * 60
+        inbox.dm_number_tried = {k: v - 3600 for k, v in inbox.dm_number_tried.items()}
+        _, _, _, named, _ = self.box('Dana Later')
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=named):
+            inbox.sync()
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], 'Dana Later')
+
+    def test_list_title_on_a_number_takes_the_chats_name(self):
+        store = self.inbox().store
+        a = store.identity('signal', '!x', 'Erin')
+        with store.db() as db:
+            db.execute('UPDATE person SET display_name=? WHERE id=?', (self.NUMBER, a['person_id']))
+        self.assertEqual(store.repair_person_titles(), 1)
+        self.assertEqual(store.person(a['person_id'])['display_name'], 'Erin')
+        g = store.identity('signal', '!g', 'Book club', 'group')
+        with store.db() as db:
+            db.execute('UPDATE person SET display_name=? WHERE id=?', (self.NUMBER, g['person_id']))
+        self.assertEqual(store.repair_person_titles(), 0)  # a group's name never becomes a person's title
+
+
 class BackfillConfigTests(Base):
     def test_templates_enable_forward_backfill_and_keep_secrets_on_rerun(self):
         setup_connectors(self.root, EXTRA_NETWORKS)

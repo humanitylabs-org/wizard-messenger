@@ -862,17 +862,20 @@ class PeopleStore:
 
     def repair_person_titles(self):
         """A list title still on a stand-in ('Signal conversation') while one of that person's chats already has a
-        name or a number takes that name (issue 401). A title the owner set is never touched."""
+        name or a number takes that name, and a title that is a number takes a one-to-one chat's real name
+        (issue 401). A title the owner set is never touched."""
         own, fixed = self.own_names(), 0
         with self.db() as db:
-            rows = db.execute('SELECT p.id,p.display_name,i.label,i.last_used FROM person p JOIN identity i ON i.person_id=p.id '
+            rows = db.execute('SELECT p.id,p.display_name,i.label,i.kind,i.last_used FROM person p JOIN identity i ON i.person_id=p.id '
                               'WHERE p.name_locked=0').fetchall()
             best = {}
             for row in rows:
-                if label_rank(row['display_name'], own) > 0:
+                # A list title that is a number also takes a real name its chat has (issue 401, 26 Nov).
+                shown = label_rank(row['display_name'], own)
+                if shown == 2 or (shown == 1 and row['kind'] != 'person'):
                     continue
                 rank = label_rank(row['label'], own)
-                if rank and (row['id'] not in best or (rank, row['last_used'] or 0) > best[row['id']][:2]):
+                if rank > shown and (row['id'] not in best or (rank, row['last_used'] or 0) > best[row['id']][:2]):
                     best[row['id']] = (rank, row['last_used'] or 0, row['label'].strip()[:160])
             for person_id, (_, _, label) in best.items():
                 seq = self.next_seq()

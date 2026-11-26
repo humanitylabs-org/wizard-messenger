@@ -17,6 +17,11 @@ LIVE_WINDOW_MS = 15 * 60 * 1000
 # Issue 401: one-to-one chats still on a stand-in title are re-read this often (only those, at most a batch a pass).
 DM_REPAIR_EVERY = 15 * 60
 DM_REPAIR_BATCH = 40
+# A one-to-one chat titled with a number is rechecked at most this often (the bridge may learn a name later).
+DM_NUMBER_EVERY = 60 * 60
+# Bridges that look a contact up by its own id from their local store (GET resolve_identifier/<id>): the ghost's
+# localpart without the network prefix. Signal ghosts are @signal_<ACI uuid> (MakeUserID = aci.String()).
+RESOLVE_BY_ID = {'signal': re.compile(r'@signal_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):messenger\.internal')}
 
 
 def dm_sources(state, room_name, channel, members, other, own):
@@ -371,16 +376,20 @@ class ConnectorInbox(UnifiedInbox):
         self.store.changed()
 
     def refresh_dm_labels(self):
-        """Issue 401: one-to-one chats still titled with a stand-in ('Signal conversation', 'Unknown user', a raw id).
-        After every start, then every DM_REPAIR_EVERY seconds while any is left, re-read only those chats and retitle
-        them from the room (name, peer, invited peer, topic number) or from the bridge's own contact entry, without
-        waiting for a new message. A DM an older sync filed as a group becomes a one-to-one chat once the bridge says
-        dm, and a list title left on a stand-in takes its chat's name. Each chat that is still stuck gets one log line
-        saying which sources exist and what kind each is: never a name or a number."""
+        """Issue 401: one-to-one chats still titled with a stand-in ('Signal conversation', 'Unknown user', a raw id)
+        or with a number. After every start, then every DM_REPAIR_EVERY seconds, re-read those chats and retitle them
+        from the room (name, peer, invited peer, topic number), the bridge's own contact entry or, on Signal, the
+        bridge's lookup of the contact in its own store (which also renames the contact on the bridge), without waiting
+        for a new message. A number never replaces a name. A chat titled with a number is rechecked at most every
+        DM_NUMBER_EVERY seconds. A DM an older sync filed as a group becomes a one-to-one chat once the bridge says
+        dm, and a list title left on a stand-in or a number takes its chat's name. Each chat that is still on a
+        stand-in or a number gets one log line saying which sources exist and what kind each is: never a name or a
+        number."""
         now = time.time()
         if now - getattr(self, 'dm_labels_checked', 0) < DM_REPAIR_EVERY:
             return
         self.dm_labels_checked = now
+        tried = self.__dict__.setdefault('dm_number_tried', {})
         try:
             self.store.repair_person_titles()
             own = self.store.own_names()
@@ -398,14 +407,19 @@ class ConnectorInbox(UnifiedInbox):
                     cached = {}
                 if cached.get('space'):
                     continue
-                if row['kind'] == 'person' and label_rank(row['label'], own) == 0:
-                    stuck.append((row, cached))
+                rank = label_rank(row['label'], own)
+                if row['kind'] == 'person' and rank == 0:
+                    stuck.append((0, row, cached))
+                elif row['kind'] == 'person' and rank == 1 and now - tried.get(row['address'], 0) >= DM_NUMBER_EVERY:
+                    stuck.append((1, row, cached))  # a number: the bridge may know a name by now
                 elif row['kind'] == 'group' and ('room_type' not in cached or cached.get('room_type') in ('dm', 'private')):
-                    stuck.append((row, cached))  # maybe a DM an older sync filed as a group; a real group is read once
-            stuck.sort(key=lambda item: item[0]['kind'] != 'person')  # stuck one-to-one chats first
+                    stuck.append((2, row, cached))  # maybe a DM an older sync filed as a group; a real group is read once
+            stuck.sort(key=lambda item: (item[0], tried.get(item[1]['address'], 0)))  # stand-ins first, then numbers
             contacts = {}
-            for row, cached in stuck[:DM_REPAIR_BATCH]:
+            for _, row, cached in stuck[:DM_REPAIR_BATCH]:
                 room = row['address']
+                if row['kind'] == 'person' and label_rank(row['label'], own) == 1:
+                    tried[room] = now
                 self.rooms[room] = dict(cached, v=0)  # an outdated copy re-reads state
                 try:
                     meta = self.room_meta(room, {})
@@ -419,17 +433,31 @@ class ConnectorInbox(UnifiedInbox):
                     self.store.set_identity_kind(row['id'], 'person')
                 elif row['kind'] == 'group':
                     continue  # a real group keeps today's behaviour
-                entry = None
-                if label_rank(label, own) == 0:
+                entry = looked = None
+                if label_rank(label, own) < 2:
                     entry = self.bridge_contact(row['network'], room, meta, contacts)
-                    label = contact_label(entry, own) or label
+                    found = contact_label(entry, own)
+                    if label_rank(found, own) > label_rank(label, own):
+                        label = found
+                if label_rank(label, own) < 2 and row['network'] in RESOLVE_BY_ID:
+                    looked = self.bridge_lookup(row['network'], meta)
+                    found = contact_label(looked, own) if isinstance(looked, dict) else None
+                    if label_rank(found, own) > label_rank(label, own):
+                        label = found
                 self.store.identity(row['network'], room, label, 'person')
-                if label_rank(label, own) == 0:
-                    self.report_dm_label(row['network'], room, meta, entry, contacts.get(row['network']))
+                if label_rank(label, own) < 2:
+                    self.report_dm_label(row['network'], room, meta, entry, contacts.get(row['network']),
+                                         'stuck' if label_rank(label, own) == 0 else 'number', looked)
             if stuck:
+                self.store.repair_person_titles()
                 self.store.changed()
         except Exception as error:
             print('messenger: dm-label repair failed: %s' % type(error).__name__, flush=True)
+
+    def bridge_peers(self, network, meta):
+        people = set(meta.get('joined') or []) | set(meta.get('names') or {})
+        bot = '@' + network + 'bot:messenger.internal'
+        return {p for p in people if isinstance(p, str) and p not in (self.owner, bot) and not self.is_me(p)}
 
     def bridge_contact(self, network, room, meta, contacts):
         """The bridge's own contact entry for a one-to-one chat (provisioning GET /contacts, read-only, once a pass)."""
@@ -439,28 +467,44 @@ class ConnectorInbox(UnifiedInbox):
                 contacts[network] = [c for c in listed if isinstance(c, dict)] if isinstance(listed, list) else []
             except Exception:
                 contacts[network] = None
-        people = set(meta.get('joined') or []) | set(meta.get('names') or {})
-        bot = '@' + network + 'bot:messenger.internal'
-        people = {p for p in people if p not in (self.owner, bot) and not self.is_me(p)}
+        people = self.bridge_peers(network, meta)
         for entry in contacts[network] or []:
             if entry.get('dm_room_mxid') == room:
                 return entry
         found = [e for e in contacts[network] or [] if e.get('mxid') in people]
         return found[0] if len(found) == 1 else None
 
-    def report_dm_label(self, network, room, meta, entry, listed):
-        """One privacy-safe log line per chat still on a stand-in title (issue 401), repeated only when it changes."""
+    def bridge_lookup(self, network, meta):
+        """Issue 401: ask the bridge to look the chat's one peer up by its own id (GET resolve_identifier/<id>). On
+        Signal that reads the bridge's local contact store only (no lookup on Signal's servers), names the contact
+        with the bridge's name template (nickname, phone-book name, profile name, number) and renames the contact on
+        the bridge too. Returns the answer, 'none' when the chat has no single peer, or 'unavailable'."""
+        ids = [m.group(1) for m in map(RESOLVE_BY_ID[network].fullmatch, sorted(self.bridge_peers(network, meta))) if m]
+        if len(ids) != 1:
+            return 'none'
+        try:
+            found = self.connectors.request(network, '/resolve_identifier/' + quote(ids[0], safe=''), timeout=20)
+        except Exception:
+            return 'unavailable'
+        return found if isinstance(found, dict) else 'unavailable'
+
+    def report_dm_label(self, network, room, meta, entry, listed, state='stuck', looked=None):
+        """One privacy-safe log line per chat still on a stand-in title or a number (issue 401), repeated only when it
+        changes."""
         sources = meta.get('sources') or {}
         contact = 'unavailable' if listed is None else ('none' if entry is None else
                                                         label_kind(contact_label(entry, ()) or entry.get('name'), ()))
+        lookup = looked if isinstance(looked, str) or looked is None else label_kind(looked.get('name'), ())
         line = ('network=%s room=%s room_type=%s room_name=%s channel=%s peers=[%s] others=[%s] topic=%s contact=%s'
                 % (network, hashlib.sha256(room.encode()).hexdigest()[:8], meta.get('room_type') or 'none',
                    sources.get('room_name', '?'), sources.get('channel', '?'), ','.join(sources.get('peers') or []),
                    ','.join(sources.get('others') or []), sources.get('topic', '?'), contact))
+        if network in RESOLVE_BY_ID:
+            line += ' lookup=%s' % (lookup or 'skipped')
         reported = self.__dict__.setdefault('dm_label_reports', {})
-        if reported.get(room) != line:
-            reported[room] = line
-            print('messenger: dm-label stuck ' + line, flush=True)
+        if reported.get(room) != (state, line):
+            reported[room] = (state, line)
+            print('messenger: dm-label %s %s' % (state, line), flush=True)
 
     def rescan_dropped(self):
         """Once per META_VERSION: rooms an older release cached as non-bridged (LINE,
