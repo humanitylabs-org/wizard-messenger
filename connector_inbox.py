@@ -153,6 +153,7 @@ class ConnectorInbox(UnifiedInbox):
         if fresh and not any(e.get('type') in self.META_TYPES for e in events):
             self.rooms[room] = meta
             return meta
+        prior = meta or {}
         state = self.mx(self.room(room) + '/state')
         info = next((e['content'] for e in state if e['type'] in ('m.bridge', 'uk.half-shot.bridge')), None)
         network = room_network(state)
@@ -183,10 +184,17 @@ class ConnectorInbox(UnifiedInbox):
             meta['avatar'] = room_pic
             label = next((e['content'].get('name') for e in state if e['type'] == 'm.room.name'), None) or channel.get('displayname')
             # A DM is titled by the other participant (name, else number), never the owner (issue 401: one rule).
+            own = self.store.own_names()
+            peer = self.peer_name(network, members) if meta['kind'] == 'person' else None
+            if meta['kind'] == 'person' and not peer and prior.get('kind') == 'person' and isinstance(prior.get('peer_name'), str):
+                peer = prior['peer_name']  # named by the bridge's contact entry or lookup earlier (see better_name)
+            if peer:
+                meta['peer_name'] = peer
+                own = own - {peer}
             meta['label'] = dm_label(meta['kind'], label, [(e.get('content') or {}).get('displayname') for e in members],
-                                     self.store.own_names(), PROVIDERS[network].label + ' conversation', dm_more(state, other))
+                                     own, PROVIDERS[network].label + ' conversation', dm_more(state, other))
             if meta['kind'] == 'person':
-                meta['sources'] = dm_sources(state, label, channel, members, other, self.store.own_names())
+                meta['sources'] = dm_sources(state, label, channel, members, other, own)
         old = self.rooms.get(room)
         if old is None:
             with self.store.db() as db:
@@ -407,7 +415,7 @@ class ConnectorInbox(UnifiedInbox):
                     cached = {}
                 if cached.get('space'):
                     continue
-                rank = label_rank(row['label'], own)
+                rank = label_rank(row['label'], own - {cached.get('peer_name')})
                 if row['kind'] == 'person' and rank == 0:
                     stuck.append((0, row, cached))
                 elif row['kind'] == 'person' and rank == 1 and now - tried.get(row['address'], 0) >= DM_NUMBER_EVERY:
@@ -418,7 +426,7 @@ class ConnectorInbox(UnifiedInbox):
             contacts = {}
             for _, row, cached in stuck[:DM_REPAIR_BATCH]:
                 room = row['address']
-                if row['kind'] == 'person' and label_rank(row['label'], own) == 1:
+                if row['kind'] == 'person' and label_rank(row['label'], own - {cached.get('peer_name')}) == 1:
                     tried[room] = now
                 self.rooms[room] = dict(cached, v=0)  # an outdated copy re-reads state
                 try:
@@ -434,25 +442,63 @@ class ConnectorInbox(UnifiedInbox):
                 elif row['kind'] == 'group':
                     continue  # a real group keeps today's behaviour
                 entry = looked = None
-                if label_rank(label, own) < 2:
+                here = own - {meta.get('peer_name')}
+                if label_rank(label, here) < 2:
                     entry = self.bridge_contact(row['network'], room, meta, contacts)
-                    found = contact_label(entry, own)
-                    if label_rank(found, own) > label_rank(label, own):
-                        label = found
-                if label_rank(label, own) < 2 and row['network'] in RESOLVE_BY_ID:
+                    label, here = self.better_name(row['network'], room, meta, label, here, own, entry)
+                if label_rank(label, here) < 2 and row['network'] in RESOLVE_BY_ID:
                     looked = self.bridge_lookup(row['network'], meta)
-                    found = contact_label(looked, own) if isinstance(looked, dict) else None
-                    if label_rank(found, own) > label_rank(label, own):
-                        label = found
+                    label, here = self.better_name(row['network'], room, meta, label, here, own, looked, asked=True)
                 self.store.identity(row['network'], room, label, 'person')
-                if label_rank(label, own) < 2:
+                if label_rank(label, here) < 2:
                     self.report_dm_label(row['network'], room, meta, entry, contacts.get(row['network']),
-                                         'stuck' if label_rank(label, own) == 0 else 'number', looked)
+                                         'stuck' if label_rank(label, here) == 0 else 'number', looked, here)
             if stuck:
                 self.store.repair_person_titles()
                 self.store.changed()
         except Exception as error:
             print('messenger: dm-label repair failed: %s' % type(error).__name__, flush=True)
+
+    def better_name(self, network, room, meta, label, here, own, answer, asked=False):
+        """A title from the bridge's contact entry or lookup when it ranks above `label` (issue 401). The answer is
+        about a different, known account when the owner's own ghost on this network is known and the answer's
+        ghost is not it (a lookup is only ever asked about the chat's one other member): its name is that person's
+        even when it is spelled like one of the owner's names (round 4), and is then kept as this chat's contact
+        name. Returns (label, the owner's names that still count as 'me' in this chat)."""
+        if not isinstance(answer, dict):
+            return label, here
+        mxid = answer.get('mxid')
+        other = self.knows_own(network) and (isinstance(mxid, str) and mxid.startswith('@%s_' % network) and not self.is_me(mxid)
+                                             or asked and not mxid)
+        found = contact_label(answer, set() if other else here)
+        if label_rank(found, set() if other else here) <= label_rank(label, here):
+            return label, here
+        if other and found in here:
+            meta['peer_name'] = found
+            self.rooms[room] = meta
+            with self.store.db() as db:
+                db.execute('UPDATE room_meta SET json=? WHERE room=?', (json.dumps(meta, ensure_ascii=False), room))
+            here = own - {found}
+        return found, here
+
+    def knows_own(self, network):
+        """True once the box knows the owner's own account (ghost) on this network, so that any other member is
+        somebody else."""
+        prefix = '@%s_' % network
+        return any(isinstance(g, str) and g.startswith(prefix) for g in self.mine)
+
+    def peer_name(self, network, members):
+        """Issue 401, round 4: the name of a one-to-one chat's one other joined member when that member is a known,
+        different account (the owner's own ghost on this network is known and it is not that). Such a name is the
+        other person's even when it is spelled like one of the owner's names (a namesake, the owner's second
+        account, a contact saved under the same name), so the owner-name rule must not throw it away."""
+        if len(members) != 1 or not self.knows_own(network):
+            return None
+        user = members[0].get('state_key')
+        name = (members[0].get('content') or {}).get('displayname')
+        if not isinstance(user, str) or not user.startswith('@%s_' % network) or self.is_me(user):
+            return None
+        return name.strip() if label_rank(name, ()) == 2 else None
 
     def bridge_peers(self, network, meta):
         people = set(meta.get('joined') or []) | set(meta.get('names') or {})
@@ -488,13 +534,14 @@ class ConnectorInbox(UnifiedInbox):
             return 'unavailable'
         return found if isinstance(found, dict) else 'unavailable'
 
-    def report_dm_label(self, network, room, meta, entry, listed, state='stuck', looked=None):
+    def report_dm_label(self, network, room, meta, entry, listed, state='stuck', looked=None, own=()):
         """One privacy-safe log line per chat still on a stand-in title or a number (issue 401), repeated only when it
         changes."""
         sources = meta.get('sources') or {}
+        # Kinds with the owner-name check, like every other source on the line ('own' = spelled like an owner name).
         contact = 'unavailable' if listed is None else ('none' if entry is None else
-                                                        label_kind(contact_label(entry, ()) or entry.get('name'), ()))
-        lookup = looked if isinstance(looked, str) or looked is None else label_kind(looked.get('name'), ())
+                                                        label_kind(contact_label(entry, ()) or entry.get('name'), own))
+        lookup = looked if isinstance(looked, str) or looked is None else label_kind(looked.get('name'), own)
         line = ('network=%s room=%s room_type=%s room_name=%s channel=%s peers=[%s] others=[%s] topic=%s contact=%s'
                 % (network, hashlib.sha256(room.encode()).hexdigest()[:8], meta.get('room_type') or 'none',
                    sources.get('room_name', '?'), sources.get('channel', '?'), ','.join(sources.get('peers') or []),

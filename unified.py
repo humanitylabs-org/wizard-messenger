@@ -805,6 +805,22 @@ class PeopleStore:
                     pass
         return names
 
+    def peer_names(self, addresses):
+        """{room: name} for one-to-one chats whose one other member is a known, different account (issue 401,
+        round 4): their name is that person's, even when it is spelled like one of the owner's names."""
+        out = {}
+        with self.db() as db:
+            for room, name in db.execute("SELECT room,json_extract(json,'$.peer_name') FROM room_meta WHERE room IN (SELECT value FROM json_each(?))",
+                                         (json.dumps(sorted({a for a in addresses if isinstance(a, str)})),)):
+                if isinstance(name, str) and name.strip():
+                    out[room] = name.strip()
+        return out
+
+    def own_names_for(self, address, own=None):
+        """The owner's names, less the name of this chat's own contact (see peer_names)."""
+        own = self.own_names() if own is None else own
+        return own - set(self.peer_names([address]).values())
+
     def remember_own_names(self, source, names):
         names = sorted({n.strip() for n in names if isinstance(n, str) and n.strip()})
         if names and self.get('own_names:' + source) != json.dumps(names, ensure_ascii=False):
@@ -831,7 +847,7 @@ class PeopleStore:
 
     def refresh_label(self, identity, label):
         label = plain_name(identity.get('network'), label)
-        own = self.own_names()
+        own = self.own_names_for(identity.get('address'))
         current = identity['label']
         if not isinstance(label, str) or label == current or label in own:
             return False
@@ -866,15 +882,22 @@ class PeopleStore:
         (issue 401). A title the owner set is never touched."""
         own, fixed = self.own_names(), 0
         with self.db() as db:
-            rows = db.execute('SELECT p.id,p.display_name,i.label,i.kind,i.last_used FROM person p JOIN identity i ON i.person_id=p.id '
+            rows = db.execute('SELECT p.id,p.display_name,i.address,i.label,i.kind,i.last_used FROM person p JOIN identity i ON i.person_id=p.id '
                               'WHERE p.name_locked=0').fetchall()
+        # A chat's own contact may share a name with the owner (issue 401, round 4): not the owner's name there.
+        peers, mine = self.peer_names([r['address'] for r in rows]), {}
+        for row in rows:
+            if row['address'] in peers:
+                mine.setdefault(row['id'], set()).add(peers[row['address']])
+        with self.db() as db:
             best = {}
             for row in rows:
+                own_here = own - mine.get(row['id'], set())
                 # A list title that is a number also takes a real name its chat has (issue 401, 26 Nov).
-                shown = label_rank(row['display_name'], own)
+                shown = label_rank(row['display_name'], own_here)
                 if shown == 2 or (shown == 1 and row['kind'] != 'person'):
                     continue
-                rank = label_rank(row['label'], own)
+                rank = label_rank(row['label'], own_here)
                 if rank > shown and (row['id'] not in best or (rank, row['last_used'] or 0) > best[row['id']][:2]):
                     best[row['id']] = (rank, row['last_used'] or 0, row['label'].strip()[:160])
             for person_id, (_, _, label) in best.items():
