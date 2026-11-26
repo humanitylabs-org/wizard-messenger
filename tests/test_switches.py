@@ -54,12 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
-                'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to '
-                               'keep deleting), a keyboard button that swaps the panel for the keyboard and back, '
-                               'skin tones on a long press, a Recent row ranked by how often you use each emoji, and '
-                               'on a phone the same height as your keyboard.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}, {
                 'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
                 'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as '
                                'stacked bubbles above the message box, oldest first, each with Send, Edit and '
@@ -226,6 +220,19 @@ class SwitchStorage(unittest.TestCase):
                 store.set('transcript-paragraphs', True)
             store.set('photo-instant', True)
             self.assertNotIn('transcript-paragraphs', json.loads(path.read_text())['switches'])
+
+    def test_telegram_emoji_is_no_longer_a_switch(self):
+        # Issue 349: the Telegram-style emoji panel was approved (switch-default), so it is always on; a stored value
+        # from before is ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"telegram-emoji": true, "photo-warm": true}}')
+            store = SwitchStore(path)
+            self.assertNotIn('telegram-emoji', [s['id'] for s in store.listing()['switches']])
+            with self.assertRaises(UnknownSwitch):
+                store.set('telegram-emoji', False)
+            store.set('photo-instant', True)
+            self.assertNotIn('telegram-emoji', json.loads(path.read_text())['switches'])
 
     def test_a_removed_switch_is_ignored_and_cleared(self):
         # Issue 176: new-contact-drafts is on for everyone now; a stored value from before is dropped on the next write.
@@ -448,7 +455,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'stacked-drafts', 'video-fullscreen'])
 
 
 if __name__ == '__main__':
