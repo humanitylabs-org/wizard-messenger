@@ -34,7 +34,7 @@ services:
       MESSENGER_COOKIE_SECURE: "1"
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
-      # Issue 325 (switch agent-inbox-door): Messenger's own Agent Service app token (app-tokens/messenger), handed
+      # Issue 325: Messenger's own Agent Service app token (app-tokens/messenger), handed
       # over by the App Manager (wizard-app-manager 804). Without it the Agent chat keeps its own list.
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}

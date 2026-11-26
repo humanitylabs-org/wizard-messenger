@@ -37,13 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
-     'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: each note '
-                    'becomes a background task there (the tick shows once it is in), Sweep shows the same card as '
-                    'Daily with one-tap answers, and urgent alerts arrive as one-line pings. With the inbox off, the '
-                    'Agent chat works as before.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#325']},
     {'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
      'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to keep '
                     'deleting), a keyboard button that swaps the panel for the keyboard and back, skin tones on a '
