@@ -104,7 +104,24 @@
     return error?.code === 'send_outcome_unknown' || !rejected.has(error?.code) ? 'checking' : 'failed';
   }
   const passphraseLength = value => [...value].length;
-  const logic = {encodePublic, decodeAddress, keyHex, peerOf, publicAddress, stamp, mergeMessages, nearBottom, backLayer, receiptState, failedSendState, passphraseLength};
+  // Issue 439: the ids this Messenger may have on the box, from its Wizard path (meta messenger-gateway, else the page's
+  // own path: /messenger/ -> messenger). The App Manager names a running update by the installed app id.
+  function ownAppIds(gatewayPath, pathname) {
+    const ids = new Set();
+    for (const p of [gatewayPath, pathname]) {
+      const first = String(p || '').split('/').filter(Boolean)[0] || '';
+      if (/^[a-z0-9][a-z0-9-]{0,62}$/.test(first)) ids.add(first);
+    }
+    ids.add('messenger');
+    return [...ids];
+  }
+  // The App Manager's GET _app-updates answer (wizard-app-manager owner_status): `running` lists the app an update is on
+  // now ({app, step}). True when that is this Messenger.
+  function updatingNow(answer, ids) {
+    const running = Array.isArray(answer?.running) ? answer.running : [];
+    return running.some(r => r && typeof r.app === 'string' && ids.includes(r.app));
+  }
+  const logic = {encodePublic, decodeAddress, keyHex, peerOf, publicAddress, stamp, mergeMessages, nearBottom, backLayer, receiptState, failedSendState, passphraseLength, ownAppIds, updatingNow};
   if (typeof module !== 'undefined' && module.exports) module.exports = logic;
   if (typeof document === 'undefined') return;
 
@@ -154,7 +171,8 @@
     csrf: null, mediaTicket: '', authenticated: false, sessionLocked: false, mode: 'opening', identity: null, contacts: [], dms: [], invites: [],
     group: null, sheet: null, cache: new Map(), records: new Map(), scroll: new Map(), nodes: new Map(),
     operation: null, timer: null, reconnecting: false, setupFailed: false, listSignature: '', focusBefore: null,
-    initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null, chatOpening: null
+    initialChat: false, storageError: false, listLoaded: false, pendingInvite: null, olderPending: null, chatOpening: null,
+    retrying: false, updating: false
   };
   const storagePrefix = () => 'wizard-messenger:v1:' + state.identity?.account_id + ':';
   let updateHold = null;
@@ -345,7 +363,7 @@
   }
   function gate(mode) {
     if (mode === 'locked' && trustedWizard && !state.sessionLocked) return recoverTrusted();
-    if (mode === 'ready') { trustedTries = 0; bootTries = 0; clearTimeout(trustedTimer); clearTimeout(bootTimer); }
+    if (mode === 'ready') { trustedTries = 0; bootTries = 0; state.retrying = false; state.updating = false; clearTimeout(trustedTimer); clearTimeout(bootTimer); }
     const changed = state.mode !== mode;
     state.mode = mode; $('gate').hidden = false; $('workspace').hidden = true;
     if (['first_open', 'enrollment_ready', 'setup_required', 'locked'].includes(mode)) window.MessengerUnified?.signout();
@@ -369,7 +387,7 @@
     updateSetup(); renderActivity(); renderPasskey();
   }
   function renderActivity() {
-    const active = !!state.operation, gateBusy = active && (state.mode === 'opening' || (isBusy() && ['locked', 'setup_required'].includes(state.mode)));
+    const active = !!state.operation, gateBusy = (active && (state.mode === 'opening' || (isBusy() && ['locked', 'setup_required'].includes(state.mode)))) || (state.retrying && state.mode === 'opening');
     const listBusy = active && state.mode === 'ready' && !state.listLoaded && !state.reconnecting;
     const group = state.group, older = group && state.olderPending?.group === group;
     const historyBusy = state.mode === 'ready' && group && !isIncoming(dmById(group)) && !state.reconnecting && (older || state.chatOpening === group || (active && !cacheFor(group).loaded));
@@ -378,7 +396,7 @@
     $('history-loading').hidden = !historyBusy; $('messages').setAttribute('aria-busy', String(!!historyBusy));
     $('history-loading-text').textContent = older ? 'Loading earlier messages…' : group && cacheFor(group).loaded ? 'Refreshing messages…' : 'Loading messages…';
     $('load-older').disabled = !!older;
-    let message = state.pendingInvite ? (state.pendingInvite.action === 'accept' ? 'Accepting invite…' : 'Ignoring invite…') : gateBusy ? (state.mode === 'opening' ? 'Opening your messages…' : state.mode === 'locked' ? 'Unlocking Messenger…' : 'Creating your address…') : listBusy ? 'Loading conversations…' : historyBusy ? $('history-loading-text').textContent : state.lastActivity || '';
+    let message = state.pendingInvite ? (state.pendingInvite.action === 'accept' ? 'Accepting invite…' : 'Ignoring invite…') : gateBusy ? (state.mode === 'opening' ? (state.retrying ? $('gate-description').textContent : 'Opening your messages…') : state.mode === 'locked' ? 'Unlocking Messenger…' : 'Creating your address…') : listBusy ? 'Loading conversations…' : historyBusy ? $('history-loading-text').textContent : state.lastActivity || '';
     if ($('activity-announcement').textContent !== message) $('activity-announcement').textContent = message;
   }
   function updateSetup() {
@@ -391,7 +409,7 @@
     $('setup-submit').disabled = create ? !trustedWizard && (passphraseLength(password) < 16 || password !== $('confirm-passphrase').value) : !password.length;
   }
   function ready(identity) {
-    state.identity = identity; state.mode = 'ready'; $('gate').hidden = true; $('workspace').hidden = false;
+    state.identity = identity; state.mode = 'ready'; state.retrying = false; state.updating = false; $('gate').hidden = true; $('workspace').hidden = false;
     for (const id of ['passphrase', 'confirm-passphrase']) $(id).value = ''; // unlocked: nothing typed is pending any more
     syncUpdateHold();
     $('own-initial').textContent = (identity.display_name || 'M').slice(0, 1).toUpperCase(); renderActivity();
@@ -1233,6 +1251,8 @@
       gate('enrollment_ready'); return;
     }
     gate('opening');
+    // Issue 439: a retry keeps the waiting line steady (updating / restarting), never flips back to "Opening…".
+    if (state.retrying) { $('gate-description').textContent = state.updating ? UPDATING_TEXT : RESTARTING_TEXT; renderActivity(); }
     await run(async signal => {
       try {
         const ticket = launchTicket; launchTicket = null;
@@ -1267,7 +1287,7 @@
         }
         if (session?.authenticated !== true || typeof session.csrf_token !== 'string' || !session.csrf_token) { disconnect(); return; }
         state.csrf = session.csrf_token; state.mediaTicket = mediaTicketOf(session); state.authenticated = true; state.sessionLocked = false; await snapshot(signal);
-        bootTries = 0; if (state.mode === 'ready') trustedTries = 0;
+        bootTries = 0; state.retrying = false; state.updating = false; if (state.mode === 'ready') trustedTries = 0;
       } catch (error) {
         if (error.name === 'AbortError') return;
         if (['session_unlock_required', 'remembered_unlock_unavailable', 'locked', 'vault_locked'].includes(error.code)) { if (trustedWizard && !(state.mode === 'locked' && state.sessionLocked)) recoverTrusted(); return; }
@@ -1276,23 +1296,45 @@
         // It keeps trying for as long as the page is open: after ~3 minutes the Try again card shows as well, but the
         // retries carry on (every 15 s) so the inbox comes back by itself once Messenger answers again. A trusted
         // Wizard treats any refusal the same way (it can always open a fresh session); only setup is a real stop.
-        if ((transient(error) || (trustedWizard && error.code !== 'setup_link_required')) ) {
-          bootTries++; clearTimeout(bootTimer);
-          if (bootTries <= 40) { gate('opening'); $('gate-description').textContent = 'Messenger is restarting. Reconnecting…'; }
+        // Issue 439: an App Store update stops Messenger for minutes. When the App Manager says it is updating this app,
+        // any failed answer (502, a gateway 404, a refused session) is that update: say so, keep one steady screen and
+        // the spinner, never the Try again card, and open by itself within seconds of Messenger answering again.
+        const mine = state.operation;
+        const updating = error.code !== 'setup_link_required' && await checkUpdating();
+        if (state.operation && state.operation !== mine) return;   // a newer open took over while we asked
+        if (updating || transient(error) || (trustedWizard && error.code !== 'setup_link_required')) {
+          bootTries++; state.retrying = true; clearTimeout(bootTimer);
+          if (updating || bootTries <= 40) { gate('opening'); $('gate-description').textContent = updating ? UPDATING_TEXT : RESTARTING_TEXT; renderActivity(); }
           else { if (state.mode !== 'reconnect') { cancelView(); gate('reconnect'); } $('gate-description').textContent = "Couldn't reach Messenger yet. Still trying… or tap Try again."; }
-          bootTimer = setTimeout(() => boot(), bootTries <= 40 ? Math.min(1000 * bootTries, 5000) : 15000); return;
+          bootTimer = setTimeout(() => boot(), updating || bootTries <= 40 ? Math.min(1000 * bootTries, 5000) : 15000); return;
         }
-        bootTries = 0; disconnect(); if (error.code === 'setup_link_required') gate('first_open');
+        bootTries = 0; state.retrying = false; disconnect(); if (error.code === 'setup_link_required') gate('first_open');
       }
     }, false, true);
   }
   let bootTries = 0, bootTimer = null;
+  const UPDATING_TEXT = 'Messenger is updating · back in a moment', RESTARTING_TEXT = 'Messenger is restarting. Reconnecting…';
+  // Issue 439: is the App Manager updating this app right now? Same origin, owner only, read at most every 10 s while
+  // Messenger can't be reached. No App Manager route (raw port, older box, a refusal): not updating, as before.
+  let updatesCheckedAt = 0;
+  async function checkUpdating() {
+    if (Date.now() - updatesCheckedAt < 10000) return state.updating;
+    updatesCheckedAt = Date.now();
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      let gatewayPath = ''; try { gatewayPath = JSON.parse(document.querySelector('meta[name="messenger-gateway"]')?.content || 'null')?.path || ''; } catch { /* no meta */ }
+      const response = await fetch('/wizard-os-home/store-install/_app-updates', {headers: {Accept: 'application/json'}, credentials: 'same-origin', cache: 'no-store', signal: controller.signal});
+      state.updating = response.ok && updatingNow(await response.json(), ownAppIds(gatewayPath, location.pathname));
+    } catch { state.updating = false; }
+    finally { clearTimeout(timer); }
+    return state.updating;
+  }
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
   function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false; }
   addEventListener('online', () => { if (state.mode === 'reconnect' || state.mode === 'opening' || bootTries) { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf, mediaTicket: () => state.mediaTicket, native: {open: openChat, close: () => { if (state.sheet) closeSheet(); if (state.group) leaveChat(); window.MessengerUnified?.returnNative?.(); }, newChat: () => openSheet('contact'), settings: () => openSheet('address'), address: () => { try { return state.identity ? publicAddress(state.identity) || '' : ''; } catch { return ''; } }}});
   window.MessengerUnified?.paintSaved();
-  $('reconnect').onclick = () => { trustedTries = 0; bootTries = 0; clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(true); };
+  $('reconnect').onclick = () => { trustedTries = 0; bootTries = 0; state.retrying = false; clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(true); };
   refreshPasskey(); refreshPhoneVault();
   boot();
 })();
