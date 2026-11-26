@@ -74,18 +74,19 @@ function server(log) {
   });
 }
 
-async function run(browser, {label, network}) {
+async function run(browser, {label, network, mode}) {
   const log = [], srv = server(log);
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${srv.address().port}/`;
   const ctx = await browser.newContext({viewport: {width: 412, height: 860}, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: 'dark', userAgent: PHONE_UA});
-  await ctx.addInitScript(net => {
+  await ctx.addInitScript(({net, mode}) => {
+    if (mode) try { localStorage.setItem('messenger.photoPrefetch', mode); } catch {}
     const noop = () => {};
     window.WizardApp = {ready: noop, update: {hold: () => ({release: noop})}, back: {register: noop}, on: noop, nav: {}, toast: noop, badge: {set: noop}};
     Object.defineProperty(Navigator.prototype, 'connection', {configurable: true, get: () => ({type: net, saveData: false, addEventListener: noop})});
     const mark = () => { const r = document.documentElement; if (!r) return false; r.dataset.wzHosted = ''; return true; };
     if (!mark()) new MutationObserver((_, o) => { if (mark()) o.disconnect(); }).observe(document, {childList: true});
-  }, network);
+  }, {net: network, mode});
   const page = await ctx.newPage(), errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(base);
@@ -121,14 +122,17 @@ async function run(browser, {label, network}) {
   const browser = await chromium.launch({args: ['--autoplay-policy=user-gesture-required']}), summary = [];
   summary.push(await run(browser, {label: 'wifi', network: 'wifi'}));
   summary.push(await run(browser, {label: 'cellular', network: 'cellular'}));
+  summary.push(await run(browser, {label: 'cellular-wifi-only', network: 'cellular', mode: 'wifi'}));
   await browser.close();
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary, null, 2));
   if (BEFORE) return;
-  const [wifi, cell] = summary;
+  const [wifi, cell, cellWifiOnly] = summary;
   assert.equal(wifi.ready.preload, 'auto', 'on Wi-Fi the bubble buffers ahead');
   assert.ok(wifi.ready.buffered >= 1, 'with the first seconds already on the phone before the tap: ' + wifi.ready.buffered);
   assert.ok(wifi.tapToFrameMs < 300, 'on Wi-Fi the first moving frame comes within 300 ms of the tap: ' + wifi.tapToFrameMs);
-  assert.equal(cell.ready.preload, 'metadata', 'on mobile data it only reads the header');
-  assert.ok(cell.tapToFrameMs < 1000, 'and still starts within a second (index in front): ' + cell.tapToFrameMs);
+  // Issue 443: on mobile data too (James is on it a lot), unless this device chose Wi-Fi only.
+  assert.equal(cell.ready.preload, 'auto', 'on mobile data the bubble buffers ahead too');
+  assert.equal(cellWifiOnly.ready.preload, 'metadata', 'a device that chose Wi-Fi only just reads the header on mobile data');
+  assert.ok(cellWifiOnly.tapToFrameMs < 1000, 'and still starts within a second (index in front): ' + cellWifiOnly.tapToFrameMs);
 })().catch(e => { console.error(e); process.exit(1); });
