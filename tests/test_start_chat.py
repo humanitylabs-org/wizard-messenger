@@ -199,7 +199,8 @@ class SenderRoutes(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(EngineError) as raised:
                 sender(network=network, base='http://127.0.0.1:9', path=path, method='POST', body={})
             self.assertEqual(raised.exception.code, 'owner_transport_failed')  # allowed; nothing listens on :9
-        for path in ('/_matrix/provision/v3/create_dm/a/b' + q, '/_matrix/provision/v3/create_group/group' + q,
+        # create_group is the owner's New group (issue 397), covered in test_group_create.py.
+        for path in ('/_matrix/provision/v3/create_dm/a/b' + q, '/_matrix/provision/v3/create_group/a/b' + q,
                      '/_matrix/provision/v3/create_dm/%2B1' + '?user_id=%40other%3Amessenger.internal',
                      '/_matrix/provision/v3/create_dm/%2e%2e' + q):
             with self.subTest(path=path), self.assertRaises(EngineError) as raised:

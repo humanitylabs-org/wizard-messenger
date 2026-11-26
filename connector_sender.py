@@ -153,6 +153,10 @@ class LocalOwnerSender:
             allowed = (
                 method == 'PUT' and re.fullmatch(r'/rooms/[^/]+/(?:send/(?:m\.room\.message|m\.sticker|m\.reaction)/[^/]+|redact/[^/]+/[^/]+|typing/%40owner%3Amessenger\.internal)', route)
                 or method == 'POST' and re.fullmatch(r'/(?:join/[^/]+|rooms/[^/]+/receipt/m\.read/[^/]+)', route)
+                # Issue 397: the picture of a group the owner just made with New group; only {url: mxc}.
+                or method == 'PUT' and re.fullmatch(r'/rooms/[^/]+/state/m\.room\.avatar/?', route)
+                and isinstance(body, dict) and set(body) == {'url'} and isinstance(body['url'], str)
+                and re.fullmatch(r'mxc://[A-Za-z0-9.:-]+/[A-Za-z0-9_-]+', body['url'])
                 or method == 'POST' and u.path in ('/_synapse/admin/v1/register', '/_matrix/client/v3/login')
                 or method == 'POST' and u.path == '/_matrix/media/v3/upload' and set(q) == {'filename'} and q['filename'] in (['photo.jpg'], ['photo.png'], ['photo.gif'], ['photo.webp'], ['voice-message.ogg'], ['voice-message.webm'], ['voice-message.m4a'], ['video.mp4'], ['video.mov'], ['video.webm'], ['attachment'])
             )
@@ -170,7 +174,9 @@ class LocalOwnerSender:
                 re.fullmatch(r'/login/(?:start/[A-Za-z0-9_.-]+|step/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:user_input|display_and_wait|cookies)|cancel/[A-Za-z0-9_.-]+)', route)
                 or route == '/logout/all'
                 # Issue 176: open an empty chat with a new contact / look a LINE ID up. Neither sends anything.
-                or re.fullmatch(r'/create_dm/[^/]+', route) or route == '/search_users')
+                or re.fullmatch(r'/create_dm/[^/]+', route) or route == '/search_users'
+                # Issue 397: New group, the owner's own Create tap (owner-only route, no agent capability).
+                or re.fullmatch(r'/create_group/[A-Za-z0-9_.-]+', route))
             allowed = allowed and set(q) <= {'user_id', 'txn_id'} and q.get('user_id') == ['@owner:messenger.internal']
         if not allowed:
             fail('sender_route_denied', 'Unapproved owner transport operation', 403)

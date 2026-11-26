@@ -64,7 +64,12 @@ class SwitchEndpoint(unittest.TestCase):
                                'Telegram. Tap to show or hide the controls (play, pause, a scrubber, close). Back or '
                                'a swipe down returns to the chat where you were. GIFs and stickers still loop in the '
                                'chat.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}, {
+                'id': 'new-group', 'name': 'New group',
+                'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick '
+                               'the network, two or more people and a name (optional photo), tap Create. The group is '
+                               'made on the real network and opens ready to send.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#397']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -455,7 +460,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'stacked-drafts', 'video-fullscreen'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'stacked-drafts', 'video-fullscreen', 'new-group'])
 
 
 if __name__ == '__main__':
