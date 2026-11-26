@@ -12,18 +12,31 @@ from switches import SwitchStore
 from unified import UnifiedInbox
 
 D = ':messenger.internal'
-# Shapes copied from the pinned bridges' GetCapabilities (whatsapp/telegram v0.2610.0 pkg/connector/capabilities.go).
+# The exact bodies the pinned bridges answer to GET /_matrix/provision/v3/capabilities: mautrix-go v0.32 writes the
+# connector's ProvisioningCapabilities as is (no "provisioning" wrapper), every GroupFieldCapability with its
+# "allowed" (whatsapp/telegram v0.2610.0 pkg/connector/capabilities.go).
+OFF = {'allowed': False}
 CAPS = {
-    'whatsapp': {'provisioning': {'resolve_identifier': {'create_dm': True, 'contact_list': True},
-                                  'group_creation': {'group': {'type_description': 'a group chat',
-                                                               'name': {'allowed': True, 'max_length': 100},
-                                                               'participants': {'allowed': True, 'required': True, 'min_length': 1}}}}},
-    'telegram': {'provisioning': {'resolve_identifier': {'create_dm': True, 'contact_list': True},
-                                  'group_creation': {'group': {'type_description': 'a normal group',
-                                                               'name': {'allowed': True, 'required': True, 'max_length': 255},
-                                                               'participants': {'allowed': True, 'required': True,
-                                                                                'min_length': 1, 'max_length': 200}}}}},
-    'signal': {'provisioning': {'resolve_identifier': {'create_dm': True}, 'group_creation': {}}},
+    'whatsapp': {'resolve_identifier': {'create_dm': True, 'lookup_phone': True, 'lookup_email': False, 'lookup_username': False,
+                                        'any_phone': False, 'contact_list': True, 'search': False},
+                 'group_creation': {'group': {'type_description': 'a group chat',
+                                              'name': {'allowed': True, 'max_length': 100}, 'username': OFF, 'avatar': OFF, 'topic': OFF,
+                                              'disappear': {'allowed': True, 'settings': {'types': ['after_send'],
+                                                                                          'timers': [86400000, 604800000, 7776000000]}},
+                                              'participants': {'allowed': True, 'required': True, 'min_length': 1},
+                                              'parent': {'allowed': True}}},
+                 'image_pack_import': True},
+    'telegram': {'resolve_identifier': {'create_dm': True, 'lookup_phone': True, 'lookup_email': False, 'lookup_username': True,
+                                        'any_phone': False, 'contact_list': True, 'search': True},
+                 'group_creation': {'group': {'type_description': 'a normal group',
+                                              'name': {'allowed': True, 'required': True, 'max_length': 255}, 'username': OFF,
+                                              'avatar': OFF, 'topic': OFF, 'disappear': OFF,
+                                              'participants': {'allowed': True, 'required': True, 'min_length': 1, 'max_length': 200},
+                                              'parent': OFF}},
+                 'image_pack_import': True},
+    'signal': {'resolve_identifier': {'create_dm': True, 'lookup_phone': True, 'lookup_email': False, 'lookup_username': True,
+                                      'any_phone': False, 'contact_list': True, 'search': False},
+               'group_creation': None},
 }
 CONTACTS = {
     'whatsapp': [{'id': '66810000001', 'name': 'Ann Lee', 'mxid': '@whatsapp_66810000001' + D},

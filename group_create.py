@@ -4,7 +4,7 @@ The owner picks a network, two or more people from that network and a name (opti
 network's bridge to create the group on the real network, joins its room and lists it in the Inbox at once.
 
 Per network (pinned bridgev2 bridges, mautrix-go v0.32 provisioning v3):
-- GET /capabilities -> provisioning.group_creation lists the group types a bridge can create, with the name and
+- GET /capabilities -> group_creation (top level) lists the group types a bridge can create, with the name and
   member rules. Only networks that list one are offered, so there is never a dead button. Today that is WhatsApp
   (type 'group', name up to 100, 1+ others, takes an avatar) and Telegram ('group', name required, 1-200 others).
 - POST /create_group/<type> {participants, name, avatar} creates it (owner sender, one fixed route).
@@ -70,8 +70,11 @@ def default_name(names, limit=100):
 
 
 def group_type(caps):
-    """(type id, its rules) a bridge's /capabilities offers for a plain group, or None. Pure."""
-    kinds = ((caps or {}).get('provisioning') or {}).get('group_creation') or {}
+    """(type id, its rules) a bridge's /capabilities offers for a plain group, or None. Pure.
+    GET /v3/capabilities answers the bridge's ProvisioningCapabilities as is (mautrix-go v0.32 provisioning.go
+    GetCapabilities), so group_creation sits at the top level, next to resolve_identifier."""
+    kinds = (caps or {}).get('group_creation') if isinstance(caps, dict) else None
+    kinds = kinds or {}
     if not isinstance(kinds, dict) or not kinds:
         return None
     key = 'group' if 'group' in kinds else sorted(kinds)[0]
