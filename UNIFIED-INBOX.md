@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.129
+
+- Updating screen (issue 439, bug fix, on for everyone): while an automatic app update has Messenger stopped, its page now says "Messenger is updating · back in a moment" on one steady screen with a spinner, instead of flipping between "Opening your messages…" and "Messenger is restarting", and it opens by itself within seconds once the update is done (it asks the App Manager's app-updates status). A plain restart keeps one steady "Messenger is restarting. Reconnecting…" line.
+
 ## 0.2.0-unified.16.128
 
 - Signal chat names, round 4 (issue 401, bug fix, on for everyone): a Signal one-to-one chat keeps its contact's name even when that name is spelled the same as one of the owner's own names (for example a contact also called James). Before, such a name was thrown away as "the owner's name" and the chat stayed on the contact's number.
