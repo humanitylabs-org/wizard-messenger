@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.128
+
+- Signal chat names, round 4 (issue 401, bug fix, on for everyone): a Signal one-to-one chat keeps its contact's name even when that name is spelled the same as one of the owner's own names (for example a contact also called James). Before, such a name was thrown away as "the owner's name" and the chat stayed on the contact's number.
+
 ## 0.2.0-unified.16.127
 
 - Signal chat names, round 3 (issue 401, bug fix, on for everyone): Signal contacts are named the way the Signal app names them (the nickname you gave them, else the name in your phone's contacts, else their profile name, else their number). One-to-one chats an older version titled with a number are rechecked (at most hourly) and take the name once the Signal bridge knows it, without a new message. A chat still on a number logs a privacy-safe `messenger: dm-label number` line (kinds only).

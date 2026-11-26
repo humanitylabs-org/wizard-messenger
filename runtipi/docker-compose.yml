@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-18594a39070583a4b915b0ec0272deca616d1d7e@sha256:47f3e9a60f59f8fdbdb1afa6d7a643f71cfe81ecde0cf107edae8c519c9ceb0b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ca3f781e94cefe315adb464b6a37d84933d2bdb3@sha256:7170cc3225fe0f43d38bf12d3c29abe5ed441c8e12e4f976d84720a8f26a6980}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-18594a39070583a4b915b0ec0272deca616d1d7e@sha256:47f3e9a60f59f8fdbdb1afa6d7a643f71cfe81ecde0cf107edae8c519c9ceb0b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ca3f781e94cefe315adb464b6a37d84933d2bdb3@sha256:7170cc3225fe0f43d38bf12d3c29abe5ed441c8e12e4f976d84720a8f26a6980}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -39,7 +39,7 @@ services:
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.127"
+      MESSENGER_VERSION: "0.2.0-unified.16.128"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
@@ -88,7 +88,7 @@ services:
     restart: unless-stopped
   telegram:
     # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
-    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-18594a39070583a4b915b0ec0272deca616d1d7e@sha256:3d914fdaaad70d1b07d6691df31a4160977982827c1610742ff7bfa3d7697f8f}
+    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-ca3f781e94cefe315adb464b6a37d84933d2bdb3@sha256:a41232b2e3f2b9786d5978540ede2e5bcfcde7de3309fa8178ec257a1cb5dc4b}
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -112,7 +112,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-18594a39070583a4b915b0ec0272deca616d1d7e@sha256:47f3e9a60f59f8fdbdb1afa6d7a643f71cfe81ecde0cf107edae8c519c9ceb0b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ca3f781e94cefe315adb464b6a37d84933d2bdb3@sha256:7170cc3225fe0f43d38bf12d3c29abe5ed441c8e12e4f976d84720a8f26a6980}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -138,7 +138,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-18594a39070583a4b915b0ec0272deca616d1d7e@sha256:47f3e9a60f59f8fdbdb1afa6d7a643f71cfe81ecde0cf107edae8c519c9ceb0b}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-ca3f781e94cefe315adb464b6a37d84933d2bdb3@sha256:7170cc3225fe0f43d38bf12d3c29abe5ed441c8e12e4f976d84720a8f26a6980}
     user: 0:0
     entrypoint:
     - python3
