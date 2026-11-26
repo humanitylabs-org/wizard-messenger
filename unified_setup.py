@@ -16,6 +16,18 @@ def write(path, value):
     tmp.replace(path)
 
 
+def write_secret(path, value):
+    """One secret as the whole file, mode 0600 (Synapse's *_path settings read it as is)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix('.new')
+    with tmp.open('w') as f:
+        os.chmod(tmp, 0o600)
+        f.write(value)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
+
+
 def setup(root):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -48,13 +60,15 @@ def setup(root):
         'sender_localpart': 'doublepuppet-' + keys['doublepuppet'][:8].lower().replace('-', 'x').replace('_', 'x'), 'rate_limited': False,
         'namespaces': {'users': [{'exclusive': False, 'regex': '@owner:messenger\\.internal'}], 'aliases': [], 'rooms': []},
     })
+    write_secret(root / 'matrix' / 'registration_shared_secret', keys['registration'])
     write(root / 'matrix' / 'homeserver.yaml', {
         'server_name': 'messenger.internal', 'pid_file': '/tmp/synapse.pid',
         'listeners': [{'port': 8008, 'type': 'http', 'tls': False, 'bind_addresses': ['0.0.0.0'], 'resources': [{'names': ['client'], 'compress': False}]}],
         'database': {'name': 'sqlite3', 'args': {'database': '/data/homeserver.db'}},
         'media_store_path': '/data/media', 'signing_key_path': '/data/signing.key',
         'report_stats': False, 'enable_registration': False,
-        'registration_shared_secret': keys['registration'],
+        # Issue 444: the secret sits in its own owner-only file, never in homeserver.yaml.
+        'registration_shared_secret_path': '/data/registration_shared_secret',
         'app_service_config_files': ['/data/telegram-registration.yaml', '/data/doublepuppet-registration.yaml'],
         'federation_domain_whitelist': [], 'allow_public_rooms_over_federation': False,
         'trusted_key_servers': [], 'suppress_key_server_warning': True,

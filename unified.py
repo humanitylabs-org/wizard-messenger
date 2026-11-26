@@ -209,6 +209,7 @@ NATIVE_ALBUM_PREFIXES = tuple(network + ':' for network in NATIVE_ALBUM_MARKERS)
 CAPTIONLESS_PHOTOS = frozenset(('line',))
 UPLOAD_MAX = 25 * 1024 * 1024
 MEDIA_CACHE_MAX = 300 * 1024 * 1024
+GAP_PAGES, GAP_PAGE = 20, 100  # issue 444: up to 2000 skipped events per chat are read back after a limited sync
 # Switch photo-warm (issue 162): incoming pictures are fetched on arrival, so the box keeps more of them.
 PHOTO_WARM_MAX = 25 * 1024 * 1024
 PHOTO_WARM_TYPES = ('m.image', 'm.sticker', 'm.video')
@@ -2677,12 +2678,11 @@ class UnifiedInbox:
                     self.store.next_seq()
                     self.notify()
             for room, data in result.get('rooms', {}).get('join', {}).items():
-                if data.get('timeline', {}).get('limited'):
-                    self.store.put('history_gap:' + room, 'Earlier history may be incomplete')
                 meta = self.room_meta(room, data)
                 if not (meta.get('network') or meta.get('telegram')) or meta.get('space'):
                     continue
                 identity = self.store.identity(meta.get('network') or 'telegram', room, meta['label'], meta['kind'])
+                self.fill_gap(identity, meta, data, since)
                 for event in data.get('timeline', {}).get('events', []):
                     self.ingest(identity, meta, event, live=bool(since))
                 self.ephemeral(identity, data.get('ephemeral', {}).get('events', []))
@@ -2694,6 +2694,40 @@ class UnifiedInbox:
             return {'state': 'unavailable', 'error': error.message}
         finally:
             self.sync_lock.release()
+
+    def fill_gap(self, identity, meta, data, since):
+        """Issue 444: a sync that skipped events (more than the 100-event timeline arrived since the
+        last sync, e.g. a bridge catching up after an update) answers `limited` with `prev_batch`.
+        Read the skipped part back to the previous sync point, so every message that reached the
+        box shows in Messenger, quietly (live=False: old lines never notify). The warning stays only
+        when the gap could not be read in full."""
+        room = identity['address']
+        timeline = data.get('timeline') or {}
+        if not timeline.get('limited'):
+            return
+        token = timeline.get('prev_batch')
+        complete = False
+        events = []
+        if since and isinstance(token, str) and token:
+            try:
+                for _ in range(GAP_PAGES):
+                    page = self.mx(self.room(room) + '/messages?' + urlencode({'dir': 'b', 'limit': GAP_PAGE, 'from': token, 'to': since}))
+                    chunk = page.get('chunk') or []
+                    events += chunk
+                    token = page.get('end')
+                    if not chunk or not token:
+                        complete = True
+                        break
+            except EngineError:
+                complete = False
+        for event in reversed(events):
+            if event.get('type') in ('m.room.message', 'm.sticker', 'm.reaction', 'm.room.redaction'):
+                self.ingest(identity, meta, event, live=False)
+        if since and complete:
+            if self.store.get('history_gap:' + room):
+                self.store.put('history_gap:' + room, '')
+        else:
+            self.store.put('history_gap:' + room, 'Earlier history may be incomplete')
 
     def backfill_media(self, identity):
         """Rows stored before media support carry only "[Photo] caption"; re-read recent room history once

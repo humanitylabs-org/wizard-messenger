@@ -64,8 +64,8 @@ services:
       is_main: true
       internal_port: 8765
   matrix:
-    # Official Synapse v1.163.0 multi-architecture manifest.
-    image: ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    # Official Synapse v1.166.0 multi-architecture manifest (tag for Dependabot, digest is what runs).
+    image: ghcr.io/element-hq/synapse:v1.166.0@sha256:2cdc84f1de4687af89e4b7b1fe7b5f93e0ee7913243b63f79b05319cb6a8f525
     user: "1000:1000"
     entrypoint: [python, -m, synapse.app.homeserver, --config-path, /data/homeserver.yaml]
     read_only: true
