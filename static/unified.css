@@ -956,6 +956,14 @@ html.u-splitting, html.u-splitting * { cursor: col-resize !important; user-selec
 .u-group-note { margin: .5rem 0; font-size: .8125rem; color: var(--ink-3); }
 .u-group-note:empty { display: none; }
 .u-group-create { margin-top: .25rem; }
+/* Issue 399 (switch add-contact): Telegram-style Add contact bar under the chat header. */
+.u-addcontact { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; padding: .375rem .5rem .375rem 1rem; background: var(--raised); border-bottom: 1px solid var(--line); font-size: .875rem; color: var(--ink-2); }
+.u-addcontact[hidden] { display: none; }
+.u-addcontact-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-addcontact-add { flex: 0 0 auto; min-height: 2.25rem; padding: 0 .875rem; border: 0; border-radius: 1.125rem; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+.u-addcontact-add:disabled { opacity: .6; }
+.u-addcontact-close { flex: 0 0 auto; }
+.u-net-contact[hidden] { display: none; }
 .u-start-chat { display: grid; grid-template-columns: auto 1fr; gap: .5rem; margin-top: .75rem; }
 .u-start-chat .u-start-title { grid-column: 1 / -1; margin: 0; font-size: .8125rem; font-weight: 600; color: var(--ink-3); }
 .u-start-chat button { grid-column: 1 / -1; }

@@ -55,6 +55,12 @@ SWITCHES = (
                     'network and opens ready to send.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#397']},
+    {'id': 'add-contact', 'name': 'Add contact on Telegram',
+     'description': 'A chat from someone who is not your Telegram contact yet shows an Add contact bar at the top (also '
+                    'in the chat menu and Contact info). One tap adds them as a real Telegram contact and saves them '
+                    'in Wizard Contacts. Networks that cannot add contacts show nothing.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#399']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

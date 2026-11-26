@@ -1,0 +1,344 @@
+diff --git a/pkg/connector/connector.go b/pkg/connector/connector.go
+index 6c61aea2..18ae2a9e 100644
+--- a/pkg/connector/connector.go
++++ b/pkg/connector/connector.go
+@@ -46,6 +46,7 @@ func (tc *TelegramConnector) Init(bridge *bridgev2.Bridge) {
+ 
+ func (tc *TelegramConnector) Start(ctx context.Context) error {
+ 	tc.registerWizardPickers()
++	tc.registerWizardContacts()
+ 	return tc.Store.Upgrade(ctx)
+ }
+ 
+diff --git a/pkg/connector/wizardcontacts.go b/pkg/connector/wizardcontacts.go
+new file mode 100644
+index 00000000..fb7dc967
+--- /dev/null
++++ b/pkg/connector/wizardcontacts.go
+@@ -0,0 +1,229 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++
++// Wizard Messenger "Add contact": two provisioning routes for the owner's own login. GET says whether a Telegram user
++// is already one of the owner's contacts (and whether they can be added at all); POST adds them with
++// contacts.addContact, the same as the native app's "Add contact" bar on a chat from someone new. The owner's phone
++// number is never shared with them (add_phone_privacy_exception stays off). Nothing here sends a message.
++package connector
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"io"
++	"net/http"
++	"strconv"
++	"strings"
++	"time"
++	"unicode/utf8"
++
++	"maunium.net/go/mautrix"
++	"maunium.net/go/mautrix/bridgev2"
++
++	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
++)
++
++// WizardContactAPI is the slice of the Telegram API Add contact uses. *tg.Client satisfies it; tests record calls.
++type WizardContactAPI interface {
++	UsersGetUsers(ctx context.Context, id []tg.InputUserClass) ([]tg.UserClass, error)
++	ContactsAddContact(ctx context.Context, request *tg.ContactsAddContactRequest) (tg.UpdatesClass, error)
++}
++
++type wizardContact struct {
++	UserID    string `json:"user_id"`
++	Contact   bool   `json:"contact"`
++	Mutual    bool   `json:"mutual,omitempty"`
++	CanAdd    bool   `json:"can_add"`
++	Reason    string `json:"reason,omitempty"`
++	FirstName string `json:"first_name,omitempty"`
++	LastName  string `json:"last_name,omitempty"`
++}
++
++// Telegram keeps first and last names to 64 characters each.
++const wizardContactNameMax = 64
++
++func wizardContactState(user *tg.User) wizardContact {
++	out := wizardContact{UserID: strconv.FormatInt(user.ID, 10), Contact: user.Contact, Mutual: user.MutualContact,
++		FirstName: user.FirstName, LastName: user.LastName}
++	switch {
++	case user.Self:
++		out.Reason = "self"
++	case user.Deleted:
++		out.Reason = "deleted"
++	case user.Bot:
++		out.Reason = "bot"
++	case user.Contact:
++		out.Reason = "contact"
++	default:
++		out.CanAdd = true
++	}
++	return out
++}
++
++func wizardContactName(value string) string {
++	value = strings.Join(strings.Fields(value), " ")
++	for utf8.RuneCountInString(value) > wizardContactNameMax {
++		_, size := utf8.DecodeLastRuneInString(value)
++		value = value[:len(value)-size]
++	}
++	return strings.TrimSpace(value)
++}
++
++func wizardOneUser(ctx context.Context, api WizardContactAPI, input tg.InputUserClass) (*tg.User, error) {
++	users, err := api.UsersGetUsers(ctx, []tg.InputUserClass{input})
++	if err != nil {
++		return nil, err
++	}
++	for _, u := range users {
++		if user, ok := u.(*tg.User); ok {
++			return user, nil
++		}
++	}
++	return nil, mautrix.MNotFound.WithMessage("Telegram user not found")
++}
++
++func wizardUpdatedUser(updates tg.UpdatesClass, id int64) *tg.User {
++	withUsers, ok := updates.(interface{ GetUsers() []tg.UserClass })
++	if !ok {
++		return nil
++	}
++	for _, u := range withUsers.GetUsers() {
++		if user, ok := u.(*tg.User); ok && user.ID == id {
++			return user
++		}
++	}
++	return nil
++}
++
++// wizardAddContact adds one user as a contact under the given name (their own Telegram name when none is given) and
++// returns the user as Telegram now sees them. Someone who already is a contact is left as is.
++func wizardAddContact(ctx context.Context, api WizardContactAPI, input tg.InputUserClass, first, last string) (*tg.User, tg.UpdatesClass, error) {
++	user, err := wizardOneUser(ctx, api, input)
++	if err != nil {
++		return nil, nil, err
++	}
++	state := wizardContactState(user)
++	if state.Contact {
++		return user, nil, nil
++	}
++	if !state.CanAdd {
++		return nil, nil, mautrix.MForbidden.WithMessage("This Telegram account can't be added as a contact")
++	}
++	first, last = wizardContactName(first), wizardContactName(last)
++	if first == "" {
++		first, last = wizardContactName(user.FirstName), wizardContactName(user.LastName)
++	}
++	if first == "" {
++		first, last = wizardContactName(last), ""
++	}
++	if first == "" {
++		return nil, nil, mautrix.MBadJSON.WithMessage("A first name is needed")
++	}
++	updates, err := api.ContactsAddContact(ctx, &tg.ContactsAddContactRequest{ID: input, FirstName: first, LastName: last})
++	if err != nil {
++		return nil, nil, err
++	}
++	if fresh := wizardUpdatedUser(updates, user.ID); fresh != nil {
++		return fresh, updates, nil
++	}
++	fresh, err := wizardOneUser(ctx, api, input)
++	if err != nil {
++		// Added; only the read back failed.
++		user.Contact = true
++		return user, updates, nil
++	}
++	return fresh, updates, nil
++}
++
++func (tc *TelegramClient) wizardContactInput(ctx context.Context, raw string) (tg.InputUserClass, error) {
++	id, err := strconv.ParseInt(raw, 10, 64)
++	if err != nil || id <= 0 {
++		return nil, mautrix.MNotFound.WithMessage("Unknown Telegram user")
++	}
++	input, err := tc.getInputUser(ctx, id)
++	if err != nil {
++		return nil, mautrix.MNotFound.WithMessage("Unknown Telegram user")
++	}
++	return input, nil
++}
++
++func (tc *TelegramClient) wizardContactGet(ctx context.Context, raw string) (any, error) {
++	input, err := tc.wizardContactInput(ctx, raw)
++	if err != nil {
++		return nil, err
++	}
++	user, err := wizardOneUser(ctx, tc.client.API(), input)
++	if err != nil {
++		return nil, err
++	}
++	return wizardContactState(user), nil
++}
++
++func (tc *TelegramClient) wizardContactAdd(ctx context.Context, raw string, first, last string) (any, error) {
++	input, err := tc.wizardContactInput(ctx, raw)
++	if err != nil {
++		return nil, err
++	}
++	user, _, err := wizardAddContact(ctx, tc.client.API(), input, first, last)
++	if err != nil {
++		return nil, err
++	}
++	// Keep the ghost (name, contact flag) in step, as the bridge does for any user Telegram sends it.
++	_, _ = tc.updateGhost(ctx, user.ID, user)
++	return wizardContactState(user), nil
++}
++
++// registerWizardContacts adds the two routes to the existing provisioning router (shared-secret auth, owner login).
++func (tc *TelegramConnector) registerWizardContacts() {
++	matrix, ok := tc.Bridge.Matrix.(bridgev2.MatrixConnectorWithProvisioning)
++	if !ok {
++		return
++	}
++	prov := matrix.GetProvisioning()
++	if prov == nil || prov.GetRouter() == nil {
++		return
++	}
++	handle := func(w http.ResponseWriter, r *http.Request) {
++		login := prov.GetUser(r).GetDefaultLogin()
++		if login == nil {
++			mautrix.MForbidden.WithMessage("Telegram is not connected").Write(w)
++			return
++		}
++		client, ok := login.Client.(*TelegramClient)
++		if !ok || client.client == nil || !client.IsLoggedIn() {
++			mautrix.MForbidden.WithMessage("Telegram is not connected").Write(w)
++			return
++		}
++		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
++		defer cancel()
++		var result any
++		var err error
++		if r.Method == http.MethodPost {
++			var body struct {
++				FirstName string `json:"first_name"`
++				LastName  string `json:"last_name"`
++			}
++			raw, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
++			if len(raw) > 0 && json.Unmarshal(raw, &body) != nil {
++				mautrix.MBadJSON.WithMessage("Invalid body").Write(w)
++				return
++			}
++			result, err = client.wizardContactAdd(ctx, r.PathValue("user"), body.FirstName, body.LastName)
++		} else {
++			result, err = client.wizardContactGet(ctx, r.PathValue("user"))
++		}
++		if err != nil {
++			var we mautrix.RespError
++			if errors.As(err, &we) {
++				we.Write(w)
++				return
++			}
++			mautrix.MUnknown.WithMessage("Telegram did not answer").Write(w)
++			return
++		}
++		wizardWriteJSON(w, result)
++	}
++	router := prov.GetRouter()
++	router.HandleFunc("GET /v3/wizard/contact/{user}", handle)
++	router.HandleFunc("POST /v3/wizard/contact/{user}", handle)
++}
+diff --git a/pkg/connector/wizardcontacts_test.go b/pkg/connector/wizardcontacts_test.go
+new file mode 100644
+index 00000000..dfe74e3b
+--- /dev/null
++++ b/pkg/connector/wizardcontacts_test.go
+@@ -0,0 +1,91 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++package connector
++
++import (
++	"context"
++	"strings"
++	"testing"
++
++	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
++)
++
++type contactRecordingAPI struct {
++	user  tg.User
++	adds  []*tg.ContactsAddContactRequest
++	reads int
++}
++
++func (a *contactRecordingAPI) UsersGetUsers(ctx context.Context, id []tg.InputUserClass) ([]tg.UserClass, error) {
++	a.reads++
++	u := a.user
++	return []tg.UserClass{&u}, nil
++}
++
++func (a *contactRecordingAPI) ContactsAddContact(ctx context.Context, req *tg.ContactsAddContactRequest) (tg.UpdatesClass, error) {
++	a.adds = append(a.adds, req)
++	a.user.Contact = true
++	a.user.FirstName, a.user.LastName = req.FirstName, req.LastName
++	u := a.user
++	return &tg.Updates{Users: []tg.UserClass{&u}}, nil
++}
++
++func TestWizardContactStateSaysWhoCanBeAdded(t *testing.T) {
++	for _, c := range []struct {
++		user   tg.User
++		can    bool
++		reason string
++	}{
++		{tg.User{ID: 5, FirstName: "Gil"}, true, ""},
++		{tg.User{ID: 5, Contact: true}, false, "contact"},
++		{tg.User{ID: 5, Bot: true}, false, "bot"},
++		{tg.User{ID: 5, Self: true}, false, "self"},
++		{tg.User{ID: 5, Deleted: true}, false, "deleted"},
++	} {
++		got := wizardContactState(&c.user)
++		if got.CanAdd != c.can || got.Reason != c.reason || got.UserID != "5" {
++			t.Fatalf("%+v -> %+v", c.user, got)
++		}
++	}
++}
++
++func TestWizardAddContactAddsWithTheNameAndNoPhone(t *testing.T) {
++	api := &contactRecordingAPI{user: tg.User{ID: 555, AccessHash: 9, FirstName: "gil", LastName: "n"}}
++	input := &tg.InputUser{UserID: 555, AccessHash: 9}
++	user, _, err := wizardAddContact(context.Background(), api, input, "  Gil ", " Novak ")
++	if err != nil || user == nil || !user.Contact {
++		t.Fatalf("user=%+v err=%v", user, err)
++	}
++	if len(api.adds) != 1 {
++		t.Fatalf("adds %d", len(api.adds))
++	}
++	req := api.adds[0]
++	if req.FirstName != "Gil" || req.LastName != "Novak" || req.Phone != "" || req.AddPhonePrivacyException {
++		t.Fatalf("request %+v: name trimmed, owner's phone never shared", req)
++	}
++	if in, ok := req.ID.(*tg.InputUser); !ok || in.UserID != 555 || in.AccessHash != 9 {
++		t.Fatalf("id %+v", req.ID)
++	}
++	// Already a contact now: a repeat changes nothing on Telegram.
++	if _, _, err := wizardAddContact(context.Background(), api, input, "Other", ""); err != nil || len(api.adds) != 1 {
++		t.Fatalf("repeat must not add again: %d %v", len(api.adds), err)
++	}
++}
++
++func TestWizardAddContactFallsBackToTheirOwnNameAndRefusesBots(t *testing.T) {
++	api := &contactRecordingAPI{user: tg.User{ID: 7, FirstName: "", LastName: "Solo"}}
++	if _, _, err := wizardAddContact(context.Background(), api, &tg.InputUser{UserID: 7}, " ", ""); err != nil {
++		t.Fatal(err)
++	}
++	if api.adds[0].FirstName != "Solo" || api.adds[0].LastName != "" {
++		t.Fatalf("fallback %+v", api.adds[0])
++	}
++	long := strings.Repeat("é", 80)
++	api = &contactRecordingAPI{user: tg.User{ID: 8, FirstName: "x"}}
++	if _, _, err := wizardAddContact(context.Background(), api, &tg.InputUser{UserID: 8}, long, ""); err != nil || len([]rune(api.adds[0].FirstName)) != 64 {
++		t.Fatalf("name cut to 64 characters: %v", err)
++	}
++	bot := &contactRecordingAPI{user: tg.User{ID: 9, Bot: true, FirstName: "Bot"}}
++	if _, _, err := wizardAddContact(context.Background(), bot, &tg.InputUser{UserID: 9}, "Bot", ""); err == nil || len(bot.adds) != 0 {
++		t.Fatal("a bot is never added")
++	}
++}

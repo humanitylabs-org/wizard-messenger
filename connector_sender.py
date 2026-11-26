@@ -176,7 +176,10 @@ class LocalOwnerSender:
                 # Issue 176: open an empty chat with a new contact / look a LINE ID up. Neither sends anything.
                 or re.fullmatch(r'/create_dm/[^/]+', route) or route == '/search_users'
                 # Issue 397: New group, the owner's own Create tap (owner-only route, no agent capability).
-                or re.fullmatch(r'/create_group/[A-Za-z0-9_.-]+', route))
+                or re.fullmatch(r'/create_group/[A-Za-z0-9_.-]+', route)
+                # Issue 399: Add contact, the owner's own tap; a Telegram user id and a name, nothing else.
+                or re.fullmatch(r'/wizard/contact/[0-9]{1,20}', route) and isinstance(body, dict)
+                and set(body) <= {'first_name', 'last_name'} and all(isinstance(v, str) and len(v) <= 128 for v in body.values()))
             allowed = allowed and set(q) <= {'user_id', 'txn_id'} and q.get('user_id') == ['@owner:messenger.internal']
         if not allowed:
             fail('sender_route_denied', 'Unapproved owner transport operation', 403)
