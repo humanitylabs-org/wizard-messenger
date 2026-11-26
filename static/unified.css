@@ -247,6 +247,9 @@ button { touch-action: manipulation; }
 .u-video-view .u-vv-scrub { flex: 1; min-width: 0; accent-color: white; height: 1.75rem; margin: 0; }
 .u-video-view .u-vv-close, .u-video-view .u-vv-bar { transition: opacity .2s; }
 .u-video-view:not(.chrome) .u-vv-close, .u-video-view:not(.chrome) .u-vv-bar { opacity: 0; pointer-events: none; }
+.u-video-view .u-vv-load { position: absolute; inset: 0; margin: auto; width: 3rem; height: 3rem; border: 3px solid color-mix(in srgb, white 30%, transparent); border-top-color: white; border-radius: 50%; animation: spin .9s linear infinite; pointer-events: none; }
+.u-video-view .u-vv-load[hidden] { display: none; }
+.u-video-view .u-vv-wait { display: block; width: 1.25rem; height: 1.25rem; margin: auto; border: 2px solid color-mix(in srgb, white 30%, transparent); border-top-color: white; border-radius: 50%; animation: spin .9s linear infinite; }
 .u-video-view svg { width: 1.375rem; height: 1.375rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .u-media.sticker { background: transparent; width: 160px; }
 .u-media img, .u-media video { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .15s; }

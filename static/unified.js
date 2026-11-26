@@ -316,8 +316,17 @@
   function videoSwipe(dx, dy) {
     return Number.isFinite(dy) && dy >= 90 && Math.abs(dx || 0) < dy ? 'close' : 'stay';
   }
-  function videoPreload(conn, mobile) {
-    return prefetchAllowed('wifi', conn, mobile) ? 'auto' : 'metadata';
+  // Issue 443 (James is on mobile data a lot): videos follow photos (issue 392). They download and buffer ahead on any
+  // network unless this device chose Wi-Fi only (stored 'wifi') or Off; Data Saver keeps them for Wi-Fi unless the
+  // device chose Always. stored is the device's own choice: '' (never chose), 'off', 'wifi' or 'always'.
+  function videoPrefetchWanted(stored, conn, mobile) {
+    if (stored === 'off') return false;
+    if (stored === 'always') return true;
+    if (stored === 'wifi') return prefetchAllowed('wifi', conn, mobile);
+    return !conn?.saveData || prefetchAllowed('wifi', conn, mobile);
+  }
+  function videoPreload(conn, mobile, stored = 'wifi') {
+    return videoPrefetchWanted(stored, conn, mobile) ? 'auto' : 'metadata';
   }
   // The download queue: one or two at a time, low priority, paused while busy() (the owner is loading something) or
   // while allowed() says no. Each file is kept in Cache Storage (open() gives the cache, or null without one) and
@@ -827,7 +836,7 @@
     if (shell === 'desktop' || shell === 'phone') return shell === 'desktop';
     return !(coarse && screenMin > 0 && screenMin < 600);
   }
-  if (typeof module !== 'undefined') module.exports = {desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -3126,7 +3135,7 @@
     for (const e of entries) {
       if (!e.isIntersecting) continue;
       const v = e.target.querySelector('video');
-      if (v && v.paused && !v.currentTime) v.preload = videoPreload(navigator.connection, onPhone());
+      if (v && v.paused && !v.currentTime && !v.dataset.kept) v.preload = videoPreload(navigator.connection, onPhone(), storedPrefetchMode());
       videoNear.unobserve(e.target);
     }
   }, {rootMargin: '50% 0px'}) : null;
@@ -3141,6 +3150,7 @@
       v = node('video'); v.playsInline = true; v.muted = true; v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
       if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
       else if (m.local && m.poster) v.poster = m.poster; // issue 402: a video still sending shows the frame the phone drew
+      if (!loop) ownPoster(v, m);
       if (loop) {
         const still = stillMotion();
         v.loop = true; v.preload = 'auto'; v.disablePictureInPicture = true; v.autoplay = !still;
@@ -3194,12 +3204,39 @@
     }
     return box;
   }
+  // Issue 443: a video with no thumbnail (LINE sends none) must never show the browser's own poster: Android WebView
+  // draws a big grey play-button picture stretched over the player. Until the phone has drawn the video's first frame
+  // the poster is plain black; then it is that frame, at the video's own shape, remembered for the full-screen player.
+  const BLACK_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAAAAACwAAAAAAQABAAACAkQBADs=';
+  const framePosters = new Map();
+  function frameShot(v) {
+    try {
+      if (!v || v.readyState < 2 || !v.videoWidth || !v.videoHeight) return null;
+      const scale = Math.min(1, 480 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.75);
+    } catch { return null; } // a frame the page may not read: no picture, the frame itself shows
+  }
+  function ownPoster(v, m) {
+    if (v.getAttribute('poster')) return;
+    v.poster = framePosters.get(m.id) || BLACK_POSTER;
+    v.addEventListener('loadeddata', () => {
+      if (!v.paused || v.closest?.('.started')) return;
+      let shot = framePosters.get(m.id);
+      if (!shot && (shot = frameShot(v))) {
+        framePosters.set(m.id, shot);
+        while (framePosters.size > 60) framePosters.delete(framePosters.keys().next().value);
+      }
+      if (shot) v.poster = shot; else v.removeAttribute('poster'); // the drawn frame shows by itself now
+    });
+  }
   // Issue 320: a video this phone already downloaded plays from the phone. The bubble swaps to the kept copy before
   // anything has played; a few kept blob: URLs are reused across repaints and the oldest are let go.
   const videoBlobs = new Map();
   function keptVideo(v, url, frag) {
     if (!photoCache.has(url)) return;
-    const use = blob => { if (blob && v.paused && !v.currentTime && !v.closest?.('.started')) { v.src = blob + frag; v.dataset.kept = '1'; } };
+    const use = blob => { if (blob && v.paused && !v.currentTime && !v.closest?.('.started')) { v.src = blob + frag; v.dataset.kept = '1'; v.preload = 'auto'; } };
     if (videoBlobs.has(url)) { use(videoBlobs.get(url)); return; }
     photoCache.match(url).then(blob => {
       if (!blob) return;
@@ -3286,7 +3323,8 @@
     const layer = node('div', 'u-video-view chrome'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true');
     layer.setAttribute('aria-label', 'Video'); layer.tabIndex = -1;
     const v = node('video'); v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto'; v.disablePictureInPicture = true;
-    if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
+    // Issue 443: never the browser's own poster. The box's thumbnail, else the first frame this phone drew, else black.
+    v.poster = m.media?.thumb && !m.local ? mediaURL(m.id, 'thumb') : (m.local && m.poster) || framePosters.get(m.id) || frameShot(from) || BLACK_POSTER;
     v.src = (from?.currentSrc || from?.src || m.local || mediaURL(m.id)).replace(/#t=[0-9.]+$/, '');
     const playBtn = iconButton('pause', 'Pause video', () => toggle(), 'u-vv-play');
     const now = node('span', 'u-vv-time', '0:00'), left = node('span', 'u-vv-time', fmtDur(m.media?.duration || 0));
@@ -3294,14 +3332,17 @@
     scrub.setAttribute('aria-label', 'Position in video');
     const bar = node('div', 'u-vv-bar'); bar.append(playBtn, now, scrub, left);
     const closeBtn = iconButton('close', 'Close', () => close(), 'u-vv-close');
-    layer.append(v, closeBtn, bar);
+    // Issue 443: while it waits for frames (a video still streaming), the player says so.
+    const spin = node('div', 'u-vv-load'); spin.setAttribute('role', 'status'); spin.setAttribute('aria-label', 'Loading video'); spin.hidden = true;
+    layer.append(v, spin, closeBtn, bar);
     const total = () => Number.isFinite(v.duration) && v.duration > 0 ? v.duration : (m.media?.duration || 0) / 1000;
-    let seeking = false, hideTimer = 0;
+    let seeking = false, hideTimer = 0, moving = false;
     const paint = () => {
-      const on = !v.paused && !v.ended;
-      layer.classList.toggle('playing', on);
-      playBtn.replaceChildren(icon(on ? 'pause' : 'play'));
-      playBtn.setAttribute('aria-label', on ? 'Pause video' : 'Play video'); playBtn.title = playBtn.getAttribute('aria-label');
+      const on = !v.paused && !v.ended, wait = on && !moving;
+      layer.classList.toggle('playing', on && moving); layer.classList.toggle('loading', wait);
+      layer.setAttribute('aria-busy', wait ? 'true' : 'false'); spin.hidden = !wait;
+      playBtn.replaceChildren(wait ? node('span', 'u-vv-wait') : icon(on ? 'pause' : 'play'));
+      playBtn.setAttribute('aria-label', wait ? 'Loading video. Tap to stop' : on ? 'Pause video' : 'Play video'); playBtn.title = playBtn.getAttribute('aria-label');
       now.textContent = fmtDur(v.currentTime * 1000); left.textContent = fmtDur(total() * 1000);
       if (!seeking && total() > 0) scrub.value = String(Math.round(1000 * v.currentTime / total()));
     };
@@ -3310,7 +3351,10 @@
       layer.classList.toggle('chrome', show);
       if (show && !v.paused) hideTimer = setTimeout(() => { if (!v.paused && !seeking) layer.classList.remove('chrome'); }, 2500);
     };
-    for (const name of ['play', 'pause', 'ended', 'timeupdate', 'durationchange', 'loadedmetadata']) v.addEventListener(name, paint);
+    // Moving: from 'playing' (or the first drawn frame) until it stalls ('waiting') or stops.
+    v.addEventListener('playing', () => { moving = true; });
+    for (const name of ['waiting', 'pause', 'ended', 'emptied']) v.addEventListener(name, () => { moving = false; });
+    for (const name of ['play', 'playing', 'waiting', 'pause', 'ended', 'timeupdate', 'durationchange', 'loadedmetadata']) v.addEventListener(name, paint);
     v.addEventListener('pause', () => chrome(true)); v.addEventListener('play', () => chrome(layer.classList.contains('chrome')));
     scrub.addEventListener('input', () => { seeking = true; if (total() > 0) { v.currentTime = total() * Number(scrub.value) / 1000; now.textContent = fmtDur(v.currentTime * 1000); } });
     scrub.addEventListener('change', () => { seeking = false; chrome(true); });
@@ -3325,6 +3369,7 @@
     const firstFrame = () => {
       if (layer.dataset.firstFrame) return;
       const ms = Math.round(performance.now() - tapped); layer.dataset.firstFrame = String(ms);
+      if (!v.paused) { moving = true; paint(); }
       if (switchState.on['photo-timings'] === true) photoClock.add('video_first_frame', ms);
     };
     if (typeof v.requestVideoFrameCallback === 'function') v.requestVideoFrameCallback(firstFrame);
@@ -6377,8 +6422,9 @@
   // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher). The switch lives
   // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
-  // Issue 392: photos download on any network; videos (up to 25 MB each) only on Wi-Fi unless this device chose Always.
-  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: (storedPrefetchMode() === 'always' || prefetchAllowed('wifi', navigator.connection, onPhone()))});
+  // Issue 392: photos download on any network. Issue 443: so do videos (up to 25 MB each, 3 per chat), unless this
+  // device chose Wi-Fi only or Data Saver is on.
+  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: videoPrefetchWanted(storedPrefetchMode(), navigator.connection, onPhone())});
   const storedPrefetchMode = () => { try { return localStorage.getItem(PREFETCH_MODE_KEY) || ''; } catch { return ''; } };
   // Issue 392: on any network unless this device chose Wi-Fi only (James is on mobile data a lot, and Settings has had
   // no row to choose Always since issue 202). The 300 MB cap still bounds what is kept.
@@ -6412,7 +6458,7 @@
   function prefetchSoon() {
     clearTimeout(prefetchTimer);
     prefetchTimer = setTimeout(async () => {
-      const wanted = () => { const w = prefetchWant(); return w.photos || w.videos; }; // issue 392: videos can wait for Wi-Fi
+      const wanted = () => { const w = prefetchWant(); return w.photos || w.videos; };
       if (prefetchMode() === 'off' || !s.ready || !wanted()) return;
       const chats = [...(store.lists.people || []), ...(store.lists.groups || [])].sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0)).slice(0, PREFETCH.chats);
       const fetched = Object.create(null);
