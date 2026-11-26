@@ -4058,6 +4058,10 @@ class UnifiedInbox:
                 return {'job': self.catchup.start(pid, since if type(since) is int else None)}
             if suffix[3:] == ['grant'] and method == 'POST': return self.catchup.grant(pid, payload.get('mode'))
             if suffix[3:] == ['revoke'] and method == 'POST': return self.catchup.revoke(pid, payload.get('clear') is True)
+        if len(suffix) == 3 and suffix[0] == 'people' and suffix[2] == 'network-contact':
+            # Issue 399, owner session only: no agent capability maps here and there is no MCP tool.
+            import network_contact
+            return network_contact.dispatch(self, method, suffix[1], payload, query)
         # Issue 251, owner session only (no agent capability maps here): Messenger's link to the Wizard Tinfoil app.
         if suffix == ['tinfoil'] and method == 'GET': return self.tinfoil_state()
         if suffix == ['tinfoil'] and method == 'POST': return self.link_tinfoil(payload)
