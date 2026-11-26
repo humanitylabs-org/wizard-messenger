@@ -934,6 +934,36 @@ html.u-splitting, html.u-splitting * { cursor: col-resize !important; user-selec
 .u-newmsg .u-directory-row:hover, .u-newmsg .u-directory-row:focus-visible { background: var(--raised); }
 .u-newmsg .u-empty { text-align: center; color: var(--ink-3); margin: 6px 0; }
 .u-newmsg-wizard { align-self: center; color: var(--ink-3); }
+/* New group (issue 397, switch new-group) */
+.u-newmsg-group { align-self: center; color: var(--ink-3); }
+.u-new-group-open { margin-top: .5rem; }
+.u-new-group .u-group-nets { display: grid; flex: 0 0 auto; width: 100%; margin: .25rem 0 .75rem; }
+.u-new-group > :not(.u-group-people) { flex-shrink: 0; }
+.u-new-group .u-group-nets[hidden] { display: none; }
+.u-group-head { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; }
+.u-group-photo { flex: 0 0 auto; width: 3.5rem; height: 3.5rem; min-width: 3.5rem; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--raised); color: var(--ink-3); overflow: hidden; cursor: pointer; }
+.u-group-photo svg { width: 1.5rem; height: 1.5rem; }
+.u-group-photo img { width: 100%; height: 100%; object-fit: cover; }
+.u-group-name { flex: 1 1 auto; min-width: 0; }
+.u-group-chips { display: flex; flex-wrap: wrap; gap: .375rem; margin-bottom: .5rem; }
+.u-group-chips:empty { display: none; }
+.u-group-chip { min-height: 2rem; padding: 0 .75rem; border: 0; border-radius: 1rem; background: var(--accent); color: var(--on-accent); font: inherit; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+.u-group-chip::after { content: ' ✕'; opacity: .8; }
+.u-group-people { flex: 1 1 auto; min-height: 8rem; overflow-y: auto; }
+.u-group-row { position: relative; }
+.u-group-tick { margin-left: auto; width: 1.5rem; height: 1.5rem; flex: 0 0 auto; border: 2px solid var(--ink-3); border-radius: 50%; display: grid; place-items: center; font-size: .8125rem; font-weight: 700; }
+.u-group-row.on .u-group-tick { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.u-group-note { margin: .5rem 0; font-size: .8125rem; color: var(--ink-3); }
+.u-group-note:empty { display: none; }
+.u-group-create { margin-top: .25rem; }
+/* Issue 399 (switch add-contact): Telegram-style Add contact bar under the chat header. */
+.u-addcontact { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; padding: .375rem .5rem .375rem 1rem; background: var(--raised); border-bottom: 1px solid var(--line); font-size: .875rem; color: var(--ink-2); }
+.u-addcontact[hidden] { display: none; }
+.u-addcontact-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-addcontact-add { flex: 0 0 auto; min-height: 2.25rem; padding: 0 .875rem; border: 0; border-radius: 1.125rem; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+.u-addcontact-add:disabled { opacity: .6; }
+.u-addcontact-close { flex: 0 0 auto; }
+.u-net-contact[hidden] { display: none; }
 .u-start-chat { display: grid; grid-template-columns: auto 1fr; gap: .5rem; margin-top: .75rem; }
 .u-start-chat .u-start-title { grid-column: 1 / -1; margin: 0; font-size: .8125rem; font-weight: 600; color: var(--ink-3); }
 .u-start-chat button { grid-column: 1 / -1; }
@@ -1142,20 +1172,20 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-sticker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; }
 .u-pick-tile.sticker { aspect-ratio: 1; margin: 0; background: none; }
 .u-pick-tile.sticker img { object-fit: contain; }
-/* Issue 349 (switch telegram-emoji): Telegram's layout. A category bar on top, the tabs and a delete key in a bottom
+/* Issue 349: Telegram's layout. A category bar on top, the tabs and a delete key in a bottom
    strip, skin-tone choices floating over the grid. */
-.u-picker.tg { position: relative; }
+.u-picker { position: relative; }
 .u-emo-cats { display: flex; gap: 2px; padding: 4px 6px 2px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
 .u-emo-cats[hidden] { display: none; }
 .u-emo-cat { flex: 1 0 36px; min-width: 36px; min-height: 36px; height: 36px; padding: 0; border-radius: 10px; background: none; font-size: 1.25rem; line-height: 1; opacity: .55; filter: grayscale(.6); }
 .u-emo-cat.on { opacity: 1; filter: none; background: var(--accent-soft); }
 .u-emo-cat:hover, .u-emo-cat:focus-visible { opacity: 1; }
 .u-pick-foot { display: flex; align-items: center; gap: 4px; padding: 4px 6px; flex-shrink: 0; border-top: 1px solid var(--line); }
-.u-picker.tg .u-pick-tabs { flex: 1; padding: 0; justify-content: center; }
+.u-picker .u-pick-tabs { flex: 1; padding: 0; justify-content: center; }
 .u-pick-del { flex: 0 0 auto; width: 44px; height: 36px; min-width: 0; min-height: 0; border-radius: 10px; background: none; color: var(--ink-2); touch-action: none; user-select: none; -webkit-user-select: none; }
 .u-pick-del svg { width: 22px; height: 22px; }
 .u-pick-del:hover, .u-pick-del:active { background: var(--raised); color: var(--ink); }
-.u-picker.tg .u-emo { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.u-picker .u-emo { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .u-emo-tones { position: absolute; z-index: 2; display: flex; gap: 2px; padding: 4px; border-radius: 14px; background: var(--panel-solid); border: 1px solid var(--line); box-shadow: 0 6px 24px color-mix(in srgb, black 35%, transparent); }
 .u-emo-tone { width: 42px; flex: 0 0 42px; }
 .u-emo-tone.on { background: var(--accent-soft); }

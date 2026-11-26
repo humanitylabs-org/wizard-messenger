@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-738dfb959258e627d25165782b0ac772695b3041@sha256:fe74572031fbea0c9c521a8265dd85958d90bd5794f8d6e832f4b5c0b33565db}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-d60d5e09b3e02fcd0dfc67df36302d78cf58be92@sha256:eef915fa842c9077d0b87eab05fac7c29e7afb70426e504f5a7c617c6effbb85}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-738dfb959258e627d25165782b0ac772695b3041@sha256:fe74572031fbea0c9c521a8265dd85958d90bd5794f8d6e832f4b5c0b33565db}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-d60d5e09b3e02fcd0dfc67df36302d78cf58be92@sha256:eef915fa842c9077d0b87eab05fac7c29e7afb70426e504f5a7c617c6effbb85}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -34,12 +34,12 @@ services:
       MESSENGER_COOKIE_SECURE: "1"
       MESSENGER_DATA: /data
       MESSENGER_PORT: "8765"
-      # Issue 325 (switch agent-inbox-door): Messenger's own Agent Service app token (app-tokens/messenger), handed
+      # Issue 325: Messenger's own Agent Service app token (app-tokens/messenger), handed
       # over by the App Manager (wizard-app-manager 804). Without it the Agent chat keeps its own list.
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.119"
+      MESSENGER_VERSION: "0.2.0-unified.16.126"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
@@ -88,7 +88,7 @@ services:
     restart: unless-stopped
   telegram:
     # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
-    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-6ab2ed06c48787acb22828b6296597f6f1dfe1a7@sha256:287f91f541f9def26a8c6cae80abce108056f505a763cc6c7f95ea9b359b4acd}
+    image: ${TELEGRAM_IMAGE:-ghcr.io/humanitylabs-org/wizard-telegram-bridge:sha-d60d5e09b3e02fcd0dfc67df36302d78cf58be92@sha256:24457b14ea17ea6f09ec145ed3c3ee5646d3b06d1d62f6f0a0a0d878735a259e}
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -112,7 +112,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-738dfb959258e627d25165782b0ac772695b3041@sha256:fe74572031fbea0c9c521a8265dd85958d90bd5794f8d6e832f4b5c0b33565db}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-d60d5e09b3e02fcd0dfc67df36302d78cf58be92@sha256:eef915fa842c9077d0b87eab05fac7c29e7afb70426e504f5a7c617c6effbb85}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -138,7 +138,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-738dfb959258e627d25165782b0ac772695b3041@sha256:fe74572031fbea0c9c521a8265dd85958d90bd5794f8d6e832f4b5c0b33565db}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-d60d5e09b3e02fcd0dfc67df36302d78cf58be92@sha256:eef915fa842c9077d0b87eab05fac7c29e7afb70426e504f5a7c617c6effbb85}
     user: 0:0
     entrypoint:
     - python3

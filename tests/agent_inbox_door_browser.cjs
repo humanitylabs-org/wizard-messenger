@@ -1,4 +1,4 @@
-// Issue 325 (switch agent-inbox-door): in door mode the Agent chat's Sweep shows the box's agent inbox card: Waiting
+// Issue 325: in door mode the Agent chat's Sweep shows the box's agent inbox card: Waiting
 // items with their recommendation and up to 4 one-tap answers, "Open to confirm" for a confirm item, Done, the counts,
 // "And N more" to Wizard's inbox view and Yes to all when the card allows it. A tap answers that record on the box.
 // Synthetic API (a small fake of agent_chat.py's door routes), no container and no shell:
@@ -12,7 +12,6 @@ const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'te
 const now = Date.now(), min = 60e3;
 const base = (id, name) => ({id, display_name: name, avatar: null, identities: [{id: id + '-i', network: 'line', kind: 'person', label: name}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'Hi', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0});
 const PEOPLE = [base('anna', 'Anna Lee')];
-const SWITCH = {id: 'agent-inbox-door', name: 'Agent chat through your agent inbox', description: 'x', on: true, default: false, tried: true, vote: null, issues: ['humanitylabs-org/wizard-messenger#325']};
 
 function item(id, title, ask, options, extra = {}) {
   return {id, agent: 'hermes', thread_id: 't-' + id, title, ask, recommendation: '', options: options.map(token => ({token})), default_option: options[0] || null,
@@ -78,7 +77,7 @@ async function run(browser, label, viewport, scheme) {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
     if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
-    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [SWITCH]})});
+    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [] /* no Messenger switch since the switch removal: the door is always on */})});
     if (p === 'api/status') return ok({state: 'ready', account_configured: true});
     if (p === 'api/identity') return ok({identity});
     if (p === 'api/contacts') return ok({contacts: []});

@@ -14,7 +14,7 @@ const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming photos as they arrive.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
-  ['share-files', 'Share files to Messenger', 'Sharing a file from another Wizard app offers Messenger.']];
+  ['stacked-drafts', 'Several drafts in one chat', 'Your agent can keep a few drafts ready in one chat.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, kit] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['390-none', {width: 390, height: 844}, false]]) {
@@ -110,8 +110,8 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       await until(async () => box.votes.at(-1)?.vote === null);
       assert.deepEqual(box.feedback['photo-warm'], {tried: true});
       // A flip in the shared section reaches the box at once.
-      await kitBox.locator('[data-try-id="share-files"]').getByRole('switch').click();
-      await until(async () => box.flips.at(-1)?.id === 'share-files' && box.flips.at(-1)?.on === true);
+      await kitBox.locator('[data-try-id="stacked-drafts"]').getByRole('switch').click();
+      await until(async () => box.flips.at(-1)?.id === 'stacked-drafts' && box.flips.at(-1)?.on === true);
       // Flipped from the Tracker: the section follows on the next switch poll.
       box.on['photo-timings'] = true;
       await until(async () => await kitBox.locator('[data-try-id="photo-timings"]').getByRole('switch').getAttribute('aria-checked') === 'true', 12000);

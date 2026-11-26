@@ -261,7 +261,7 @@
   // of the last messages of the most recent chats, then the box's view copies of the newest photos in each, so a
   // tapped photo is already on the device. PREFETCH holds the sizes; prefetchPlan() lists what to fetch, in order.
   const PREFETCH = {chats: 15, messages: 40, views: 10, cap: 300 * 1024 * 1024, concurrency: 2};
-  // Background video download (issue 320, switch video-prefetch, off by default): after the photos, the newest videos
+  // Background video download (issue 320, on for everyone): after the photos, the newest videos
   // of each chat up to 25 MB each are kept on the phone too, so the bubble plays from there. GIFs and stickers (which
   // loop on their own) and bigger videos are left to stream.
   const VIDEO_PREFETCH = {perChat: 3, maxBytes: 25 * 1024 * 1024};
@@ -534,7 +534,7 @@
         })};
     });
   }
-  // Issue 325 (switch agent-inbox-door): the box's agent inbox card (wizard-agent-service agent-sweep.mjs composeCard /
+  // Issue 325: the box's agent inbox card (wizard-agent-service agent-sweep.mjs composeCard /
   // cardView), as the Agent chat draws it: Waiting items with their recommendation and up to 4 answer buttons, Done,
   // and the counts. Only record fields, never free text. A `confirm` item is never answered here ("Open to confirm").
   function doorCard(card) {
@@ -685,7 +685,7 @@
     if (choice.capture) input.setAttribute('capture', choice.capture); else input.removeAttribute('capture');
     input.click();
   }
-  // ---------- Emoji panel like Telegram (issue 349, switch telegram-emoji): the pure parts ----------
+  // ---------- Emoji panel like Telegram (issue 349): the pure parts ----------
   // Skin tones: an emoji takes a tone when exactly one of its characters is an Emoji_Modifier_Base (👍, 🏃‍♀️, ☝️);
   // the tone goes right after that character (in place of its variation selector). Several people (👨‍👩‍👧) get none.
   const EMOJI_TONES = ['\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
@@ -1302,6 +1302,115 @@
     };
     return form;
   }
+  // Issue 397 (switch new-group): New group. Offered only for networks whose bridge says it can create groups (the box
+  // asks each connected bridge), so there is never a dead button. The owner picks a network, two or more people from
+  // it and a name (optional photo); the box creates the group on the real network and it opens ready to send.
+  // Owner only: no agent tool or capability reaches these routes.
+  const newGroupOn = () => switchState.on['new-group'] === true;
+  function newGroupButton(label, cls, before) {
+    const b = button(label, () => { before?.(); newGroupSheet(); }, cls); b.hidden = true;
+    if (!newGroupOn()) return b;
+    call('new-group').then(r => { b.hidden = !(r?.networks || []).length; }).catch(() => { b.hidden = true; });
+    return b;
+  }
+  // A small square JPEG for the group picture; the original file if the browser can't draw it.
+  async function groupPicture(file) {
+    try {
+      const bmp = await createImageBitmap(file), side = Math.min(bmp.width, bmp.height), size = Math.min(640, side);
+      const c = Object.assign(document.createElement('canvas'), {width: size, height: size});
+      c.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, size, size);
+      return await new Promise((ok, bad) => c.toBlob(b => b ? ok(b) : bad(new Error('no blob')), 'image/jpeg', .85));
+    } catch { return file; }
+  }
+  async function newGroupSheet() {
+    const sheet = overlay('New group'); sheet.classList.add('tall', 'u-new-group');
+    const title = 'New group', clientId = uid(), picked = new Map();
+    let networks = [], net = null, people = [], photo = null, photoURL = '';
+    const nets = node('div', 'u-view-choice u-group-nets'); nets.setAttribute('role', 'radiogroup'); nets.setAttribute('aria-label', 'Network');
+    const head = node('div', 'u-group-head'), pic = button('', () => file.click(), 'u-group-photo'), name = node('input', 'u-group-name');
+    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/webp'; file.hidden = true;
+    pic.setAttribute('aria-label', 'Add group photo'); pic.append(icon('camera'));
+    name.type = 'text'; name.maxLength = 100; name.autocomplete = 'off'; name.setAttribute('aria-label', 'Group name');
+    head.append(pic, name, file);
+    const chips = node('div', 'u-group-chips'), search = node('input', 'u-search'), list = node('div', 'u-directory u-group-people');
+    search.type = 'search'; search.setAttribute('aria-label', 'Search people');
+    const create = button('Create group', () => submit(), 'primary wide u-group-create'), note = node('p', 'u-start-note u-group-note');
+    sheet.append(nets, head, chips, search, list, note, create);
+    const firsts = () => [...picked.values()].map(n => n.trim().split(/\s+/)[0]).filter(Boolean);
+    const fallbackName = () => { const f = firsts(); return !f.length ? 'Group name' : f.length <= 3 ? (f.length === 1 ? f[0] : f.slice(0, -1).join(', ') + ' and ' + f.at(-1)) : f.slice(0, 3).join(', ') + ' +' + (f.length - 3); };
+    const paint = () => {
+      name.placeholder = net && picked.size ? fallbackName() : 'Group name' + (net?.name_required ? '' : ' (optional)');
+      chips.replaceChildren(...[...picked].map(([id, who]) => button(who, () => { picked.delete(id); paint(); }, 'u-group-chip')));
+      for (const c of chips.children) c.setAttribute('aria-label', 'Remove ' + c.textContent);
+      const min = net?.min || 2, ready = !!net && picked.size >= min && (!net.max || picked.size <= net.max);
+      create.disabled = !ready || create.dataset.busy === '1';
+      if (create.dataset.busy !== '1') note.textContent = !net ? '' : picked.size < min ? 'Pick at least ' + min + ' people' : net.max && picked.size > net.max ? 'Up to ' + net.max + ' people' : picked.size + ' people · ' + net.label;
+      draw();
+    };
+    const draw = () => {
+      const q = search.value.trim().toLowerCase(); list.replaceChildren();
+      for (const p of people.filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 200)) {
+        const on = picked.has(p.id), row = button('', () => { on ? picked.delete(p.id) : picked.set(p.id, p.name); paint(); }, 'u-directory-row u-group-row' + (on ? ' on' : ''));
+        row.setAttribute('role', 'checkbox'); row.setAttribute('aria-checked', String(on));
+        const text = node('span', 'u-who-text'); text.append(node('strong', '', p.name), node('span', '', net.label));
+        row.append(avatar(p.name, 'small'), text, node('span', 'u-group-tick', on ? '✓' : '')); list.append(row);
+      }
+      if (!list.children.length) list.append(node('p', 'u-empty', !net ? '' : people.loading ? 'Loading…' : q ? 'No one matches' : 'No ' + net.label + ' contacts yet'));
+    };
+    const choose = async n => {
+      if (net?.network === n.network) return;
+      net = n; picked.clear(); people = Object.assign([], {loading: true}); search.value = ''; search.placeholder = 'Search ' + n.label + ' people';
+      for (const b of nets.children) { const on = b.dataset.network === n.network; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
+      paint();
+      try {
+        const r = await api('api/unified/new-group/people?network=' + encodeURIComponent(n.network), {});
+        if (s.overlay !== title || net !== n) return;
+        people = r.people || [];
+      } catch (e) { if (s.overlay === title && net === n) { people = []; error(e); } }
+      paint();
+    };
+    search.oninput = draw;
+    file.onchange = async () => {
+      const f = file.files?.[0]; file.value = ''; if (!f) return;
+      pic.disabled = true;
+      try {
+        const blob = await groupPicture(f);
+        const response = await fetch('api/unified/new-group/photo', {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+          headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
+        let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
+        if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Could not add that photo. Try again.');
+        if (s.overlay !== title) return;
+        photo = env.result.photo; if (photoURL) URL.revokeObjectURL(photoURL); photoURL = URL.createObjectURL(new Blob([blob], {type: 'image/jpeg'}));
+        const img = node('img'); img.alt = ''; img.src = photoURL; pic.replaceChildren(img); pic.classList.add('has-img'); pic.setAttribute('aria-label', 'Change group photo');
+      } catch (e) { error(e); }
+      finally { pic.disabled = false; }
+    };
+    async function submit() {
+      if (create.disabled) return;
+      create.dataset.busy = '1'; create.disabled = true; note.textContent = 'Creating the group on ' + net.label + '…';
+      try {
+        const r = await call('new-group', {client_id: clientId, network: net.network, people: [...picked.keys()], name: name.value.trim(), ...(photo ? {photo} : {})});
+        if (s.overlay !== title) return;
+        store.directory = null; closeOverlay();
+        if (photoURL) URL.revokeObjectURL(photoURL);
+        await openPerson(r.chat_id);
+        if (r.not_added?.length) toast(r.not_added.join(', ') + (r.not_added.length === 1 ? " wasn't" : " weren't") + ' added straight away', 4000);
+        else if (r.photo === 'failed') toast('Group made. The photo could not be set.', 4000);
+      } catch (e) { delete create.dataset.busy; note.textContent = ''; error(e); paint(); }
+    }
+    paint();
+    try {
+      networks = (await call('new-group')).networks || [];
+      if (s.overlay !== title) return;
+      if (!networks.length) { note.textContent = 'None of your connected networks can make groups here yet.'; return; }
+      nets.style.gridTemplateColumns = 'repeat(' + networks.length + ', 1fr)';
+      for (const n of networks) {
+        const b = button(n.label, () => choose(n), 'u-view-btn'); b.dataset.network = n.network; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', 'false'); nets.append(b);
+      }
+      nets.hidden = networks.length < 2;
+      choose(networks[0]);
+    } catch (e) { error(e); }
+  }
   // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
   // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
   function fillEmpty(thread, focus = false) {
@@ -1311,6 +1420,7 @@
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
     box.append(node('h2', '', 'New message'), search, list, wizard);
+    if (newGroupOn()) box.append(newGroupButton('New group', 'link u-newmsg-group'));
     box.append(startChatForm(id => openPerson(id)));
     thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
     if (focus) requestAnimationFrame(() => search.focus());
@@ -1483,6 +1593,7 @@
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
     const settled = sharing ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
     if (!sharing) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
+    if (!sharing && newGroupOn()) sheet.append(newGroupButton('New group', 'secondary wide u-new-group-open'));
     if (!sharing) sheet.append(startChatForm(id => { closeOverlay(); openPerson(id); }));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);
@@ -2614,6 +2725,7 @@
     // Header ⋯: the everyday chat actions, same as long-pressing the chat in the list.
     view.menu = anchor => { const cur = store.threads[id]?.person || p; actionMenu(anchor, cur.display_name, [
       {label: 'Contact info', icon: 'compose', run: () => editPerson(cur)},
+      ...addContactItems(cur),
       {label: 'Mark as unread', icon: 'unread', run: async () => { await setUnread(cur, true); back(); }},
       {label: 'Merge with…', icon: 'merge', run: () => mergePicker(cur)},
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
@@ -2633,6 +2745,7 @@
     const pill = iconButton('down', 'Scroll to newest', () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'}), 'u-down'); pill.hidden = true;
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
+    if (addContactOn()) addContactBar(root, p);
     root.append(composer(id, p));
     view.selection = messageSelection(root, () => albumPosts(store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
   }
@@ -3085,7 +3198,7 @@
   // anything has played; a few kept blob: URLs are reused across repaints and the oldest are let go.
   const videoBlobs = new Map();
   function keptVideo(v, url, frag) {
-    if (switchState.on['video-prefetch'] !== true || !photoCache.has(url)) return;
+    if (!photoCache.has(url)) return;
     const use = blob => { if (blob && v.paused && !v.currentTime && !v.closest?.('.started')) { v.src = blob + frag; v.dataset.kept = '1'; } };
     if (videoBlobs.has(url)) { use(videoBlobs.get(url)); return; }
     photoCache.match(url).then(blob => {
@@ -4548,11 +4661,11 @@
     return emojiKit;
   }
   const emojiRecent = () => { try { const v = JSON.parse(localStorage.getItem(EMOJI_RECENT) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 24) : []; } catch { return []; } };
-  // Issue 349 (switch telegram-emoji): how often each emoji is used (Recent's ranking) and the skin tone picked per emoji.
+  // Issue 349: how often each emoji is used (Recent's ranking) and the skin tone picked per emoji.
   const EMOJI_USAGE = 'messenger-emoji-usage-v1', EMOJI_TONE_PICKS = 'messenger-emoji-tones-v1', KEYBOARD_HEIGHT = 'messenger.keyboardHeight';
   const storedObject = key => { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; } };
   const storeObject = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode: kept for this session only */ } };
-  // The first time with the switch on, Recent starts from the plain recent list (newest first).
+  // The first time, Recent starts from the plain recent list (newest first).
   function emojiUsageNow() {
     const u = storedObject(EMOJI_USAGE); if (u) return u;
     const now = Date.now(), seed = {}; emojiRecent().forEach((k, i) => { seed[k] = {s: 1, t: now - (i + 1) * 60000}; });
@@ -4576,7 +4689,7 @@
   function rememberEmoji(k) {
     const list = [k, ...emojiRecent().filter(x => x !== k)].slice(0, 24);
     try { localStorage.setItem(EMOJI_RECENT, JSON.stringify(list)); } catch { /* private mode: recent stays for this session */ }
-    if (switchState.on['telegram-emoji'] === true) storeObject(EMOJI_USAGE, emojiUsage(emojiUsageNow(), k, Date.now()));
+    storeObject(EMOJI_USAGE, emojiUsage(emojiUsageNow(), k, Date.now()));
     recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); // the reaction strip leads with the same recent picks
   }
   const pickerCache = {stickers: null, packs: Object.create(null), gifs: Object.create(null)};
@@ -4586,8 +4699,8 @@
     const tabs = node('div', 'u-pick-tabs'); tabs.setAttribute('role', 'tablist');
     const body = node('div', 'u-pick-body');
     panel.append(tabs, body);
-    const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0, tg: false, lit: null, swallow: false};
-    // Issue 349 (switch telegram-emoji): like Telegram, a category bar over the emoji and a bottom strip with the
+    const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0, lit: null, swallow: false};
+    // Issue 349: like Telegram, a category bar over the emoji and a bottom strip with the
     // tabs and a delete key; the smiley turns into a keyboard button while the panel is open.
     const cats = node('div', 'u-emo-cats'); cats.setAttribute('role', 'toolbar'); cats.setAttribute('aria-label', 'Emoji categories');
     const foot = node('div', 'u-pick-foot');
@@ -4622,7 +4735,6 @@
     function show(name) { state.tab = name; state.gen++; closeTones(); state.lit = null; cats.replaceChildren(); cats.hidden = true; paintTabs(); body.replaceChildren(); body.scrollTop = 0; ({emoji: emojiTab, gifs: gifTab, stickers: stickerTab})[name](state.gen); }
     function section(title, cls) { const h = node('h3', 'u-pick-head', title); const g = node('div', cls); body.append(h, g); return g; }
     function emojiButton(k) {
-      if (!state.tg) { const b = button(k, () => insert(k), 'u-emo'); b.setAttribute('aria-label', k); return b; }
       const choices = emojiTones(k), shown = choices ? toneFor(k) : k;
       const b = button(shown, () => { if (b.held) { b.held = false; return; } insert(choices ? toneFor(k) : k); }, 'u-emo');
       b.setAttribute('aria-label', shown); b.dataset.emoji = k;
@@ -4687,16 +4799,14 @@
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) del.addEventListener(ev, stopDel);
     del.addEventListener('contextmenu', e => e.preventDefault());
     function layout() {
-      state.tg = switchState.on['telegram-emoji'] === true; panel.classList.toggle('tg', state.tg);
-      if (state.tg) { foot.replaceChildren(tabs, del); panel.replaceChildren(cats, body, foot); }
-      else panel.replaceChildren(tabs, body);
+      foot.replaceChildren(tabs, del); panel.replaceChildren(cats, body, foot);
       // On a phone the panel takes the keyboard's place at the keyboard's own height, so nothing jumps.
-      const kb = state.tg && touch() ? emojiPanelHeight((storedObject(KEYBOARD_HEIGHT) || {})[innerWidth], keyboardWatch.full[innerWidth] || innerHeight) : 0;
+      const kb = touch() ? emojiPanelHeight((storedObject(KEYBOARD_HEIGHT) || {})[innerWidth], keyboardWatch.full[innerWidth] || innerHeight) : 0;
       panel.style.height = kb ? kb + 'px' : '';
     }
     // Recent: about three rows, ranked by how often and how recently each emoji was used.
     const recentRows = () => emojiRanked(emojiUsageNow(), Date.now(), Math.min(48, Math.max(6, Math.floor(((body.clientWidth || 360) - 14) / 42)) * 3));
-    function emojiTabTg(gen) {
+    function emojiTab(gen) {
       const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
       const list = node('div', 'u-emo-list');
       body.append(search, list);
@@ -4741,25 +4851,6 @@
       paint();
       search.oninput = () => { clearTimeout(timer); timer = setTimeout(paint, 120); };
       if (!kitNow) loadEmojiKit().then(kit => { if (kit && gen === state.gen) { kitNow = kit; paint(); } });
-    }
-    function emojiTab(gen) {
-      if (state.tg) return emojiTabTg(gen);
-      const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
-      const list = node('div', 'u-pick-list');
-      body.append(search, list);
-      const paint = kit => {
-        if (gen !== state.gen) return;
-        list.replaceChildren();
-        const add = (title, emoji) => { if (!emoji.length) return; const g = node('div', 'u-emo-grid'); for (const k of emoji) g.append(emojiButton(k)); list.append(node('h3', 'u-pick-head', title), g); };
-        const q = search.value.trim();
-        if (!q) add('Recent', emojiRecent());
-        const groups = kit ? kit.search(q) : [{label: 'Smileys', emoji: [...QUICK, ...MORE].filter(k => !q || k.includes(q))}];
-        for (const c of groups) add(c.label, [...c.emoji]);
-        if (!list.childElementCount) list.append(node('p', 'u-pick-empty', 'No emoji found'));
-      };
-      paint(window.WosTopicEmoji?.categories?.length ? window.WosTopicEmoji : null);
-      loadEmojiKit().then(kit => { if (kit) { search.oninput = () => paint(kit); paint(kit); } });
-      search.oninput = () => paint(null);
     }
     // A tile is a small preview; a GIF plays only while on screen (reduced motion keeps the still).
     const playing = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
@@ -4843,7 +4934,7 @@
     function open() {
       if (state.open) return;
       if (document.activeElement === o.draft) keep(); state.open = true; layout(); panel.hidden = false; o.button.classList.add('on'); o.button.setAttribute('aria-expanded', 'true'); o.form.classList.add('picking');
-      if (state.tg) paintButton(true);
+      paintButton(true);
       if (touch()) o.draft.blur(); // the panel takes the keyboard's place
       show(state.tab);
       // Issue 159: a tap anywhere outside the panel (the chat, the text box, Send, another control) closes it, like
@@ -4859,19 +4950,18 @@
     function close() {
       if (!state.open) return false;
       state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
-      stopDel(); closeTones(); state.lit = null; if (state.tg) paintButton(false);
+      stopDel(); closeTones(); state.lit = null; paintButton(false);
       return true;
     }
     function paintButton(keyboard) {
       const label = keyboard ? 'Show keyboard' : 'Emoji, GIFs and stickers';
       o.button.replaceChildren(icon(keyboard ? 'keyboard' : 'smile')); o.button.setAttribute('aria-label', label); o.button.title = label;
     }
-    // Issue 349: with the switch on, the button shows a keyboard while the panel is open; a tap brings the keyboard
+    // Issue 349: the button shows a keyboard while the panel is open; a tap brings the keyboard
     // back with the caret where it was, and the next tap swaps the panel back in.
     function toggle() {
       if (!state.open) return open();
-      const tg = state.tg; close();
-      if (!tg) return;
+      close();
       const n = o.draft.value.length, a = Math.min(state.start ?? n, n), b = Math.max(a, Math.min(state.end ?? a, n));
       o.draft.focus(); o.draft.setSelectionRange(a, b);
     }
@@ -4882,7 +4972,7 @@
     body.addEventListener('scroll', () => { closeTones(); if (state.lit && !litQueued) { litQueued = true; requestAnimationFrame(() => { litQueued = false; state.lit?.(); }); } }, {passive: true});
     // Swiping sideways over the panel moves between Emoji, GIFs and Stickers.
     let swipe = null;
-    body.addEventListener('touchstart', e => { swipe = state.tg && e.touches.length === 1 && !e.target?.closest?.('.u-pack-row, .u-emo-tones') ? {x: e.touches[0].clientX, y: e.touches[0].clientY} : null; }, {passive: true});
+    body.addEventListener('touchstart', e => { swipe = e.touches.length === 1 && !e.target?.closest?.('.u-pack-row, .u-emo-tones') ? {x: e.touches[0].clientX, y: e.touches[0].clientY} : null; }, {passive: true});
     body.addEventListener('touchend', e => {
       const t = e.changedTouches?.[0], from = swipe; swipe = null;
       if (!from || !t || !state.open) return;
@@ -5267,6 +5357,64 @@
     return box;
   }
 
+  // ---------- Add contact on the network (issue 399, switch add-contact) ----------
+  // A chat from someone who isn't a contact on that network yet shows Telegram's "Add contact" bar at its top, and the
+  // same item in the chat menu and Contact info. One tap adds them as a real contact there (the box asks the bridge;
+  // only networks whose bridge can do it answer, so there is never a dead button) and saves them in Wizard Contacts
+  // too. Owner only: no agent tool or capability reaches the route.
+  const addContactOn = () => switchState.on['add-contact'] === true;
+  const netContacts = new Map(); // person id -> {at, networks: [{network, label, contact, can_add}]}
+  const ADD_CONTACT_HIDDEN = 'messenger.addContactHidden';
+  const addContactHidden = () => { try { return new Set(JSON.parse(localStorage.getItem(ADD_CONTACT_HIDDEN) || '[]')); } catch { return new Set(); } };
+  function hideAddContact(id) { const set = addContactHidden(); set.add(id); try { localStorage.setItem(ADD_CONTACT_HIDDEN, JSON.stringify([...set].slice(-500))); } catch { /* no storage */ } }
+  const oneToOne = p => !!p?.id && !p.native && (p.identities || []).length > 0 && p.identities.every(i => i.kind === 'person');
+  const addableNets = p => addContactOn() && oneToOne(p) ? (netContacts.get(p.id)?.networks || []).filter(n => n.can_add) : [];
+  async function loadNetContact(p, fresh) {
+    if (!addContactOn() || !oneToOne(p)) return [];
+    const had = netContacts.get(p.id);
+    if (had && !fresh && Date.now() - had.at < 5 * 60e3) return had.networks;
+    try { const r = await call('people/' + encodeURIComponent(p.id) + '/network-contact' + (fresh ? '?fresh=1' : '')); netContacts.set(p.id, {at: Date.now(), networks: r?.networks || []}); }
+    catch { netContacts.set(p.id, {at: Date.now(), networks: []}); }
+    return netContacts.get(p.id).networks;
+  }
+  let addingContact = null;
+  async function addNetworkContact(p, n) {
+    if (addingContact) return addingContact;
+    addingContact = (async () => {
+      try {
+        const r = await call('people/' + encodeURIComponent(p.id) + '/network-contact', {network: n.network});
+        const had = netContacts.get(p.id)?.networks || [];
+        netContacts.set(p.id, {at: Date.now(), networks: had.map(x => x.network === n.network ? {...x, contact: true, can_add: false} : x)});
+        let saved = !!listed(p).contact;
+        if (!saved && contacts.ok) try { saved = !!(await saveToContacts(p)); } catch { /* Telegram has them; Contacts can be added later */ }
+        toast(saved ? 'Added to your ' + n.label + ' contacts and Contacts' : 'Added to your ' + n.label + ' contacts');
+        paintAddContact(); drawList();
+        return r;
+      } catch (e) { error(e); return null; }
+      finally { addingContact = null; }
+    })();
+    return addingContact;
+  }
+  const addContactItems = p => addableNets(p).map(n => ({label: 'Add contact on ' + n.label, icon: 'compose', run: () => addNetworkContact(p, n)}));
+  // The bar under the chat header: "Add contact" and ✕ (hides it for this chat on this device).
+  function paintAddContact() {
+    const bar = view.root?.querySelector('.u-addcontact'); if (!bar) return;
+    const p = store.threads[view.id]?.person || bar.person, nets = addableNets(p);
+    bar.hidden = !nets.length || addContactHidden().has(p.id);
+    if (bar.hidden) { bar.replaceChildren(); return; }
+    const n = nets[0], text = node('span', 'u-addcontact-text', 'Not a ' + n.label + ' contact');
+    const add = button('Add contact', async () => { add.disabled = true; try { await addNetworkContact(p, n); } finally { add.disabled = false; } }, 'u-addcontact-add');
+    add.setAttribute('aria-label', 'Add ' + (p.display_name || 'them') + ' as a ' + n.label + ' contact');
+    const close = iconButton('close', 'Hide Add contact', () => { hideAddContact(p.id); paintAddContact(); }, 'u-addcontact-close');
+    bar.replaceChildren(text, add, close);
+  }
+  function addContactBar(root, p) {
+    const bar = node('div', 'u-addcontact'); bar.hidden = true; bar.person = p; bar.setAttribute('role', 'region'); bar.setAttribute('aria-label', 'Add contact');
+    const body = root.querySelector('.u-thread-body'); if (body) root.insertBefore(bar, body); else root.append(bar);
+    if (addContactOn() && oneToOne(p)) loadNetContact(p).then(() => { if (bar.isConnected) paintAddContact(); });
+    return bar;
+  }
+
   // ---------- Labels: your own groups of chats ----------
   // A label is a name you make once ("WizardOS") and tick on any chat, from any network, person or group.
   // Choosing it in the Inbox filters then shows those chats together. The catalogue lives on the box, so an empty label exists.
@@ -5395,6 +5543,11 @@
     const save = () => action(async () => { await call('people/' + p.id, {display_name: name.value, language: lang.value, preferred_identity: preferred.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); });
     form.append(button('Save', save, 'primary wide'));
     const linkBox = contactsRow(p); if (linkBox) sheet.append(linkBox);
+    if (addContactOn() && oneToOne(p)) {
+      const netBox = node('div', 'u-contact-link u-net-contact'); netBox.hidden = true; sheet.append(netBox);
+      const paintNet = () => { const nets = addableNets(p); netBox.hidden = !nets.length; netBox.replaceChildren(...nets.flatMap(n => [node('span', '', 'Not in your ' + n.label + ' contacts'), button('Add contact on ' + n.label, () => addNetworkContact(p, n).then(r => { if (r) paintNet(); }), 'secondary')])); };
+      loadNetContact(p).then(paintNet);
+    }
     form.onsubmit = e => { e.preventDefault(); save(); }; sheet.append(form);
     if (!p.native) sheet.append(node('h3', '', 'Labels'), labelPicker(p));
     if (p.id && !p.native) sheet.append(catchUpInfo(p));
@@ -5694,7 +5847,7 @@
   async function setSwitch(id, on) {
     const before = switchState.on[id] === true;
     switchState.on[id] = on; repaintSwitches(); drawList();
-    try { applySwitches(await switchCall({id, on})); if ((id === 'photo-prefetch' || id === 'video-prefetch') && on) prefetchSoon(); }
+    try { applySwitches(await switchCall({id, on})); if (id === 'photo-prefetch' && on) prefetchSoon(); }
     catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
   // ---------- Agent chat (issue 265, on for everyone) ----------
@@ -6225,12 +6378,12 @@
   // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
   // Issue 392: photos download on any network; videos (up to 25 MB each) only on Wi-Fi unless this device chose Always.
-  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: switchState.on['video-prefetch'] === true
-    && (storedPrefetchMode() === 'always' || prefetchAllowed('wifi', navigator.connection, onPhone()))});
+  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: (storedPrefetchMode() === 'always' || prefetchAllowed('wifi', navigator.connection, onPhone()))});
   const storedPrefetchMode = () => { try { return localStorage.getItem(PREFETCH_MODE_KEY) || ''; } catch { return ''; } };
   // Issue 392: on any network unless this device chose Wi-Fi only (James is on mobile data a lot, and Settings has had
   // no row to choose Always since issue 202). The 300 MB cap still bounds what is kept.
-  const prefetchMode = () => { if (switchState.on['photo-prefetch'] !== true && switchState.on['video-prefetch'] !== true) return 'off'; return storedPrefetchMode() === 'wifi' ? 'wifi' : 'always'; };
+  // Issue 320: videos download for everyone, so the queue always runs; prefetchWant() says what goes in it.
+  const prefetchMode = () => storedPrefetchMode() === 'wifi' ? 'wifi' : 'always';
   const prefetchBusy = {loads: 0, until: 0};
   const onPhone = () => { try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches; } catch { return false; } };
   const photoCache = photoPrefetcher({
@@ -6654,11 +6807,10 @@
     const had = (s.drafts[id] || '').trim();
     s.drafts[id] = had ? had + '\n\n' + text : text; saveDrafts(); hold();
   }
-  // Issue 314 (switch share-files): a shared file that is not a photo (a PDF, an .md from a chat) lands in the
+  // Issue 314 (on for everyone): a shared file that is not a photo (a PDF, an .md from a chat) lands in the
   // composer's attachment tray like one added with +, so the owner reviews and taps Send. The shell hands a Blob plus
   // name and mime; Messenger's own cap is 25 MB, so a bigger file is answered with a plain "too big" and not kept.
   const SHARE_FILE_MAX = 25 * 1048576;
-  const shareFilesOn = () => switchState.on['share-files'] === true;
   function sharedFile(item) {
     const blob = item.file; if (!blob || typeof blob.size !== 'number' || typeof blob.slice !== 'function') return null;
     const name = String(item.name || blob.name || 'File').slice(0, 255), type = item.mime || blob.type || 'application/octet-stream';
@@ -6666,7 +6818,7 @@
   }
   async function receiveShare(item) {
     const text = sharedText(item), image = item.kind === 'image' && item.file?.type?.startsWith('image/');
-    const file = item.kind === 'file' && shareFilesOn() ? sharedFile(item) : null;
+    const file = item.kind === 'file' ? sharedFile(item) : null;
     if (!s.ready || (!text && !image && !file) || (item.kind === 'file' && !file)) return false; // stays pending in Wizard; check() runs again once unlocked
     if (file && file.size > SHARE_FILE_MAX) { toast((file.name || 'That file') + ' is too big to send (over 25 MB)', 4500); return true; }
     if (s.overlay) closeOverlay();
@@ -6686,15 +6838,14 @@
     if (s.person) { s.person = null; view.id = null; inChat(false); renderList(); }
     return newChat(text); // settles once the owner picks someone (text in that composer) or closes the picker
   }
-  const shareKinds = () => ['text', 'url', 'image', ...(shareFilesOn() ? ['file'] : [])];
-  let sharedKinds = '';
+  const SHARE_KINDS = ['text', 'url', 'image', 'file'];
   function listenForShares() {
-    const accepts = shareKinds(); sharedKinds = accepts.join();
+    const accepts = [...SHARE_KINDS];
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
-  // Turning share-files on or off tells the share sheet at once (it re-offers a waiting file once it is on).
   switchState.paints['stacked-drafts'] = () => view.sd?.check?.(false);
-  switchState.paints['share-files'] = () => { if (shareKinds().join() !== sharedKinds) listenForShares(); };
+  // Issue 399: the Add contact bar follows the switch in an open chat.
+  switchState.paints['add-contact'] = () => { const p = store.threads[view.id]?.person; if (!p || !view.root) return; if (!addContactOn()) return paintAddContact(); if (!view.root.querySelector('.u-addcontact')) addContactBar(view.root, p); else loadNetContact(p).then(paintAddContact); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
     // Issue 341: the Wizard chats view is on screen with no chat or sheet of its own (the Inbox list is hidden). Back then

@@ -37,38 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'unread-count', 'name': 'Unread count on the phone icon',
-     'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never names or '
-                    'messages), so the Messenger icon on your home screen can show it. Muted, Medium and Low '
-                    'priority chats never count. Your private Messenger chats count too.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#296', 'humanitylabs-org/wizard-messenger#302']},
-    {'id': 'share-files', 'name': 'Share files to Messenger',
-     'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers Messenger. '
-                    'The file waits in the chosen chat\'s message box as an attachment, like one added with +, '
-                    'until you tap Send. Files over 25 MB are too big.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#314']},
-    {'id': 'video-prefetch', 'name': 'Background video download',
-     'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your newest chats, '
-                    'on Wi-Fi only unless you chose Always for photos, so a tapped video plays at once from the phone. '
-                    'Bigger videos still stream on tap.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#320']},
-    {'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
-     'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: each note '
-                    'becomes a background task there (the tick shows once it is in), Sweep shows the same card as '
-                    'Daily with one-tap answers, and urgent alerts arrive as one-line pings. With the inbox off, the '
-                    'Agent chat works as before.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#325']},
-    {'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
-     'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to keep '
-                    'deleting), a keyboard button that swaps the panel for the keyboard and back, skin tones on a '
-                    'long press, a Recent row ranked by how often you use each emoji, and on a phone the same height '
-                    'as your keyboard.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#349']},
     {'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
      'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as stacked '
                     'bubbles above the message box, oldest first, each with Send, Edit and Remove. One draft works '
@@ -81,6 +49,18 @@ SWITCHES = (
                     'to the chat where you were. GIFs and stickers still loop in the chat.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#379']},
+    {'id': 'new-group', 'name': 'New group',
+     'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick the network, '
+                    'two or more people and a name (optional photo), tap Create. The group is made on the real '
+                    'network and opens ready to send.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#397']},
+    {'id': 'add-contact', 'name': 'Add contact on Telegram',
+     'description': 'A chat from someone who is not your Telegram contact yet shows an Add contact bar at the top (also '
+                    'in the chat menu and Contact info). One tap adds them as a real Telegram contact and saves them '
+                    'in Wizard Contacts. Networks that cannot add contacts show nothing.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#399']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 

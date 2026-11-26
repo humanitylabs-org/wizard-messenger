@@ -72,3 +72,16 @@ Read-only provisioning routes (same shared secret, the owner's default login) fo
 - `GET /v3/wizard/prepare/{sticker|gif}/{document_id}`: uploads the picked document whole to the private homeserver and returns `{url, info}`. Sticker `info` carries `fi.mau.bridged_sticker`, so Messenger's `m.sticker` is forwarded as the **original Telegram sticker** (`InputMediaDocument`, no reupload). GIF `info` carries `fi.mau.gif`, so Messenger's `m.video` is reuploaded with `DocumentAttributeAnimated` and shows in Telegram as a GIF.
 
 Previews are document thumbnails (or the whole small static WebP), cached by Telegram location so reopening is instant. No route sends a message; Messenger's normal send path does. Recording-API tests: `wizardpickers_test.go`.
+
+## Add contact (`contacts.patch`, applied after `pickers.patch`; Messenger issue 399)
+
+Two provisioning routes (same shared secret, the owner's default login) for Messenger's Add contact bar:
+
+- `GET /v3/wizard/contact/{user_id}`: `{user_id, contact, mutual, can_add, reason, first_name, last_name}` from
+  `users.getUsers`. `can_add` is false for bots, the owner's own account, deleted accounts and existing contacts.
+- `POST /v3/wizard/contact/{user_id}` `{first_name, last_name}`: `contacts.addContact` under that name (their own
+  Telegram name when empty; each part cut to 64 characters). `add_phone_privacy_exception` stays off, so the owner's
+  phone number is never shared. An existing contact is left as is (no second call). The returned user updates the ghost.
+
+Messenger's owner sender allows only this POST (a numeric id and the two name fields). Recording-API tests:
+`wizardcontacts_test.go`.

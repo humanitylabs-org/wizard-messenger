@@ -54,34 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'unread-count', 'name': 'Unread count on the phone icon',
-                'description': 'Messenger tells the Wizard phone app how many chats are unread (a number only, never '
-                               'names or messages), so the Messenger icon on your home screen can show it. Muted, '
-                               'Medium and Low priority chats never count. Your private Messenger chats count too.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#296',
-                                                           'humanitylabs-org/wizard-messenger#302']}, {
-                'id': 'share-files', 'name': 'Share files to Messenger',
-                'description': 'Sharing a file from another Wizard app (a PDF, a note, a document from a chat) offers '
-                               'Messenger. The file waits in the chosen chat\'s message box as an attachment, like '
-                               'one added with +, until you tap Send. Files over 25 MB are too big.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#314']}, {
-                'id': 'video-prefetch', 'name': 'Background video download',
-                'description': 'The phone also quietly downloads videos up to 25 MB from the newest messages of your '
-                               'newest chats, on Wi-Fi only unless you chose Always for photos, so a tapped video plays '
-                               'at once from the phone. Bigger videos still stream on tap.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#320']}, {
-                'id': 'agent-inbox-door', 'name': 'Agent chat through your agent inbox',
-                'description': 'When your Wizard\'s agent inbox is on, the Agent chat uses it instead of its own list: '
-                               'each note becomes a background task there (the tick shows once it is in), Sweep shows '
-                               'the same card as Daily with one-tap answers, and urgent alerts arrive as one-line '
-                               'pings. With the inbox off, the Agent chat works as before.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#325']}, {
-                'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
-                'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to '
-                               'keep deleting), a keyboard button that swaps the panel for the keyboard and back, '
-                               'skin tones on a long press, a Recent row ranked by how often you use each emoji, and '
-                               'on a phone the same height as your keyboard.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#349']}, {
                 'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
                 'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as '
                                'stacked bubbles above the message box, oldest first, each with Send, Edit and '
@@ -92,7 +64,18 @@ class SwitchEndpoint(unittest.TestCase):
                                'Telegram. Tap to show or hide the controls (play, pause, a scrubber, close). Back or '
                                'a swipe down returns to the chat where you were. GIFs and stickers still loop in the '
                                'chat.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}, {
+                'id': 'new-group', 'name': 'New group',
+                'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick '
+                               'the network, two or more people and a name (optional photo), tap Create. The group is '
+                               'made on the real network and opens ready to send.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#397']}, {
+                'id': 'add-contact', 'name': 'Add contact on Telegram',
+                'description': 'A chat from someone who is not your Telegram contact yet shows an Add contact bar at '
+                               'the top (also in the chat menu and Contact info). One tap adds them as a real Telegram '
+                               'contact and saves them in Wizard Contacts. Networks that cannot add contacts show '
+                               'nothing.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#399']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -248,6 +231,19 @@ class SwitchStorage(unittest.TestCase):
                 store.set('transcript-paragraphs', True)
             store.set('photo-instant', True)
             self.assertNotIn('transcript-paragraphs', json.loads(path.read_text())['switches'])
+
+    def test_telegram_emoji_is_no_longer_a_switch(self):
+        # Issue 349: the Telegram-style emoji panel was approved (switch-default), so it is always on; a stored value
+        # from before is ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"telegram-emoji": true, "photo-warm": true}}')
+            store = SwitchStore(path)
+            self.assertNotIn('telegram-emoji', [s['id'] for s in store.listing()['switches']])
+            with self.assertRaises(UnknownSwitch):
+                store.set('telegram-emoji', False)
+            store.set('photo-instant', True)
+            self.assertNotIn('telegram-emoji', json.loads(path.read_text())['switches'])
 
     def test_a_removed_switch_is_ignored_and_cleared(self):
         # Issue 176: new-contact-drafts is on for everyone now; a stored value from before is dropped on the next write.
@@ -433,16 +429,34 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('row-tap-menu', saved['switches'])
             self.assertNotIn('row-tap-menu', saved.get('feedback', {}))
 
+    def test_share_files_is_gone_and_its_stored_value_cleared(self):
+        # Issue 314: Share files to Messenger was approved (switch-default), so it is always on; a stored value and
+        # its feedback from before are ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text('{"switches": {"share-files": false, "photo-warm": true}, '
+                            '"feedback": {"share-files": {"tried": true, "vote": "up"}}}')
+            store = SwitchStore(path)
+            self.assertNotIn('share-files', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('share-files', store.listing()['feedback'])
+            with self.assertRaises(UnknownSwitch):
+                store.set('share-files', True)
+            store.set('photo-instant', True)
+            saved = json.loads(path.read_text())
+            self.assertNotIn('share-files', saved['switches'])
+            self.assertNotIn('share-files', saved.get('feedback', {}))
+            self.assertTrue(saved['switches']['photo-warm'])
+
     def test_feedback_survives_switch_writes(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             store = SwitchStore(path)
-            store.vote('share-files', 'down')
-            store.set('share-files', True)
-            self.assertEqual(json.loads(path.read_text()), {'switches': {'share-files': True},
-                                                            'feedback': {'share-files': {'tried': True, 'vote': 'down'}}})
-            store.set('share-files', False)
-            self.assertEqual(SwitchStore(path).listing()['feedback'], {'share-files': {'tried': True, 'vote': 'down'}})
+            store.vote('photo-timings', 'down')
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text()), {'switches': {'photo-timings': True},
+                                                            'feedback': {'photo-timings': {'tried': True, 'vote': 'down'}}})
+            store.set('photo-timings', False)
+            self.assertEqual(SwitchStore(path).listing()['feedback'], {'photo-timings': {'tried': True, 'vote': 'down'}})
             with self.assertRaises(UnknownSwitch):
                 store.vote('gone', 'up')
 
@@ -452,7 +466,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'unread-count', 'share-files', 'video-prefetch', 'agent-inbox-door', 'telegram-emoji', 'stacked-drafts', 'video-fullscreen'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'stacked-drafts', 'video-fullscreen', 'new-group', 'add-contact'])
 
 
 if __name__ == '__main__':

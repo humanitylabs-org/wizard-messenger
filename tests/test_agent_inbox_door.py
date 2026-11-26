@@ -1,4 +1,4 @@
-"""Issue 325 (switch agent-inbox-door): the Agent chat as a door to the box's one agent inbox.
+"""Issue 325 (on for everyone; the box switch wizard/agent-inbox is the only off switch): the Agent chat as a door to the box's one agent inbox.
 
 Runs through the real view server (owner routes) and the real MCP endpoint, with a fake Agent Service that keeps
 records and one sweep card the way wizard-agent-service's app doors do (docs/agent-inbox.md, "App doors")."""
@@ -130,19 +130,22 @@ class AgentInboxDoor(AgentChat):
     def setUp(self):
         super().setUp()
         self.service = FakeService()
+        self.service.on = False   # the box inbox starts off: today's Agent chat (every AgentChat test reruns so)
         self.door = agent_inbox_door.Door(self.inbox, call=self.service)
         self.door.kick = lambda force=False: None   # passes run by hand below
         self.inbox.agent_inbox_door = self.door
 
     def switch(self, on):
-        self.inbox.switches.set('agent-inbox-door', on)
+        """The owner's box switch wizard/agent-inbox: the Service answers the door probe 200 or 404."""
+        self.service.on = on
 
     def opened(self):
         self.switch(True)
         self.assertTrue(self.door.probe(force=True))
         return self.ok('GET')
 
-    def test_switch_off_is_todays_chat_and_never_calls_the_inbox(self):
+    def test_no_token_is_todays_chat_and_never_calls_the_inbox(self):
+        self.inbox.agent_inbox_door = agent_inbox_door.Door(self.inbox, call=None, token='')
         state = self.ok('GET')
         self.assertNotIn('door', state)
         note = self.ok('POST', '', {'text': 'Buy dog food'})['entries'][-1]
@@ -151,12 +154,11 @@ class AgentInboxDoor(AgentChat):
         self.assertEqual(self.service.calls, [])
         got, _ = self.mcp('messenger_agent_chat_inbox')
         self.assertEqual([n['text'] for n in got['notes']], ['Buy dog food'])
-        # The door routes don't exist while the switch is off.
+        # The door routes don't exist without a token.
         self.assertEqual(self.owner_call('POST', '/door/answer', {'post_id': 'p1', 'record': 'x', 'option': 'yes'})[0], 404)
 
     def test_box_inbox_off_keeps_todays_chat(self):
-        self.service.on = False
-        self.switch(True)
+        self.switch(False)
         self.assertFalse(self.door.probe(force=True))
         self.assertEqual(self.ok('GET')['door'], {'on': False})
         note = self.ok('POST', '', {'text': 'Call the plumber'})['entries'][-1]
@@ -241,11 +243,31 @@ class AgentInboxDoor(AgentChat):
         note = self.ok('POST', '', {'text': 'Sell the old bike'})['entries'][-1]
         self.service.lose_answers = True
         self.door.run_pass()
-        self.switch(False)
-        self.ok('GET')
+        self.service.lose_answers = False
+        self.switch(False)   # the owner turns the box inbox off
+        self.door.probed_at = 0
+        self.door.run_pass()
         got = agent_chat._find(agent_chat._load(self.inbox.store), note['id'])
         self.assertNotIn('door', got)
         self.assertNotIn('door_tried', got)
+        listed, _ = self.mcp('messenger_agent_chat_inbox')
+        self.assertEqual([n['id'] for n in listed['notes']], [note['id']])
+
+    def test_a_stale_stored_switch_value_changes_nothing(self):
+        # Before the switch removal an owner may have stored agent-inbox-door off: the door works all the same.
+        path = self.inbox.switches.path
+        path.write_text(json.dumps({'switches': {'agent-inbox-door': False}}))
+        self.assertEqual(self.opened()['door'], {'on': True})
+        self.assertNotIn('agent-inbox-door', [s['id'] for s in self.inbox.switches.listing()['switches']])
+
+    def test_any_answer_but_200_on_is_todays_chat(self):
+        self.switch(True)
+        for answer in [(0, None), (401, {}), (403, {}), (404, {}), (500, {}), (201, {'on': True}), (200, {'on': False}), (200, None)]:
+            self.service.handle = lambda m, pth, b=None, a=answer: a
+            self.assertFalse(self.door.probe(force=True), answer)
+        self.assertEqual(self.ok('GET')['door'], {'on': False})
+        note = self.ok('POST', '', {'text': 'Post the letter'})['entries'][-1]
+        self.assertNotIn('door', note)
 
     def test_inbox_turned_off_hands_unsent_notes_back(self):
         self.opened()
@@ -259,10 +281,10 @@ class AgentInboxDoor(AgentChat):
         got, _ = self.mcp('messenger_agent_chat_inbox')
         self.assertEqual([n['id'] for n in got['notes']], [note['id']])
 
-    def test_switching_off_hands_unsent_notes_back(self):
+    def test_token_gone_hands_unsent_notes_back(self):
         self.opened()
         note = self.ok('POST', '', {'text': 'Water the plants'})['entries'][-1]
-        self.switch(False)
+        self.door.call_fn, self.door.token = None, ''
         state = self.ok('GET')
         self.assertNotIn('door', state)
         self.assertNotIn('door', state['entries'][-1])
@@ -356,6 +378,42 @@ class AgentInboxDoor(AgentChat):
         entry = agent_chat._find(agent_chat._load(self.inbox.store), long)
         self.assertEqual((len(entry['text']), entry['link']), (200, None))
 
+    def watching(self):
+        stop = threading.Event()
+        old = self.inbox.stop
+        self.inbox.stop = stop
+        self.addCleanup(setattr, self.inbox, 'stop', old)
+        self.addCleanup(stop.set)
+        agent_inbox_door.watch(self.inbox)
+        return stop
+
+    def test_urgent_alerts_arrive_with_messenger_closed(self):
+        # Nobody has the page open: the box's own loop probes at start and takes the ping, so the unread badge and
+        # the phone notification come at once instead of the next time Messenger is opened.
+        self.switch(True)
+        self.service.pings.append({'id': 'ping_1', 'title': 'Card payment failed', 'ask': 'Netflix could not charge your card',
+                                   'severity': 'urgent', 'link': 'https://bank.example/card', 'at': 1})
+        del self.door.kick   # the real kick, as on a box
+        stop = self.watching()
+        stored = lambda: any(e.get('door_ping') == 'ping_1' for e in agent_chat._load(self.inbox.store)['entries'])
+        for _ in range(100):
+            if stored() and 'ping_1' in self.service.acked:
+                break
+            stop.wait(0.05)
+        stop.set()
+        self.assertTrue(stored())
+        self.assertIn('ping_1', self.service.acked)
+        self.assertEqual(self.service.calls[0][1], '/doors')
+
+    def test_the_loop_does_nothing_without_a_token(self):
+        door = agent_inbox_door.Door(self.inbox, token='')
+        self.inbox.agent_inbox_door = door
+        stop = self.watching()
+        stop.wait(0.2)
+        stop.set()
+        self.assertFalse(door.running)
+        self.assertEqual(door.passed_at, 0.0)
+
     def test_a_ping_is_acked_only_after_it_is_stored(self):
         self.opened()
         alert = {'id': 'inbox_a9', 'title': 'Server down', 'severity': 'urgent', 'at': 1}
@@ -435,10 +493,11 @@ class RealHTTP(unittest.TestCase):
             def switch_on(self, _id):
                 return True
         door = agent_inbox_door.Door(Inbox(), token='')
+        self.assertFalse(door.enabled())
         self.assertFalse(door.probe(force=True))
 
 
-# AgentInboxDoor also reruns every AgentChat test with the door switch off: today's Agent chat is unchanged.
+# AgentInboxDoor also reruns every AgentChat test with the box inbox off: today's Agent chat is unchanged.
 del AgentChat
 
 if __name__ == '__main__':

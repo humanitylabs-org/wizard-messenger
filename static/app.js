@@ -489,9 +489,9 @@
     if (unread) meta.append(element('span', 'row-dot' + (record.muted ? ' muted' : '')));
     el.append(body, meta); return el;
   }
-  // Issue 302 (switch unread-count): the box counts private chats for the phone icon from the marks the view hands
-  // it: per chat only the seen message id and whether it is quiet (muted, Medium or Low). A 404 means the switch is
-  // off: ask again after a while instead of on every list change.
+  // Issue 302: the box counts private chats for the phone icon from the marks the view hands it: per chat only the
+  // seen message id and whether it is quiet (muted, Medium or Low). A 404 is an older box without the route: ask
+  // again after a while instead of on every list change.
   const seenSync = {sent: '', timer: null, offUntil: 0};
   function privateSeenMarks() {
     return state.dms.filter(dm => !isIncoming(dm)).slice(0, 200).map(dm => {

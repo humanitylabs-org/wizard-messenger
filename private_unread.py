@@ -1,4 +1,4 @@
-"""Issue 302 (switch unread-count): Messenger's own private chats (Marmot, static/app.js) in the phone icon count.
+"""Issue 302: Messenger's own private chats (Marmot, static/app.js) in the phone icon count.
 
 The view keeps a chat's "seen" marker per device (record.seen in localStorage), so the box could not tell which
 private chats are unread. The view now also hands the box one mark per chat: the newest message id it has shown,
