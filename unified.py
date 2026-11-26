@@ -960,8 +960,9 @@ class PeopleStore:
         # Chats: only conversations with messages, newest first, each with its latest line and unread count.
         # Directory (chats=False): everyone A-Z, used by New chat. A fixed handful of queries, never N+1.
         # Started chats (issue 176) are read before the store lock: draft_people takes the drafts lock.
-        started = self.started() if chats and kind == 'person' else {}
-        waiting = (self.draft_people() if started and self.draft_people else set()) or set()
+        # A group made with New group (issue 397) is listed from the start, before its first message.
+        started = self.started() if chats else {}
+        waiting = (self.draft_people() if started and kind == 'person' and self.draft_people else set()) or set()
         with self.db() as db:
             persons = {r['id']: dict(r) for r in db.execute('SELECT * FROM person')}
             idents = {}
@@ -986,7 +987,7 @@ class PeopleStore:
         for pid, ident in idents.items():
             if pid not in persons or (ids is not None and pid not in ids):
                 continue
-            if chats and pid not in last and not (pid in started and pid in waiting):
+            if chats and pid not in last and not (pid in started and (kind == 'group' or pid in waiting)):
                 continue
             p = dict(persons[pid], identities=ident, labels=labels.get(pid, []))
             pic = next((pictures[i['address']] for i in ident if pictures.get(i['address'])), None)
@@ -4008,6 +4009,10 @@ class UnifiedInbox:
             return agent_chat.dispatch(self, method, suffix[1:], payload, query, raw)
         if suffix == ['start-chat'] and method == 'POST':
             return self.start_chat(payload.get('network'), payload.get('to'))
+        if suffix[:1] == ['new-group']:
+            # Issue 397, owner session only: no agent capability maps here and there is no MCP tool.
+            import group_create
+            return group_create.dispatch(self, method, suffix[1:], payload, query, raw)
         if suffix == ['sync'] and method == 'POST':
             # The background long-poll keeps the store current; this answers at once.
             return {'state': 'syncing' if self.sync_lock.locked() else 'ready', 'error': self.store.get('sync_error') or None}

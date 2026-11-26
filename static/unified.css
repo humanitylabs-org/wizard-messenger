@@ -934,6 +934,28 @@ html.u-splitting, html.u-splitting * { cursor: col-resize !important; user-selec
 .u-newmsg .u-directory-row:hover, .u-newmsg .u-directory-row:focus-visible { background: var(--raised); }
 .u-newmsg .u-empty { text-align: center; color: var(--ink-3); margin: 6px 0; }
 .u-newmsg-wizard { align-self: center; color: var(--ink-3); }
+/* New group (issue 397, switch new-group) */
+.u-newmsg-group { align-self: center; color: var(--ink-3); }
+.u-new-group-open { margin-top: .5rem; }
+.u-new-group .u-group-nets { display: grid; flex: 0 0 auto; width: 100%; margin: .25rem 0 .75rem; }
+.u-new-group > :not(.u-group-people) { flex-shrink: 0; }
+.u-new-group .u-group-nets[hidden] { display: none; }
+.u-group-head { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; }
+.u-group-photo { flex: 0 0 auto; width: 3.5rem; height: 3.5rem; min-width: 3.5rem; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--raised); color: var(--ink-3); overflow: hidden; cursor: pointer; }
+.u-group-photo svg { width: 1.5rem; height: 1.5rem; }
+.u-group-photo img { width: 100%; height: 100%; object-fit: cover; }
+.u-group-name { flex: 1 1 auto; min-width: 0; }
+.u-group-chips { display: flex; flex-wrap: wrap; gap: .375rem; margin-bottom: .5rem; }
+.u-group-chips:empty { display: none; }
+.u-group-chip { min-height: 2rem; padding: 0 .75rem; border: 0; border-radius: 1rem; background: var(--accent); color: var(--on-accent); font: inherit; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+.u-group-chip::after { content: ' ✕'; opacity: .8; }
+.u-group-people { flex: 1 1 auto; min-height: 8rem; overflow-y: auto; }
+.u-group-row { position: relative; }
+.u-group-tick { margin-left: auto; width: 1.5rem; height: 1.5rem; flex: 0 0 auto; border: 2px solid var(--ink-3); border-radius: 50%; display: grid; place-items: center; font-size: .8125rem; font-weight: 700; }
+.u-group-row.on .u-group-tick { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.u-group-note { margin: .5rem 0; font-size: .8125rem; color: var(--ink-3); }
+.u-group-note:empty { display: none; }
+.u-group-create { margin-top: .25rem; }
 .u-start-chat { display: grid; grid-template-columns: auto 1fr; gap: .5rem; margin-top: .75rem; }
 .u-start-chat .u-start-title { grid-column: 1 / -1; margin: 0; font-size: .8125rem; font-weight: 600; color: var(--ink-3); }
 .u-start-chat button { grid-column: 1 / -1; }

@@ -1302,6 +1302,115 @@
     };
     return form;
   }
+  // Issue 397 (switch new-group): New group. Offered only for networks whose bridge says it can create groups (the box
+  // asks each connected bridge), so there is never a dead button. The owner picks a network, two or more people from
+  // it and a name (optional photo); the box creates the group on the real network and it opens ready to send.
+  // Owner only: no agent tool or capability reaches these routes.
+  const newGroupOn = () => switchState.on['new-group'] === true;
+  function newGroupButton(label, cls, before) {
+    const b = button(label, () => { before?.(); newGroupSheet(); }, cls); b.hidden = true;
+    if (!newGroupOn()) return b;
+    call('new-group').then(r => { b.hidden = !(r?.networks || []).length; }).catch(() => { b.hidden = true; });
+    return b;
+  }
+  // A small square JPEG for the group picture; the original file if the browser can't draw it.
+  async function groupPicture(file) {
+    try {
+      const bmp = await createImageBitmap(file), side = Math.min(bmp.width, bmp.height), size = Math.min(640, side);
+      const c = Object.assign(document.createElement('canvas'), {width: size, height: size});
+      c.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, size, size);
+      return await new Promise((ok, bad) => c.toBlob(b => b ? ok(b) : bad(new Error('no blob')), 'image/jpeg', .85));
+    } catch { return file; }
+  }
+  async function newGroupSheet() {
+    const sheet = overlay('New group'); sheet.classList.add('tall', 'u-new-group');
+    const title = 'New group', clientId = uid(), picked = new Map();
+    let networks = [], net = null, people = [], photo = null, photoURL = '';
+    const nets = node('div', 'u-view-choice u-group-nets'); nets.setAttribute('role', 'radiogroup'); nets.setAttribute('aria-label', 'Network');
+    const head = node('div', 'u-group-head'), pic = button('', () => file.click(), 'u-group-photo'), name = node('input', 'u-group-name');
+    const file = node('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/webp'; file.hidden = true;
+    pic.setAttribute('aria-label', 'Add group photo'); pic.append(icon('camera'));
+    name.type = 'text'; name.maxLength = 100; name.autocomplete = 'off'; name.setAttribute('aria-label', 'Group name');
+    head.append(pic, name, file);
+    const chips = node('div', 'u-group-chips'), search = node('input', 'u-search'), list = node('div', 'u-directory u-group-people');
+    search.type = 'search'; search.setAttribute('aria-label', 'Search people');
+    const create = button('Create group', () => submit(), 'primary wide u-group-create'), note = node('p', 'u-start-note u-group-note');
+    sheet.append(nets, head, chips, search, list, note, create);
+    const firsts = () => [...picked.values()].map(n => n.trim().split(/\s+/)[0]).filter(Boolean);
+    const fallbackName = () => { const f = firsts(); return !f.length ? 'Group name' : f.length <= 3 ? (f.length === 1 ? f[0] : f.slice(0, -1).join(', ') + ' and ' + f.at(-1)) : f.slice(0, 3).join(', ') + ' +' + (f.length - 3); };
+    const paint = () => {
+      name.placeholder = net && picked.size ? fallbackName() : 'Group name' + (net?.name_required ? '' : ' (optional)');
+      chips.replaceChildren(...[...picked].map(([id, who]) => button(who, () => { picked.delete(id); paint(); }, 'u-group-chip')));
+      for (const c of chips.children) c.setAttribute('aria-label', 'Remove ' + c.textContent);
+      const min = net?.min || 2, ready = !!net && picked.size >= min && (!net.max || picked.size <= net.max);
+      create.disabled = !ready || create.dataset.busy === '1';
+      if (create.dataset.busy !== '1') note.textContent = !net ? '' : picked.size < min ? 'Pick at least ' + min + ' people' : net.max && picked.size > net.max ? 'Up to ' + net.max + ' people' : picked.size + ' people · ' + net.label;
+      draw();
+    };
+    const draw = () => {
+      const q = search.value.trim().toLowerCase(); list.replaceChildren();
+      for (const p of people.filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 200)) {
+        const on = picked.has(p.id), row = button('', () => { on ? picked.delete(p.id) : picked.set(p.id, p.name); paint(); }, 'u-directory-row u-group-row' + (on ? ' on' : ''));
+        row.setAttribute('role', 'checkbox'); row.setAttribute('aria-checked', String(on));
+        const text = node('span', 'u-who-text'); text.append(node('strong', '', p.name), node('span', '', net.label));
+        row.append(avatar(p.name, 'small'), text, node('span', 'u-group-tick', on ? '✓' : '')); list.append(row);
+      }
+      if (!list.children.length) list.append(node('p', 'u-empty', !net ? '' : people.loading ? 'Loading…' : q ? 'No one matches' : 'No ' + net.label + ' contacts yet'));
+    };
+    const choose = async n => {
+      if (net?.network === n.network) return;
+      net = n; picked.clear(); people = Object.assign([], {loading: true}); search.value = ''; search.placeholder = 'Search ' + n.label + ' people';
+      for (const b of nets.children) { const on = b.dataset.network === n.network; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
+      paint();
+      try {
+        const r = await api('api/unified/new-group/people?network=' + encodeURIComponent(n.network), {});
+        if (s.overlay !== title || net !== n) return;
+        people = r.people || [];
+      } catch (e) { if (s.overlay === title && net === n) { people = []; error(e); } }
+      paint();
+    };
+    search.oninput = draw;
+    file.onchange = async () => {
+      const f = file.files?.[0]; file.value = ''; if (!f) return;
+      pic.disabled = true;
+      try {
+        const blob = await groupPicture(f);
+        const response = await fetch('api/unified/new-group/photo', {method: 'PUT', credentials: 'same-origin', cache: 'no-store',
+          headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
+        let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
+        if (!response.ok || !env.ok) throw new Error(env.error?.message || 'Could not add that photo. Try again.');
+        if (s.overlay !== title) return;
+        photo = env.result.photo; if (photoURL) URL.revokeObjectURL(photoURL); photoURL = URL.createObjectURL(new Blob([blob], {type: 'image/jpeg'}));
+        const img = node('img'); img.alt = ''; img.src = photoURL; pic.replaceChildren(img); pic.classList.add('has-img'); pic.setAttribute('aria-label', 'Change group photo');
+      } catch (e) { error(e); }
+      finally { pic.disabled = false; }
+    };
+    async function submit() {
+      if (create.disabled) return;
+      create.dataset.busy = '1'; create.disabled = true; note.textContent = 'Creating the group on ' + net.label + '…';
+      try {
+        const r = await call('new-group', {client_id: clientId, network: net.network, people: [...picked.keys()], name: name.value.trim(), ...(photo ? {photo} : {})});
+        if (s.overlay !== title) return;
+        store.directory = null; closeOverlay();
+        if (photoURL) URL.revokeObjectURL(photoURL);
+        await openPerson(r.chat_id);
+        if (r.not_added?.length) toast(r.not_added.join(', ') + (r.not_added.length === 1 ? " wasn't" : " weren't") + ' added straight away', 4000);
+        else if (r.photo === 'failed') toast('Group made. The photo could not be set.', 4000);
+      } catch (e) { delete create.dataset.busy; note.textContent = ''; error(e); paint(); }
+    }
+    paint();
+    try {
+      networks = (await call('new-group')).networks || [];
+      if (s.overlay !== title) return;
+      if (!networks.length) { note.textContent = 'None of your connected networks can make groups here yet.'; return; }
+      nets.style.gridTemplateColumns = 'repeat(' + networks.length + ', 1fr)';
+      for (const n of networks) {
+        const b = button(n.label, () => choose(n), 'u-view-btn'); b.dataset.network = n.network; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', 'false'); nets.append(b);
+      }
+      nets.hidden = networks.length < 2;
+      choose(networks[0]);
+    } catch (e) { error(e); }
+  }
   // With no chat open, the right side is New message (Miguel, 31 Oct 2026): "the list of chats without one selected",
   // reached from the New chat button or the ✕ on an open chat. Picking someone opens that chat in the same place.
   function fillEmpty(thread, focus = false) {
@@ -1311,6 +1420,7 @@
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
     box.append(node('h2', '', 'New message'), search, list, wizard);
+    if (newGroupOn()) box.append(newGroupButton('New group', 'link u-newmsg-group'));
     box.append(startChatForm(id => openPerson(id)));
     thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
     if (focus) requestAnimationFrame(() => search.focus());
@@ -1483,6 +1593,7 @@
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
     const settled = sharing ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
     if (!sharing) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
+    if (!sharing && newGroupOn()) sheet.append(newGroupButton('New group', 'secondary wide u-new-group-open'));
     if (!sharing) sheet.append(startChatForm(id => { closeOverlay(); openPerson(id); }));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);

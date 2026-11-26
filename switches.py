@@ -49,6 +49,12 @@ SWITCHES = (
                     'to the chat where you were. GIFs and stickers still loop in the chat.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#379']},
+    {'id': 'new-group', 'name': 'New group',
+     'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick the network, '
+                    'two or more people and a name (optional photo), tap Create. The group is made on the real '
+                    'network and opens ready to send.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#397']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
