@@ -37,13 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'telegram-emoji', 'name': 'Emoji panel like Telegram',
-     'description': 'The emoji panel gets a category bar that jumps to a section, a delete key (hold to keep '
-                    'deleting), a keyboard button that swaps the panel for the keyboard and back, skin tones on a '
-                    'long press, a Recent row ranked by how often you use each emoji, and on a phone the same height '
-                    'as your keyboard.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#349']},
     {'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
      'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as stacked '
                     'bubbles above the message box, oldest first, each with Send, Edit and Remove. One draft works '

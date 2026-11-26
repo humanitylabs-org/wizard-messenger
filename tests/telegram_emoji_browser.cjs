@@ -1,5 +1,5 @@
-// Issue 349 (switch telegram-emoji): Messenger's emoji panel works like Telegram's (James, 20 Nov 2026).
-// With the switch on, on a phone and a computer, in two skins:
+// Issue 349: Messenger's emoji panel works like Telegram's (James, 20 Nov 2026), on for everyone (switch-default).
+// On a phone and a computer, in two skins, with no switch listed (a stale stored switch changes nothing):
 //   - a category bar sits over the emoji; tapping 🏁 lands on Flags and the bar's highlight follows scrolling;
 //   - a delete key in the bottom strip removes one emoji per tap and keeps deleting while held, keyboard down;
 //   - the smiley turns into a keyboard button: the keyboard comes back with the panel hidden and the caret where it
@@ -7,7 +7,6 @@
 //   - a long press (right-click on a computer) on 👍 shows 6 tones; 👍🏽 sticks for the next plain tap and in Recent;
 //   - on a phone the panel takes the keyboard's height; a computer keeps the fixed one;
 //   - search still works, GIFs/Stickers are still there, and the panel still closes on outside tap and send.
-// OFF=1 checks the switch off leaves today's panel as it was.
 // Staged like tests/emoji_stays_open_browser.cjs:
 //   AGENT_STAGE_DIR=<dir> python3 tests/pickers_stage.py <port> &  then  node tests/telegram_emoji_browser.cjs
 // WIZARD_WEB_DIR=<wizard-ux>/web serves the shared emoji set (needed); SHOTS=<dir> writes screenshots.
@@ -17,7 +16,7 @@ const dir = process.env.AGENT_STAGE_DIR;
 if (!dir) { console.error('AGENT_STAGE_DIR is required'); process.exit(2); }
 const st = JSON.parse(fs.readFileSync(path.join(dir, 'state.json')));
 const SHOTS = process.env.SHOTS; if (SHOTS) fs.mkdirSync(SHOTS, {recursive: true});
-const WEB = process.env.WIZARD_WEB_DIR, OFF = process.env.OFF === '1';
+const WEB = process.env.WIZARD_WEB_DIR;
 if (!WEB) { console.error('WIZARD_WEB_DIR is required (the shared emoji set)'); process.exit(2); }
 const SKINS = {
   dark: {scheme: 'dark', bg: '#000000', ink: '#f7f7f7', accent: '#ffffff'},
@@ -36,9 +35,9 @@ async function setup(browser, p, viewport) {
     if (!fs.existsSync(f)) return r.fulfill({status: 404, body: ''});
     return r.fulfill({status: 200, contentType: TYPES[path.extname(f)] || 'application/octet-stream', body: fs.readFileSync(f)});
   });
-  // The box's switch listing, with this one switch on (or off).
+  // The box's switch listing: telegram-emoji is no longer a switch.
   await ctx.route('**/api/view/switches', r => r.request().method() === 'GET'
-    ? r.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'telegram-emoji', name: 'Emoji panel like Telegram', on: !OFF, default: false, issues: ['humanitylabs-org/wizard-messenger#349']}]})})
+    ? r.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: []})})
     : r.continue());
   await ctx.addInitScript(([scheme, p, kb, width]) => {
     const mark = () => {
@@ -93,27 +92,8 @@ const scrollTo = (page, label) => page.evaluate(l => {
   body.scrollTop += h.getBoundingClientRect().top - body.getBoundingClientRect().top + 30;
 }, label);
 
-async function offCase(browser) {
-  for (const viewport of [{width: 390, height: 844}, {width: 1280, height: 860}]) {
-    const t = await setup(browser, SKINS.dark, viewport), {page} = t;
-    await openChat(t, 'Zoe'); await openPanel(t);
-    assert.equal(await page.locator('.u-picker.tg').count(), 0, 'off: no Telegram layout');
-    assert.equal(await page.locator('.u-emo-cats').count(), 0, 'off: no category bar');
-    assert.equal(await page.locator('.u-pick-del').count(), 0, 'off: no delete key');
-    assert.equal(await page.locator('.u-composer .u-pick-btn').getAttribute('aria-label'), 'Emoji, GIFs and stickers', 'off: the smiley stays a smiley');
-    assert.deepEqual(await page.locator('.u-picker .u-pick-tab').allInnerTexts(), ['Emoji', 'GIFs', 'Stickers']);
-    const h = await page.locator('.u-picker').evaluate(e => e.getBoundingClientRect().height);
-    assert.notEqual(Math.round(h), KEYBOARD, 'off: the fixed height');
-    if (SHOTS) await page.screenshot({path: path.join(SHOTS, `off-${viewport.width}.png`)});
-    assert.deepEqual(t.errors, []);
-    await t.ctx.close();
-    console.log('ok off', viewport.width);
-  }
-}
-
 (async () => {
   const browser = await engine.launch();
-  if (OFF) { await offCase(browser); await browser.close(); console.log('PASS telegram_emoji_browser OFF: switch off keeps today\'s panel'); return; }
   for (const [skin, p] of Object.entries(SKINS)) for (const viewport of [{width: 390, height: 844}, {width: 1280, height: 860}]) {
     const tag = skin + '-' + viewport.width;
     const t = await setup(browser, p, viewport), {ctx, page, errors, posts, phone} = t;

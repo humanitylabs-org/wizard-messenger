@@ -685,7 +685,7 @@
     if (choice.capture) input.setAttribute('capture', choice.capture); else input.removeAttribute('capture');
     input.click();
   }
-  // ---------- Emoji panel like Telegram (issue 349, switch telegram-emoji): the pure parts ----------
+  // ---------- Emoji panel like Telegram (issue 349): the pure parts ----------
   // Skin tones: an emoji takes a tone when exactly one of its characters is an Emoji_Modifier_Base (👍, 🏃‍♀️, ☝️);
   // the tone goes right after that character (in place of its variation selector). Several people (👨‍👩‍👧) get none.
   const EMOJI_TONES = ['\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
@@ -4548,11 +4548,11 @@
     return emojiKit;
   }
   const emojiRecent = () => { try { const v = JSON.parse(localStorage.getItem(EMOJI_RECENT) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 24) : []; } catch { return []; } };
-  // Issue 349 (switch telegram-emoji): how often each emoji is used (Recent's ranking) and the skin tone picked per emoji.
+  // Issue 349: how often each emoji is used (Recent's ranking) and the skin tone picked per emoji.
   const EMOJI_USAGE = 'messenger-emoji-usage-v1', EMOJI_TONE_PICKS = 'messenger-emoji-tones-v1', KEYBOARD_HEIGHT = 'messenger.keyboardHeight';
   const storedObject = key => { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; } };
   const storeObject = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode: kept for this session only */ } };
-  // The first time with the switch on, Recent starts from the plain recent list (newest first).
+  // The first time, Recent starts from the plain recent list (newest first).
   function emojiUsageNow() {
     const u = storedObject(EMOJI_USAGE); if (u) return u;
     const now = Date.now(), seed = {}; emojiRecent().forEach((k, i) => { seed[k] = {s: 1, t: now - (i + 1) * 60000}; });
@@ -4576,7 +4576,7 @@
   function rememberEmoji(k) {
     const list = [k, ...emojiRecent().filter(x => x !== k)].slice(0, 24);
     try { localStorage.setItem(EMOJI_RECENT, JSON.stringify(list)); } catch { /* private mode: recent stays for this session */ }
-    if (switchState.on['telegram-emoji'] === true) storeObject(EMOJI_USAGE, emojiUsage(emojiUsageNow(), k, Date.now()));
+    storeObject(EMOJI_USAGE, emojiUsage(emojiUsageNow(), k, Date.now()));
     recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); // the reaction strip leads with the same recent picks
   }
   const pickerCache = {stickers: null, packs: Object.create(null), gifs: Object.create(null)};
@@ -4586,8 +4586,8 @@
     const tabs = node('div', 'u-pick-tabs'); tabs.setAttribute('role', 'tablist');
     const body = node('div', 'u-pick-body');
     panel.append(tabs, body);
-    const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0, tg: false, lit: null, swallow: false};
-    // Issue 349 (switch telegram-emoji): like Telegram, a category bar over the emoji and a bottom strip with the
+    const state = {open: false, tab: 'emoji', start: null, end: null, gen: 0, lit: null, swallow: false};
+    // Issue 349: like Telegram, a category bar over the emoji and a bottom strip with the
     // tabs and a delete key; the smiley turns into a keyboard button while the panel is open.
     const cats = node('div', 'u-emo-cats'); cats.setAttribute('role', 'toolbar'); cats.setAttribute('aria-label', 'Emoji categories');
     const foot = node('div', 'u-pick-foot');
@@ -4622,7 +4622,6 @@
     function show(name) { state.tab = name; state.gen++; closeTones(); state.lit = null; cats.replaceChildren(); cats.hidden = true; paintTabs(); body.replaceChildren(); body.scrollTop = 0; ({emoji: emojiTab, gifs: gifTab, stickers: stickerTab})[name](state.gen); }
     function section(title, cls) { const h = node('h3', 'u-pick-head', title); const g = node('div', cls); body.append(h, g); return g; }
     function emojiButton(k) {
-      if (!state.tg) { const b = button(k, () => insert(k), 'u-emo'); b.setAttribute('aria-label', k); return b; }
       const choices = emojiTones(k), shown = choices ? toneFor(k) : k;
       const b = button(shown, () => { if (b.held) { b.held = false; return; } insert(choices ? toneFor(k) : k); }, 'u-emo');
       b.setAttribute('aria-label', shown); b.dataset.emoji = k;
@@ -4687,16 +4686,14 @@
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) del.addEventListener(ev, stopDel);
     del.addEventListener('contextmenu', e => e.preventDefault());
     function layout() {
-      state.tg = switchState.on['telegram-emoji'] === true; panel.classList.toggle('tg', state.tg);
-      if (state.tg) { foot.replaceChildren(tabs, del); panel.replaceChildren(cats, body, foot); }
-      else panel.replaceChildren(tabs, body);
+      foot.replaceChildren(tabs, del); panel.replaceChildren(cats, body, foot);
       // On a phone the panel takes the keyboard's place at the keyboard's own height, so nothing jumps.
-      const kb = state.tg && touch() ? emojiPanelHeight((storedObject(KEYBOARD_HEIGHT) || {})[innerWidth], keyboardWatch.full[innerWidth] || innerHeight) : 0;
+      const kb = touch() ? emojiPanelHeight((storedObject(KEYBOARD_HEIGHT) || {})[innerWidth], keyboardWatch.full[innerWidth] || innerHeight) : 0;
       panel.style.height = kb ? kb + 'px' : '';
     }
     // Recent: about three rows, ranked by how often and how recently each emoji was used.
     const recentRows = () => emojiRanked(emojiUsageNow(), Date.now(), Math.min(48, Math.max(6, Math.floor(((body.clientWidth || 360) - 14) / 42)) * 3));
-    function emojiTabTg(gen) {
+    function emojiTab(gen) {
       const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
       const list = node('div', 'u-emo-list');
       body.append(search, list);
@@ -4741,25 +4738,6 @@
       paint();
       search.oninput = () => { clearTimeout(timer); timer = setTimeout(paint, 120); };
       if (!kitNow) loadEmojiKit().then(kit => { if (kit && gen === state.gen) { kitNow = kit; paint(); } });
-    }
-    function emojiTab(gen) {
-      if (state.tg) return emojiTabTg(gen);
-      const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
-      const list = node('div', 'u-pick-list');
-      body.append(search, list);
-      const paint = kit => {
-        if (gen !== state.gen) return;
-        list.replaceChildren();
-        const add = (title, emoji) => { if (!emoji.length) return; const g = node('div', 'u-emo-grid'); for (const k of emoji) g.append(emojiButton(k)); list.append(node('h3', 'u-pick-head', title), g); };
-        const q = search.value.trim();
-        if (!q) add('Recent', emojiRecent());
-        const groups = kit ? kit.search(q) : [{label: 'Smileys', emoji: [...QUICK, ...MORE].filter(k => !q || k.includes(q))}];
-        for (const c of groups) add(c.label, [...c.emoji]);
-        if (!list.childElementCount) list.append(node('p', 'u-pick-empty', 'No emoji found'));
-      };
-      paint(window.WosTopicEmoji?.categories?.length ? window.WosTopicEmoji : null);
-      loadEmojiKit().then(kit => { if (kit) { search.oninput = () => paint(kit); paint(kit); } });
-      search.oninput = () => paint(null);
     }
     // A tile is a small preview; a GIF plays only while on screen (reduced motion keeps the still).
     const playing = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
@@ -4843,7 +4821,7 @@
     function open() {
       if (state.open) return;
       if (document.activeElement === o.draft) keep(); state.open = true; layout(); panel.hidden = false; o.button.classList.add('on'); o.button.setAttribute('aria-expanded', 'true'); o.form.classList.add('picking');
-      if (state.tg) paintButton(true);
+      paintButton(true);
       if (touch()) o.draft.blur(); // the panel takes the keyboard's place
       show(state.tab);
       // Issue 159: a tap anywhere outside the panel (the chat, the text box, Send, another control) closes it, like
@@ -4859,19 +4837,18 @@
     function close() {
       if (!state.open) return false;
       state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
-      stopDel(); closeTones(); state.lit = null; if (state.tg) paintButton(false);
+      stopDel(); closeTones(); state.lit = null; paintButton(false);
       return true;
     }
     function paintButton(keyboard) {
       const label = keyboard ? 'Show keyboard' : 'Emoji, GIFs and stickers';
       o.button.replaceChildren(icon(keyboard ? 'keyboard' : 'smile')); o.button.setAttribute('aria-label', label); o.button.title = label;
     }
-    // Issue 349: with the switch on, the button shows a keyboard while the panel is open; a tap brings the keyboard
+    // Issue 349: the button shows a keyboard while the panel is open; a tap brings the keyboard
     // back with the caret where it was, and the next tap swaps the panel back in.
     function toggle() {
       if (!state.open) return open();
-      const tg = state.tg; close();
-      if (!tg) return;
+      close();
       const n = o.draft.value.length, a = Math.min(state.start ?? n, n), b = Math.max(a, Math.min(state.end ?? a, n));
       o.draft.focus(); o.draft.setSelectionRange(a, b);
     }
@@ -4882,7 +4859,7 @@
     body.addEventListener('scroll', () => { closeTones(); if (state.lit && !litQueued) { litQueued = true; requestAnimationFrame(() => { litQueued = false; state.lit?.(); }); } }, {passive: true});
     // Swiping sideways over the panel moves between Emoji, GIFs and Stickers.
     let swipe = null;
-    body.addEventListener('touchstart', e => { swipe = state.tg && e.touches.length === 1 && !e.target?.closest?.('.u-pack-row, .u-emo-tones') ? {x: e.touches[0].clientX, y: e.touches[0].clientY} : null; }, {passive: true});
+    body.addEventListener('touchstart', e => { swipe = e.touches.length === 1 && !e.target?.closest?.('.u-pack-row, .u-emo-tones') ? {x: e.touches[0].clientX, y: e.touches[0].clientY} : null; }, {passive: true});
     body.addEventListener('touchend', e => {
       const t = e.changedTouches?.[0], from = swipe; swipe = null;
       if (!from || !t || !state.open) return;

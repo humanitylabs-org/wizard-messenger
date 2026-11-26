@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS} = require('../static/unified.js');
-// Issue 349 (switch telegram-emoji): the pure parts of the Telegram-style emoji panel.
+// Issue 349: the pure parts of the Telegram-style emoji panel.
 
 test('emoji that take one skin tone get six choices, plain first', () => {
   assert.deepEqual(emojiTones('👍'), ['👍', '👍🏻', '👍🏼', '👍🏽', '👍🏾', '👍🏿']);
