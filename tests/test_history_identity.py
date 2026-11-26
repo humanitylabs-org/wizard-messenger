@@ -604,6 +604,125 @@ class SignalNumberTitleTests(Base):
         self.assertEqual(store.repair_person_titles(), 0)  # a group's name never becomes a person's title
 
 
+class SignalNamesakeTests(Base):
+    """Issue 401 round 4 (26 Nov): the contact's Signal name is spelled like one of the owner's names. James's box
+    logged `dm-label number ... room_name=own channel=own peers=[own] others=[] topic=number contact=name
+    lookup=name` and kept the number."""
+    OWN_ACI = '11111111-2222-4333-8444-555555555555'
+    ACI = '7c1e2f0a-3b4d-4e5f-8a9b-0c1d2e3f4a5b'
+    PEER = '@signal_' + ACI + ':' + SERVER
+    NUMBER = '+66 81 234 5678'
+    NAME = 'Sam Carter'
+
+    def box(self, peer_name=None, looked_up=None, own_known=True, own_names=('Sam Carter',)):
+        inbox = self.inbox()
+        inbox.learn_me = lambda: None
+        if own_known:
+            inbox.mine.add(own_ghost('signal', self.OWN_ACI))
+        inbox.store.remember_own_names('signal', ['+66 89 999 0000', 'James'])
+        inbox.store.remember_own_names('telegram', list(own_names))
+        room = '!n:' + SERVER
+        a = inbox.store.identity('signal', room, self.NUMBER)  # what 16.127 left on the box
+        inbox.store.put('sync_token', 'previous')
+        for marker in ('meta_members_v4', 'meta_rescan_v4', 'meta_status_channel_v1'):
+            inbox.store.put(marker, '1')
+        name = self.NAME if peer_name is None else peer_name
+        state = [bridge('signal', 'signal', **{'com.beeper.room_type.v2': 'dm', 'channel': {'displayname': name}}),
+                 member(inbox.owner, 'owner'), member(self.PEER, name), {'type': 'm.room.name', 'content': {'name': name}},
+                 {'type': 'm.room.topic', 'content': {'topic': 'Signal private chat with ' + self.NUMBER}}]
+        looked_up = self.NAME if looked_up is None else looked_up
+
+        def matrix(path, *args, **kw):
+            if path.startswith('/sync?'):
+                return {'next_batch': 'next', 'rooms': {'join': {}}}  # no new message
+            if path.endswith('/state'):
+                return state
+            raise AssertionError(path)
+
+        def bridge_api(network, path, *args, **kw):
+            if path == '/contacts':
+                return {'contacts': [{'id': self.ACI, 'name': looked_up, 'identifiers': ['tel:' + self.NUMBER],
+                                      'mxid': self.PEER, 'dm_room_mxid': room}]}
+            if path == '/resolve_identifier/' + self.ACI:
+                return {'id': self.ACI, 'name': looked_up, 'identifiers': ['tel:' + self.NUMBER], 'mxid': self.PEER}
+            raise AssertionError(path)
+        return inbox, a, matrix, bridge_api, state
+
+    def run_sync(self, inbox, matrix, bridge_api):
+        import contextlib, io
+        out = io.StringIO()
+        with patch.object(inbox, 'mx', side_effect=matrix), patch.object(inbox.connectors, 'request', side_effect=bridge_api), \
+                contextlib.redirect_stdout(out):
+            inbox.sync()
+        return [l for l in out.getvalue().splitlines() if 'dm-label' in l]
+
+    def test_the_contacts_name_wins_when_it_is_spelled_like_an_owner_name(self):
+        inbox, a, matrix, bridge_api, state = self.box()
+        lines = self.run_sync(inbox, matrix, bridge_api)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NAME)
+        self.assertEqual(lines, [])  # no longer on a number: nothing to report
+        # the next state change or message keeps the name; a number never takes it back
+        inbox.rooms.pop('!n:' + SERVER)
+        with patch.object(inbox, 'mx', return_value=state):
+            self.assertEqual(inbox.room_meta('!n:' + SERVER, {'state': {'events': [state[-1]]}})['label'], self.NAME)
+        inbox.store.identity('signal', '!n:' + SERVER, self.NUMBER)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NAME)
+        self.assertEqual(inbox.store.repair_person_titles(), 0)
+
+    def test_the_lookup_name_beats_the_number_when_the_room_only_has_the_number(self):
+        inbox, a, matrix, bridge_api, state = self.box(peer_name=self.NUMBER)
+        self.run_sync(inbox, matrix, bridge_api)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NAME)
+        # a later state read (the room still says the number) keeps the name the lookup found
+        inbox.rooms.pop('!n:' + SERVER)
+        with patch.object(inbox, 'mx', return_value=state):
+            inbox.room_meta('!n:' + SERVER, {'state': {'events': [state[-1]]}})
+        inbox.store.identity('signal', '!n:' + SERVER, self.NUMBER)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NAME)
+
+    def test_unknown_own_account_keeps_the_owner_name_rule(self):
+        # The box does not know the owner's own Signal account yet: the member could be the owner, so no change.
+        inbox, a, matrix, bridge_api, _ = self.box(own_known=False)
+        lines = self.run_sync(inbox, matrix, bridge_api)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NUMBER)
+        self.assertEqual(len(lines), 1)
+        for part in ('dm-label number', 'room_name=own', 'peers=[own]', 'contact=own', 'lookup=own'):
+            self.assertIn(part, lines[0])  # the line now says the name is spelled like an owner name
+        self.assertNotIn('Sam', lines[0])
+        self.assertNotIn('5678', lines[0])
+
+    def test_the_owners_own_ghost_named_after_the_owner_is_never_the_title(self):
+        inbox, a, matrix, bridge_api, state = self.box()
+        own = own_ghost('signal', self.OWN_ACI)
+        state[2] = member(own, self.NAME)
+        def lookup_owner(network, path, *args, **kw):
+            if path == '/contacts':
+                return {'contacts': [{'id': self.OWN_ACI, 'name': self.NAME, 'mxid': own}]}
+            raise AssertionError(path)  # no other member: no lookup
+        self.run_sync(inbox, matrix, lookup_owner)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NUMBER)
+
+    def test_other_names_and_groups_are_unchanged(self):
+        inbox, a, matrix, bridge_api, _ = self.box(own_names=('Someone Else',))
+        self.run_sync(inbox, matrix, bridge_api)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NAME)
+
+    def test_a_contact_with_no_name_keeps_the_number(self):
+        inbox, a, matrix, bridge_api, _ = self.box(looked_up=self.NUMBER, peer_name=self.NUMBER)
+        lines = self.run_sync(inbox, matrix, bridge_api)
+        self.assertEqual(inbox.store.person(a['person_id'])['display_name'], self.NUMBER)  # no name at all
+        self.assertIn('lookup=number', lines[0])
+
+    def test_a_group_without_a_name_is_unchanged(self):
+        inbox = self.inbox()
+        inbox.mine.add(own_ghost('signal', self.OWN_ACI))
+        inbox.store.remember_own_names('telegram', [self.NAME])
+        state = [bridge('signal', 'signal', **{'com.beeper.room_type.v2': 'group'}), member(inbox.owner, 'owner'),
+                 member(self.PEER, self.NAME), member('@signal_e:' + SERVER, 'E')]
+        with patch.object(inbox, 'mx', return_value=state):
+            self.assertEqual(inbox.room_meta('!g', {})['label'], 'Signal conversation')
+
+
 class BackfillConfigTests(Base):
     def test_templates_enable_forward_backfill_and_keep_secrets_on_rerun(self):
         setup_connectors(self.root, EXTRA_NETWORKS)
