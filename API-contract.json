@@ -195,9 +195,9 @@
     },
     {
       "method": "PUT",
-      "path": "/api/drafts/{id}/attachments?revision={revision}&name={name}&mime={mime}",
+      "path": "/api/drafts/{id}/attachments?revision={revision}&name={name}&mime={mime}&key={key}",
       "auth": "owner or draft_only/full_access bearer",
-      "body": "raw file bytes; max 25 MB each, 10 per draft, 100 MB total; server sniffs images",
+      "body": "raw file bytes; max 25 MB each, 10 per draft, 100 MB total; server sniffs images; optional key (8-64 of A-Z a-z 0-9 _ -) names the upload once: a repeat with a key already on the draft returns the draft as it is (any revision), so a retry after a lost answer never stores the file twice",
       "result": "draft with attachment metadata and new revision; no send"
     },
     {

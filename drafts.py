@@ -19,6 +19,7 @@ ATTACH_MAX = 25 * 1024 * 1024
 ATTACH_COUNT = 10
 STORAGE_MAX = 100 * 1024 * 1024  # shared cap for all server drafts, including agent uploads
 STACK_MAX = 5  # drafts an agent may line up in one chat (issue 353)
+UPLOAD_KEY = re.compile(r'[A-Za-z0-9_-]{8,64}')  # the composer's one-time name for an upload (issue 463)
 
 class Drafts:
     def __init__(self, root=None):
@@ -127,6 +128,13 @@ class Drafts:
             raise EngineError('draft_closed', 'This draft is already submitted', 409)
         if not owner: self.mine(row, actor, edit=True)
         if method == 'PUT' and not rest:
+            # Issue 463: the composer names each upload once (key). When its answer was lost on the way back (a
+            # gateway 502, a dropped connection) the retry carries the same key: the file is already here, so the
+            # draft is answered as it is, whatever revision the retry names, and the photo is never stored twice.
+            key = (query.get('key') or [''])[0] if files is None else ''
+            key = key if UPLOAD_KEY.fullmatch(key or '') else ''
+            if key and any(a.get('key') == key for a in row.get('attachments', [])):
+                return {'draft': copy.deepcopy(row)}
             try: revision = int((query.get('revision') or [''])[0])
             except ValueError: revision = None
             self.check(row, {'revision': revision})
@@ -134,6 +142,7 @@ class Drafts:
                 files = [(raw, (query.get('name') or ['Attachment'])[0])]
             # Every file of one call lands in ONE revision, so a viewer never sees a half-attached draft.
             added = self.store_files(ident, row.get('attachments', []), files)
+            if key: added[0]['key'] = key
             before = copy.deepcopy(row)
             row.setdefault('attachments', []).extend(added)
             self.stamp(row, owner, actor)

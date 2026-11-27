@@ -60,6 +60,27 @@ class ServerDrafts(unittest.TestCase):
         self.do('DELETE', (aid,), {'revision': 3})
         self.assertFalse((Path(self.tmp.name) / 'draft-files' / aid).exists())
 
+    def test_repeat_upload_with_the_same_key_is_answered_as_is(self):
+        # Issue 463: the answer to a stored upload was lost; the composer's retry names the same key and old revision.
+        d = self.do('POST', body=self.owner)['draft']
+        q = {'revision': ['1'], 'name': ['photo.jpg'], 'key': ['u0123456789abcdef']}
+        first = self.do('PUT', (d['id'], 'attachments'), raw=b'\xff\xd8\xffphoto', query=q)['draft']
+        self.assertEqual(first['revision'], 2)
+        self.assertEqual(first['attachments'][0]['key'], 'u0123456789abcdef')
+        again = self.do('PUT', (d['id'], 'attachments'), raw=b'\xff\xd8\xffphoto', query=q)['draft']
+        self.assertEqual(again, first)
+        self.assertEqual(len(list((Path(self.tmp.name) / 'draft-files' / d['id']).iterdir())), 1)
+        # A different upload at the old revision is still fenced, and a bad key is ignored (stored without one).
+        with self.assertRaises(EngineError) as ctx:
+            self.do('PUT', (d['id'], 'attachments'), raw=b'other', query=dict(q, key=['u-another-upload']))
+        self.assertEqual(ctx.exception.code, 'draft_changed')
+        odd = self.do('PUT', (d['id'], 'attachments'), raw=b'other', query={'revision': ['2'], 'key': ['bad key!']})['draft']
+        self.assertNotIn('key', odd['attachments'][1])
+        # A key never reopens a closed draft.
+        self.do('DELETE', (d['id'],), {'revision': 3})
+        with self.assertRaises(EngineError):
+            self.do('PUT', (d['id'], 'attachments'), raw=b'\xff\xd8\xffphoto', query=q)
+
     def test_spoofed_image_is_download_only_and_storage_budget(self):
         from unittest.mock import patch
         d = self.do('POST', body=self.owner)['draft']

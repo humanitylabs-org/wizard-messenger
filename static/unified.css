@@ -360,6 +360,11 @@ button { touch-action: manipulation; }
 .u-attach-video .u-attach-dur { position: absolute; left: .375rem; bottom: .375rem; font-size: .6875rem; color: white; background: color-mix(in srgb, black 50%, transparent); padding: .125rem .375rem; border-radius: .5rem; pointer-events: none; z-index: 1; }
 .u-attach-video:not(.ch-attimg) .u-attach-play { position: static; margin: 0; width: 1.75rem; height: 1.75rem; flex: none; }
 .u-attach-video:not(.ch-attimg) .u-attach-dur { position: static; }
+/* Issue 463: an upload that failed after its automatic retries carries Retry on the item itself. */
+.u-attach-strip .u-attach-failed { border-color: var(--err); }
+.u-attach-strip:has(.u-attach-failed) { flex-shrink: 0; max-width: 60%; } /* keep the photo and its Retry in view next to the note */
+.u-attach-strip .u-attach-retry { flex: none; min-width: 0; min-height: 0; padding: .25rem .625rem; border: 0; border-radius: 1rem; background: var(--err); color: white; font-size: .75rem; font-weight: 600; cursor: pointer; }
+.u-attach-strip .ch-attimg .u-attach-retry { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; }
 .u-recording { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 2px 0 4px; }
 .u-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; animation: u-pulse 1s infinite; }
 .u-rec-time { font-size: 15px; min-width: 40px; }

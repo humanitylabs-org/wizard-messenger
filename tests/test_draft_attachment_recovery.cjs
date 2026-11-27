@@ -12,7 +12,7 @@ const defer = () => { let resolve; const promise = new Promise(r => { resolve = 
 const copy = v => structuredClone(v);
 async function fixture(saved = []) {
   let row = saved === null ? null : {id: 'synthetic-draft', person_id: 'alice', identity_id: 'signal-alice', revision: 1, text: 'Keep this caption', state: 'draft', attachments: saved};
-  let next = 0, writes = 0, failPut = new Set(), failGet = new Set(), holdPut = null, holdGet = null, failDelete = false;
+  let next = 0, writes = 0, failPut = new Set(), lost = 0, flaky = 0, failGet = new Set(), holdPut = null, holdGet = null, failDelete = false;
   const counts = {puts: 0, deletes: 0, draftDeletes: 0, sends: 0}, errors = [], requests = [];
   const s = {person: 'alice', drafts: {}, draftIndex: {}, bindDraft: null};
   const view = {id: 'alice', attach: null}, ui = {form: {isConnected: true}, draft: {value: '', focus() {}}, channel: {value: 'signal-alice', options: [{value: 'signal-alice'}]}, grow() {}, paintBar() {}, paintVia() {}};
@@ -40,8 +40,12 @@ async function fixture(saved = []) {
     counts.puts++;
     if (holdPut) { const gate = holdPut; holdPut = null; gate.entered.resolve(); await gate.promise; }
     if (failPut.has(q.name)) throw bad('storage_failed');
+    // Issue 463: passing trouble (no answer / gateway 502) is transient; the box answers a known upload key as is.
+    if (flaky > 0) { flaky--; throw Object.assign(new Error('Could not attach that file'), {transient: true}); }
+    if (q.key && row.attachments.some(a => a.key === q.key)) return {draft: copy(row)};
     if (q.revision !== row.revision) throw bad('draft_changed');
-    row.attachments.push({id: 'file-' + (++next), name: q.name, mime: blob.type, bytes: blob.size}); row.revision++;
+    row.attachments.push({id: 'file-' + (++next), name: q.name, mime: blob.type, bytes: blob.size, ...(q.key ? {key: q.key} : {})}); row.revision++;
+    if (lost > 0) { lost--; throw Object.assign(new Error('Could not attach that file'), {transient: true}); }
     return {draft: copy(row)};
   }
   const context = vm.createContext({view, ui, s, saveDrafts() {}, draftsFor: (rows, id) => rows.filter(d => d.person_id === id), Blob, File: class extends Blob { constructor(b, name, o) { super(b, o); this.name = name; } },
@@ -56,7 +60,7 @@ async function fixture(saved = []) {
     draftStack: require(path.join(__dirname, '../static/unified.js')).draftStack, prepareVideo: async f => ({video: true, blob: f, local: 'blob:synthetic', url: ''}),
     draftWrites: writes, draftWrote() { context.draftWrites++; }, refreshDraftIndex() {},
     fetchDrafts: async () => row ? [copy(row)] : [], closedDrafts: new Set(), agentName: () => 'Owner',
-    SD_SAVE_MS: 500000, SD_POLL_MS: 500000, setTimeout: (fn, ms) => ms === 0 ? setTimeout(fn, 0) : 0,
+    SD_SAVE_MS: 500000, SD_POLL_MS: 500000, SD_UPLOAD_WAIT_MS: [1, 1, 1], setTimeout: (fn, ms) => ms <= 1 ? setTimeout(fn, 0) : 0,
     clearTimeout, setInterval: () => 0, clearInterval() {}, document: {hidden: false},
     node: (tag, cls, text) => ({tag, cls, text, append() {}}), button: () => ({}),
   });
@@ -65,6 +69,7 @@ async function fixture(saved = []) {
   await new Promise(r => setTimeout(r, 10));
   const item = name => ({key: name, name, bytes: 3, file: true, blob: new Blob(['abc'], {type: 'application/pdf'})});
   return {sd: context.sd, ui, view, item, counts, errors, requests, row: () => copy(row), failPut, failGet,
+    loseAnswers(n) { lost = n; }, flaky(n) { flaky = n; },
     holdPut() { return holdPut = {...defer(), entered: defer()}; }, holdGet() { return holdGet = defer(); },
     failDelete(v) { failDelete = v; }, remoteAttachments(a) { row.attachments = a; row.revision++; },
     replaceView(empty = false) { s.person = 'bob'; ui.form.isConnected = false; view.id = 'bob'; view.sd = {}; view.attach = empty ? null : [item('bob-only')]; },
@@ -92,7 +97,7 @@ test('autosave waits for attachment revision, preserving caption and both files'
 test('transient PUT failure retries from retained bytes and clears its own error', async () => {
   const f = await fixture(), it = f.item('one.pdf'); f.failPut.add(it.name); await f.select(it);
   assert.equal(f.sd.uploadError, true); assert.equal(f.view.attach[0], it);
-  assert.equal(f.sd.note().text, 'An attachment could not be saved or opened. Remove it or reload the draft before sending.');
+  assert.equal(f.sd.note().text, 'An attachment did not upload. Tap Retry on it, or remove it, before sending.');
   f.failPut.clear(); await f.sd.retry();
   assert.equal(f.sd.uploadError, false); assert.equal(f.row().attachments.length, 1); assert.equal(f.ui.draft.value, 'Keep this caption');
 });
@@ -215,4 +220,33 @@ test('send barrier waits for pending upload and uses its final revision exactly 
   const f = await fixture(), gate = f.holdPut(), upload = f.select(f.item('one.pdf')); await tick();
   f.sd.closeForSend(); gate.resolve(); await upload; await f.sd.afterSend();
   assert.equal(f.row(), null); assert.equal(f.counts.puts, 1); assert.equal(f.sd.loadError, false); assert.equal(f.sd.uploadError, false);
+});
+
+// Issue 463: the box stored the photo but its answer was lost (gateway 502, dropped connection).
+test('a lost upload answer becomes the saved attachment: one copy, no warning, no conflict', async () => {
+  const f = await fixture(), it = f.item('photo.jpg'); f.loseAnswers(1); await f.select(it);
+  assert.equal(f.row().attachments.length, 1, 'never stored twice'); assert.equal(it.sid, f.row().attachments[0].id);
+  assert.equal(f.sd.uploadError, false); assert.equal(f.sd.conflict, null); assert.equal(f.sd.row.revision, f.row().revision); assert.deepEqual(f.errors, []);
+  await f.sd.check(false); assert.equal(f.view.attach.length, 1, 'a poll adds no second chip');
+});
+test('passing trouble retries by itself, then stops and asks for Retry', async () => {
+  const once = await fixture(), a = once.item('a.jpg'); once.flaky(1); await once.select(a);
+  assert.equal(once.counts.puts, 2); assert.equal(once.sd.uploadError, false); assert.equal(once.row().attachments.length, 1);
+  const f = await fixture(), it = f.item('b.jpg'); f.flaky(99); await f.select(it);
+  assert.equal(f.counts.puts, 4, 'one try plus three automatic retries'); assert.equal(f.sd.uploadError, true); assert.equal(it.uploadFailed, true);
+  assert.deepEqual(f.errors, [], 'no error toast for passing trouble: the photo carries Retry');
+  f.flaky(0); await f.sd.retry(); assert.equal(f.sd.uploadError, false); assert.equal(f.row().attachments.length, 1);
+});
+test('a refusal from Messenger is not retried by itself', async () => {
+  const f = await fixture(), it = f.item('big.pdf'); f.failPut.add(it.name); await f.select(it);
+  assert.equal(f.counts.puts, 1); assert.equal(f.sd.uploadError, true);
+});
+test('stored, then every retry fails: the next poll adopts the stored copy by its key', async () => {
+  // The box stored it, the phone never heard back and gave up (no sid, uploadFailed); then a drafts poll arrives.
+  const f = await fixture(), photo = f.item('photo.jpg');
+  photo.upkey = 'u-known-key-1'; photo.uploadFailed = true; f.view.attach = [photo];
+  f.remoteAttachments([{id: 'stored', name: 'photo.jpg', mime: 'application/pdf', bytes: 3, key: 'u-known-key-1'}]);
+  await f.sd.check(false);
+  assert.equal(photo.sid, 'stored'); assert.equal(photo.uploadFailed, false); assert.equal(f.view.attach.length, 1, 'no second chip');
+  assert.equal(f.sd.uploadError, false);
 });
