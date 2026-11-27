@@ -13,7 +13,7 @@ const now = Date.now(), min = 60e3;
 const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return; throw new Error('timed out: ' + fn); };
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
-const SW = [['add-contact', 'Add contact on Telegram', 'A chat from someone not yet your contact shows an Add contact bar.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
+const SW = [['synapse-postgres', 'Postgres message store', 'Messenger keeps chats in Postgres with longer history.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
   ['full-reactions', 'Any emoji as a reaction', 'The ＋ next to the reactions opens the full emoji panel.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
@@ -96,19 +96,19 @@ const SW = [['add-contact', 'Add contact on Telegram', 'A chat from someone not 
       assert.equal(await kitBox.locator('h2').innerText().then(t => t.trim()), 'Try new features');
       assert.equal(await kitBox.locator('.wz-try-note').innerText(), 'Features still being tested. Approved ones become part of the app; the rest go away. Thumbs up the ones you like.');
       assert.deepEqual(await kitBox.locator('.wz-try-row .wz-main b').allInnerTexts(), SW.map(x => x[1]));
-      const warm = kitBox.locator('[data-try-id="add-contact"]'), toggle = warm.getByRole('switch');
+      const warm = kitBox.locator('[data-try-id="synapse-postgres"]'), toggle = warm.getByRole('switch');
       assert.equal(await toggle.getAttribute('aria-checked'), 'false');
       await toggle.click();
       await until(async () => await warm.getByRole('switch').getAttribute('aria-checked') === 'true');
-      assert.deepEqual(box.flips.at(-1), {id: 'add-contact', on: true});
-      await warm.getByRole('button', {name: 'Thumbs up for Add contact on Telegram'}).click();
-      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Add contact on Telegram'}).getAttribute('aria-pressed') === 'true');
-      assert.deepEqual(box.votes.at(-1), {id: 'add-contact', vote: 'up'});
-      assert.deepEqual(box.feedback['add-contact'], {tried: true, vote: 'up'});
+      assert.deepEqual(box.flips.at(-1), {id: 'synapse-postgres', on: true});
+      await warm.getByRole('button', {name: 'Thumbs up for Postgres message store'}).click();
+      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Postgres message store'}).getAttribute('aria-pressed') === 'true');
+      assert.deepEqual(box.votes.at(-1), {id: 'synapse-postgres', vote: 'up'});
+      assert.deepEqual(box.feedback['synapse-postgres'], {tried: true, vote: 'up'});
       // Tapping the active thumb takes it back.
-      await warm.getByRole('button', {name: 'Thumbs up for Add contact on Telegram'}).click();
+      await warm.getByRole('button', {name: 'Thumbs up for Postgres message store'}).click();
       await until(async () => box.votes.at(-1)?.vote === null);
-      assert.deepEqual(box.feedback['add-contact'], {tried: true});
+      assert.deepEqual(box.feedback['synapse-postgres'], {tried: true});
       // A flip in the shared section reaches the box at once.
       await kitBox.locator('[data-try-id="full-reactions"]').getByRole('switch').click();
       await until(async () => box.flips.at(-1)?.id === 'full-reactions' && box.flips.at(-1)?.on === true);

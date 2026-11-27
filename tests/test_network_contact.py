@@ -1,8 +1,9 @@
-"""Add contact on the network (issue 399, switch add-contact). A recorded Telegram bridge answers like our patched
+"""Add contact on the network (issue 399, on for everyone since its switch-default). A recorded Telegram bridge answers like our patched
 mautrix-telegram (plumbing/telegram-bridge/contacts.patch: GET/POST /wizard/contact/<user id>); no real account is
 contacted. WhatsApp's upstream bridge has no such route and answers 404."""
 import json
 import unittest
+from pathlib import Path
 
 import test_web as fixtures
 from connector_sender import LocalOwnerSender
@@ -75,23 +76,20 @@ class AddContact(unittest.TestCase):
                 {'network': network, 'kind': 'person', 'label': name, 'names': {ghost + D: name}})))
         return ident['person_id']
 
-    def on(self):
-        self.inbox.switches.set('add-contact', True)
-
     def go(self, method, pid, body=None, headers=None):
         status, _, data = self.request(method, '/api/unified/people/%s/network-contact' % pid, body or {},
                                        headers or self.owner)
         return status, data
 
-    def test_switch_off_changes_nothing(self):
-        for method, body in (('GET', None), ('POST', {'network': 'telegram'})):
-            status, data = self.go(method, self.gil, body)
-            self.assertEqual(status, 404, data)
-            self.assertEqual(data['error']['code'], 'feature_off')
-        self.assertEqual(self.bridge.calls, [])
+    def test_on_without_a_switch_even_with_a_stale_stored_off(self):
+        # Issue 399 switch-default: no switch left; a stored `add-contact: false` from before is ignored.
+        self.inbox.switches.path = Path(self.temp.name) / 'switches.json'
+        self.inbox.switches.path.write_text(json.dumps({'switches': {'add-contact': False}}))
+        status, data = self.go('GET', self.gil)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data['result']['networks'][0]['can_add'], True)
 
     def test_offered_only_where_the_bridge_can_add_and_not_for_contacts(self):
-        self.on()
         status, data = self.go('GET', self.gil)
         self.assertEqual(status, 200, data)
         self.assertEqual(data['result']['networks'], [{'network': 'telegram', 'label': 'Telegram', 'contact': False, 'can_add': True}])
@@ -107,7 +105,6 @@ class AddContact(unittest.TestCase):
         self.assertEqual(self.go('GET', self.gil)[1]['result']['networks'], [])
 
     def test_add_uses_the_chats_own_account_and_name(self):
-        self.on()
         status, data = self.go('POST', self.gil, {'network': 'telegram', 'value': '999'})
         self.assertEqual(status, 200, data)
         self.assertTrue(data['result']['contact'])
@@ -118,7 +115,6 @@ class AddContact(unittest.TestCase):
         self.assertEqual(self.bridge.adds()[-1][3], {'first_name': 'Gil', 'last_name': 'from Jana'})
 
     def test_add_refuses_networks_the_chat_is_not_on(self):
-        self.on()
         for pid, network in ((self.fern, 'whatsapp'), (self.gil, 'whatsapp'), (self.group, 'telegram')):
             status, data = self.go('POST', pid, {'network': network})
             self.assertEqual(status, 409, data)
@@ -126,7 +122,6 @@ class AddContact(unittest.TestCase):
         self.assertEqual(self.bridge.adds(), [])
 
     def test_no_agent_can_add_a_contact(self):
-        self.on()
         for method, body in (('GET', None), ('POST', {'network': 'telegram'})):
             status, data = self.go(method, self.gil, body, self.key)
             self.assertIn(status, (401, 403), data)

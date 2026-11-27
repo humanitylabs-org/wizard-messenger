@@ -959,7 +959,7 @@ html.u-splitting, html.u-splitting * { cursor: col-resize !important; user-selec
 .u-group-note { margin: .5rem 0; font-size: .8125rem; color: var(--ink-3); }
 .u-group-note:empty { display: none; }
 .u-group-create { margin-top: .25rem; }
-/* Issue 399 (switch add-contact): Telegram-style Add contact bar under the chat header. */
+/* Issue 399: Telegram-style Add contact bar under the chat header. */
 .u-addcontact { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; padding: .375rem .5rem .375rem 1rem; background: var(--raised); border-bottom: 1px solid var(--line); font-size: .875rem; color: var(--ink-2); }
 .u-addcontact[hidden] { display: none; }
 .u-addcontact-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

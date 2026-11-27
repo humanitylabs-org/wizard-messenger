@@ -1,4 +1,4 @@
-"""Add contact on the network (issue 399, switch `add-contact`, off by default).
+"""Add contact on the network (issue 399, on for everyone since its switch-default).
 
 In a chat from someone who isn't a contact on that network yet, the owner can add them as a real contact there, the
 same as the native app's "Add contact" bar on a chat from someone new. Messenger then also saves them in Wizard
@@ -22,7 +22,6 @@ from typing import NoReturn
 
 from engine import EngineError
 
-SWITCH = 'add-contact'
 # Networks whose bridge serves the Wizard contact routes, and the form of their user ids.
 NETWORKS = {'telegram': re.compile(r'[0-9]{1,20}\Z')}
 STATUS_TTL = 10 * 60
@@ -40,9 +39,7 @@ def _state(inbox):
     return st
 
 
-def _require_on(inbox):
-    if not inbox.switch_on(SWITCH):
-        _fail('feature_off', 'Add contact is not switched on', 404)
+def _require_connectors(inbox):
     if getattr(inbox, 'connectors', None) is None:
         _fail('unsupported_network', 'Add contact needs the connected networks of this Messenger', 409)
 
@@ -85,7 +82,7 @@ def _entry(network, value, answer):
 
 def status(inbox, person_id, fresh=False):
     """{networks: [{network, label, contact, can_add}]} for the networks where this chat's person can be a contact."""
-    _require_on(inbox)
+    _require_connectors(inbox)
     person, found = accounts(inbox, person_id)
     st, out = _state(inbox), []
     for account in found:
@@ -108,7 +105,7 @@ def status(inbox, person_id, fresh=False):
 
 def add(inbox, person_id, payload):
     """Add this chat's person as a contact on one network, under the name the owner gave (else the chat's name)."""
-    _require_on(inbox)
+    _require_connectors(inbox)
     payload = payload if isinstance(payload, dict) else {}
     network = payload.get('network') if isinstance(payload.get('network'), str) else ''
     person, found = accounts(inbox, person_id)

@@ -1,12 +1,13 @@
-// Add contact on the network (issue 399, switch add-contact): a chat from someone who isn't a Telegram contact yet
-// shows an Add contact bar under the header (plus the chat menu and Contact info). One tap adds them on Telegram
-// through the box and saves them in Wizard Contacts; contacts, WhatsApp chats and groups show nothing. OFF=1 checks
-// that with the switch off nothing changes and the box is never asked. Synthetic box only; phone + desktop.
-// PLAYWRIGHT_MODULE=... [OFF=1] [STATIC_DIR=...] node tests/add_contact_browser.cjs [outdir]
+// Add contact on the network (issue 399, on for everyone since its switch-default): a chat from someone who isn't a
+// Telegram contact yet shows an Add contact bar under the header (plus the chat menu and Contact info). One tap adds
+// them on Telegram through the box and saves them in Wizard Contacts; contacts, WhatsApp chats and groups show
+// nothing. There is no switch: the box lists none, and STALE=1 serves an old `add-contact: off` entry, which must
+// change nothing. Synthetic box only; phone + desktop.
+// PLAYWRIGHT_MODULE=... [STALE=1] [STATIC_DIR=...] node tests/add_contact_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const root = path.resolve(process.env.STATIC_DIR || path.join(__dirname, '../static')), out = path.resolve(process.argv[2] || 'add-contact-shots');
-const OFF = process.env.OFF === '1';
+const STALE = process.env.STALE === '1';
 fs.mkdirSync(out, {recursive: true});
 const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'};
 const now = Date.now(), min = 60e3, D = ':messenger.internal';
@@ -32,7 +33,7 @@ const person = (id, name, net, value, text, ago, kind = 'person') => ({id, displ
       const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       const bad = (status, code, message) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code, message}})});
-      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'add-contact', name: 'Add contact on Telegram', on: !OFF, default: false, vote: null, tried: false}]})});
+      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: STALE ? [{id: 'add-contact', name: 'Add contact on Telegram', on: false, default: false, vote: null, tried: false}] : []})});
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
       if (p === 'api/status') return ok({state: 'ready', account_configured: true});
       if (p === 'api/identity') return ok({identity: {display_name: 'Owner'}});
@@ -49,7 +50,6 @@ const person = (id, name, net, value, text, ago, kind = 'person') => ({id, displ
       const nc = /^api\/unified\/people\/([^/]+)\/network-contact$/.exec(p);
       if (nc) {
         const id = decodeURIComponent(nc[1]), pr = [...PEOPLE, ...GROUPS].find(x => x.id === id);
-        if (OFF) { box.asks.push(id); return bad(404, 'feature_off', 'Add contact is not switched on'); }
         if (req.method() === 'GET') {
           box.asks.push(id);
           const tg = pr?.identities[0].kind === 'person' && pr.identities[0].network === 'telegram';
@@ -85,15 +85,6 @@ const person = (id, name, net, value, text, ago, kind = 'person') => ({id, displ
     await page.locator('.u-person', {hasText: 'Gil Novak'}).waitFor({timeout: 15000});
     await page.waitForTimeout(600); // switches load
     await open('Gil Novak');
-    if (OFF) {
-      assert.equal(await bar.count(), 0, 'switch off: no bar');
-      assert.ok(!(await menu()).some(t => /Add contact on/.test(t)), 'switch off: no menu item');
-      assert.deepEqual(box.asks, [], 'switch off: the box is never asked');
-      await shot('off');
-      summary.push(label + ' off ok');
-      await ctx.close();
-      continue;
-    }
     await bar.waitFor({state: 'visible', timeout: 8000});
     assert.match(await bar.innerText(), /Not a Telegram contact/);
     const box1 = await bar.boundingBox(), head = await page.locator('.u-thread-head').boundingBox();
