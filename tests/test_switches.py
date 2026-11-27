@@ -43,12 +43,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'add-contact', 'name': 'Add contact on Telegram',
-                'description': 'A chat from someone who is not your Telegram contact yet shows an Add contact bar at '
-                               'the top (also in the chat menu and Contact info). One tap adds them as a real Telegram '
-                               'contact and saves them in Wizard Contacts. Networks that cannot add contacts show '
-                               'nothing.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#399']}, {
                 'id': 'synapse-postgres', 'name': 'Postgres message store and longer history',
                 'description': 'The next time Messenger starts (its next update or a restart), the box checks and '
                                'backs up the store behind your bridged chats and moves it from SQLite to Postgres. '
@@ -238,8 +232,25 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('transcript-paragraphs', [s['id'] for s in store.listing()['switches']])
             with self.assertRaises(UnknownSwitch):
                 store.set('transcript-paragraphs', True)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             self.assertNotIn('transcript-paragraphs', json.loads(path.read_text())['switches'])
+
+    def test_add_contact_is_no_longer_a_switch(self):
+        # Issue 399: Add contact on Telegram was approved (switch-default), so it is always on; a stored value and
+        # feedback from before are ignored and dropped on the next write.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'switches.json'
+            path.write_text(json.dumps({'switches': {'add-contact': False, 'full-reactions': True},
+                                        'feedback': {'add-contact': {'tried': True, 'vote': 'up'}}}))
+            store = SwitchStore(path)
+            self.assertNotIn('add-contact', [s['id'] for s in store.listing()['switches']])
+            self.assertNotIn('add-contact', store.listing()['feedback'])
+            with self.assertRaises(UnknownSwitch):
+                store.set('add-contact', True)
+            store.set('photo-timings', True)
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved['switches'], {'full-reactions': True, 'photo-timings': True})
+            self.assertNotIn('add-contact', saved.get('feedback', {}))
 
     def test_telegram_emoji_is_no_longer_a_switch(self):
         # Issue 349: the Telegram-style emoji panel was approved (switch-default), so it is always on; a stored value
@@ -251,7 +262,7 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('telegram-emoji', [s['id'] for s in store.listing()['switches']])
             with self.assertRaises(UnknownSwitch):
                 store.set('telegram-emoji', False)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             self.assertNotIn('telegram-emoji', json.loads(path.read_text())['switches'])
 
     def test_a_removed_switch_is_ignored_and_cleared(self):
@@ -263,8 +274,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('new-contact-drafts', [s['id'] for s in store.listing()['switches']])
             with self.assertRaises(UnknownSwitch):
                 store.set('new-contact-drafts', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
 
     def test_agent_chat_is_gone_and_its_stored_value_cleared(self):
         # Issue 265: the Agent chat is on for everyone now; a stored value and its feedback are dropped on the next write.
@@ -276,9 +287,9 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('agent-chat', [s['id'] for s in store.listing()['switches']])
             with self.assertRaises(UnknownSwitch):
                 store.set('agent-chat', True)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             stored = json.loads(path.read_text())
-            self.assertEqual(stored['switches'], {'full-reactions': True, 'add-contact': True})
+            self.assertEqual(stored['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('agent-chat', stored.get('feedback', {}))
 
     def test_agent_documents_is_gone_and_its_stored_value_cleared(self):
@@ -292,9 +303,9 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('agent-documents'))
             with self.assertRaises(UnknownSwitch):
                 store.set('agent-documents', False)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             raw = json.loads(path.read_text())
-            self.assertEqual(raw['switches'], {'full-reactions': True, 'add-contact': True})
+            self.assertEqual(raw['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('agent-documents', raw['feedback'])
 
     def test_agent_drafts_is_gone_and_its_stored_value_cleared(self):
@@ -307,8 +318,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('agent-drafts'))
             with self.assertRaises(UnknownSwitch):
                 store.set('agent-drafts', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
 
     def test_line_photo_groups_is_gone_and_its_stored_value_cleared(self):
         # Issue 188: LINE photo groups are on for everyone now; a stored value from before is dropped on the next write.
@@ -320,8 +331,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('line-photo-groups'))
             with self.assertRaises(UnknownSwitch):
                 store.set('line-photo-groups', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
 
     def test_on_device_translate_is_gone_and_its_stored_value_cleared(self):
         # Issue 199: Translate on this device is on for everyone now; a stored value from before is dropped on the next
@@ -336,8 +347,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('on-device-translate'))
             with self.assertRaises(UnknownSwitch):
                 store.set('on-device-translate', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('on-device-translate', json.loads(path.read_text()).get('feedback', {}))
 
     def test_device_auto_translate_is_gone_and_its_stored_value_cleared(self):
@@ -353,8 +364,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('device-auto-translate'))
             with self.assertRaises(UnknownSwitch):
                 store.set('device-auto-translate', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('device-auto-translate', json.loads(path.read_text()).get('feedback', {}))
 
     def test_clean_settings_is_gone_and_its_stored_value_cleared(self):
@@ -370,8 +381,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('clean-settings'))
             with self.assertRaises(UnknownSwitch):
                 store.set('clean-settings', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('clean-settings', json.loads(path.read_text()).get('feedback', {}))
 
     def test_photo_file_names_is_gone_and_its_stored_value_cleared(self):
@@ -385,8 +396,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('photo-file-names', store.listing().get('feedback', {}))
             with self.assertRaises(UnknownSwitch):
                 store.set('photo-file-names', True)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('photo-file-names', json.loads(path.read_text()).get('feedback', {}))
 
     def test_list_draft_ready_is_gone_and_its_stored_value_cleared(self):
@@ -400,8 +411,8 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('list-draft-ready', store.listing().get('feedback', {}))
             with self.assertRaises(UnknownSwitch):
                 store.set('list-draft-ready', False)
-            store.set('add-contact', True)
-            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'add-contact': True})
+            store.set('photo-timings', True)
+            self.assertEqual(json.loads(path.read_text())['switches'], {'full-reactions': True, 'photo-timings': True})
             self.assertNotIn('list-draft-ready', json.loads(path.read_text()).get('feedback', {}))
 
     def test_phone_notifications_is_gone_and_its_stored_value_cleared(self):
@@ -416,7 +427,7 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('phone-notifications', store.listing()['feedback'])
             with self.assertRaises(UnknownSwitch):
                 store.set('phone-notifications', True)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             saved = json.loads(path.read_text())
             self.assertNotIn('phone-notifications', saved['switches'])
             self.assertNotIn('phone-notifications', saved.get('feedback', {}))
@@ -433,7 +444,7 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('row-tap-menu', store.listing()['feedback'])
             with self.assertRaises(UnknownSwitch):
                 store.set('row-tap-menu', True)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             saved = json.loads(path.read_text())
             self.assertNotIn('row-tap-menu', saved['switches'])
             self.assertNotIn('row-tap-menu', saved.get('feedback', {}))
@@ -450,7 +461,7 @@ class SwitchStorage(unittest.TestCase):
             self.assertNotIn('share-files', store.listing()['feedback'])
             with self.assertRaises(UnknownSwitch):
                 store.set('share-files', True)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             saved = json.loads(path.read_text())
             self.assertNotIn('share-files', saved['switches'])
             self.assertNotIn('share-files', saved.get('feedback', {}))
@@ -469,7 +480,7 @@ class SwitchStorage(unittest.TestCase):
             self.assertFalse(store.is_on('new-group'))
             with self.assertRaises(UnknownSwitch):
                 store.set('new-group', True)
-            store.set('add-contact', True)
+            store.set('photo-timings', True)
             saved = json.loads(path.read_text())
             self.assertNotIn('new-group', saved['switches'])
             self.assertNotIn('new-group', saved.get('feedback', {}))
@@ -493,7 +504,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"full-reactions": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('full-reactions'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'add-contact', 'synapse-postgres', 'calls', 'full-reactions'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'synapse-postgres', 'calls', 'full-reactions'])
 
     def test_the_photo_speed_switches_are_gone_and_their_stored_values_cleared(self):
         # Issue 468: Photos ready on arrival, Photos open instantly, Photos ready in Wizard's viewer and Background

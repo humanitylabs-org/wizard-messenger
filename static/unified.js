@@ -2853,7 +2853,7 @@
     const pill = iconButton('down', 'Scroll to newest', () => scroll.scrollTo({top: scroll.scrollHeight, behavior: 'smooth'}), 'u-down'); pill.hidden = true;
     const wrap = node('div', 'u-thread-body'); wrap.append(scroll, pill); root.append(wrap);
     Object.assign(view, {root, scroll, pill, id});
-    if (addContactOn()) addContactBar(root, p);
+    addContactBar(root, p);
     root.append(composer(id, p));
     view.selection = messageSelection(root, () => albumPosts(store.threads[id]?.messages || []).map(message => ({message, node: els.get(message.client_id || message.id)})));
   }
@@ -5528,20 +5528,19 @@
     return box;
   }
 
-  // ---------- Add contact on the network (issue 399, switch add-contact) ----------
+  // ---------- Add contact on the network (issue 399, on for everyone since its switch-default) ----------
   // A chat from someone who isn't a contact on that network yet shows Telegram's "Add contact" bar at its top, and the
   // same item in the chat menu and Contact info. One tap adds them as a real contact there (the box asks the bridge;
   // only networks whose bridge can do it answer, so there is never a dead button) and saves them in Wizard Contacts
   // too. Owner only: no agent tool or capability reaches the route.
-  const addContactOn = () => switchState.on['add-contact'] === true;
   const netContacts = new Map(); // person id -> {at, networks: [{network, label, contact, can_add}]}
   const ADD_CONTACT_HIDDEN = 'messenger.addContactHidden';
   const addContactHidden = () => { try { return new Set(JSON.parse(localStorage.getItem(ADD_CONTACT_HIDDEN) || '[]')); } catch { return new Set(); } };
   function hideAddContact(id) { const set = addContactHidden(); set.add(id); try { localStorage.setItem(ADD_CONTACT_HIDDEN, JSON.stringify([...set].slice(-500))); } catch { /* no storage */ } }
   const oneToOne = p => !!p?.id && !p.native && (p.identities || []).length > 0 && p.identities.every(i => i.kind === 'person');
-  const addableNets = p => addContactOn() && oneToOne(p) ? (netContacts.get(p.id)?.networks || []).filter(n => n.can_add) : [];
+  const addableNets = p => oneToOne(p) ? (netContacts.get(p.id)?.networks || []).filter(n => n.can_add) : [];
   async function loadNetContact(p, fresh) {
-    if (!addContactOn() || !oneToOne(p)) return [];
+    if (!oneToOne(p)) return [];
     const had = netContacts.get(p.id);
     if (had && !fresh && Date.now() - had.at < 5 * 60e3) return had.networks;
     try { const r = await call('people/' + encodeURIComponent(p.id) + '/network-contact' + (fresh ? '?fresh=1' : '')); netContacts.set(p.id, {at: Date.now(), networks: r?.networks || []}); }
@@ -5582,7 +5581,7 @@
   function addContactBar(root, p) {
     const bar = node('div', 'u-addcontact'); bar.hidden = true; bar.person = p; bar.setAttribute('role', 'region'); bar.setAttribute('aria-label', 'Add contact');
     const body = root.querySelector('.u-thread-body'); if (body) root.insertBefore(bar, body); else root.append(bar);
-    if (addContactOn() && oneToOne(p)) loadNetContact(p).then(() => { if (bar.isConnected) paintAddContact(); });
+    if (oneToOne(p)) loadNetContact(p).then(() => { if (bar.isConnected) paintAddContact(); });
     return bar;
   }
 
@@ -5714,7 +5713,7 @@
     const save = () => action(async () => { await call('people/' + p.id, {display_name: name.value, language: lang.value, preferred_identity: preferred.value}); closeOverlay(); delete store.threads[p.id]; store.lists = {people: null, groups: null}; await openPerson(p.id); });
     form.append(button('Save', save, 'primary wide'));
     const linkBox = contactsRow(p); if (linkBox) sheet.append(linkBox);
-    if (addContactOn() && oneToOne(p)) {
+    if (oneToOne(p)) {
       const netBox = node('div', 'u-contact-link u-net-contact'); netBox.hidden = true; sheet.append(netBox);
       const paintNet = () => { const nets = addableNets(p); netBox.hidden = !nets.length; netBox.replaceChildren(...nets.flatMap(n => [node('span', '', 'Not in your ' + n.label + ' contacts'), button('Add contact on ' + n.label, () => addNetworkContact(p, n).then(r => { if (r) paintNet(); }), 'secondary')])); };
       loadNetContact(p).then(paintNet);
@@ -7015,9 +7014,8 @@
     const accepts = [...SHARE_KINDS];
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
-  // Issue 399: the Add contact bar follows the switch in an open chat.
+  // Issue 445: the call buttons follow the calls switch.
   switchState.paints.calls = () => document.querySelectorAll('.u-call-btn').forEach(b => { b.hidden = !callsOn(); });
-  switchState.paints['add-contact'] = () => { const p = store.threads[view.id]?.person; if (!p || !view.root) return; if (!addContactOn()) return paintAddContact(); if (!view.root.querySelector('.u-addcontact')) addContactBar(view.root, p); else loadNetContact(p).then(paintAddContact); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,
     // Issue 341: the Wizard chats view is on screen with no chat or sheet of its own (the Inbox list is hidden). Back then
