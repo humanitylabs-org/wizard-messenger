@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9fda5e0b51558a264e52206c9a6ce53b6cd83dcd@sha256:aeb1299b859fb81e7fd32db8440b035b8e992901461d19bcdcf8d0c2f607464e}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-868f9e728147006a586d4fd547b830057fcef1b5@sha256:1c2758451c39aefab70ce927350e27fa77f058c063303663459f9d4bff3378ea}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9fda5e0b51558a264e52206c9a6ce53b6cd83dcd@sha256:aeb1299b859fb81e7fd32db8440b035b8e992901461d19bcdcf8d0c2f607464e}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-868f9e728147006a586d4fd547b830057fcef1b5@sha256:1c2758451c39aefab70ce927350e27fa77f058c063303663459f9d4bff3378ea}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -39,7 +39,7 @@ services:
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.133"
+      MESSENGER_VERSION: "0.2.0-unified.16.134"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
@@ -112,7 +112,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9fda5e0b51558a264e52206c9a6ce53b6cd83dcd@sha256:aeb1299b859fb81e7fd32db8440b035b8e992901461d19bcdcf8d0c2f607464e}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-868f9e728147006a586d4fd547b830057fcef1b5@sha256:1c2758451c39aefab70ce927350e27fa77f058c063303663459f9d4bff3378ea}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -138,7 +138,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-9fda5e0b51558a264e52206c9a6ce53b6cd83dcd@sha256:aeb1299b859fb81e7fd32db8440b035b8e992901461d19bcdcf8d0c2f607464e}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-868f9e728147006a586d4fd547b830057fcef1b5@sha256:1c2758451c39aefab70ce927350e27fa77f058c063303663459f9d4bff3378ea}
     user: 0:0
     entrypoint:
     - python3
