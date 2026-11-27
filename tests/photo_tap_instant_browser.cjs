@@ -1,5 +1,5 @@
 // Issue 348 (James, 20 Nov 2026): a tapped photo must be on screen full size in the frame of the tap, like Telegram,
-// with every photo speed switch on (photo-warm, photo-instant, photo-prefetch, viewer-placeholder, photo-timings) and
+// with every photo speed feature on (for everyone since issue 468; photo-timings switched on here) and
 // the photo's screen copy already on the phone. Messenger is framed in a minimal Wizard shell built from the real
 // app-services.js, chat-kit.js and chats.css of a wizard-ux checkout (SHELL_DIR), so the tap goes through Wizard's
 // shared viewer exactly as on a box. The box is slow on purpose (view copy and original take seconds), so anything
@@ -31,7 +31,7 @@ const THUMB = png(400, 300, [200, 40, 40]), VIEW = png(1600, 1200, [40, 80, 200]
 const VIEW_MS = Number(process.env.VIEW_MS || 1500), ORIGINAL_MS = Number(process.env.ORIGINAL_MS || 3000);
 const person = {id: 'ann', display_name: 'Ann Lee', identities: [{id: 'ann-i', network: 'telegram', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'Photo', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
 const MESSAGES = [0, 1, 2].map(i => ({id: '$p' + i, identity_id: 'ann-i', network: 'telegram', sender: 'Ann Lee', outgoing: false, original: '', timestamp: now - (3 - i) * min, timeline_order: i + 1, msgtype: 'm.image', media: {w: 1600, h: 1200, mime: 'image/png', thumb: true}, reactions: []}));
-const SWITCHES = ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings'].map(id => ({id, name: id, on: true}));
+const SWITCHES = [{id: 'photo-timings', name: 'photo-timings', on: true}]; // the other photo speed switches are gone (issue 468)
 const stats = list => { const v = [...list].sort((a, b) => a - b); return {n: v.length, p50: v[Math.floor(v.length / 2)], p90: v[Math.min(v.length - 1, Math.ceil(v.length * 0.9) - 1)], max: v[v.length - 1]}; };
 
 async function run(browser, label, viewport, mobile) {

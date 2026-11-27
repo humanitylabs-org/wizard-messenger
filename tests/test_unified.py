@@ -836,13 +836,12 @@ class SignalMvpTests(unittest.TestCase):
             queued.append(self.inbox.warm_queue.get_nowait())
         self.assertEqual(queued, ['$new'])
 
-    def test_incoming_photos_are_prefetched_only_with_the_switch(self):
-        # Issue 162: off by default nothing new is queued; on, pictures from others in the last 3 days are.
+    def test_incoming_photos_are_prefetched_for_everyone(self):
+        # Issue 162 (on for everyone since issue 468): pictures from others in the last 3 days are queued, also on a
+        # box whose switches file still says photo-warm is off.
         now = int(time.time() * 1000)
         pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg', 'size': 1000}}
-        self.ingest(self.event('$off', pic, ts=now))
-        self.assertTrue(self.inbox.photo_queue.empty())
-        self.inbox.switches.set('photo-warm', True)
+        self.inbox.switches.path.write_text('{"switches": {"photo-warm": false, "photo-instant": false}}')
         sticker = {'body': 's', 'url': 'mxc://messenger.internal/s', 'info': {'mimetype': 'image/webp'}}
         video = {'msgtype': 'm.video', 'body': 'v.mp4', 'url': 'mxc://messenger.internal/v', 'info': {'mimetype': 'video/mp4', 'size': 5 * 1024 * 1024}}
         huge = {'msgtype': 'm.video', 'body': 'h.mp4', 'url': 'mxc://messenger.internal/h', 'info': {'mimetype': 'video/mp4', 'size': 26 * 1024 * 1024}}
@@ -864,7 +863,7 @@ class SignalMvpTests(unittest.TestCase):
         calls = []
         self.inbox.media = lambda mid, kind: calls.append((mid, kind))
         self.inbox.warm_photo_now('$pic')
-        self.assertEqual(calls, [('$pic', 'thumb'), ('$pic', None)])
+        self.assertEqual(calls, [('$pic', 'thumb'), ('$pic', None), ('$pic', 'view')])
         retried = []
         self.inbox.retry_photo = lambda mid, attempt: retried.append((mid, attempt))
         def down(mid, kind):
@@ -921,7 +920,7 @@ class SignalMvpTests(unittest.TestCase):
             timer.call_args.args[1]()
         self.assertEqual(self.inbox.photo_queue.get_nowait(), ('$pic', 1))
 
-    def test_cache_with_photo_warm_is_bigger_and_drops_full_files_before_thumbnails(self):
+    def test_cache_is_the_photo_size_and_drops_full_files_before_thumbnails(self):
         cache = Path(self.tmp.name) / 'cache'
         cache.mkdir()
         def put(name, size, age, thumb=False):
@@ -931,14 +930,9 @@ class SignalMvpTests(unittest.TestCase):
             if thumb:
                 (cache / (name + '.thumb')).touch()
             os.utime(path, (1000 + age, 1000 + age))
-        with patch.object(unified, 'MEDIA_CACHE_MAX', 250), patch.dict(os.environ, {'MESSENGER_MEDIA_CACHE_MB': '1'}), \
-                patch.object(unified, 'photo_cache_max', lambda: 250):
+        with patch.object(unified, 'photo_cache_max', lambda: 250):
             put('thumb-old', 100, 0, thumb=True); put('full-new', 100, 5); put('thumb-new', 100, 6, thumb=True)
-            self.inbox.evict(cache)  # off: oldest first, whatever it is
-            self.assertEqual(sorted(p.name for p in cache.iterdir()), ['full-new', 'full-new.type', 'thumb-new', 'thumb-new.thumb', 'thumb-new.type'])
-            self.inbox.switches.set('photo-warm', True)
-            put('thumb-old', 100, 0, thumb=True)
-            self.inbox.evict(cache)  # on: the full file goes first, thumbnails stay
+            self.inbox.evict(cache)  # the full file goes first, thumbnails stay
             self.assertEqual(sorted(p.name for p in cache.iterdir() if '.' not in p.name), ['thumb-new', 'thumb-old'])
         with patch.dict(os.environ, {'MESSENGER_MEDIA_CACHE_MB': '2048'}):
             self.assertEqual(unified.photo_cache_max(), 2048 * 1024 * 1024)
@@ -1010,21 +1004,20 @@ class SignalMvpTests(unittest.TestCase):
             full = self.inbox.dispatch('GET', '/api/unified/media/$jpg', {}, {'kind': ['full']})
         self.assertEqual(view.path, full.path)
 
-    def test_photo_warm_builds_the_view_copy_with_photo_instant(self):
+    def test_photo_warm_builds_the_view_copy(self):
+        # Issue 164 (on for everyone since issue 468): a stored old off value changes nothing.
         pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}
         self.ingest(self.event('$pic', pic))
         calls = []
         self.inbox.media = lambda mid, kind: calls.append(kind)
+        self.inbox.switches.path.write_text('{"switches": {"photo-instant": false}}')
         self.inbox.warm_photo_now('$pic')
-        self.assertEqual(calls, ['thumb', None])
-        self.inbox.switches.set('photo-instant', True)
-        calls.clear(); self.inbox.warm_photo_now('$pic')
         self.assertEqual(calls, ['thumb', None, 'view'])
 
     def test_a_shown_thumbnail_queues_its_photo_for_warming_whatever_its_age_or_sender(self):
         # Issue 392: photo-warm only took photos arriving live from others in the last days, so an older photo (or
         # one from before the switch) made a tap wait for the box to fetch and shrink it. Now the phone asking for
-        # its thumbnail queues it once (original + screen copy), with photo-instant or photo-warm on.
+        # its thumbnail queues it once (original + screen copy), for everyone since issue 468.
         pic = {'msgtype': 'm.image', 'body': 'p.jpg', 'url': 'mxc://messenger.internal/p', 'info': {'mimetype': 'image/jpeg'}}
         doc = {'msgtype': 'm.file', 'body': 'a.pdf', 'url': 'mxc://messenger.internal/d', 'info': {'mimetype': 'application/pdf'}}
         self.ingest(self.event('$old', pic, ts=1000), self.event('$mine', pic, sender='@owner:messenger.internal', ts=1000), self.event('$doc', doc))
@@ -1033,9 +1026,7 @@ class SignalMvpTests(unittest.TestCase):
             self.inbox.photo_queue.get_nowait()
         thumb = lambda mid: self.inbox.dispatch('GET', '/api/unified/media/' + mid, {}, {'kind': ['thumb']})
         self.assertEqual(thumb('$old'), 'blob-$old-thumb')
-        self.assertTrue(self.inbox.photo_queue.empty(), 'both switches off: nothing changes')
-        self.inbox.switches.set('photo-instant', True)
-        for mid in ('$old', '$old', '$mine', '$doc'):
+        for mid in ('$old', '$mine', '$doc'):
             thumb(mid)
         self.inbox.dispatch('GET', '/api/unified/media/$old', {}, {'kind': ['full']})
         queued = []
@@ -1053,13 +1044,12 @@ class SignalMvpTests(unittest.TestCase):
             if mark:
                 (cache / (name + '.' + mark)).touch()
             os.utime(path, (1000 + age, 1000 + age))
-        with patch.object(unified, 'MEDIA_CACHE_MAX', 250):
-            self.inbox.switches.set('photo-instant', True)
+        with patch.object(unified, 'photo_cache_max', lambda: 250):
             put('thumb', 0, 'thumb'); put('view', 1, 'view'); put('full', 9)
             self.inbox.evict(cache)
             self.assertEqual(sorted(p.name for p in cache.iterdir() if '.' not in p.name), ['thumb', 'view'])
             put('full', 9)
-            with patch.object(unified, 'MEDIA_CACHE_MAX', 150):
+            with patch.object(unified, 'photo_cache_max', lambda: 150):
                 self.inbox.evict(cache)
             self.assertEqual(sorted(p.name for p in cache.iterdir()), ['thumb', 'thumb.thumb', 'thumb.type'])
 

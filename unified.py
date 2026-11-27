@@ -208,13 +208,14 @@ NATIVE_ALBUM_PREFIXES = tuple(network + ':' for network in NATIVE_ALBUM_MARKERS)
 # whole message failed and nothing arrived, issue 186). The words go as their own text message right after the photos.
 CAPTIONLESS_PHOTOS = frozenset(('line',))
 UPLOAD_MAX = 25 * 1024 * 1024
-MEDIA_CACHE_MAX = 300 * 1024 * 1024
 GAP_PAGES, GAP_PAGE = 20, 100  # issue 444: up to 2000 skipped events per chat are read back after a limited sync
-# Switch photo-warm (issue 162): incoming pictures are fetched on arrival, so the box keeps more of them.
+# Photos ready on arrival (issue 162, on for everyone since issue 468): incoming pictures are fetched on arrival, so the
+# box keeps more of them.
 PHOTO_WARM_MAX = 25 * 1024 * 1024
 PHOTO_WARM_TYPES = ('m.image', 'm.sticker', 'm.video')
 PHOTO_WARM_RETRY = (5, 30, 120)
-# Switch photo-instant (issue 164): a screen-size "view" copy of each still photo, built on the box from the original.
+# Photos open instantly (issue 164, on for everyone since issue 468): a screen-size "view" copy of each still photo,
+# built on the box from the original.
 PHOTO_VIEW_SIDE = 1600
 PHOTO_VIEW_QUALITY = 80
 PHOTO_VIEW_MAX_PIXELS = 80_000_000  # larger originals are served as they are, never decoded on the box
@@ -1943,7 +1944,7 @@ class UnifiedInbox:
         threading.Thread(target=warm, name='voice-warm', daemon=True).start()
 
         def photos():
-            # Switch photo-warm (issue 162): pictures from other people are fetched as they arrive, thumbnail first.
+            # Issue 162 (on for everyone, issue 468): pictures from other people are fetched as they arrive, thumbnail first.
             while not self.stop.is_set():
                 try:
                     item = self.photo_queue.get(timeout=5)
@@ -2480,7 +2481,7 @@ class UnifiedInbox:
             pass
 
     def warm_photo(self, message_id, msgtype, outgoing, media, stamp):
-        """Queue a picture from someone else for the photo workers (switch photo-warm). The backlog replay after a
+        """Queue a picture from someone else for the photo workers (issue 162, on for everyone). The backlog replay after a
         restart passes through here too, so the last WARM_DAYS of history are fetched once as well."""
         if msgtype not in PHOTO_WARM_TYPES or outgoing or not isinstance(media, dict) or not media.get('mxc'):
             return
@@ -2488,8 +2489,6 @@ class UnifiedInbox:
         if isinstance(size, (int, float)) and size > PHOTO_WARM_MAX:
             return
         if stamp < (time.time() - self.WARM_DAYS * 86400) * 1000:
-            return
-        if not self.switches.is_on('photo-warm'):
             return
         try:
             self.photo_queue.put_nowait((message_id, 0))
@@ -2507,8 +2506,7 @@ class UnifiedInbox:
             if media.get('thumb') or picture:
                 self.media(message_id, 'thumb')
             self.media(message_id, None)
-            switches = getattr(self, 'switches', None)
-            if picture and switches and switches.is_on('photo-instant'):
+            if picture:
                 self.media(message_id, 'view')
             self.timing('photo_warm', started)
             stamp = message.get('timestamp') or 0
@@ -2522,12 +2520,9 @@ class UnifiedInbox:
 
     def warm_shown(self, message_id):
         """Issue 392: a photo whose thumbnail the owner's phone just asked for is queued for the photo workers (its
-        original and, with photo-instant, its screen copy), whatever its age or sender, so a tap on it finds the screen
-        copy ready instead of waiting for the box to fetch and shrink it. photo-warm alone only covered photos that
+        original and its screen copy), whatever its age or sender, so a tap on it finds the screen
+        copy ready instead of waiting for the box to fetch and shrink it. Arrival fetching alone only covers photos that
         arrived live from other people in the last WARM_DAYS. Each message is queued once per run."""
-        switches = getattr(self, 'switches', None)  # some tests build a bare inbox
-        if not switches or not (switches.is_on('photo-instant') or switches.is_on('photo-warm')):
-            return
         shown = self.__dict__.setdefault('_warm_shown', {})
         if message_id in shown:
             return
@@ -3843,7 +3838,7 @@ class UnifiedInbox:
                         self.timing('video_faststart', started)
                 meta_path.write_text(sniffed or got or mime)
                 if thumb or raw_thumb:
-                    # Marks a thumbnail, so eviction with photo-warm on drops full files before thumbnails.
+                    # Marks a thumbnail, so eviction drops full files before thumbnails.
                     Path(str(path) + '.thumb').touch()
                 os.replace(tmp, path)
                 self.timing('media', started)
@@ -3858,10 +3853,7 @@ class UnifiedInbox:
         return Blob(path, served if served in INLINE_MIME else download_mime(served, mime, name), name, served in INLINE_MIME)
 
     def evict(self, cache):
-        switches = getattr(self, 'switches', None)  # some tests build a bare inbox
-        warm = bool(switches and switches.is_on('photo-warm'))
-        tiered = warm or bool(switches and switches.is_on('photo-instant'))
-        limit = photo_cache_max() if warm else MEDIA_CACHE_MAX
+        limit = photo_cache_max()  # photos are kept on arrival (issue 162, on for everyone since issue 468)
         files = []
         for p in cache.iterdir():
             if not p.is_file() or p.name.endswith(('.type', '.thumb', '.view')):
@@ -3870,9 +3862,8 @@ class UnifiedInbox:
                 st = p.stat()
             except OSError:
                 continue
-            # With photo-warm or photo-instant on, full files go first, then view copies, then thumbnails, oldest
-            # first within each.
-            tier = (2 if Path(str(p) + '.thumb').exists() else 1 if Path(str(p) + '.view').exists() else 0) if tiered else 0
+            # Full files go first, then view copies, then thumbnails, oldest first within each.
+            tier = 2 if Path(str(p) + '.thumb').exists() else 1 if Path(str(p) + '.view').exists() else 0
             files.append((tier, st.st_atime, st.st_size, p))
         total = sum(f[2] for f in files)
         for _, _, size, p in sorted(files, key=lambda f: (f[0], f[1])):

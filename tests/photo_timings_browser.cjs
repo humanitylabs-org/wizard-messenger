@@ -1,6 +1,6 @@
 // Issue 168: with "Photo timings" on, the view times each photo stage (thumbnail request, tap to picture, tap to sharp
 // copy, black first frames), sends only names and milliseconds to the box, and Settings shows the summary. Off, it
-// sends nothing. Both with "Photos open instantly" on and off. Synthetic chats only, no container and no shell:
+// sends nothing. Photos open instantly is on for everyone (issue 468). Synthetic chats only, no container and no shell:
 // PLAYWRIGHT_MODULE=... node tests/photo_timings_browser.cjs [outdir]   (THUMB_MS / VIEW_MS set the fake box delays)
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -31,7 +31,7 @@ async function run(browser, timings, instant, label, viewport, mobile) {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
     if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
-    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'photo-instant', on: instant}, {id: 'photo-timings', on: timings}]})});
+    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'photo-timings', on: timings}]})});
     if (p === 'api/status') return ok({state: 'ready', account_configured: true});
     if (p === 'api/identity') return ok({identity});
     if (p === 'api/contacts') return ok({contacts: []});
@@ -87,7 +87,7 @@ async function run(browser, timings, instant, label, viewport, mobile) {
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, mobile] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, false]]) {
-    for (const [timings, instant] of [[true, true], [true, false], [false, true]]) summary.push(await run(browser, timings, instant, label, viewport, mobile));
+    for (const [timings, instant] of [[true, true], [false, true]]) summary.push(await run(browser, timings, instant, label, viewport, mobile));
   }
   await browser.close();
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));

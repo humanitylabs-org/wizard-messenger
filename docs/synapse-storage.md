@@ -56,8 +56,8 @@ already there keep the history they have. WhatsApp sends its history only while 
   limited time) and direct media is off, so Synapse's store is the only lasting copy of bridged media on the box.
 - Messenger's own database (`data/unified/people.sqlite3`) holds message text and media details (type, size, name,
   the Matrix content address), never the files.
-- Messenger's `data/unified/media-cache` is a cache of files it fetched from Synapse (opened, or fetched on arrival
-  with Photos ready on arrival), plus its own thumbnails and screen-size copies. It is capped
+- Messenger's `data/unified/media-cache` is a cache of files it fetched from Synapse (opened, or fetched as photos
+  arrive), plus its own thumbnails and screen-size copies. It is capped
   (`MESSENGER_MEDIA_CACHE_MB`, 2048 by default) and drops the least recently used files first: originals, then
   view copies, then thumbnails.
 

@@ -13,7 +13,7 @@ const now = Date.now(), min = 60e3;
 const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return; throw new Error('timed out: ' + fn); };
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
-const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming photos as they arrive.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
+const SW = [['add-contact', 'Add contact on Telegram', 'A chat from someone not yet your contact shows an Add contact bar.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
   ['new-group', 'New group', 'New chat offers New group on networks that can make one.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
@@ -90,7 +90,7 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
         const rows = await sheet.evaluate(el => [...el.querySelectorAll('.u-more-row')].filter(r => r.offsetParent).map(r => r.querySelector('.u-more-label, .u-agent-name')?.textContent));
         assert.deepEqual(rows, ['Oscar', 'Agent drafts'], 'Settings rows: ' + JSON.stringify(rows));
         assert.equal(await sheet.locator('.u-try-kit:not([hidden])').count(), 0, 'no Try new features without switches');
-        assert.equal(await sheet.locator('.u-cu-settings, .u-more-view, .u-more-photo-warm').count(), 0, 'no old Settings rows');
+        assert.equal(await sheet.locator('.u-cu-settings, .u-more-view, .u-more-add-contact').count(), 0, 'no old Settings rows');
         await shot('settings', true);
         await page.keyboard.press('Escape'); await page.waitForTimeout(400);
         if (await sheet.count()) { await page.getByRole('button', {name: 'Back'}).first().click().catch(() => {}); await page.waitForTimeout(400); }
@@ -121,15 +121,15 @@ const SW = [['photo-warm', 'Photos ready on arrival', 'The box fetches incoming 
       assert.match(await tryBox.locator('.wz-try-note').innerText(), /^Features still being tested\. Approved ones become part of the app; the rest go away\. Thumbs up the ones you like\.$/);
       assert.deepEqual(await tryBox.locator('.wz-try-row .wz-main b').allInnerTexts(), SW.map(x => x[1]));
       assert.equal(await tryBox.locator('.u-more-timings').count(), 0, 'no timing numbers');
-      const warm = tryBox.locator('[data-try-id="photo-warm"]');
-      assert.match(await warm.innerText(), /fetches incoming photos/);
+      const warm = tryBox.locator('[data-try-id="add-contact"]');
+      assert.match(await warm.innerText(), /Add contact bar/);
       await warm.getByRole('switch').click();
       await until(async () => await warm.getByRole('switch').getAttribute('aria-checked') === 'true');
-      assert.deepEqual(box.flips.at(-1), {id: 'photo-warm', on: true});
-      await warm.getByRole('button', {name: 'Thumbs up for Photos ready on arrival'}).click();
-      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Photos ready on arrival'}).getAttribute('aria-pressed') === 'true');
-      assert.deepEqual(box.votes.at(-1), {id: 'photo-warm', vote: 'up'});
-      assert.deepEqual(box.feedback['photo-warm'], {tried: true, vote: 'up'});
+      assert.deepEqual(box.flips.at(-1), {id: 'add-contact', on: true});
+      await warm.getByRole('button', {name: 'Thumbs up for Add contact on Telegram'}).click();
+      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Add contact on Telegram'}).getAttribute('aria-pressed') === 'true');
+      assert.deepEqual(box.votes.at(-1), {id: 'add-contact', vote: 'up'});
+      assert.deepEqual(box.feedback['add-contact'], {tried: true, vote: 'up'});
       // Draft ready from the chat list is on for everyone (issue 201): the hint names the Drafts toggle and the hold.
       assert.match(await pick.innerText(), /Drafts at the top of a chat, or by holding a chat/);
       const rtm = tryBox.locator('[data-try-id="new-group"]');
