@@ -4573,13 +4573,13 @@
     async function submitOnce() {
       if (view.sd?.conflict) return toast('Choose which draft to keep first');
       const draftState = view.sd;
-      // Issue 480: Send never waits for the photos' copies into the draft. The send job carries its own copy of each
+      // Issue 480: Send never waits for photos still being saved to the draft. The send job carries its own copy of each
       // photo (upload() from the blob in memory), so the box empties and the sending bubble shows at once; closeForSend
-      // then stops the draft copies still waiting. Only a tray that can't be sent as it is (a draft photo that didn't
-      // download, a removal the box refused) gets its retry first.
-      if (draftState?.loadError) await draftState.retry?.();
+      // then stops the draft copies still waiting. Only a tray already known to need attention (a photo whose upload
+      // failed and shows Retry, issue 463; a draft photo that didn't download; a refused removal) retries first.
+      if (draftState?.loadError || draftState?.uploadError) await draftState.retry?.();
       if (s.person !== id || view.sd !== draftState || !form.isConnected) return;
-      if (view.sd?.loadError) return toast('An attachment needs attention before sending');
+      if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
       const text = draft.value.trim(), a = view.attach || [];
       if (!text && !a.length) return;
       if (view.edit) { const m = view.edit; view.edit = null; draft.value = s.drafts[id] || ''; grow(); paintBar(); if (text && text !== m.original) editMsg(m, text); return; }

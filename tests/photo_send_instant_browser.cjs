@@ -1,6 +1,7 @@
 // Issue 480: tapping Send with photos shows the sending album and empties the box at once, even while the photos are
-// still being copied to the draft on a slow phone link. The send carries its own copy of each photo, so a draft copy
-// that fails never blocks or loses the send; a send the box refuses puts the photos back in the box with a toast.
+// still being saved to the draft on a slow phone link. The send carries its own copy of each photo, so a draft copy
+// still uploading (or failing) never holds it up; a send the box refuses puts the photos back in the box with a toast.
+// A photo already showing Retry (its draft upload failed, issue 463) still blocks Send, as before.
 // Usage: AGENT_STAGE_DIR=<dir> WIZARD_WEB_DIR=<wizard-ux>/web python3 tests/agent_drafts_stage.py <port> &
 //        AGENT_STAGE_DIR=<dir> PHOTOS=<a.jpg,b.jpg,...> node tests/photo_send_instant_browser.cjs
 // PHOTOS defaults to four generated 8-12 MP JPEGs. STATIC_DIR=<other>/static runs another unified.js (before).
@@ -186,5 +187,5 @@ async function photos(browser) {
   }
   await browser.close();
   console.log('RESULT ' + JSON.stringify(results));
-  console.log('PASS issue 480: photo sends show at once, a failing draft copy never blocks or loses a send, a refused send comes back into the box');
+  console.log('PASS issue 480: photo sends show at once, sent once; a refused send comes back into the box');
 })().catch(e => { console.error(e); process.exitCode = 1; });
