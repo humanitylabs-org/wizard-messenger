@@ -26,9 +26,9 @@ class ServerDrafts(unittest.TestCase):
         updated = self.do('POST', (d['id'],), dict(self.owner, revision=1, text='Owner starts; agent finishes'),
                           owner=False, actor=self.agent)['draft']
         self.assertEqual(updated['revision'], 2)
-        with self.assertRaises(EngineError) as ctx:
-            self.do('POST', body=self.owner)
-        self.assertEqual(ctx.exception.code, 'draft_exists')
+        # Issue 353: a second draft in the same chat waits beside the first instead of failing.
+        second = self.do('POST', body=self.owner)['draft']
+        self.assertNotEqual(second['id'], d['id'])
         self.assertEqual(updated['updated_by']['name'], 'Oscar')
         with self.assertRaises(EngineError) as ctx:
             self.do('POST', (d['id'],), dict(self.owner, revision=1, text='Stale browser overwrite'))

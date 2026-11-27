@@ -1,5 +1,7 @@
-"""Issue 353: with the stacked-drafts switch on, an agent can line up several drafts in one chat."""
+"""Issue 353: an agent can line up several drafts in one chat (on for everyone, no switch)."""
+import json
 import tempfile
+from pathlib import Path
 import unittest
 
 from drafts import Drafts, STACK_MAX
@@ -8,9 +10,10 @@ from switches import SwitchStore
 
 
 class Inbox:
-    def __init__(self, on):
-        self.switches = SwitchStore()
-        if on: self.switches.set('stacked-drafts', True)
+    """A box whose switches.json still holds the removed stacked-drafts switch as off."""
+    def __init__(self, path):
+        self.switches = SwitchStore(path)
+        self.switches.path.write_text(json.dumps({'switches': {'stacked-drafts': False}}))
 
     def switch_on(self, switch_id):
         return self.switches.is_on(switch_id)
@@ -27,17 +30,16 @@ class StackedDrafts(unittest.TestCase):
         body = {'person_id': person, 'identity_id': 'telegram', 'text': text}
         return self.ds.dispatch('POST', [], body, unified, owner=owner, actor=None if owner else self.agent)['draft']
 
-    def test_switch_off_keeps_one_draft_per_chat(self):
-        for unified in (None, Inbox(False)):
-            ds = Drafts(self.tmp.name + '/' + ('none' if unified is None else 'off'))
-            self.ds = ds
+    def test_a_stale_stored_off_value_changes_nothing(self):
+        stale = Inbox(Path(self.tmp.name) / 'switches.json')
+        self.assertNotIn('stacked-drafts', [s['id'] for s in stale.switches.listing()['switches']])
+        for unified in (None, stale):
+            self.ds = Drafts(self.tmp.name + '/' + ('none' if unified is None else 'stale'))
             self.create(unified, 'First')
-            with self.assertRaises(EngineError) as ctx:
-                self.create(unified, 'Second')
-            self.assertEqual(ctx.exception.code, 'draft_exists')
+            self.assertEqual(self.create(unified, 'Second')['text'], 'Second')
 
-    def test_switch_on_lines_up_drafts_in_creation_order(self):
-        unified = Inbox(True)
+    def test_agents_line_up_drafts_in_creation_order(self):
+        unified = None
         made = [self.create(unified, 'Part %d' % i) for i in range(1, STACK_MAX + 1)]
         self.assertEqual(STACK_MAX, 5)
         listed = [d for d in self.ds.dispatch('GET', [], {}, unified, owner=False, actor=self.agent)['drafts']
@@ -61,19 +63,10 @@ class StackedDrafts(unittest.TestCase):
         self.assertEqual(listed, ['Part 2', 'Part 3 (better)', 'Part 4', 'Part 5', 'Owner types'])
 
     def test_order_survives_a_restart(self):
-        unified = Inbox(True)
+        unified = None
         for t in ('A', 'B', 'C'): self.create(unified, t)
         again = Drafts(self.tmp.name)
         self.assertEqual([d['text'] for d in again.dispatch('GET', [], {}, unified)['drafts']], ['A', 'B', 'C'])
-
-    def test_switching_off_keeps_waiting_drafts_but_adds_no_more(self):
-        unified = Inbox(True)
-        self.create(unified, 'A'); self.create(unified, 'B')
-        unified.switches.set('stacked-drafts', False)
-        with self.assertRaises(EngineError) as ctx:
-            self.create(unified, 'C')
-        self.assertEqual(ctx.exception.code, 'draft_exists')
-        self.assertEqual(len(self.ds.dispatch('GET', [], {}, unified)['drafts']), 2)
 
 
 if __name__ == '__main__':

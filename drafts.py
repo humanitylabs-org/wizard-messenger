@@ -18,7 +18,7 @@ from engine import EngineError
 ATTACH_MAX = 25 * 1024 * 1024
 ATTACH_COUNT = 10
 STORAGE_MAX = 100 * 1024 * 1024  # shared cap for all server drafts, including agent uploads
-STACK_MAX = 5  # drafts an agent may line up in one chat while stacked drafts is on (issue 353)
+STACK_MAX = 5  # drafts an agent may line up in one chat (issue 353)
 
 class Drafts:
     def __init__(self, root=None):
@@ -53,12 +53,6 @@ class Drafts:
     def stamp(self, row, owner, actor):
         row['revision'] += 1; row['updated'] = int(time.time() * 1000)
         row['updated_by'] = {'id': 'owner', 'name': 'You'} if owner else {'id': str(actor['id'])[:80], 'name': str(actor['name'])[:60]}
-    @staticmethod
-    def stacked(unified):
-        # Issue 353: several drafts per chat only while the owner has the stacked-drafts switch on.
-        on = getattr(unified, 'switch_on', None)
-        try: return bool(callable(on) and on('stacked-drafts'))
-        except Exception: return False
     def waiting_people(self):
         # No lock: the people store calls this, and a draft write holds this lock while it tells that store.
         # list() copies the values in one step under the GIL.
@@ -165,9 +159,7 @@ class Drafts:
             if not suffix and method == 'POST':
                 person_id = payload.get('person_id')
                 waiting = sum(1 for r in self.rows.values() if r['person_id'] == person_id and r['state'] == 'draft') if isinstance(person_id, str) else 0
-                if waiting and not self.stacked(unified):
-                    raise EngineError('draft_exists', 'This chat already has a draft. Open and update it instead.', 409)
-                # Issue 353 (switch stacked-drafts): agents line up to STACK_MAX drafts in one chat; the owner's
+                # Issue 353: agents line up to STACK_MAX drafts in one chat; the owner's
                 # composer may always start one more beside them.
                 if waiting >= STACK_MAX + (1 if owner else 0):
                     raise EngineError('draft_stack_full', 'This chat already has %d drafts. Update or delete one first.' % STACK_MAX, 409)

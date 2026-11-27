@@ -797,7 +797,7 @@
     function clear() { for (const b of ready.values()) revoke(b); ready.clear(); reading.clear(); warm.length = 0; }
     return {prime, clear, get: url => ready.get(url), size: () => ready.size};
   }
-  // Issue 353 (switch stacked-drafts): the drafts waiting as stacked bubbles above the box, oldest first (the box
+  // Issue 353: the drafts waiting as stacked bubbles above the box, oldest first (the box
   // lists drafts in creation order). The composer's own draft (boundId) is never in the stack; one draft alone
   // belongs in the composer, as before.
   function draftStack(rows, personId, boundId) {
@@ -3885,7 +3885,6 @@
   }
   function serverDraft(id, ui, after = null) {
     const sd = {id, row: null, saved: null, timer: null, busy: null, conflict: null, alive: true, poll: null, loadError: false, uploadError: false, epoch: 0, closing: null, late: null, all: [], stack: [], pinned: null};
-    const stackOn = () => !!switchState.on['stacked-drafts'];
     const by = row => row?.updated_by || row?.created_by;
     const byAgent = row => by(row) && by(row).id !== 'owner';
     const dirty = () => sd.row ? ui.draft.value !== sd.saved || ui.channel.value !== sd.row.identity_id : !!ui.draft.value.trim();
@@ -3915,7 +3914,7 @@
     };
     // Issue 353: two or more drafts wait as stacked bubbles above the box, each with Send, Edit and Remove.
     const stackNode = () => {
-      if (!stackOn() || !sd.stack.length) return null;
+      if (!sd.stack.length) return null;
       const box = node('div', 'u-draft-stack'); box.setAttribute('role', 'list'); box.setAttribute('aria-label', 'Drafts, not sent');
       for (const d of sd.stack) {
         const item = node('div', 'u-draft-bubble'); item.setAttribute('role', 'listitem'); item.dataset.draft = d.id;
@@ -3930,7 +3929,7 @@
       }
       return box;
     };
-    const restack = () => { sd.stack = stackOn() ? draftStack(sd.all, id, sd.row?.id) : []; };
+    const restack = () => { sd.stack = draftStack(sd.all, id, sd.row?.id); };
     // The composer lets go of its draft: it stays on the box and joins the stack. The box empties.
     function release() {
       if (!sd.row) return;
@@ -4169,7 +4168,7 @@
       if (!alive() || sd.busy || sd.timer || sd.closing || sd.attachmentPending) return;
       if (gen !== draftWrites) return check(first); // this screen wrote meanwhile: that list may predate it
       rows = rows.filter(d => !closedDrafts.has(d.id));
-      if (stackOn()) {
+      {
         // Issue 353: with two or more drafts the box stays empty and they wait as stacked bubbles. An agent's draft
         // the owner hasn't touched (or picked with Edit) goes back to the stack when another one arrives.
         const before = sd.stack.map(d => d.id + ':' + d.revision).join();
@@ -4187,7 +4186,7 @@
           }
           return;
         }
-      } else if (sd.stack.length) { sd.all = []; sd.stack = []; ui.paintBar(); }
+      }
       const mine = sd.row && rows.find(d => d.id === sd.row.id && d.state === 'draft');
       const pick = s.bindDraft && rows.find(d => d.id === s.bindDraft && d.person_id === id && d.state === 'draft'); if (pick) { s.bindDraft = null; sd.pinned = pick.id; }
       const latest = pick || mine || (!sd.row && draftsFor(rows, id)[0]);
@@ -6889,7 +6888,6 @@
     const accepts = [...SHARE_KINDS];
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
-  switchState.paints['stacked-drafts'] = () => view.sd?.check?.(false);
   // Issue 399: the Add contact bar follows the switch in an open chat.
   switchState.paints['add-contact'] = () => { const p = store.threads[view.id]?.person; if (!p || !view.root) return; if (!addContactOn()) return paintAddContact(); if (!view.root.querySelector('.u-addcontact')) addContactBar(view.root, p); else loadNetContact(p).then(paintAddContact); };
   window.MessengerUnified = {

@@ -51,12 +51,14 @@ async function fixture(saved = []) {
       return {ok: !failGet.has(id), blob: async () => new Blob(['synthetic'], {type: 'image/png'})}; },
     preparePhoto: async f => ({blob: f, albumBlob: f, url: 'blob:synthetic', w: 1, h: 1}),
     // Issue 402: restored attachments are sorted photo / video / file by the view's own rule.
-    attachKind: require(path.join(__dirname, '../static/unified.js')).attachKind, prepareVideo: async f => ({video: true, blob: f, local: 'blob:synthetic', url: ''}),
+    attachKind: require(path.join(__dirname, '../static/unified.js')).attachKind,
+    // Issue 353: several drafts per chat are on for everyone, so the controller always works out the stack.
+    draftStack: require(path.join(__dirname, '../static/unified.js')).draftStack, prepareVideo: async f => ({video: true, blob: f, local: 'blob:synthetic', url: ''}),
     draftWrites: writes, draftWrote() { context.draftWrites++; }, refreshDraftIndex() {},
     fetchDrafts: async () => row ? [copy(row)] : [], closedDrafts: new Set(), agentName: () => 'Owner',
     SD_SAVE_MS: 500000, SD_POLL_MS: 500000, setTimeout: (fn, ms) => ms === 0 ? setTimeout(fn, 0) : 0,
     clearTimeout, setInterval: () => 0, clearInterval() {}, document: {hidden: false},
-    node: (tag, cls, text) => ({tag, cls, text, append() {}}), button: () => ({}), switchState: {on: {}}, // issue 353: stacked-drafts off
+    node: (tag, cls, text) => ({tag, cls, text, append() {}}), button: () => ({}),
   });
   vm.runInContext(controller + '\nthis.sd = serverDraft("alice", ui);', context);
   view.sd = context.sd;

@@ -1,17 +1,18 @@
-// Issue 353 (switch stacked-drafts): several drafts in one chat wait as stacked bubbles above an empty box, oldest
+// Issue 353 (on for everyone, no switch): several drafts in one chat wait as stacked bubbles above an empty box, oldest
 // first, each with Send, Edit and Remove; one draft alone sits in the box as before. Synthetic API, no container:
-//   PLAYWRIGHT_MODULE=... node tests/stacked_drafts_browser.cjs [outdir]      (OFF=1: the switch off)
+//   PLAYWRIGHT_MODULE=... node tests/stacked_drafts_browser.cjs [outdir]      (STALE=1: the box still lists an old stacked-drafts switch as off)
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const root = path.resolve(process.env.STATIC_DIR || path.join(__dirname, '../static')), out = path.resolve(process.argv[2] || 'stacked-drafts-shots');
 const L = require(path.join(root, 'app.js'));
 fs.mkdirSync(out, {recursive: true});
-const OFF = process.env.OFF === '1';
+const STALE = process.env.STALE === '1';
 const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'};
 const now = Date.now(), min = 60e3;
 const person = {id: 'ann', display_name: 'Ann Lee', avatar: null, identities: [{id: 'ann-i', network: 'whatsapp', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false,
   low_priority: false, last: {text: 'How did the week go?', timestamp: now - min, outgoing: false}, language: '', peer_read_ts: 0};
-const switches = [{id: 'stacked-drafts', name: 'Several drafts in one chat', description: '', on: !OFF, default: false, issues: ['humanitylabs-org/wizard-messenger#353']}];
+// The switch is gone: the stack never reads one, even when an older box still answers it as off.
+const switches = STALE ? [{id: 'stacked-drafts', name: 'Several drafts in one chat', description: '', on: false, default: false, issues: ['humanitylabs-org/wizard-messenger#353']}] : [];
 const oscar = {id: 'agent:oscar', name: 'Oscar'};
 
 (async () => {
@@ -65,14 +66,6 @@ const oscar = {id: 'agent:oscar', name: 'Oscar'};
   const box = page.locator('form textarea[aria-label=Message]');
   await box.waitFor({timeout: 20000}); await page.waitForTimeout(1200);
   const bubbles = page.locator('.u-draft-stack .u-draft-bubble');
-
-  if (OFF) {
-    assert.equal(await bubbles.count(), 0, 'switch off: no stack');
-    assert.equal(await box.inputValue(), 'Week update 3/3: next week we hire.', 'switch off: the newest draft sits in the box, as today');
-    await page.screenshot({path: path.join(out, 'off.png')});
-    assert.deepEqual(errors, []); console.log(JSON.stringify({off: true, errors}));
-    return browser.close();
-  }
 
   assert.equal(await box.inputValue(), '', 'two or more drafts: the box stays empty');
   assert.deepEqual(await bubbles.locator('.u-draft-text').allTextContents(),
