@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.137
+
+- Photos stuck with "An attachment could not be saved" fixed (issue 463, bug, on for everyone): each staged file carries a one-time upload key; when an upload's answer is lost (gateway 502, dropped connection) but the box kept the file, the retry or the next drafts poll adopts the saved attachment instead of a second copy. Passing trouble retries by itself 3 times, then the photo shows Retry. The attachments PUT takes an optional `key`.
+
 ## 0.2.0-unified.16.136
 
 - Dropped feature removed (wizard-ux issue 1276, cleanup wizard-ux issue 1818): Messenger no longer tells Wizard which chat was read so the Android app could clear that chat app's notification. Nothing changes for anyone: the shell switch was off and is gone too. Ships #464.
