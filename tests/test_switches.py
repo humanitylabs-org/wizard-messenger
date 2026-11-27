@@ -55,7 +55,11 @@ class SwitchEndpoint(unittest.TestCase):
                                'After that it brings in up to 200 Telegram chats and up to 500 earlier messages for '
                                'each new or reconnected chat. Chats already there keep the history they have. Once '
                                'moved, it stays on Postgres.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#451']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#451']}, {
+                'id': 'calls', 'name': 'Calls',
+                'description': 'Encrypted voice and video calls from your own Wizard. Turning it on starts the call '
+                               'server on your box (LiveKit); turning it off stops it again.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#445']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -104,6 +108,25 @@ class SwitchEndpoint(unittest.TestCase):
         status, _, body = self.request('POST', '/api/switches', {'id': 'new-group', 'on': False}, {**self.owner_headers(), **WRITE})
         self.assertEqual(status, 200)
         self.assertFalse(body['switches'][1]['on'])
+
+    def test_calls_switch_starts_and_stops_the_call_server(self):
+        # Issue 445: flipping `calls` (Tracker Try it or Try new features) puts or removes calls/enabled, which
+        # the recipe's livekit and call-auth containers wait for.
+        import calls
+        self.server.shutdown(); self.server.server_close(); self.thread.join()
+        data = Path(self.temp.name) / 'data'
+        engine = test_web.FakeEngine(); engine.data = str(data)
+        self.server = test_web.ViewServer(('127.0.0.1', 0), engine, TOKEN, [ORIGIN])
+        self.server.static_root = Path(self.temp.name)
+        self.thread = test_web.threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
+        marker = data / 'calls' / 'enabled'
+        self.assertFalse(marker.exists())
+        h = {**self.owner(), **WRITE}
+        self.assertEqual(self.request('POST', '/api/switches', {'id': 'calls', 'on': True}, h)[0], 200)
+        self.assertTrue(marker.exists())
+        self.assertTrue(calls.running(data))
+        self.assertEqual(self.request('POST', '/api/switches', {'id': 'calls', 'on': False}, h)[0], 200)
+        self.assertFalse(marker.exists())
 
     def test_owner_only(self):
         status, _, body = self.request('GET', '/api/view/switches', headers={'Origin': ORIGIN})
@@ -446,7 +469,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"new-group": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('new-group'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'new-group', 'add-contact', 'synapse-postgres'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'new-group', 'add-contact', 'synapse-postgres', 'calls'])
 
     def test_the_photo_speed_switches_are_gone_and_their_stored_values_cleared(self):
         # Issue 468: Photos ready on arrival, Photos open instantly, Photos ready in Wizard's viewer and Background

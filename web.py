@@ -180,6 +180,11 @@ class ViewServer(MessengerServer):
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
         self.switches=SwitchStore(Path(data)/'switches.json' if data else None)
+        if data:
+            # Issue 445: the calls switch starts and stops LiveKit and its token service (their marker file).
+            import calls
+            self.switches.changed[calls.SWITCH]=lambda on: calls.set_running(data,on)
+            calls.sync(data)
         from private_unread import PrivateUnread
         self.private_unread=PrivateUnread(Path(data)/'private-seen.json' if data else None)
         # One transaction for provider proof, engine transition and verifier issuance.

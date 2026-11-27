@@ -35,8 +35,11 @@ RUN if ! command -v gnome-keyring-daemon >/dev/null; then \
     mkdir -p /app /data /run/messenger && chown 1000:1000 /data /run/messenger
 COPY --from=mdk /out/wn /out/wnd /usr/local/bin/
 RUN test "$(wn --version)" = 'wn 0.12.0'
+# Issue 445 (switch calls): LiveKit's token service for Matrix (element-hq lk-jwt-service), run by the recipe's
+# call-auth container from this image only while the calls switch is on. Static binary from the pinned official image.
+COPY --from=ghcr.io/element-hq/lk-jwt-service:0.10.0@sha256:b821befeb148929825f1a9059253d9faa0764991f45c07a91db5ad21a81c2dde /lk-jwt-service /usr/local/bin/lk-jwt-service
 COPY owner_unix.py /app/owner_unix.py
-COPY engine.py server.py web.py trusted_owner.py passkey.py messenger_addresses.py unified.py group_features.py unified_setup.py synapse_postgres.py telegram_application.py translation.py private_translation.py catchup.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py switches.py start_chat.py group_create.py network_contact.py draft_watch.py agent_chat.py agent_inbox_door.py phone_notify.py voice_archive.py inbox_feed.py private_unread.py remote_authority.py contacts_link.py tinfoil_link.py API-contract.json /app/
+COPY engine.py server.py web.py trusted_owner.py passkey.py messenger_addresses.py unified.py group_features.py unified_setup.py synapse_postgres.py calls.py telegram_application.py translation.py private_translation.py catchup.py history_cursor.py permissions.py agent_keys.py agent_tools.py wizard_agents.py drafts.py switches.py start_chat.py group_create.py network_contact.py draft_watch.py agent_chat.py agent_inbox_door.py phone_notify.py voice_archive.py inbox_feed.py private_unread.py remote_authority.py contacts_link.py tinfoil_link.py API-contract.json /app/
 RUN apt-get update && apt-get install -y --no-install-recommends python3-cryptography python3-pil python3-pypdf opus-tools mkvtoolnix libheif-examples && rm -rf /var/lib/apt/lists/*
 # Issue 209 (on for everyone): the translator that runs on the box (Argos models, CTranslate2). Its own folder,
 # imported only by the translation worker; models are downloaded on first use into the worker's /models volume.
