@@ -59,7 +59,7 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(reg['as_token'], conf['appservice']['as_token'])
         setup_connectors(self.root)
         matrix = json.loads((self.root / 'matrix' / 'homeserver.yaml').read_text())
-        self.assertEqual(len(matrix['app_service_config_files']), 12)
+        self.assertEqual(len(matrix['app_service_config_files']), 13)  # + issue 445's call token service
         self.assertFalse((self.root / 'signal' / 'configured').exists())
 
     def test_owner_enable_wakes_only_selected_preinstalled_bridge(self):
@@ -71,8 +71,8 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse((self.root / 'whatsapp' / 'configured').exists())
         self.assertEqual(before, (self.root / 'unified' / 'connector-secrets.json').read_bytes())
         config = json.loads((self.root / 'matrix' / 'homeserver.yaml').read_text())
-        self.assertEqual(len(config['app_service_config_files']), 12)
-        self.assertEqual(len(set(config['app_service_config_files'])), 12)
+        self.assertEqual(len(config['app_service_config_files']), 13)
+        self.assertEqual(len(set(config['app_service_config_files'])), 13)
         read_only = Connectors(self.root / 'unified')
         with self.assertRaises(EngineError): read_only.dispatch('POST', ['whatsapp', 'enable'], {})
         self.assertFalse((self.root / 'whatsapp' / 'configured').exists())

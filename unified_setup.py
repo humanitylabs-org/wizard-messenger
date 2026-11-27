@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import secrets
 import synapse_postgres
+import calls
 
 
 def write(path, value):
@@ -62,7 +63,8 @@ def setup(root):
         'namespaces': {'users': [{'exclusive': False, 'regex': '@owner:messenger\\.internal'}], 'aliases': [], 'rooms': []},
     })
     write_secret(root / 'matrix' / 'registration_shared_secret', keys['registration'])
-    write(root / 'matrix' / 'homeserver.yaml', {
+    # Issue 445: Synapse's call settings are inert until the calls switch starts LiveKit, so they are always there.
+    write(root / 'matrix' / 'homeserver.yaml', calls.synapse({
         'server_name': 'messenger.internal', 'pid_file': '/tmp/synapse.pid',
         'listeners': [{'port': 8008, 'type': 'http', 'tls': False, 'bind_addresses': ['0.0.0.0'], 'resources': [{'names': ['client'], 'compress': False}]}],
         # Issue 451: SQLite until the synapse-postgres switch has moved Synapse to Postgres.
@@ -78,7 +80,7 @@ def setup(root):
         # One owner on a private homeserver: Synapse's public-server defaults (0.2 msg/s) throttle fast chatting.
         'rc_message': {'per_second': 50, 'burst_count': 300},
         'log_config': '/data/log.yaml',
-    })
+    }))
     write(root / 'matrix' / 'log.yaml', {'version': 1, 'handlers': {'null': {'class': 'logging.NullHandler'}}, 'root': {'handlers': ['null'], 'level': 'WARNING'}, 'disable_existing_loggers': False})
     # Template is the pinned official binary's generated example, with no credentials.
     config = json.loads((Path(__file__).parent / 'plumbing' / 'telegram-template.json').read_text())
@@ -124,6 +126,8 @@ def setup(root):
     else:
         marker.unlink(missing_ok=True)
     synapse_postgres.prepare(root)
+    # Issue 445: LiveKit and its token service, idle until the calls switch is on.
+    calls.prepare(root)
     # Each runtime is uid 1000, including Synapse (explicit compose override).
     if os.getuid() == 0:
         for p in [root, *root.rglob('*')]:

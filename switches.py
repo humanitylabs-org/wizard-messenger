@@ -37,6 +37,11 @@ SWITCHES = (
                     'already there keep the history they have. Once moved, it stays on Postgres.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#451']},
+    {'id': 'calls', 'name': 'Calls',
+     'description': 'Encrypted voice and video calls from your own Wizard. Turning it on starts the call server on '
+                    'your box (LiveKit); turning it off stops it again.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#445']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
@@ -58,6 +63,8 @@ class SwitchStore:
         self.lock = threading.Lock()
         self.memory = {}
         self.memory_feedback = {}
+        # Issue 445: what runs when a switch is set (id -> fn(on)), e.g. the calls switch starts or stops LiveKit.
+        self.changed = {}
 
     def _raw(self):
         if self.path is None:
@@ -154,4 +161,6 @@ class SwitchStore:
             if on:
                 feedback[switch_id] = {**feedback.get(switch_id, {}), 'tried': True}
             self._write(values, feedback)
+            if switch_id in self.changed:
+                self.changed[switch_id](values.get(switch_id, default))
         return self.listing()

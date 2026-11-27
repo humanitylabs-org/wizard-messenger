@@ -180,6 +180,25 @@ class ViewServer(MessengerServer):
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
         self.switches=SwitchStore(Path(data)/'switches.json' if data else None)
+        self.call_door=None
+        self.call_cloudflare=None
+        if data:
+            # Issue 445: the calls switch starts and stops LiveKit and its token service (their marker file).
+            import calls
+            calls.sync(data)
+            # The call door (call_door.py): Element Call and the call-scoped passes to Synapse and LiveKit. It answers
+            # only while the switch is on; the owner reaches it at <app path>call/, guests on its own listener.
+            import call_door
+            self.call_door=call_door.Door(data)
+            # The guests' public door in the owner's own Cloudflare account (call_cloudflare.py): made while the
+            # switch is on, removed from the account when it goes off.
+            import call_cloudflare
+            door=self.call_door
+            self.call_cloudflare=call_cloudflare.Cloudflare(data,idle=lambda: not door.busy())
+            def calls_changed(on, data=data, keeper=self.call_cloudflare):
+                calls.set_running(data,on)
+                keeper.kick()
+            self.switches.changed[calls.SWITCH]=calls_changed
         from private_unread import PrivateUnread
         self.private_unread=PrivateUnread(Path(data)/'private-seen.json' if data else None)
         # One transaction for provider proof, engine transition and verifier issuance.
@@ -266,6 +285,18 @@ class ViewHandler(Handler):
     @property
     def service(self) -> ViewServer:
         return cast(ViewServer,self.server)
+    def _call_door(self):
+        """Issue 445 (switch calls): the owner's way into a call, Element Call at <app path>call/ (call_door.py).
+        Only a call's owner key opens it here, and only the owner's own session gets that key (/api/view/calls)."""
+        if not self.path.startswith('/call/') or getattr(self.service,'call_door',None) is None: return False
+        import call_door
+        self.pending_cookie=None
+        try: call_door.serve(self,self.service.call_door,self.service.public_path+'call',True,self.path[len('/call'):])
+        except (BrokenPipeError,ConnectionResetError): pass
+        return True
+    def _handle(self,method):
+        if self._call_door(): return
+        return super()._handle(method)
     def _origin(self,required=False):
         origin=self.headers.get('Origin')
         if (required and origin is None) or (origin is not None and not self._origin_allowed(origin)) or self.headers.get('Sec-Fetch-Site')=='cross-site':
@@ -689,6 +720,41 @@ class ViewHandler(Handler):
                     raise EngineError('invalid_subscription', 'Invalid notification subscription', 400) from None
                 return 200, {'ok': True, 'result': result}
             raise EngineError('not_found', 'No such notification route', 404)
+        if path == '/api/view/calls/cloudflare':
+            # Issue 445 (switch calls): the owner's Cloudflare link for the guests' door (call_cloudflare.py).
+            # GET: its state; POST {token}: check and keep a new API token; POST {zone}: pick the domain; DELETE:
+            # remove the door from the account and forget the token. Owner only.
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Only the owner can set up calls', 403)
+            self._authorize()
+            keeper = self.service.call_cloudflare
+            if keeper is None or not self.service.call_door.on(): raise EngineError('calls_off', 'Calls are off', 404)
+            import call_cloudflare
+            try:
+                if method == 'GET': return 200, {'ok': True, 'result': keeper.status()}
+                if method == 'DELETE': return 200, {'ok': True, 'result': keeper.forget()}
+                if method != 'POST': raise EngineError('not_found', 'No such call route', 404)
+                body = self._body()
+                if 'zone' in body: return 200, {'ok': True, 'result': keeper.choose(str(body.get('zone') or ''))}
+                return 200, {'ok': True, 'result': keeper.connect(body.get('token'))}
+            except call_cloudflare.CloudflareError as e:
+                raise EngineError(e.code, e.message, 400 if e.status < 500 else 502) from None
+        if path == '/api/view/calls':
+            # Issue 445 (switch calls): the chat header's call button. Owner only: it starts a call and gets the
+            # owner's own way in (call_door.py). The guest link exists once the owner's Cloudflare door does.
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Only the owner can start a call', 403)
+            self._authorize()
+            if method != 'POST': raise EngineError('not_found', 'No such call route', 404)
+            door = self.service.call_door
+            if door is None or not door.on(): raise EngineError('calls_off', 'Calls are off', 404)
+            body = self._body()
+            title = body.get('title') if isinstance(body.get('title'), str) else ''
+            import call_door
+            try: call = door.start(' '.join(title.split())[:80] or 'Call')
+            except call_door.DoorError as e: raise EngineError('call_unavailable', e.message, e.status) from None
+            return 200, {'ok': True, 'result': {'call': call['id'], 'open': door.link(call, '', self.service.public_path+'call', owner=True),
+                                               'link': door.guest_link(call), 'reach': 'everyone' if door.guest_link(call) else 'tailnet'}}
         if path == '/api/view/authority':
             if self.headers.get('Authorization'):
                 raise EngineError('owner_only', 'Independent review configuration is owner-only', 403)
@@ -899,6 +965,7 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         self._trusted_owner_verified=False
+        if self._call_door(): return
         path=urlsplit(self.path).path
         if path == '/push-service-worker.js':
             self.pending_cookie = None
@@ -988,6 +1055,12 @@ if __name__=='__main__':
     owner_hop = start_owner_hop(server)
     if server.trusted_owner.enabled:
         threading.Thread(target=keep_unlocked, args=(server,), daemon=True).start()
+    if server.call_door is not None:
+        # Issue 445: the guests' call-only listener (no published port; only the box's own call tunnel reaches it)
+        # and the sweeper that ends empty calls. Both idle while the calls switch is off.
+        import call_door
+        call_door.start_guests(server.call_door)
+        threading.Thread(target=server.call_cloudflare.run, daemon=True, name='call-cloudflare').start()
     def stop(*_):
         threading.Thread(target=server.shutdown,daemon=True).start()
         if owner_hop: threading.Thread(target=owner_hop.shutdown,daemon=True).start()
