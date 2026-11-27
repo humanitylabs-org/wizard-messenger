@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.135
+
+- Postgres message store and longer history (issue 451, new switch `synapse-postgres`, off by default): with it on, the next start moves Synapse from SQLite to Postgres inside Synapse's own container (integrity check, backup `homeserver.db.pre-postgres`, background updates finished, `synapse_port_db`, every table's row count compared, stream sequences settled), and the bridges then bring up to 200 Telegram chats and up to 500 first messages per new chat (Messenger imports up to 1000). Any failure keeps SQLite. Once moved it stays on Postgres. Media: both copies stay, see docs/synapse-storage.md.
+
 ## 0.2.0-unified.16.134
 
 - Videos open full screen (issue 379, on for everyone, its `video-fullscreen` switch is gone): one tap on a received video opens it full screen on black, already playing with sound, with Messenger's own controls (a tap shows or hides play/pause, a scrubber and Close). Back, Esc, Close or a swipe down returns to the chat where it was. GIFs and stickers still loop in the chat. The old in-bubble player and its corner button are gone.
