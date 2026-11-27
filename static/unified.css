@@ -237,7 +237,7 @@ button { touch-action: manipulation; }
 .u-photo-view img, .u-photo-view video { display: block; width: 100%; height: 100%; object-fit: contain; }
 .u-photo-view .u-photo-view-close { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 8px; width: 44px; height: 44px; }
 .u-photo-view-error { color: var(--ink); }
-/* Full-screen video (issue 379, switch video-fullscreen): black, the video fit to the screen, Messenger's own controls. */
+/* Full-screen video (issue 379): black, the video fit to the screen, Messenger's own controls. */
 .u-video-view { position: fixed; inset: 0; z-index: 90; background: color-mix(in srgb, black calc(var(--vv-fade, 1) * 100%), transparent); touch-action: none; color: white; outline: none; }
 .u-video-view video { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
 .u-video-view .u-vv-close { position: absolute; top: max(.5rem, env(safe-area-inset-top)); right: .5rem; width: 2.75rem; height: 2.75rem; color: white; background: color-mix(in srgb, black 45%, transparent); border-radius: 50%; }
@@ -257,11 +257,6 @@ button { touch-action: manipulation; }
 .u-media.sticker img { object-fit: contain; }
 .u-play { position: absolute; inset: 0; margin: auto; width: 48px; height: 48px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; font-size: 18px; }
 .u-vdur { position: absolute; left: 8px; bottom: 8px; font-size: 11px; color: #fff; background: rgba(0,0,0,.5); padding: 2px 6px; border-radius: 8px; }
-.u-media .u-play { transition: opacity .15s; }
-.u-media.playing .u-play { opacity: 0; }
-.u-vfull { position: absolute; right: .5rem; top: .5rem; width: 2rem; height: 2rem; border-radius: 50%; background: color-mix(in srgb, black 55%, transparent); color: white; display: grid; place-items: center; }
-.u-vfull[hidden] { display: none; }
-.u-vfull svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .u-broken { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 13px; }
 .u-media.broken .u-broken { place-content: center; gap: .25rem; text-align: center; padding: .5rem; }
 .u-media.broken .u-broken small { font-size: .75rem; color: var(--ink-3); opacity: .8; }

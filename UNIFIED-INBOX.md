@@ -328,7 +328,7 @@ New switch Background video download (`video-prefetch`, off by default). With it
 
 ## 0.2.0-unified.16.82 (one tap plays a video)
 
-Tapping a received video used to open Wizard's viewer, a second screen whose plain player waited for another tap on play. Now one tap plays the video right in the chat, with sound; tap again to pause, and the corner button goes full screen. One video plays at a time and it pauses when scrolled away or when the chat is left. GIFs and stickers still loop on their own, muted. Downloading videos ahead of time is a separate feature (issue 320). Guard: `tests/video_one_tap_browser.cjs`. Issue 319, PR 322.
+Tapping a received video used to open Wizard's viewer, a second screen whose plain player waited for another tap on play. Now one tap plays the video right in the chat, with sound; tap again to pause, and the corner button goes full screen. One video plays at a time and it pauses when scrolled away or when the chat is left. GIFs and stickers still loop on their own, muted. Downloading videos ahead of time is a separate feature (issue 320). Issue 319, PR 322. Since issue 379 is on for everyone (its `video-fullscreen` switch is gone), one tap opens the video full screen instead, playing with sound; the in-bubble player and its corner button are gone. Guard: `tests/video_fullscreen_browser.cjs`.
 
 ## 0.2.0-unified.16.81 (Create address works in the Mac window)
 

@@ -37,12 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'video-fullscreen', 'name': 'Videos open full screen',
-     'description': 'One tap on a video opens it full screen on black, already playing with sound, like Telegram. '
-                    'Tap to show or hide the controls (play, pause, a scrubber, close). Back or a swipe down returns '
-                    'to the chat where you were. GIFs and stickers still loop in the chat.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#379']},
     {'id': 'new-group', 'name': 'New group',
      'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick the network, '
                     'two or more people and a name (optional photo), tap Create. The group is made on the real '

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {videoSwipe} = require('../static/unified.js');
-// Issue 379 (switch video-fullscreen): a clear drag down closes the full-screen video; short or sideways drags stay.
+// Issue 379: a clear drag down closes the full-screen video; short or sideways drags stay.
 
 test('a drag down of 90 px or more closes', () => {
   assert.equal(videoSwipe(0, 90), 'close');

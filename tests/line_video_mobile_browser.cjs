@@ -6,8 +6,8 @@
 //   3. a video with no thumbnail (LINE sends none) never gets the browser's default poster (Android WebView draws a big
 //      play icon): the poster is the video's own first frame at its own aspect ratio, or plain black;
 //   4. a video that still streams shows a visible loading state, and the play/pause button says what is happening.
-// Messenger is framed in a minimal Wizard shell from the real wizard-ux core files (SHELL_DIR), with the
-// video-fullscreen switch on, a cellular Android phone and a box that answers full videos slowly (LATENCY ms).
+// Messenger is framed in a minimal Wizard shell from the real wizard-ux core files (SHELL_DIR), with
+// a cellular Android phone and a box that answers full videos slowly (LATENCY ms).
 // SHELL_DIR=<wizard-ux checkout> [STATIC_DIR=<static>] [LATENCY=2500] [SHOTS=1] node tests/line_video_mobile_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict');
@@ -42,7 +42,7 @@ async function run(browser, {label, skin, mode}) {
   const page = await ctx.newPage(), errors = [], media = [];
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = [{id: 'video-fullscreen', name: 'Videos open full screen', description: '', on: true, default: false, issues: ['humanitylabs-org/wizard-messenger#379']}];
+  const switches = [];
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
