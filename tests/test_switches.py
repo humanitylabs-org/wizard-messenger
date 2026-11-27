@@ -54,11 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
-                'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as '
-                               'stacked bubbles above the message box, oldest first, each with Send, Edit and '
-                               'Remove. One draft works as before. Nothing is ever sent on its own.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#353']}, {
                 'id': 'video-fullscreen', 'name': 'Videos open full screen',
                 'description': 'One tap on a video opens it full screen on black, already playing with sound, like '
                                'Telegram. Tap to show or hide the controls (play, pause, a scrubber, close). Back or '
@@ -466,7 +461,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'stacked-drafts', 'video-fullscreen', 'new-group', 'add-contact'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'video-fullscreen', 'new-group', 'add-contact'])
 
 
 if __name__ == '__main__':

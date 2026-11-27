@@ -68,9 +68,9 @@ TOOLS = [
     _tool('messenger_list_drafts', 'List saved drafts waiting for the owner, optionally for one chat. Needs Read-only or higher.',
           {'chat_id': _string('Only drafts for this chat')}),
     _tool('messenger_create_draft', 'Save a reply as a draft in a chat, optionally with attachments. Nothing is sent: the owner '
-          'reviews it in Messenger and sends or discards it. A chat holds one draft (draft_exists: update that one '
-          'instead) unless the owner turned on several drafts per chat: then each call adds another, up to 5, kept in '
-          'creation order. Needs Draft-only or higher.',
+          'reviews it in Messenger and sends or discards it. Each call adds another draft to the chat, up to 5 '
+          '(draft_stack_full: update or delete one first), kept in creation order; to change a waiting draft use '
+          'messenger_update_draft. Needs Draft-only or higher.',
           {'chat_id': _string('Chat id from messenger_list_chats'), 'text': _string('The draft message'),
            'channel_id': _string('Optional channel id (from the chat\'s channels) when a person has several networks'),
            'attachments': _attachments},

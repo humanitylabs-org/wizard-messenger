@@ -37,12 +37,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'stacked-drafts', 'name': 'Several drafts in one chat',
-     'description': 'Your agent can line up to five drafts in one chat. With two or more, they wait as stacked '
-                    'bubbles above the message box, oldest first, each with Send, Edit and Remove. One draft works '
-                    'as before. Nothing is ever sent on its own.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#353']},
     {'id': 'video-fullscreen', 'name': 'Videos open full screen',
      'description': 'One tap on a video opens it full screen on black, already playing with sound, like Telegram. '
                     'Tap to show or hide the controls (play, pause, a scrubber, close). Back or a swipe down returns '

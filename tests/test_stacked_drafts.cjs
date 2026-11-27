@@ -1,4 +1,4 @@
-// Issue 353: which drafts wait as stacked bubbles above the box (switch stacked-drafts).
+// Issue 353: which drafts wait as stacked bubbles above the box (on for everyone).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {draftStack} = require('../static/unified.js');
