@@ -51,7 +51,7 @@ def _keys(folder):
     if not isinstance(keys, dict):
         keys = {}
     changed = False
-    for name in ('livekit_secret', 'as_token', 'hs_token'):
+    for name in ('livekit_api', 'as_token', 'hs_token'):
         if not isinstance(keys.get(name), str) or len(keys[name]) < 32:
             keys[name] = secrets.token_hex(32)
             changed = True
@@ -96,7 +96,7 @@ def prepare(root):
     os.chmod(folder, 0o700)
     keys = _keys(folder)
     # LiveKit and lk-jwt-service both read `<key>: <secret>` (hex, so plain YAML).
-    _write(folder / 'livekit-keys.yaml', f'{LIVEKIT_KEY}: {keys["livekit_secret"]}\n')
+    _write(folder / 'livekit-keys.yaml', f'{LIVEKIT_KEY}: {keys["livekit_api"]}\n')
     _write(folder / 'livekit.yaml', json.dumps(livekit_config(), indent=2))
     reg = json.dumps(registration(keys), indent=2)
     _write(folder / REGISTRATION, reg)

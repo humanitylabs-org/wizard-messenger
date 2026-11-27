@@ -30,8 +30,8 @@ class CallsFilesTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(folder.stat().st_mode), 0o700)
         keys = json.loads((folder / 'secrets.json').read_text())
         line = (folder / 'livekit-keys.yaml').read_text()
-        self.assertEqual(line, 'messenger: %s\n' % keys['livekit_secret'])
-        self.assertRegex(keys['livekit_secret'], r'^[0-9a-f]{64}$')
+        self.assertEqual(line, 'messenger: %s\n' % keys['livekit_api'])
+        self.assertRegex(keys['livekit_api'], r'^[0-9a-f]{64}$')
         unified_setup.setup(self.root)
         self.assertEqual(json.loads((folder / 'secrets.json').read_text()), keys)
         # Synapse reads its own copy of the registration, identical to the token service's.
