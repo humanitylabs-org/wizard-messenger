@@ -180,11 +180,16 @@ class ViewServer(MessengerServer):
         self.passkeys=Passkeys(Path(data)/'passkeys.json' if data else None)
         self.drafts=Drafts(data)
         self.switches=SwitchStore(Path(data)/'switches.json' if data else None)
+        self.call_door=None
         if data:
             # Issue 445: the calls switch starts and stops LiveKit and its token service (their marker file).
             import calls
             self.switches.changed[calls.SWITCH]=lambda on: calls.set_running(data,on)
             calls.sync(data)
+            # The call door (call_door.py): Element Call and the call-scoped passes to Synapse and LiveKit. It answers
+            # only while the switch is on; the owner reaches it at <app path>call/, guests on its own listener.
+            import call_door
+            self.call_door=call_door.Door(data)
         from private_unread import PrivateUnread
         self.private_unread=PrivateUnread(Path(data)/'private-seen.json' if data else None)
         # One transaction for provider proof, engine transition and verifier issuance.
@@ -271,6 +276,26 @@ class ViewHandler(Handler):
     @property
     def service(self) -> ViewServer:
         return cast(ViewServer,self.server)
+    def _call_door(self):
+        """Issue 445 (switch calls): the owner's way into a call, Element Call at <app path>call/ (call_door.py)."""
+        if not self.path.startswith('/call/') or getattr(self.service,'call_door',None) is None: return False
+        import call_door
+        self.pending_cookie=None
+        try: call_door.serve(self,self.service.call_door,self.service.public_path+'call',self._call_owner,self.path[len('/call'):])
+        except (BrokenPipeError,ConnectionResetError): pass
+        return True
+    def _call_owner(self,_handler):
+        """Only the owner's own Messenger session makes an owner call account (never a bearer, never cross-site)."""
+        if self.headers.get('Authorization') or self.headers.get('Sec-Fetch-Site') not in (None,'same-origin'): return None
+        try:
+            if self.service.trusted_owner.enabled: self._trusted_owner()
+            session=self._session()
+        except EngineError: return None
+        if session is None or session.get('setup_only'): return None
+        return ('Me',True)
+    def _handle(self,method):
+        if self._call_door(): return
+        return super()._handle(method)
     def _origin(self,required=False):
         origin=self.headers.get('Origin')
         if (required and origin is None) or (origin is not None and not self._origin_allowed(origin)) or self.headers.get('Sec-Fetch-Site')=='cross-site':
@@ -904,6 +929,7 @@ class ViewHandler(Handler):
         return super()._dispatch(method)
     def do_GET(self):
         self._trusted_owner_verified=False
+        if self._call_door(): return
         path=urlsplit(self.path).path
         if path == '/push-service-worker.js':
             self.pending_cookie = None
@@ -993,6 +1019,11 @@ if __name__=='__main__':
     owner_hop = start_owner_hop(server)
     if server.trusted_owner.enabled:
         threading.Thread(target=keep_unlocked, args=(server,), daemon=True).start()
+    if server.call_door is not None:
+        # Issue 445: the guests' call-only listener (no published port; only the box's own call tunnel reaches it)
+        # and the sweeper that ends empty calls. Both idle while the calls switch is off.
+        import call_door
+        call_door.start_guests(server.call_door)
     def stop(*_):
         threading.Thread(target=server.shutdown,daemon=True).start()
         if owner_hop: threading.Thread(target=owner_hop.shutdown,daemon=True).start()
