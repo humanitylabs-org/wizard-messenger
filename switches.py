@@ -2,7 +2,7 @@
 
 The WizardOS Tracker's Try it toggle, Messenger's Settings and the agent all read and set the same state here, so a
 switch no longer differs per device. Every switch is off until the owner turns it on. A switch that was approved
-(Drafts at top, issue 150) leaves this list and its behaviour is simply on; a stored value for it is ignored.
+(Drafts at top, issue 150; the photo speed switches, issue 468) leaves this list and its behaviour is simply on; a stored value for it is ignored.
 """
 import json
 import os
@@ -13,25 +13,6 @@ from pathlib import Path
 CONTRACT = 'wizard.app-switches/1'
 
 SWITCHES = (
-    {'id': 'photo-warm', 'name': 'Photos ready on arrival',
-     'description': 'The box fetches incoming photos, stickers, GIFs and videos as they arrive, so they open at once.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#162']},
-    {'id': 'photo-instant', 'name': 'Photos open instantly',
-     'description': 'A tapped photo shows its thumbnail at once and sharpens to a screen-size copy the box keeps; '
-                    'zooming in loads the original.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#164']},
-    {'id': 'viewer-placeholder', 'name': "Photos ready in Wizard's viewer",
-     'description': "A photo opened in Wizard's shared viewer comes with a ready copy (the one this phone downloaded, "
-                    'else its thumbnail) to show until the original is in. Save and Share still use the original.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#170']},
-    {'id': 'photo-prefetch', 'name': 'Background photo download',
-     'description': 'The phone quietly downloads recent photos from your newest chats, on Wi-Fi only unless you choose '
-                    'Always, so they open at once.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#166']},
     {'id': 'photo-timings', 'name': 'Photo timings',
      'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, black '
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',

@@ -1,8 +1,8 @@
 // Issue 392 (James, 24 Nov 2026): on a phone on mobile data, opening a chat showed blank photo boxes for 5-10 s, and
 // tapping a photo already on screen showed Wizard's loading wheel for another 5-10 s. Photos must already be on the
 // phone: the chat paints them at once, and a tap opens full screen in the tap's frame with no wheel over the photo.
-// With every photo switch on, Messenger runs framed in a minimal Wizard shell built from the real wizard-ux core
-// (app-services*.js, chat-kit.js, chats.css from SHELL_DIR), on a phone whose network says 'cellular'.
+// On a fresh box (no photo switches to turn on since issue 468), Messenger runs framed in a minimal Wizard shell
+// built from the real wizard-ux core (app-services*.js, chat-kit.js, chats.css from SHELL_DIR), on a phone whose network says 'cellular'.
 //   1. The box is quick: Messenger is opened once and left on the chat list for a moment (as an owner does).
 //   2. The box becomes slow (every photo request takes SLOW_MS, default 5000): reopen Messenger, open the chat, tap.
 // page.route bypasses the browser's HTTP cache, so anything not kept on the phone waits on the slow box.
@@ -33,7 +33,10 @@ const PHONE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (K
 const person = {id: 'ann', display_name: 'Ann Lee', identities: [{id: 'ann-i', network: 'line', kind: 'person', label: 'Ann Lee'}], labels: [], unread: 0, muted: false, low_priority: false, last: {text: 'Photo', timestamp: now - min, outgoing: false, msgtype: 'm.image'}, language: '', peer_read_ts: 0};
 const N = 10;
 const MESSAGES = Array.from({length: N}, (_, i) => ({id: '$p' + i, identity_id: 'ann-i', network: 'line', sender: 'Ann Lee', outgoing: false, original: '', timestamp: now - (N + 1 - i) * min, timeline_order: i + 1, msgtype: 'm.image', media: {w: 1600, h: 1200, mime: 'image/jpeg', thumb: true, size: 900000}, reactions: []}));
-const SWITCHES = ['photo-warm', 'photo-instant', 'photo-prefetch', 'photo-timings', 'viewer-placeholder'].map(id => ({id, name: id, on: true}));
+// Issue 468: the photo speed switches are gone (on for everyone), so this is what a fresh box lists: Photo timings only,
+// off. OLD_LISTING=1 serves a listing from before with the old switches off instead; it must make no difference.
+const SWITCHES = process.env.OLD_LISTING ? ['photo-warm', 'photo-instant', 'photo-prefetch', 'photo-timings', 'viewer-placeholder'].map(id => ({id, name: id, on: false}))
+  : [{id: 'photo-timings', name: 'Photo timings', on: false}];
 
 (async () => {
   const browser = await chromium.launch();

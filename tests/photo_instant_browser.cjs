@@ -1,6 +1,7 @@
-// Issue 164: with "Photos open instantly" on, Messenger's own photo view (used when Wizard's viewer does not open)
-// shows the thumbnail the bubble already has on the first frame, swaps to the box's view copy, fetches the photos
-// either side, and loads the original only on zoom (double tap). Off, it opens the original as before.
+// Issue 164 (on for everyone since issue 468, no switch): Messenger's own photo view (used when Wizard's viewer does
+// not open) shows the thumbnail the bubble already has on the first frame, swaps to the box's view copy, fetches the
+// photos either side, and loads the original only on zoom (double tap). A fresh box's listing and one that still says
+// the old switch is off behave the same.
 // Synthetic API only, no container and no shell: PLAYWRIGHT_MODULE=... node tests/photo_instant_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -30,7 +31,7 @@ async function run(browser, instant, label, viewport, mobile) {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
     if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
-    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'photo-instant', on: instant}]})});
+    if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: instant ? [{id: 'photo-timings', on: false}] : [{id: 'photo-instant', on: false}]})});
     if (p === 'api/status') return ok({state: 'ready', account_configured: true});
     if (p === 'api/identity') return ok({identity});
     if (p === 'api/contacts') return ok({contacts: []});
@@ -63,25 +64,21 @@ async function run(browser, instant, label, viewport, mobile) {
   await own.waitFor({timeout: 5000});
   const first = await img.getAttribute('src'), stage = await own.getAttribute('data-stage');
   const painted = await img.evaluate(i => new Promise(r => requestAnimationFrame(() => r(i.complete && i.naturalWidth > 0))));
-  await page.screenshot({path: path.join(out, `${instant ? 'on' : 'off'}-first-frame-${label}.png`)});
+  await page.screenshot({path: path.join(out, `${instant ? 'fresh' : 'old-listing-off'}-first-frame-${label}.png`)});
   const result = {label, instant, first, painted};
-  if (instant) {
+  {
     assert.match(first, /%24p1\?kind=thumb$/, 'opens from the thumbnail');
     assert.equal(painted, true, 'an image on the first frame, never black');
     assert.equal(stage, 'thumb');
     await page.waitForFunction(() => document.querySelector('.u-photo-view')?.dataset.stage === 'view', null, {timeout: 5000});
     assert.match(await img.getAttribute('src'), /%24p1\?kind=view$/, 'sharpens to the view copy');
-    await page.screenshot({path: path.join(out, `on-view-${label}.png`)});
+    await page.screenshot({path: path.join(out, `${instant ? 'fresh' : 'old-listing-off'}-view-${label}.png`)});
     assert.ok(media.includes('$p0:view') && media.includes('$p2:view'), 'the photos either side are fetched: ' + media);
     assert.ok(!media.includes('$p1:full'), 'no original before zoom: ' + media);
     await img.dblclick();
     await page.waitForFunction(() => document.querySelector('.u-photo-view')?.dataset.stage === 'full', null, {timeout: 5000});
     assert.match(await img.getAttribute('src'), /%24p1$/, 'zoom loads the original');
     result.stages = 'thumb > view > full';
-  } else {
-    assert.match(first, /%24p1$/, 'off: the original, as before');
-    assert.ok(!media.some(x => x.endsWith(':view')), 'off: no view copies: ' + media);
-    assert.equal(stage, null);
   }
   await own.press('Escape');
   assert.equal(await own.count(), 0, 'Esc closes it');
@@ -98,7 +95,8 @@ async function run(browser, instant, label, viewport, mobile) {
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, mobile] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, false]]) {
-    for (const instant of [true, false]) summary.push(await run(browser, instant, label, viewport, mobile));
+    for (const instant of [true, false]) // true: a fresh box's listing; false: an old listing with the switch off
+      summary.push(await run(browser, instant, label, viewport, mobile));
   }
   await browser.close();
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));

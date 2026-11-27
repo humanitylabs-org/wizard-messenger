@@ -257,7 +257,7 @@
     if (!job.loaded) return 'Downloading…' + (total ? ' · ' + fmt(total) : '');
     return 'Downloading' + (total ? ' ' + Math.min(99, Math.floor(job.loaded * 100 / total)) + '% · ' + fmt(job.loaded) + ' of ' + fmt(total) : ' ' + fmt(job.loaded));
   }
-  // Background photo download (issue 166, switch photo-prefetch, off by default): the phone quietly fetches thumbnails
+  // Background photo download (issue 166, on for everyone since issue 468): the phone quietly fetches thumbnails
   // of the last messages of the most recent chats, then the box's view copies of the newest photos in each, so a
   // tapped photo is already on the device. PREFETCH holds the sizes; prefetchPlan() lists what to fetch, in order.
   const PREFETCH = {chats: 15, messages: 40, views: 10, cap: 300 * 1024 * 1024, concurrency: 2};
@@ -3344,26 +3344,27 @@
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = Math.max(0, list.indexOf(m));
     const who = x => savedMediaName(x);
-    const tapped = performance.now(), placeholder = switchState.on['viewer-placeholder'] === true;
+    // Issue 468: Photos ready in Wizard's viewer (placeholder) and Photos open instantly (sharp) are on for everyone.
+    const tapped = performance.now();
     // Issue 348: opened in the tap, never after a wait. The view copies this phone already read (viewCopies) go as
     // blob: URLs; one still being read goes as the thumbnail the bubble shows, and the swipe to it finds it ready.
-    const near = placeholder ? nearCopies(list, at) : [], sharp = switchState.on['photo-instant'] === true;
+    const near = nearCopies(list, at);
     const open = () => {
       const blobs = {};
       for (const u of near) { const b = viewCopies.get(u); if (b) blobs[u] = b; }
       // Issue 392: the thumbnails this phone keeps (the ones the bubbles show) are the stand-ins.
       for (const x of list) { const u = mediaURL(x.id, 'thumb'), b = thumbCopies.get(u); if (b) blobs[u] = b; }
-      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder, sharp, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
+      const how = openMedia(hostViewer(window.WizardApp, window.parent !== window), viewerItems(list, {placeholder: true, sharp: true, url: mediaURL, who, blobs}), at, item => photoView(item, list, at, tapped));
       if (how === 'wizard' && switchState.on['photo-timings'] === true) photoClock.add('photo_wizard', performance.now() - tapped);
     };
-    const reading = viewCopies.prime(near), mine = placeholder ? photoStages(m, true, mediaURL).sharp : null;
+    const reading = viewCopies.prime(near), mine = photoStages(m, true, mediaURL).sharp;
     // Normally the tapped photo's copy is already read (a chat reads its photos ahead), so it opens in the tap. Only
     // when this phone has it but it is not read yet does the tap wait for that one read, at most 100 ms: a picture
     // the viewer can show at once beats a thumbnail it has to fetch.
     if (!mine || viewCopies.get(mine) || !photoCache.has(mine)) { open(); return; }
     Promise.race([reading, sleep(100)]).then(open);
   }
-  // The view copies of a chat's photo at `at` and the ones either side (photo-instant's screen copies, issue 164).
+  // The view copies of a chat's photo at `at` and the ones either side (the screen copies of issue 164).
   const nearCopies = (list, at) => [list[at - 1], list[at], list[at + 1]].map(x => x && photoStages(x, true, mediaURL).sharp).filter(Boolean);
   // Issue 348: this phone's downloaded view copies, held as blob: URLs so a tap hands them over at once. A photo is read
   // ahead when its chat shows it (and when the phone stores it later), and on the finger's touch (pointerdown comes
@@ -3393,12 +3394,11 @@
       img.src = b || url;
     }, () => { if (!img.getAttribute('src')) img.src = url; });
   }
-  // Read ahead the newest photos of the chat on screen, so the first tap already finds them (only while the shared
-  // viewer gets placeholders: viewer-placeholder). Issue 392: the open chat's photos also go first in this phone's
+  // Read ahead the newest photos of the chat on screen, so the first tap already finds them (the shared viewer gets
+  // them as placeholders, issue 170, on for everyone since issue 468). Issue 392: the open chat's photos also go first in this phone's
   // background download, so a chat outside the newest 15 gets its screen copies too.
   function primeChatCopies(messages) {
     if (prefetchMode() !== 'off' && messages?.length) photoCache.add(prefetchPlan([{id: 'open'}], () => messages, mediaURL, PREFETCH, prefetchWant()), true);
-    if (switchState.on['viewer-placeholder'] !== true) return;
     const list = (messages || []).filter(x => x && !x.pending && !x.deleted && !isSticker(x));
     const urls = list.map(x => photoStages(x, true, mediaURL).sharp).filter(Boolean).slice(-6);
     viewWanted = new Set(urls); // one the phone downloads later is read as soon as it is stored
@@ -3406,7 +3406,6 @@
   }
   let viewWanted = new Set();
   function primeTapped(m, box) {
-    if (switchState.on['viewer-placeholder'] !== true) return;
     const boxes = [...(box.closest('.u-thread-body') || document).querySelectorAll('.u-media')].filter(b => b.message && !b.message.pending && !isSticker(b.message));
     const list = boxes.map(b => b.message), at = list.indexOf(m);
     if (at < 0) return;
@@ -3417,14 +3416,15 @@
   }
   // Messenger's own full-size view, used only when Wizard's viewer did not open: the photo fit to the screen (pinch
   // zooms natively); Close, Esc or Back closes it.
-  // With "Photos open instantly" on (issue 164) a photo opens from its thumbnail and sharpens in place (photoStages),
-  // the photos either side are fetched in the background, and zooming in (double tap or pinch) loads the original.
+  // Photos open instantly (issue 164, on for everyone since issue 468): a photo opens from its thumbnail and sharpens in
+  // place (photoStages), the photos either side are fetched in the background, and zooming in (double tap or pinch)
+  // loads the original.
   function photoView(item, list = [], at = -1, tapped = performance.now()) {
     view.photo?.close();
     const before = document.activeElement;
     const layer = node('div', 'u-photo-view'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true'); layer.setAttribute('aria-label', item.name || 'Photo'); layer.tabIndex = -1;
-    const instant = switchState.on['photo-instant'] === true, m = list[at];
-    const stages = item.kind !== 'video' && m ? photoStages(m, instant, mediaURL) : {first: item.url, sharp: null, full: item.url};
+    const m = list[at];
+    const stages = item.kind !== 'video' && m ? photoStages(m, true, mediaURL) : {first: item.url, sharp: null, full: item.url};
     // Issue 348: a view copy this phone already holds ready (viewCopies) is the first picture, sharp at once.
     const ready = stages.sharp ? viewCopies.get(stages.sharp) : undefined;
     let media, shown = ready || stages.first, upgrade = () => {}, stop = () => {};
@@ -5847,7 +5847,7 @@
   async function setSwitch(id, on) {
     const before = switchState.on[id] === true;
     switchState.on[id] = on; repaintSwitches(); drawList();
-    try { applySwitches(await switchCall({id, on})); if (id === 'photo-prefetch' && on) prefetchSoon(); }
+    try { applySwitches(await switchCall({id, on})); }
     catch { switchState.on[id] = before; repaintSwitches(); drawList(); toast('Couldn’t save that. Try again.'); }
   }
   // ---------- Agent chat (issue 265, on for everyone) ----------
@@ -6374,12 +6374,12 @@
       watch.observe({type: 'resource'}); return watch;
     } catch { return null; } // no PerformanceObserver: thumbnails are not timed
   })();
-  // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher). The switch lives
-  // on the box for the owner; Wi-Fi only or Always is per device, because each phone has its own network.
+  // Issue 166: the phone downloads photos quietly in the background (prefetchPlan, photoPrefetcher), for everyone since
+  // issue 468; Wi-Fi only or Always is per device, because each phone has its own network.
   const PREFETCH_MODE_KEY = 'messenger.photoPrefetch', PREFETCH_INDEX_KEY = 'messenger.photoPrefetchIndex', PREFETCH_CACHE = 'messenger-photos-v1';
   // Issue 392: photos download on any network. Issue 443: so do videos (up to 25 MB each, 3 per chat), unless this
   // device chose Wi-Fi only or Data Saver is on.
-  const prefetchWant = () => ({photos: switchState.on['photo-prefetch'] === true, videos: videoPrefetchWanted(storedPrefetchMode(), navigator.connection, onPhone())});
+  const prefetchWant = () => ({photos: true, videos: videoPrefetchWanted(storedPrefetchMode(), navigator.connection, onPhone())});
   const storedPrefetchMode = () => { try { return localStorage.getItem(PREFETCH_MODE_KEY) || ''; } catch { return ''; } };
   // Issue 392: on any network unless this device chose Wi-Fi only (James is on mobile data a lot, and Settings has had
   // no row to choose Always since issue 202). The 300 MB cap still bounds what is kept.

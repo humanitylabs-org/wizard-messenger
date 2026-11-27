@@ -37,7 +37,7 @@ async function run(browser, {label, stale, network, mode}) {
   const page = await ctx.newPage(), errors = [], media = [], threads = [];
   page.on('pageerror', e => errors.push(e.message));
   const ownKey = '11'.repeat(32), identity = {account_id: ownKey, npub: L.encodePublic(ownKey), display_name: 'Owner'};
-  const switches = {'photo-prefetch': false, ...(stale ? {'video-prefetch': false} : {})};
+  const switches = {...(stale ? {'video-prefetch': false, 'photo-prefetch': false} : {})};
   await page.route('https://messenger.test/**', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname.slice(1);
     const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
@@ -71,8 +71,9 @@ async function run(browser, {label, stale, network, mode}) {
   const expect = network === 'wifi' || mode !== 'wifi';
   if (expect) {
     assert.deepEqual(threads, ['ann:40'], 'the recent chat read once');
-    assert.deepEqual(media, ['$video:full'], 'only the 10 MB video downloads (not the 40 MB one, not the GIF, no photos): ' + media);
-    assert.deepEqual(kept, ['$video'], 'and it is kept on the phone');
+    // Issue 468: background photo download is on for everyone, so the video posters (thumbnails) come along.
+    assert.deepEqual(media.filter(x => !x.endsWith(':thumb')), ['$video:full'], 'only the 10 MB video downloads (not the 40 MB one, not the GIF): ' + media);
+    assert.deepEqual(kept.filter(x => !x.endsWith('?kind=thumb')), ['$video'], 'and it is kept on the phone');
   } else {
     assert.deepEqual(threads, [], 'no chats read in the background');
     assert.deepEqual(media, [], 'nothing downloads in the background');
