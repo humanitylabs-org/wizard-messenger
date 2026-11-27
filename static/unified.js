@@ -824,7 +824,20 @@
   function callInvite(link) {
     return /^https:\/\/[a-z0-9.-]+\/c\/[A-Za-z0-9_-]+$/.test(String(link || '')) ? 'Join my video call: ' + link : '';
   }
-  if (typeof module !== 'undefined') module.exports = {callInvite, desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 445: how the owner's own call opens. The WizardOS phone app (0.10.80+, WizardOSNative.openCall) gives it a
+  // call window with the camera and the phone's call sound, where Element Call picks earpiece, speaker or headset
+  // (its controlledAudioDevices mode, flagged in the address's #? part). In the Wizard shell an app frame may not
+  // open windows itself (the shell catches window.open and the frame has no camera), so the call opens through a
+  // link the shell sends to the owner's browser; a plain tab opens a window straight away.
+  function callRoute(native, framed) { return native ? 'phone' : framed ? 'shell' : 'window'; }
+  function callWindowURL(open, base) {
+    let u; try { u = new URL(String(open || ''), base); } catch (_) { return ''; }
+    if (!/^https?:$/.test(u.protocol) || u.username || u.password) return '';
+    const hash = u.hash || '#';
+    u.hash = hash + (hash.includes('?') ? '&' : '?') + 'controlledAudioDevices=true';
+    return u.href;
+  }
+  if (typeof module !== 'undefined') module.exports = {callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2724,21 +2737,42 @@
   // devices, and the Call link sheet says how to connect Cloudflare (call_cloudflare.py).
   const callsOn = () => switchState.on.calls === true;
   const callChannel = (id, p) => (view.id === id && view.root?.querySelector('.u-channel')?.value) || p.preferred_identity || p.identities?.[0]?.id || '';
+  const nativeCall = () => { try { const n = window.WizardOSNative; return n && typeof n.openCall === 'function' ? n : null; } catch (_) { return null; } };
+  const framedApp = () => { try { return window.top !== window; } catch (_) { return true; } };
+  // The shell's links (wizard-ux links.js): data-wizard-browse sends the call to the owner's browser (a desktop tab,
+  // the phone's browser in older phone apps), never into a frame without a camera.
+  // `tried`: the link is followed at once (the shell opens it while the owner's tap still counts); it stays as the way
+  // back into the call.
+  function callOpenLink(open) {
+    const a = node('a', 'primary wide', 'Open the call');
+    a.href = open; a.target = '_blank'; a.rel = 'noopener'; a.setAttribute('data-wizard-browse', '');
+    return a;
+  }
+  function openCallSheet(open, tried) {
+    const sheet = overlay('Call'), a = callOpenLink(open);
+    sheet.append(node('p', 'helper', 'Your call opens in its own window, where it can use your camera.'), a);
+    if (tried) a.click();
+  }
   async function startCall(p, id) {
-    const win = window.open('', '_blank');
+    const phone = nativeCall(), route = callRoute(!!phone, framedApp());
+    const win = route === 'window' ? window.open('', '_blank') : null;
     try {
       const r = await api('api/view/calls', {method: 'POST', body: {title: p.display_name || ''}});
-      if (win && !win.closed) win.location.replace(r.open);
-      else { const a = node('a', 'primary wide', 'Open the call'); a.href = r.open; a.target = '_blank'; a.rel = 'noopener'; overlay('Call').append(a); }
-      const invite = callInvite(r.link);
-      if (invite) { queueSend(id, {text: invite, identity_id: callChannel(id, p)}); toast('Call link sent'); }
-      else callLinkSheet(true);
+      const open = new URL(r.open, location.href).href;
+      let opened = false;
+      if (route === 'phone') { const u = callWindowURL(open, location.href); try { opened = !!u && phone.openCall(u) === true; } catch (_) { opened = false; } }
+      else if (win && !win.closed) { win.location.replace(open); opened = true; }
+      const invite = callInvite(r.link), again = opened ? null : open;
+      if (invite) { if (again) openCallSheet(again, route === 'shell'); queueSend(id, {text: invite, identity_id: callChannel(id, p)}); toast('Call link sent'); }
+      else callLinkSheet(true, again, route === 'shell');
     } catch (e) { win?.close(); error(e); }
   }
   // The Call link sheet: the owner's own Cloudflare account carries the guests' link (James, 27 Nov 2026: the box
   // stays closed). Paste a token made on Cloudflare's page, pick a domain; Disconnect removes it all again.
-  async function callLinkSheet(afterCall) {
-    const sheet = overlay('Call link'); const body = node('div', 'u-call-link'); sheet.append(body);
+  async function callLinkSheet(afterCall, open = null, tried = false) {
+    const sheet = overlay('Call link'); const body = node('div', 'u-call-link');
+    if (open) { const a = callOpenLink(open); sheet.append(a); if (tried) a.click(); }
+    sheet.append(body);
     const paint = st => {
       body.replaceChildren();
       if (st.connected && st.zone) {

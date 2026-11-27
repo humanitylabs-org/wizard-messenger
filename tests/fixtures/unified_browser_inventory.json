@@ -83,7 +83,9 @@
         "WosTopicEmojiData",
         "__messengerKeys",
         "confirm",
-        "parent"
+        "parent",
+        "top",
+        "WizardOSNative"
       ]
     },
     "document": {
