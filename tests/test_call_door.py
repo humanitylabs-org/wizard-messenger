@@ -344,7 +344,7 @@ class OwnerDoor(DoorCase):
 
     def test_owner_connects_cloudflare_for_the_guest_link(self):
         import call_cloudflare
-        from test_call_cloudflare import API_TOKEN, FakeCloudflare
+        from test_call_cloudflare import CF_FIXTURE, FakeCloudflare
         cf = FakeCloudflare()
         keeper = self.view.call_cloudflare
         keeper.request = cf
@@ -354,13 +354,13 @@ class OwnerDoor(DoorCase):
         owner = {'Cookie': cookie, 'Origin': test_web.ORIGIN, 'X-Messenger-CSRF': csrf}
         path = '/api/view/calls/cloudflare'
         self.assertEqual(self.owner_request('GET', path)[0], 401)
-        self.assertEqual(self.owner_request('POST', path, {'token': API_TOKEN}, extra={'Authorization': 'Bearer ' + test_web.TOKEN})[0], 403)
-        self.assertEqual(self.owner_request('POST', path, {'token': API_TOKEN}, extra={'Cookie': cookie, 'Origin': test_web.ORIGIN})[0], 403)  # no CSRF
+        self.assertEqual(self.owner_request('POST', path, {'token': CF_FIXTURE}, extra={'Authorization': 'Bearer ' + test_web.TOKEN})[0], 403)
+        self.assertEqual(self.owner_request('POST', path, {'token': CF_FIXTURE}, extra={'Cookie': cookie, 'Origin': test_web.ORIGIN})[0], 403)  # no CSRF
         status, body = self.owner_request('GET', path, extra=owner)
         self.assertEqual((status, body['result']['connected'], body['result']['reach']), (200, False, 'tailnet'))
         status, body = self.owner_request('POST', path, {'token': 'cf-wrong-' + 'b' * 32}, extra=owner)
         self.assertEqual((status, body['error']['code']), (400, 'cloudflare_refused'))
-        status, body = self.owner_request('POST', path, {'token': API_TOKEN}, extra=owner)
+        status, body = self.owner_request('POST', path, {'token': CF_FIXTURE}, extra=owner)
         self.assertEqual((status, body['result']['zone']), (200, 'example.org'))
         keeper.sync()
         status, body = self.owner_request('POST', '/api/view/calls', {'title': 'Ann'}, extra=owner)

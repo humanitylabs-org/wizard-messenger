@@ -18,7 +18,7 @@ import unified_setup
 from switches import SwitchStore
 
 ROOT = Path(__file__).resolve().parents[1]
-API_TOKEN = 'cf-test-' + 'a' * 32  # a stand-in for the owner's Cloudflare token (not a real credential)
+CF_FIXTURE = 'cf-test-' + 'a' * 32  # a stand-in for the owner's Cloudflare token (not a real credential)
 
 
 class FakeCloudflare:
@@ -47,7 +47,7 @@ class FakeCloudflare:
                 'turn:turn.cloudflare.com:3478?transport=tcp', 'turn:turn.cloudflare.com:80?transport=tcp',
                 'turns:turn.cloudflare.com:5349?transport=tcp', 'turns:turn.cloudflare.com:443?transport=tcp'],
                 **dict(zip(call_cloudflare.TURN_LOGIN, ('u-' + key_id, 'c-' + str(body['ttl']))))}]}
-        if token != API_TOKEN:
+        if token != CF_FIXTURE:
             raise call_cloudflare.CloudflareError(403, 'cloudflare_refused', 'Invalid API Token')
         path = path[len('client/v4/'):]
         a = 'accounts/' + self.account
@@ -144,7 +144,7 @@ class CloudflareDoorTests(unittest.TestCase):
         self.assertIn('Invalid API Token', e.exception.message)
         self.cf.zones = []
         with self.assertRaises(call_cloudflare.CloudflareError) as e:
-            self.keeper.connect(API_TOKEN)
+            self.keeper.connect(CF_FIXTURE)
         self.assertEqual(e.exception.code, 'no_domain')
         self.assertFalse(self.keeper.status()['connected'])
 
@@ -152,7 +152,7 @@ class CloudflareDoorTests(unittest.TestCase):
         self.switch(True)
         self.assertEqual(self.keeper.status()['reach'], 'tailnet')  # no Cloudflare yet: own devices only
         self.assertTrue(self.cf.empty())
-        st = self.keeper.connect(API_TOKEN)
+        st = self.keeper.connect(CF_FIXTURE)
         self.assertEqual((st['connected'], st['zone']), (True, 'example.org'))
         self.keeper.sync()
         st = self.keeper.status()
@@ -199,7 +199,7 @@ class CloudflareDoorTests(unittest.TestCase):
 
     def test_forget_removes_the_door_and_the_token(self):
         self.switch(True)
-        self.keeper.connect(API_TOKEN)
+        self.keeper.connect(CF_FIXTURE)
         self.keeper.sync()
         self.assertFalse(self.cf.empty())
         st = self.keeper.forget()
@@ -210,7 +210,7 @@ class CloudflareDoorTests(unittest.TestCase):
 
     def test_a_failed_step_is_finished_later_without_a_second_tunnel(self):
         self.switch(True)
-        self.keeper.connect(API_TOKEN)
+        self.keeper.connect(CF_FIXTURE)
         self.cf.fail[('POST', r'dns_records$')] = 1
         with self.assertRaises(call_cloudflare.CloudflareError):
             self.keeper.sync()
@@ -229,7 +229,7 @@ class CloudflareDoorTests(unittest.TestCase):
         self.assertTrue(self.cf.empty())
 
     def test_the_keeper_thread_follows_the_switch(self):
-        self.keeper.connect(API_TOKEN)
+        self.keeper.connect(CF_FIXTURE)
         t = threading.Thread(target=self.keeper.run, kwargs={'every': 3600}, daemon=True)
         t.start()
         try:
@@ -254,7 +254,7 @@ class CloudflareDoorTests(unittest.TestCase):
 
     def test_turn_logins_are_renewed_only_between_calls(self):
         self.switch(True)
-        self.keeper.connect(API_TOKEN)
+        self.keeper.connect(CF_FIXTURE)
         self.keeper.sync()
         state = json.loads((self.root / 'calls' / 'cloudflare.json').read_text())
         state['made']['ice_at'] -= call_cloudflare.TURN_REFRESH + 1
@@ -273,7 +273,7 @@ class CloudflareDoorTests(unittest.TestCase):
     def test_choosing_a_domain_when_the_account_has_several(self):
         self.cf.zones = FakeCloudflare(('a.example', 'b.example')).zones
         self.switch(True)
-        st = self.keeper.connect(API_TOKEN)
+        st = self.keeper.connect(CF_FIXTURE)
         self.assertIsNone(st['zone'])
         self.keeper.sync()
         self.assertTrue(self.cf.empty())  # nothing made before the owner picks
