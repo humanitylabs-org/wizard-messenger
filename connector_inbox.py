@@ -634,12 +634,11 @@ class ConnectorInbox(UnifiedInbox):
                     self.store.next_seq()
                     self.notify()
             for room, data in result.get('rooms', {}).get('join', {}).items():
-                if data.get('timeline', {}).get('limited'):
-                    self.store.put('history_gap:' + room, 'Earlier history may be incomplete')
                 meta = self.room_meta(room, data)
                 if not meta.get('network') or meta.get('space'):
                     continue
                 identity = self.store.identity(meta['network'], room, meta['label'], meta['kind'])
+                self.fill_gap(identity, meta, data, since)
                 for event in data.get('timeline', {}).get('events', []):
                     # ingest() also refuses to notify for backfilled (old-timestamp) lines.
                     self.ingest(identity, meta, event, live=bool(since))

@@ -1,0 +1,13 @@
+# Issue 444: Messenger's built-in Synapse must not fall behind upstream again.
+# Only the Synapse image is watched; every other image in the compose file keeps its own pin.
+version: 2
+updates:
+  - package-ecosystem: docker-compose
+    directory: /runtipi
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "*element-hq/synapse"
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "Messenger Synapse"

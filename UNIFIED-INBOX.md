@@ -8,7 +8,7 @@ Started from `feature/private-beta-20261015` (`16e245e`), not the older MVP chec
 
 ## Plumbing decision
 
-Use **Synapse v1.163.0 with SQLite**, plus the official **mautrix-telegram Go/bridgev2 v0.2610.0 with SQLite**. Images are pinned by official multi-architecture manifest digest in `runtipi/docker-compose.yml`.
+Use **Synapse v1.166.0 with SQLite**, plus the official **mautrix-telegram Go/bridgev2 v0.2610.0 with SQLite**. Images are pinned by official multi-architecture manifest digest in `runtipi/docker-compose.yml`.
 
 Continuwuity was considered first (the published v26.7.2 image exists), but its unattended appservice-registration/owner-bootstrap path was not proved here. Synapse provides config-file appservice registration and a documented shared-secret local user bootstrap; both are exercised by this preview. This is a conservative MVP fallback, **not a finding that Continuwuity is incompatible**. No Go or Rust build is needed for these services.
 

@@ -17,7 +17,7 @@ from connector_setup import setup_connectors
 from connectors import Connectors
 
 ROOT = Path(__file__).resolve().parents[1]
-SYNAPSE = 'ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6'
+SYNAPSE = 'ghcr.io/element-hq/synapse:v1.166.0@sha256:2cdc84f1de4687af89e4b7b1fe7b5f93e0ee7913243b63f79b05319cb6a8f525'
 CARRIER = 'python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1'
 
 
