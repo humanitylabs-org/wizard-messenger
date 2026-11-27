@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.132
+
+- Personal data label (wizard-os issue 929, feature, nothing changes on its own): wizard.md says `personal_data: reads your messages`, so the Privacy check and the install sheet's private AI card (each behind its own switch) count Messenger as an app that holds personal data. Agent access is unchanged.
+
 ## 0.2.0-unified.16.131
 
 - Synapse housekeeping (issue 444, bug fix, on for everyone): when more messages reach a chat between two of Messenger's syncs than one sync shows (a bridge catching up after an update, a busy group), Messenger now reads the skipped part back, so every message on the box shows and the "Earlier history may be incomplete" note goes away; before, the rest were missing for good. The built-in Synapse moves from v1.163.0 to v1.166.0 (security fixes; Dependabot watches it), and its registration secret moved out of homeserver.yaml into its own owner-only file. Postgres, a larger history cap and media retention are issue 451.
