@@ -37,7 +37,7 @@ from urllib.parse import quote, unquote, urlsplit
 import calls
 
 MATRIX_URL = os.environ.get('MATRIX_URL', 'http://matrix:8008')
-LIVEKIT = ('livekit', 7880)
+LIVEKIT = (os.environ.get('MESSENGER_LIVEKIT_HOST', 'livekit'), 7880)
 APP_DIR = Path(os.environ.get('MESSENGER_CALL_APP', '/opt/element-call'))
 CALL_PORT = 8790
 IDLE = 600          # a call nobody is in for 10 minutes has ended
@@ -181,11 +181,13 @@ class Door:
             token = state.get('door_bot')
             if token and _hs('GET', '/_matrix/client/v3/account/whoami', token=token)[0] == 200:
                 return token
-            localpart = BOT if not state.get('door_bot_made') else BOT + '-' + secrets.token_hex(4)
-            login = self._register(localpart, admin=True)
+            try:
+                login = self._register(BOT, admin=True)
+            except DoorError:
+                # Its first account exists already but this box lost its token (a restored backup): a new one.
+                login = self._register(BOT + '-' + secrets.token_hex(4), admin=True)
             state = self._load()
             state['door_bot'] = login['access_token']
-            state['door_bot_made'] = True
             self._save(state)
             return login['access_token']
 
@@ -205,6 +207,7 @@ class Door:
         if status != 200:
             raise DoorError(503, 'M_UNKNOWN', 'Could not start the call')
         call = {'id': secrets.token_hex(8), 'room': made['room_id'], 'key': secrets.token_urlsafe(24),
+                'owner_key': secrets.token_urlsafe(24),
                 'password': secrets.token_urlsafe(18), 'title': str(title)[:80] or 'Call', 'created': time.time(),
                 'active': time.time(), 'ended': None}
         with self.lock:
@@ -218,12 +221,14 @@ class Door:
             call = self._load()['calls'].get(call_id)
         return call if call and not call.get('ended') else None
 
-    def by_key(self, key):
+    def by_key(self, key, owner=False):
+        """The live call whose guest key (or, inside Messenger, owner key) this is."""
         if not isinstance(key, str) or not key:
             return None
+        field = 'owner_key' if owner else 'key'
         with self.lock:
             for call in self._load()['calls'].values():
-                if not call.get('ended') and hmac.compare_digest(call['key'], key):
+                if not call.get('ended') and isinstance(call.get(field), str) and hmac.compare_digest(call[field], key):
                     return call
         return None
 
@@ -319,6 +324,11 @@ class Door:
             elif n == 0 and now - call.get('active', call['created']) > IDLE:
                 self.end(call['id'])
 
+    def guest_link(self, call):
+        """The join link to send to the other person, when guests can reach this box (public_origin)."""
+        origin = public_origin(self.root)
+        return '%s/c/%s' % (origin, call['key']) if origin else None
+
     def run_sweeper(self, every=60):
         while not self.stop.wait(every):
             try:
@@ -334,24 +344,35 @@ class Door:
                 'features': {'feature_use_device_session_member_events': True},
                 'ssla': '', 'eula': ''}
 
-    def link(self, call, origin, prefix=''):
+    def link(self, call, origin, prefix='', owner=False):
         """Where Element Call opens this call (the media key stays in the fragment, never sent to a server)."""
         return '%s%s/k/%s/join/#/%s?roomId=%s&password=%s&confineToRoom=true&lang=en' % (
-            origin, prefix, call['key'], quote(call['title'][:40] or 'call'), quote(call['room']), quote(call['password']))
+            origin, prefix, call['owner_key' if owner else 'key'], quote(call['title'][:40] or 'call'), quote(call['room']), quote(call['password']))
 
 
-def serve(handler, door, prefix, may_join, target):
-    """Answer one request for the door. `prefix` is the public path the door is at ('' on its own listener,
+def public_origin(root):
+    """The guests' public address (slice 4: the owner's own Cloudflare tunnel), or None: calls then stay on the
+    owner's own devices."""
+    try:
+        origin = json.loads((Path(root) / 'calls' / 'public.json').read_text()).get('origin')
+    except (OSError, ValueError, AttributeError):
+        return None
+    return origin if isinstance(origin, str) and re.fullmatch(r'https://[a-z0-9.-]+', origin) else None
+
+
+def serve(handler, door, prefix, owner, target):
+    """Answer one request for the door. `prefix` is the public path the door is at ('' on the guests' listener,
     '<app path>call' inside Messenger) and `target` the request path and query below it. Everything of a call is
-    below `/k/<its link key>`, so a request names its call (Element Call sends no cookies). `may_join(handler)`
-    returns (display name, owner) for someone allowed to make a call account in it, else None."""
+    below `/k/<key>`, so every request names its call (Element Call sends no cookies). The guests' listener takes
+    a call's guest key (its join link); inside Messenger only its owner key works, which only the owner's own
+    session gets (web.py /api/view/calls). Whoever holds the key may make one call account for that call."""
     parts = urlsplit(target)
     method = handler.command
     if not door.on():
         return _json(handler, 404, {'errcode': 'M_NOT_FOUND', 'error': 'Calls are off'})
     try:
         m = re.fullmatch(r'/k/([A-Za-z0-9_-]{16,64})(/.*)?', parts.path)
-        call = door.by_key(m.group(1)) if m else None
+        call = door.by_key(m.group(1), owner=owner) if m else None
         if not call:
             if re.search(r'/assets/[A-Za-z0-9._-]+$', parts.path) and method == 'GET':
                 return _file(handler, door.app, 'assets/' + parts.path.rsplit('/', 1)[1], immutable=True)
@@ -362,7 +383,7 @@ def serve(handler, door, prefix, may_join, target):
             return _livekit(handler, path[len('/livekit'):] or '/', parts.query)
         m = CLIENT.fullmatch(path)
         if m:
-            return _matrix(handler, door, prefix, may_join, m.group(1), m.group(2), call, parts.query)
+            return _matrix(handler, door, prefix, owner, m.group(1), m.group(2), call, parts.query)
         if path == '/_matrix/client/versions':
             return _pass(handler, door, '/_matrix/client/versions', None)
         if method != 'GET':
@@ -452,10 +473,10 @@ def _token(handler):
     return auth[7:] if auth.startswith('Bearer ') else None
 
 
-def _matrix(handler, door, prefix, may_join, version, rest, call, query):
+def _matrix(handler, door, prefix, owner, version, rest, call, query):
     method = handler.command
     if rest == 'register' and method == 'POST':
-        return _register(handler, door, may_join, call)
+        return _register(handler, door, owner, call)
     if rest == 'login' and method == 'GET':
         return _json(handler, 200, {'flows': []})
     found = door.account(_token(handler))
@@ -465,12 +486,12 @@ def _matrix(handler, door, prefix, may_join, version, rest, call, query):
     if not allowed(method, rest, user, call['room']):
         return _json(handler, 403, {'errcode': 'M_FORBIDDEN', 'error': 'Not part of this call'})
     upstream = '/_matrix/client/%s/%s%s' % (version, rest, '?' + query if query else '')
-    return _pass(handler, door, upstream, _token(handler), rewrite=rest.startswith('rtc/'), prefix=prefix, rest=rest)
+    return _pass(handler, door, upstream, _token(handler), rewrite=True, prefix=prefix, rest=rest)
 
 
-def _register(handler, door, may_join, call):
-    """Element Call's own guest sign-up. Only someone the door lets in (a join-link cookie, or the owner) gets an
-    account, and the account is in exactly one call."""
+def _register(handler, door, owner, call):
+    """Element Call's own sign-up (it asks only for a name, which it then sets itself). The account is made for
+    exactly this call, as a guest, or as the owner when it came in by the owner key inside Messenger."""
     try:
         body = json.loads(_read_body(handler, 8192) or b'{}')
     except ValueError:
@@ -478,11 +499,7 @@ def _register(handler, door, may_join, call):
     if not isinstance(body, dict) or not body.get('username'):
         # Element Call's first, empty request asks which steps sign-up needs: none it has to show.
         return _json(handler, 401, {'session': secrets.token_hex(8), 'flows': [{'stages': ['m.login.dummy']}], 'params': {}})
-    who = may_join(handler)
-    if not who:
-        return _json(handler, 403, {'errcode': 'M_FORBIDDEN', 'error': 'Open the call from its link'})
-    name, owner = who
-    session = door.join(call, name, owner=owner)
+    session = door.join(call, 'Me' if owner else 'Guest', owner=owner)
     return _json(handler, 200, session)
 
 
@@ -507,8 +524,11 @@ def _pass(handler, door, upstream, token, rewrite=False, prefix='', rest=''):
     if not callers_only(unquote(rest), body if body is not None else b'{}'):
         return _json(handler, 403, {'errcode': 'M_FORBIDDEN', 'error': 'Not part of this call'})
     if rewrite:
-        # MatrixRTC names LiveKit by its address inside the box (calls.LIVEKIT_WS); a browser reaches it through
-        # this door instead. Callers see the door's address, the box's services keep seeing their own.
+        # MatrixRTC names LiveKit by its address inside the box (calls.LIVEKIT_WS), and Element Call connects to the
+        # address it is given. Each caller reaches it through the door it came in by (the owner inside Messenger, a
+        # guest on its own listener), so each sees its own door's address: in the transports list, in the other
+        # callers' memberships and in its token requests. Synapse and the token service only ever see the box's own
+        # address, so every caller's membership names the same LiveKit.
         origin = _origin(handler)
         public = ('wss' if origin.startswith('https') else 'ws') + origin[origin.index(':'):] + prefix + '/livekit'
         if body:
@@ -624,7 +644,7 @@ class GuestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return None
         # Anyone holding the link may join as a guest, with the name they give Element Call.
-        return serve(self, door, '', lambda _h: ('Guest', False), self.path)
+        return serve(self, door, '', False, self.path)
 
     def do_GET(self):
         self._handle()

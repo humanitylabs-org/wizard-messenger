@@ -888,6 +888,7 @@
     expand: ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'],
     keyboard: ['M2.5 6.5h19v11h-19z', 'M6 10h.01', 'M10 10h.01', 'M14 10h.01', 'M18 10h.01', 'M8 14h8'],
     backspace: ['M21 5H8l-6 7 6 7h13z', 'm17 9-6 6', 'm11 9 6 6'],
+    video: ['M3 7h12v10H3z', 'm15 10.5 6-3.5v10l-6-3.5z'],
     qr: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h2v2h-2z', 'M18 14h2', 'M14 18v2', 'M18 18h2v2h-2z'],
   };
   function icon(name) {
@@ -2713,6 +2714,19 @@
     const t = store.threads[s.person]; if (!t || !view.sub) return;
     view.sub.textContent = subtitle(t.person); view.sub.classList.toggle('typing', (store.typing[s.person] || []).length > 0);
   }
+  // Issue 445 (switch calls): the box starts the call (its own LiveKit and Element Call, call_door.py) and the
+  // call opens in a window of its own, which may use the camera. With a public door the join link to send comes
+  // back too; without one, calls stay on the owner's own devices and the call button says so.
+  const callsOn = () => switchState.on.calls === true;
+  async function startCall(p) {
+    const win = window.open('', '_blank');
+    try {
+      const r = await api('api/view/calls', {method: 'POST', body: {title: p.display_name || ''}});
+      if (win && !win.closed) win.location.replace(r.open);
+      else { const a = node('a', 'primary wide', 'Open the call'); a.href = r.open; a.target = '_blank'; a.rel = 'noopener'; overlay('Call').append(a); }
+      if (!r.link) toast('Calls work on your own devices for now. Connect Cloudflare to send a link anyone can open.', 4000);
+    } catch (e) { win?.close(); error(e); }
+  }
   function buildThread(id, p) {
     const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null, networksOf(p)[0], pictureURL(p.id, p.avatar));
     // Header ⋯: the everyday chat actions, same as long-pressing the chat in the list.
@@ -2729,6 +2743,8 @@
       const head = root.querySelector('.u-thread-head'), more = head?.querySelector('[aria-label="Chat options"]'), cu = iconButton('sparkle', 'Catch me up', () => catchUp(id), 'u-catchup-btn');
       if (more) head.insertBefore(cu, more); else head?.append(cu);
       if (!p.native) head?.insertBefore(draftToggle(id, p), cu);
+      // Issue 445 (switch calls): a call from this chat, left of Catch me up.
+      if (!p.native) { const cb = iconButton('video', 'Call', () => startCall(store.threads[id]?.person || p), 'u-call-btn'); cb.hidden = !callsOn(); head?.insertBefore(cb, cu); }
     }
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];
@@ -6845,6 +6861,7 @@
     try { window.WizardApp?.share?.receive?.({accepts, receive: receiveShare}); } catch { /* standalone or an older Wizard: no share sheet */ }
   }
   // Issue 399: the Add contact bar follows the switch in an open chat.
+  switchState.paints.calls = () => document.querySelectorAll('.u-call-btn').forEach(b => { b.hidden = !callsOn(); });
   switchState.paints['add-contact'] = () => { const p = store.threads[view.id]?.person; if (!p || !view.root) return; if (!addContactOn()) return paintAddContact(); if (!view.root.querySelector('.u-addcontact')) addContactBar(view.root, p); else loadNetContact(p).then(paintAddContact); };
   window.MessengerUnified = {
     settings: accounts, showNative, returnNative, reactionChip, reactorList,

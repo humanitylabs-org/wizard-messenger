@@ -277,22 +277,14 @@ class ViewHandler(Handler):
     def service(self) -> ViewServer:
         return cast(ViewServer,self.server)
     def _call_door(self):
-        """Issue 445 (switch calls): the owner's way into a call, Element Call at <app path>call/ (call_door.py)."""
+        """Issue 445 (switch calls): the owner's way into a call, Element Call at <app path>call/ (call_door.py).
+        Only a call's owner key opens it here, and only the owner's own session gets that key (/api/view/calls)."""
         if not self.path.startswith('/call/') or getattr(self.service,'call_door',None) is None: return False
         import call_door
         self.pending_cookie=None
-        try: call_door.serve(self,self.service.call_door,self.service.public_path+'call',self._call_owner,self.path[len('/call'):])
+        try: call_door.serve(self,self.service.call_door,self.service.public_path+'call',True,self.path[len('/call'):])
         except (BrokenPipeError,ConnectionResetError): pass
         return True
-    def _call_owner(self,_handler):
-        """Only the owner's own Messenger session makes an owner call account (never a bearer, never cross-site)."""
-        if self.headers.get('Authorization') or self.headers.get('Sec-Fetch-Site') not in (None,'same-origin'): return None
-        try:
-            if self.service.trusted_owner.enabled: self._trusted_owner()
-            session=self._session()
-        except EngineError: return None
-        if session is None or session.get('setup_only'): return None
-        return ('Me',True)
     def _handle(self,method):
         if self._call_door(): return
         return super()._handle(method)
@@ -719,6 +711,22 @@ class ViewHandler(Handler):
                     raise EngineError('invalid_subscription', 'Invalid notification subscription', 400) from None
                 return 200, {'ok': True, 'result': result}
             raise EngineError('not_found', 'No such notification route', 404)
+        if path == '/api/view/calls':
+            # Issue 445 (switch calls): the chat header's call button. Owner only: it starts a call and gets the
+            # owner's own way in (call_door.py). The guest link exists once a public door does (slice 4).
+            if self.headers.get('Authorization'):
+                raise EngineError('owner_only', 'Only the owner can start a call', 403)
+            self._authorize()
+            if method != 'POST': raise EngineError('not_found', 'No such call route', 404)
+            door = self.service.call_door
+            if door is None or not door.on(): raise EngineError('calls_off', 'Calls are off', 404)
+            body = self._body()
+            title = body.get('title') if isinstance(body.get('title'), str) else ''
+            import call_door
+            try: call = door.start(' '.join(title.split())[:80] or 'Call')
+            except call_door.DoorError as e: raise EngineError('call_unavailable', e.message, e.status) from None
+            return 200, {'ok': True, 'result': {'call': call['id'], 'open': door.link(call, '', self.service.public_path+'call', owner=True),
+                                               'link': door.guest_link(call), 'reach': 'everyone' if door.guest_link(call) else 'tailnet'}}
         if path == '/api/view/authority':
             if self.headers.get('Authorization'):
                 raise EngineError('owner_only', 'Independent review configuration is owner-only', 403)

@@ -283,6 +283,7 @@ class OwnerDoor(DoorCase):
         engine.data = str(self.root)
         self.view = test_web.ViewServer(('127.0.0.1', 0), engine, test_web.TOKEN, [test_web.ORIGIN])
         self.view.call_door.app = self.app
+        self.server = self.view  # for test_web.ViewBoundary.session
         threading.Thread(target=self.view.serve_forever, daemon=True).start()
 
     def tearDown(self):
@@ -304,28 +305,42 @@ class OwnerDoor(DoorCase):
         conn.close()
         return r.status, json.loads(raw) if raw[:1] == b'{' else raw
 
-    def test_owner_joins_from_messenger_and_nobody_else_does(self):
-        call = self.view.call_door.start('Ann')
-        base = '/call/k/%s' % call['key']
+    def test_owner_starts_a_call_and_joins_from_messenger(self):
+        cookie, csrf = test_web.ViewBoundary.session(self)
+        owner = {'Cookie': cookie, 'Origin': test_web.ORIGIN, 'X-Messenger-CSRF': csrf}
+        self.assertEqual(self.owner_request('POST', '/api/view/calls', {'title': 'Ann'}, extra={'Origin': test_web.ORIGIN})[0], 401)
+        self.assertEqual(self.owner_request('POST', '/api/view/calls', {'title': 'Ann'},
+                                            extra={'Authorization': 'Bearer ' + test_web.TOKEN})[0], 403)
+        status, body = self.owner_request('POST', '/api/view/calls', {'title': 'Ann'}, extra=owner)
+        self.assertEqual(status, 200, body)
+        result = body['result']
+        call = self.view.call_door._load()['calls'][result['call']]
+        self.assertEqual(call['title'], 'Ann')
+        self.assertTrue(result['open'].startswith('/call/k/%s/join/#/Ann?roomId=' % call['owner_key']), result['open'])
+        self.assertEqual((result['link'], result['reach']), (None, 'tailnet'))  # no public door yet
+        base = '/call/k/%s' % call['owner_key']
         status, page = self.owner_request('GET', base + '/join/')
         self.assertEqual(status, 200)
         self.assertIn(b'Element Call', page)
         status, config = self.owner_request('GET', base + '/join/config.json')
-        self.assertTrue(config['default_server_config']['m.homeserver']['base_url'].endswith('/call/k/' + call['key']))
-        reg = base + '/_matrix/client/v3/register'
-        body = {'username': 'x', 'password': 'y'}
-        self.assertEqual(self.owner_request('POST', reg, body)[0], 403)  # no owner session
-        token, _ = self.view.auth.create()
-        cookie = 'wizard_messenger_session=' + token
-        self.assertEqual(self.owner_request('POST', reg, body, cookie, {'Sec-Fetch-Site': 'cross-site'})[0], 403)
-        self.assertEqual(self.owner_request('POST', reg, body, cookie, {'Authorization': 'Bearer ' + test_web.TOKEN})[0], 403)
-        status, login = self.owner_request('POST', reg, body, cookie, {'Sec-Fetch-Site': 'same-origin'})
+        self.assertTrue(config['default_server_config']['m.homeserver']['base_url'].endswith(base))
+        status, login = self.owner_request('POST', base + '/_matrix/client/v3/register', {'username': 'x', 'password': 'y'})
         self.assertEqual(status, 200, login)
         self.assertRegex(login['user_id'], r'^@owner-[0-9a-f]{12}:messenger\.internal$')
-        self.assertTrue(self.view.call_door._load()['accounts'][login['user_id']]['owner'])
-        # The switch off closes this door too, and Messenger's own pages are untouched.
+        self.assertIn((call['room'], login['user_id']), self.hs.invites)
+        # Each key opens only its own door: the guest key never inside Messenger, the owner key never for guests.
+        self.assertEqual(self.owner_request('GET', '/call/k/%s/join/' % call['key'])[0], 404)
+        self.assertEqual(self.request('GET', '/k/%s/join/' % call['owner_key'])[0], 404)
+        self.assertEqual(self.request('GET', '/c/' + call['owner_key'])[0], 404)
+        # With a public door the owner gets the link to send.
+        (self.root / 'calls' / 'public.json').write_text(json.dumps({'origin': 'https://call.example.org'}))
+        status, body = self.owner_request('POST', '/api/view/calls', {'title': 'Bob'}, extra=owner)
+        key = self.view.call_door._load()['calls'][body['result']['call']]['key']
+        self.assertEqual((body['result']['link'], body['result']['reach']), ('https://call.example.org/c/' + key, 'everyone'))
+        # The switch off closes this door too.
         self.switch(False)
         self.assertEqual(self.owner_request('GET', base + '/join/')[0], 404)
+        self.assertEqual(self.owner_request('POST', '/api/view/calls', {'title': 'Ann'}, extra=owner)[0], 404)
 
 
 class Pins(unittest.TestCase):

@@ -1228,6 +1228,8 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 
 /* Catch me up (6 Nov 2026): opaque sheet, --wz-* tokens with the standalone fallbacks, 44px+ targets. */
 .u-catchup-btn svg { stroke: currentColor; }
+.u-call-btn svg { stroke: currentColor; }
+.u-call-btn[hidden] { display: none; }
 /* Drafts toggle in the chat header (issue 201): a pill that shows on/off at a glance. */
 .u-draft-toggle { display: inline-flex; align-items: center; gap: .375rem; flex: 0 0 auto; min-height: 44px; min-width: 44px; padding: 0 .625rem; border-radius: 22px; border: 1px solid var(--wz-border, var(--line)); background: transparent; color: var(--wz-text-muted, var(--ink-3)); font-size: .8125rem; font-weight: 600; }
 .u-agent-toggle[aria-pressed=true] { color: var(--wz-accent, var(--accent)); background: color-mix(in srgb, var(--wz-accent, var(--accent)) 14%, transparent); }
