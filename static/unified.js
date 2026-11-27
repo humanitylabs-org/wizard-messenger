@@ -2859,15 +2859,16 @@
   }
   // Network-neutral projection: only adjacent parts with the same source and sender join.
   function albumPosts(messages) {
-    const posts = [];
+    const posts = [], sending = new Set();
     for (const m of messages) {
       const last = posts[posts.length - 1];
-      if (m.album && m.msgtype === 'm.image' && last?.msgtype === 'm.image' && last?.album === m.album && last.sender === m.sender && last.identity_id === m.identity_id && last.network === m.network && last.outgoing === m.outgoing) {
+      if (m.album && m.msgtype === 'm.image' && last?.msgtype === 'm.image' && last?.album === m.album && !sending.has(last) && last.sender === m.sender && last.identity_id === m.identity_id && last.network === m.network && last.outgoing === m.outgoing) {
         last.photos.push(m);
         last.deleted = last.photos.every(p => p.deleted);
-      } else posts.push(m.album && m.msgtype === 'm.image' ? {...m, photos: [m]} : m);
+      } else if (m.album && m.msgtype === 'm.image' && m.photos?.length) { posts.push(m); sending.add(m); } // issue 480: an album still sending holds its own photos
+      else posts.push(m.album && m.msgtype === 'm.image' ? {...m, photos: [m]} : m);
     }
-    for (const post of posts) if (post.photos) {
+    for (const post of posts) if (post.photos && !sending.has(post)) {
       // Explicit native ordinals, never event-ID or time-window guesses. Telegram
       // retains its existing timeline order. Incomplete/delayed albums stay usable.
       if ((post.network === 'signal' || post.network === 'line') && post.photos.every(p => Number.isInteger(p.media?.album_index))) {
@@ -4572,7 +4573,11 @@
     async function submitOnce() {
       if (view.sd?.conflict) return toast('Choose which draft to keep first');
       const draftState = view.sd;
-      await draftState?.retry?.();
+      // Issue 480: Send never waits for photos still being saved to the draft. The send job carries its own copy of each
+      // photo (upload() from the blob in memory), so the box empties and the sending bubble shows at once; closeForSend
+      // then stops the draft copies still waiting. Only a tray already known to need attention (a photo whose upload
+      // failed and shows Retry, issue 463; a draft photo that didn't download; a refused removal) retries first.
+      if (draftState?.loadError || draftState?.uploadError) await draftState.retry?.();
       if (s.person !== id || view.sd !== draftState || !form.isConnected) return;
       if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
       const text = draft.value.trim(), a = view.attach || [];
