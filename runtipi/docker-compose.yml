@@ -39,7 +39,7 @@ services:
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.131"
+      MESSENGER_VERSION: "0.2.0-unified.16.132"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
