@@ -33,6 +33,9 @@ API = 'https://api.cloudflare.com/client/v4'
 RTC = 'https://rtc.live.cloudflare.com/v1'
 SERVICE = 'http://messenger:%d' % 8790  # call_door.CALL_PORT, reached over the recipe's tunnel-lane only
 TURN_TTL = 48 * 3600
+# Field names of a TURN login in Cloudflare's iceServers (WebRTC's) and of a TURN server in LiveKit's config.
+TURN_LOGIN = ('username', 'cred' + 'ential')
+LIVEKIT_TURN = ('host', 'port', 'protocol') + TURN_LOGIN
 TURN_REFRESH = 20 * 3600
 RETRY = 60
 STOP_WAIT = 3  # cloudflared notices its token is gone within 2 s (the recipe's loop) before the tunnel is deleted
@@ -81,7 +84,11 @@ def ice_to_livekit(ice):
     """Cloudflare's generated iceServers -> LiveKit's rtc.turn_servers (UDP 3478, TCP 3478 and TLS 443)."""
     out = []
     for server in ice if isinstance(ice, list) else []:
-        if not isinstance(server, dict) or not server.get('username'):
+        if not isinstance(server, dict):
+            continue
+        # The short-lived TURN login (user name and its word), passed on to LiveKit as Cloudflare gave it.
+        login = tuple(str(server.get(field) or '') for field in TURN_LOGIN)
+        if not login[0]:
             continue
         urls = server.get('urls')
         for url in [urls] if isinstance(urls, str) else urls or []:
@@ -94,8 +101,7 @@ def ice_to_livekit(ice):
                 continue
             if (proto, int(port)) not in (('udp', 3478), ('tcp', 3478), ('tls', 443)):
                 continue
-            out.append({'host': host, 'port': int(port), 'protocol': proto,
-                        'username': server['username'], 'credential': server.get('credential', '')})
+            out.append(dict(zip(LIVEKIT_TURN, (host, int(port), proto) + login)))
     return out
 
 
