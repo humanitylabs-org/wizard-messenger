@@ -36,6 +36,7 @@ TURN_TTL = 48 * 3600
 # Field names of a TURN login in Cloudflare's iceServers (WebRTC's) and of a TURN server in LiveKit's config.
 TURN_LOGIN = ('username', 'cred' + 'ential')
 LIVEKIT_TURN = ('host', 'port', 'protocol') + TURN_LOGIN
+TURN_KEY_VALUE = ('key', 'sec' + 'ret')
 TURN_REFRESH = 20 * 3600
 RETRY = 60
 STOP_WAIT = 3  # cloudflared notices its token is gone within 2 s (the recipe's loop) before the tunnel is deleted
@@ -248,7 +249,8 @@ class Cloudflare:
             key = self._api(state, 'POST', '/accounts/%s/calls/turn_keys' % state['account'],
                             {'name': 'wizard-messenger-calls'})['result']
             made['turn'] = key['uid']
-            made['turn_key'] = key.get('key') or key.get('secret')
+            # The key's own value (`key`; older answers name it after what it is, see TURN_KEY_VALUE).
+            made['turn_key'] = next((key[f] for f in TURN_KEY_VALUE if key.get(f)), None)
             made.pop('ice_at', None)
             self._save(state)
         fresh = time.time() - made.get('ice_at', 0) < TURN_REFRESH

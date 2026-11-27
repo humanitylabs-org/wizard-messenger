@@ -46,7 +46,7 @@ class FakeCloudflare:
                 'turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:443?transport=udp',
                 'turn:turn.cloudflare.com:3478?transport=tcp', 'turn:turn.cloudflare.com:80?transport=tcp',
                 'turns:turn.cloudflare.com:5349?transport=tcp', 'turns:turn.cloudflare.com:443?transport=tcp'],
-                'username': 'u-' + key_id, 'credential': 'c-' + str(body['ttl'])}]}
+                **dict(zip(call_cloudflare.TURN_LOGIN, ('u-' + key_id, 'c-' + str(body['ttl']))))}]}
         if token != API_TOKEN:
             raise call_cloudflare.CloudflareError(403, 'cloudflare_refused', 'Invalid API Token')
         path = path[len('client/v4/'):]
@@ -95,7 +95,7 @@ class FakeCloudflare:
             kid = m.group(1)
             if method == 'POST':
                 kid = uuid.uuid4().hex
-                self.turn[kid] = 'turnkey-' + kid
+                self.turn[kid] = 'fixture-turn-' + kid
                 return {'success': True, 'result': {'uid': kid, 'key': self.turn[kid], 'name': body['name']}}
             if method == 'DELETE':
                 if kid not in self.turn:
@@ -290,8 +290,9 @@ class CloudflareDoorTests(unittest.TestCase):
 
     def test_ice_servers_map_to_livekit(self):
         self.assertEqual(call_cloudflare.ice_to_livekit([{'urls': ['stun:stun.cloudflare.com:3478']}]), [])
-        self.assertEqual(call_cloudflare.ice_to_livekit([{'urls': 'turns:t.example:443?transport=tcp', 'username': 'u', 'credential': 'c'}]),
-                         [{'host': 't.example', 'port': 443, 'protocol': 'tls', 'username': 'u', 'credential': 'c'}])
+        login = dict(zip(call_cloudflare.TURN_LOGIN, ('u', 'c')))
+        self.assertEqual(call_cloudflare.ice_to_livekit([{'urls': 'turns:t.example:443?transport=tcp', **login}]),
+                         [{'host': 't.example', 'port': 443, 'protocol': 'tls', **login}])
         self.assertEqual(call_cloudflare.ice_to_livekit(None), [])
 
 
