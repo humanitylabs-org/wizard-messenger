@@ -158,6 +158,45 @@ def reaction_key(key, known=None):
         return key
     return (known or {}).get(key[:32]) or IMAGE_REACTION
 
+# Issue 471: a bridge publishes what reactions a chat accepts in the room's com.beeper.room_features state (bridgev2
+# RoomFeatures): `reaction` (-2 = rejected), `allowed_reactions` (Telegram: the chat's limited set, else the account's
+# available set; LINE: its fixed set) and `custom_emoji_reactions` (Telegram Premium: any emoji, sent as a custom one).
+ROOM_FEATURES = 'com.beeper.room_features'
+REACTION_RULES_TTL = 300
+
+
+def reaction_bare(key):
+    """A reaction compared without variation selectors (bridges add U+FE0F to their lists, pickers may not)."""
+    return (key or '').replace('\ufe0f', '').replace('\ufe0e', '')
+
+
+def reaction_rules(state):
+    """The chat's reaction rules from its room state: {reactions: bool, allowed: [emoji] or None (any), custom: bool}."""
+    rules = {'reactions': True, 'allowed': None, 'custom': False}
+    for event in state or []:
+        content = event.get('content') if isinstance(event, dict) and event.get('type') == ROOM_FEATURES else None
+        if not isinstance(content, dict) or not content:
+            continue
+        level = content.get('reaction')
+        if isinstance(level, int) and level <= -2:
+            rules['reactions'] = False
+        allowed = content.get('allowed_reactions')
+        if isinstance(allowed, list) and allowed:
+            rules['allowed'] = [k for k in allowed if isinstance(k, str) and k and not k.startswith('mxc://')]
+        rules['custom'] = content.get('custom_emoji_reactions') is True
+        break
+    if rules['custom']:
+        rules['allowed'] = None  # any emoji goes (the bridge sends one it lacks as a custom emoji)
+    return rules
+
+
+def reaction_allowed(rules, key):
+    if not rules or not rules.get('reactions', True):
+        return False
+    allowed = rules.get('allowed')
+    return allowed is None or reaction_bare(key) in {reaction_bare(k) for k in allowed}
+
+
 # Bridges tag ghost names with their network ("Ana (WA)"); the Inbox already shows the network's icon.
 NAME_SUFFIX = {'whatsapp': ' (WA)', 'twitter': ' (Twitter)', 'linkedin': ' (LinkedIn)'}
 
@@ -3875,6 +3914,36 @@ class UnifiedInbox:
             Path(str(p) + '.view').unlink(missing_ok=True)
             total -= size
 
+    def network_label(self, network):
+        try:
+            from connectors import PROVIDERS
+            return PROVIDERS[network].label
+        except (ImportError, KeyError):
+            return (network or 'This network').title()
+
+    def room_reaction_rules(self, address):
+        """Issue 471: the chat's reaction rules as its bridge published them, cached per room for a few minutes."""
+        cache = self.__dict__.setdefault('_reaction_rules', {})
+        hit = cache.get(address)
+        if hit and hit[0] > time.monotonic():
+            return hit[1]
+        try:
+            rules = reaction_rules(self.mx(self.room(address) + '/state'))
+        except EngineError:
+            return hit[1] if hit else reaction_rules([])
+        cache[address] = (time.monotonic() + REACTION_RULES_TTL, rules)
+        return rules
+
+    def reaction_choices(self, message_id):
+        """Issue 471 (switch full-reactions): which reactions this message's chat accepts, for the view's picker."""
+        if not self.switch_on('full-reactions'):
+            fail('not_found', 'Not found', 404)
+        message = self.store.message(message_id)
+        message = self.store.message(message.get('source_event') or message_id)
+        if message['network'] not in MATRIX_NETWORKS:
+            return {'reactions': False, 'allowed': [], 'custom': False, 'network': self.network_label(message['network'])}
+        return dict(self.room_reaction_rules(message['address']), network=self.network_label(message['network']))
+
     def react(self, message_id, payload):
         message = self.store.message(message_id)
         message_id = message.get('source_event') or message_id
@@ -3887,11 +3956,19 @@ class UnifiedInbox:
         room = self.room(message['address'])
         with self.store.db() as db:
             mine = db.execute('SELECT event_id,key FROM reaction WHERE message_id=? AND outgoing=1', (message_id,)).fetchall()
+        removing = payload.get('remove') is True or any(reaction_key(r[1], self.store.image_reactions()) == key for r in mine)
+        if not removing and self.switch_on('full-reactions'):
+            # Issue 471: never send a reaction the chat's network has said it refuses; the owner gets one plain line.
+            rules = self.room_reaction_rules(message['address'])
+            if not reaction_allowed(rules, key):
+                label = self.network_label(message['network'])
+                fail('reaction_not_allowed', label + (' only allows some reactions in this chat' if rules.get('reactions', True)
+                                                      else " doesn't allow reactions in this chat"), 409)
         # Telegram allows one reaction per person here: replace any previous one (Signal behaves the same).
         for row in mine:
             self.mx(room + '/redact/' + quote(row[0], safe='') + '/' + secrets.token_hex(8), 'PUT', {})
             self.store.redact(row[0])
-        if payload.get('remove') is True or any(reaction_key(r[1], self.store.image_reactions()) == key for r in mine):
+        if removing:
             return {'message': self.row(message_id)}
         result = self.mx(room + '/send/m.reaction/' + secrets.token_hex(12), 'PUT',
                          {'m.relates_to': {'rel_type': 'm.annotation', 'event_id': message_id, 'key': key}})
@@ -4144,6 +4221,9 @@ class UnifiedInbox:
                 if action == 'unread': return self.store.mark_unread(person_id)
                 if action == 'labels': return self.store.person_labels(person_id, payload.get('labels'))
                 if action == 'typing': return self.set_typing(person_id, payload)
+        # Issue 471, owner session only: no agent capability maps here (permissions.capability_for -> None).
+        if len(suffix) == 3 and suffix[0] == 'messages' and suffix[2] == 'reactions' and method == 'GET':
+            return self.reaction_choices(text(suffix[1], 300))
         if len(suffix) == 3 and suffix[0] == 'messages' and method == 'POST':
             message_id = text(suffix[1], 300)
             if suffix[2] == 'transcript': return self.save_transcript(message_id, payload)

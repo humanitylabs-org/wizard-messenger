@@ -59,7 +59,13 @@ class SwitchEndpoint(unittest.TestCase):
                 'id': 'calls', 'name': 'Calls',
                 'description': 'Encrypted voice and video calls from your own Wizard. Turning it on starts the call '
                                'server on your box (LiveKit); turning it off stops it again.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#445']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#445']}, {
+                'id': 'full-reactions', 'name': 'Any emoji as a reaction',
+                'description': 'The ＋ next to the reactions on a message opens the full emoji panel (search, '
+                               'categories, Recent), so any emoji can be a reaction, like Telegram. The quick row '
+                               'shows the reactions you use most. Chats that only allow some reactions show only '
+                               'those.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#471']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -469,7 +475,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"new-group": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('new-group'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'new-group', 'add-contact', 'synapse-postgres', 'calls'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'new-group', 'add-contact', 'synapse-postgres', 'calls', 'full-reactions'])
 
     def test_the_photo_speed_switches_are_gone_and_their_stored_values_cleared(self):
         # Issue 468: Photos ready on arrival, Photos open instantly, Photos ready in Wizard's viewer and Background

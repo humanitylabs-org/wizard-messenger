@@ -715,6 +715,25 @@
       .sort((a, b) => emojiScore(b[1], now) - emojiScore(a[1], now) || b[1].t - a[1].t)
       .slice(0, n).map(([e]) => e);
   }
+  // Issue 471: reactions are compared without variation selectors (bridges list ❤️ with U+FE0F, pickers may not).
+  const reactionBare = k => String(k || '').replace(/[\uFE0E\uFE0F]/g, '');
+  // The chat's allowed reactions as a lookup, or null when any emoji goes.
+  function reactionFilter(allowed) {
+    if (!Array.isArray(allowed)) return null;
+    const set = new Set(allowed.map(reactionBare));
+    return k => set.has(reactionBare(k));
+  }
+  // The quick row: the owner's most-used reactions first, then the usual six, only ones the chat allows (then the
+  // chat's own list fills the row).
+  function reactionQuick(ranked, defaults, allowed, n = 6) {
+    const ok = reactionFilter(allowed) || (() => true), out = [], seen = new Set();
+    for (const k of [...(ranked || []), ...(defaults || []), ...(Array.isArray(allowed) ? allowed : [])]) {
+      if (out.length >= n) break;
+      if (!k || seen.has(reactionBare(k)) || !ok(k)) continue;
+      seen.add(reactionBare(k)); out.push(k);
+    }
+    return out;
+  }
   // The delete key: a selection goes, else the one character (a whole emoji, flags and families too) before the caret.
   function emojiDelete(value, start, end) {
     const v = String(value || ''), a = Math.max(0, Math.min(start ?? v.length, v.length)), b = Math.max(a, Math.min(end ?? a, v.length));
@@ -837,7 +856,7 @@
     u.hash = hash + (hash.includes('?') ? '&' : '?') + 'controlledAudioDevices=true';
     return u.href;
   }
-  if (typeof module !== 'undefined') module.exports = {callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2258,7 +2277,7 @@
   // "Inside" is the visible boxes only (actions list, emoji strip, emoji grid), not the panel's empty width beside them.
   // closest() also works for a control the tap itself just replaced (the emoji ＋ swaps the strip for the grid).
   function outsideCloses(layer, panel) {
-    const inside = t => !!t?.closest?.('.u-actions,.u-quick,.u-grid');
+    const inside = t => !!t?.closest?.('.u-actions,.u-quick,.u-grid,.u-react-picker');
     layer.addEventListener('pointerdown', e => { if (inside(e.target)) return; e.preventDefault(); swallowRelease(); closeOverlay(); });
     layer.addEventListener('click', e => { if (!inside(e.target)) closeOverlay(); });
   }
@@ -2290,8 +2309,18 @@
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
     const panel = node('div', 'u-menu ' + (opts.side === 'right' ? 'right' : 'left') + (opts.cls ? ' ' + opts.cls : '')); panel.setAttribute('role', 'menu'); panel.setAttribute('aria-label', title);
     s.menuClosed = opts.onClose || null;
-    const pick = k => { recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); closeOverlay(); opts.quick.pick(k); };
-    if (opts.quick) {
+    const pick = k => {
+      if (fullReactions() && opts.quick.mine !== k) rememberEmoji(k); else recent = [k, ...recent.filter(x => x !== k)].slice(0, 8);
+      closeOverlay(); opts.quick.pick(k);
+    };
+    if (opts.quick && fullReactions()) {
+      // Issue 471: the same most-used row and full emoji panel as a bridged message's menu.
+      const strip = node('div', 'u-quick');
+      for (const k of reactionQuick(emojiRanked(emojiUsageNow(), Date.now(), 24), QUICK, null)) strip.append(button(k, () => pick(k), 'u-qr-btn' + (opts.quick.mine === k ? ' mine' : '')));
+      const more = button('＋', () => fullReactionPanel(panel, card, opts.side === 'right', pick, null), 'u-qr-btn more');
+      more.setAttribute('aria-label', 'More reactions'); strip.append(more);
+      panel.append(strip);
+    } else if (opts.quick) {
       const strip = node('div', 'u-quick');
       for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => pick(k), 'u-qr-btn' + (opts.quick.mine === k ? ' mine' : '')));
       strip.append(button('＋', () => { const box = node('div', 'u-grid'); for (const k of [...QUICK, ...MORE]) box.append(button(k, () => pick(k), 'u-qr-btn')); panel.replaceChildren(box); }, 'u-qr-btn more'));
@@ -3709,7 +3738,21 @@
     const layer = node('div', 'u-overlay u-menu-layer'); layer.id = 'u-overlay';
     const panel = node('div', 'u-menu'); panel.setAttribute('role', 'menu');
     const telegram = bridged(m.network);
-    if (telegram) {
+    if (telegram && fullReactions()) {
+      // Issue 471: most-used reactions first, ＋ opens the full emoji panel, both narrowed to what the chat takes.
+      const strip = node('div', 'u-quick');
+      const mine = m.reactions?.find(r => r.mine)?.key;
+      const paintStrip = rules => {
+        strip.hidden = rules?.reactions === false;
+        strip.replaceChildren(...reactionQuick(emojiRanked(emojiUsageNow(), Date.now(), 24), QUICK, rules?.allowed)
+          .map(k => button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn' + (reactionBare(mine) === reactionBare(k) ? ' mine' : ''))));
+        const more = button('＋', () => fullReactionPanel(panel, b, m.outgoing, k => { closeOverlay(); react(m, k); }, rules?.allowed), 'u-qr-btn more');
+        more.setAttribute('aria-label', 'More reactions'); strip.append(more);
+      };
+      paintStrip(reactionRulesNow(m));
+      reactionRulesFor(m).then(rules => { if (strip.isConnected && rules) { const had = strip.contains(document.activeElement); paintStrip(rules); if (had) strip.querySelector('button')?.focus(); } });
+      panel.append(strip);
+    } else if (telegram) {
       const strip = node('div', 'u-quick');
       const mine = m.reactions?.find(r => r.mine)?.key;
       for (const k of [...new Set([...recent.slice(0, 2), ...QUICK])].slice(0, 6)) strip.append(button(k, () => { closeOverlay(); react(m, k); }, 'u-qr-btn' + (mine === k ? ' mine' : '')));
@@ -3734,6 +3777,29 @@
     panel.classList.add(m.outgoing ? 'right' : 'left'); placeMenu(panel, b, m.outgoing);
     b.closest('.u-row')?.classList.add('lifted'); layer.addEventListener('remove', () => {}); view.lifted = b.closest('.u-row');
     panel.querySelector('button')?.focus(); hold();
+  }
+  // Issue 471 (switch full-reactions): the full emoji panel as a reaction picker, in place of the open menu.
+  const fullReactions = () => switchState.on['full-reactions'] === true;
+  function fullReactionPanel(panel, anchor, right, pick, allowed) {
+    const p = picker({react: true, pick, allowed: Array.isArray(allowed) ? allowed : null});
+    panel.classList.add('u-react-full'); panel.replaceChildren(p.panel); p.open();
+    placeMenu(panel, anchor, right);
+    // A computer types straight into Search; a phone keeps its keyboard down until Search is tapped.
+    const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    (coarse ? p.panel.querySelector('.u-emo') : p.panel.querySelector('.u-pick-search'))?.focus();
+  }
+  // What the chat's network takes as reactions (the box reads the bridge's room features), kept a few minutes.
+  const reactionRules = new Map();
+  const reactionRulesNow = m => { const hit = reactionRules.get(m.id); return hit && hit.rules && hit.at > Date.now() - 300000 ? hit.rules : null; };
+  function reactionRulesFor(m) {
+    const hit = reactionRules.get(m.id);
+    if (hit && hit.at > Date.now() - 300000) return hit.ask;
+    const entry = {at: Date.now(), rules: null};
+    entry.ask = api('api/unified/messages/' + encodeURIComponent(m.id) + '/reactions')
+      .then(r => { entry.rules = r && typeof r === 'object' ? {reactions: r.reactions !== false, allowed: Array.isArray(r.allowed) ? r.allowed : null} : null; return entry.rules; })
+      .catch(() => { reactionRules.delete(m.id); return null; });
+    reactionRules.set(m.id, entry);
+    return entry.ask;
   }
   function grid(m) {
     const box = node('div', 'u-grid');
@@ -3809,7 +3875,9 @@
   }
   async function react(m, key) {
     const pid = view.id, t = store.threads[pid]; if (!t) return;
-    recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
+    // Issue 471: with full-reactions on, a new reaction counts in the same usage ranking as the composer's emoji.
+    if (typeof fullReactions === 'function' && fullReactions() && !(m.photos || [m]).some(p => (t.messages.find(row => row.id === p.id) || p).reactions?.some(r => r.mine && r.key === key))) rememberEmoji(key);
+    else recent = [key, ...recent.filter(k => k !== key)].slice(0, 8);
     // Album posts are projections, not store rows. Change the canonical part, including
     // an own reaction on a later photo, so paintThread's next projection sees it now.
     const parts = (m.photos || [m]).map(p => t.messages.find(row => row.id === p.id)).filter(Boolean);
@@ -4782,8 +4850,11 @@
   }
   const pickerCache = {stickers: null, packs: Object.create(null), gifs: Object.create(null)};
   const pickURL = (pid, full) => ticketed('api/unified/picker/media/' + encodeURIComponent(pid) + (full ? '?kind=full' : ''));
+  // Issue 471 (switch full-reactions): with o.react the same panel picks a reaction for a message: emoji only, no text
+  // box, tabs or delete key; o.pick(k) gets the emoji and o.allowed (a list, or null for any) narrows the choice.
   function picker(o) {
-    const panel = node('div', 'u-picker'); panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Emoji, GIFs and stickers');
+    const reacting = !!o.react;
+    const panel = node('div', 'u-picker' + (reacting ? ' u-react-picker' : '')); panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', reacting ? 'Choose a reaction' : 'Emoji, GIFs and stickers');
     const tabs = node('div', 'u-pick-tabs'); tabs.setAttribute('role', 'tablist');
     const body = node('div', 'u-pick-body');
     panel.append(tabs, body);
@@ -4802,10 +4873,11 @@
     const touch = () => lastPointer ? lastPointer !== 'mouse' : matchMedia('(pointer: coarse)').matches;
     // The caret survives the box losing focus (the phone keyboard goes down while the panel is open).
     const keep = () => { state.start = o.draft.selectionStart; state.end = o.draft.selectionEnd; };
-    for (const ev of ['select', 'keyup', 'pointerup', 'input', 'blur']) o.draft.addEventListener(ev, keep);
+    if (!reacting) for (const ev of ['select', 'keyup', 'pointerup', 'input', 'blur']) o.draft.addEventListener(ev, keep);
     // Issue 294: the panel stays open while several emoji go in. A tap in the box still closes it (the outside tap
     // below covers the box, like Telegram), but focus alone (a phone handing focus back to the box) no longer does.
     function insert(k) {
+      if (reacting) return o.pick(k);
       const v = o.draft.value, a = Math.min(state.start ?? v.length, v.length), b = Math.max(a, Math.min(state.end ?? a, v.length));
       o.draft.value = v.slice(0, a) + k + v.slice(b);
       o.draft.dispatchEvent(new Event('input', {bubbles: true}));
@@ -4817,13 +4889,14 @@
       const t = button(label, () => show(name), 'u-pick-tab' + (state.tab === name ? ' on' : '')); t.setAttribute('role', 'tab'); t.setAttribute('aria-selected', String(state.tab === name)); t.dataset.tab = name; return t;
     }
     function paintTabs() {
-      const tg = o.telegram(); if (!tg && state.tab !== 'emoji') state.tab = 'emoji';
+      const tg = !reacting && o.telegram(); if (!tg && state.tab !== 'emoji') state.tab = 'emoji';
       tabs.replaceChildren(tab('emoji', 'Emoji'), ...(tg ? [tab('gifs', 'GIFs'), tab('stickers', 'Stickers')] : []));
     }
     function show(name) { state.tab = name; state.gen++; closeTones(); state.lit = null; cats.replaceChildren(); cats.hidden = true; paintTabs(); body.replaceChildren(); body.scrollTop = 0; ({emoji: emojiTab, gifs: gifTab, stickers: stickerTab})[name](state.gen); }
     function section(title, cls) { const h = node('h3', 'u-pick-head', title); const g = node('div', cls); body.append(h, g); return g; }
     function emojiButton(k) {
-      const choices = emojiTones(k), shown = choices ? toneFor(k) : k;
+      // A chat with a fixed list of reactions takes them as listed, so no skin tones there.
+      const choices = reacting && o.allowed ? null : emojiTones(k), shown = choices ? toneFor(k) : k;
       const b = button(shown, () => { if (b.held) { b.held = false; return; } insert(choices ? toneFor(k) : k); }, 'u-emo');
       b.setAttribute('aria-label', shown); b.dataset.emoji = k;
       if (choices) { b.dataset.tones = emojiToneKey(k); holdForTones(b, k, choices); }
@@ -4887,6 +4960,7 @@
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) del.addEventListener(ev, stopDel);
     del.addEventListener('contextmenu', e => e.preventDefault());
     function layout() {
+      if (reacting) { panel.replaceChildren(cats, body); return; }
       foot.replaceChildren(tabs, del); panel.replaceChildren(cats, body, foot);
       // On a phone the panel takes the keyboard's place at the keyboard's own height, so nothing jumps.
       const kb = touch() ? emojiPanelHeight((storedObject(KEYBOARD_HEIGHT) || {})[innerWidth], keyboardWatch.full[innerWidth] || innerHeight) : 0;
@@ -4894,6 +4968,7 @@
     }
     // Recent: about three rows, ranked by how often and how recently each emoji was used.
     const recentRows = () => emojiRanked(emojiUsageNow(), Date.now(), Math.min(48, Math.max(6, Math.floor(((body.clientWidth || 360) - 14) / 42)) * 3));
+    const allowedOnly = reacting ? reactionFilter(o.allowed) : null;
     function emojiTab(gen) {
       const search = node('input', 'u-pick-search'); search.type = 'search'; search.placeholder = 'Search emoji'; search.setAttribute('aria-label', 'Search emoji'); search.enterKeyHint = 'search';
       const list = node('div', 'u-emo-list');
@@ -4903,8 +4978,15 @@
         if (gen !== state.gen) return;
         const mine = ++round, q = search.value.trim(), heads = [], fills = [];
         list.replaceChildren(); cats.replaceChildren();
-        const groups = q ? [] : [{label: 'Recent', emoji: recentRows()}];
+        let groups = q ? [] : [{label: 'Recent', emoji: recentRows()}];
         for (const c of kitNow ? kitNow.search(q) : [{label: 'Smileys & People', emoji: [...QUICK, ...MORE].filter(k => !q || k.includes(q))}]) groups.push({label: c.label, emoji: [...c.emoji]});
+        if (allowedOnly) {
+          // Only what this chat takes; listed reactions the shared set doesn't have still show, under More.
+          groups = groups.map(g => ({...g, emoji: g.emoji.filter(allowedOnly)}));
+          const shown = new Set(groups.flatMap(g => g.emoji.map(reactionBare)));
+          const extra = q ? [] : o.allowed.filter(k => !shown.has(reactionBare(k)));
+          if (extra.length) groups.push({label: 'More', emoji: extra});
+        }
         for (const g of groups.filter(x => x.emoji.length)) {
           const h = node('h3', 'u-pick-head', g.label), grid = node('div', 'u-emo-grid'), i = heads.length; h.dataset.cat = g.label;
           list.append(h, grid); heads.push(h);
@@ -5021,6 +5103,7 @@
     }
     function open() {
       if (state.open) return;
+      if (reacting) { state.open = true; layout(); panel.hidden = false; show('emoji'); return; } // the message menu closes it
       if (document.activeElement === o.draft) keep(); state.open = true; layout(); panel.hidden = false; o.button.classList.add('on'); o.button.setAttribute('aria-expanded', 'true'); o.form.classList.add('picking');
       paintButton(true);
       if (touch()) o.draft.blur(); // the panel takes the keyboard's place
@@ -5037,8 +5120,10 @@
     }
     function close() {
       if (!state.open) return false;
-      state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren(); o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking');
-      stopDel(); closeTones(); state.lit = null; paintButton(false);
+      state.open = false; state.gen++; state.outside?.abort(); state.outside = null; panel.hidden = true; body.replaceChildren();
+      stopDel(); closeTones(); state.lit = null;
+      if (reacting) return true;
+      o.button.classList.remove('on'); o.button.setAttribute('aria-expanded', 'false'); o.form.classList.remove('picking'); paintButton(false);
       return true;
     }
     function paintButton(keyboard) {
@@ -5069,10 +5154,10 @@
       const names = [...tabs.children].map(x => x.dataset.tab), next = names[names.indexOf(state.tab) + (dx < 0 ? 1 : -1)];
       if (next) show(next);
     }, {passive: true});
-    panel.addEventListener('pointerdown', notePointer, true); o.button.addEventListener('pointerdown', notePointer, true);
-    panel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); o.draft.focus(); } });
-    const handle = {panel, close, toggle, get isOpen() { return state.open; }};
-    view.picker = handle;
+    panel.addEventListener('pointerdown', notePointer, true); o.button?.addEventListener('pointerdown', notePointer, true);
+    panel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (reacting) return closeOverlay(); close(); o.draft.focus(); } });
+    const handle = {panel, open, close, toggle, get isOpen() { return state.open; }};
+    if (!reacting) view.picker = handle;
     return handle;
   }
   // WebM (Matroska) Opus -> Ogg Opus, packet for packet (RFC 7845). Throws on anything it does not understand.

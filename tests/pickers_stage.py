@@ -4,7 +4,7 @@ path, one Telegram chat and one WhatsApp chat. The Telegram bridge's picker rout
 mocked; every Matrix send is appended to <dir>/sends.jsonl so the test can read the exact event type and content.
 Preview and prepared media bytes are generated with ffmpeg and pre-seeded into the media cache. No homeserver,
 no provider, no real account. Writes <dir>/state.json."""
-import hashlib, itertools, json, os, subprocess, sys, tempfile, time
+import hashlib, itertools, json, os, subprocess, sys, tempfile, time, urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, 'tests'))
 OUT = os.environ.get('AGENT_STAGE_DIR', '/home/oscar/.hermes/cache/scratch/pickers-stage'); os.makedirs(OUT, exist_ok=True)
 os.environ['MESSENGER_COOKIE_SECURE'] = '0'
@@ -29,7 +29,13 @@ server = ViewServer(('127.0.0.1', port), engine, fx.TOKEN, [origin])
 inbox = UnifiedInbox(tmp, engine); server.unified = inbox
 SENDS = os.path.join(OUT, 'sends.jsonl'); open(SENDS, 'w').close()
 _sent = itertools.count(1)
+# Issue 471: the bridges' reaction rules (com.beeper.room_features) per room, written by a test as
+# <dir>/features.json {"!zoe": [state events]}; a room missing there has none (any emoji).
+FEATURES = os.path.join(OUT, 'features.json')
 def mx(path, method='GET', body=None, timeout=15):
+    if method == 'GET' and path.endswith('/state'):
+        room = urllib.parse.unquote(path.split('/')[2])
+        return (json.load(open(FEATURES)) if os.path.exists(FEATURES) else {}).get(room, [])
     with open(SENDS, 'a') as f:
         f.write(json.dumps({'path': path, 'method': method, 'body': body}) + '\n')
     return {'event_id': '$sent%d' % next(_sent)}
