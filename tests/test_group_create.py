@@ -1,4 +1,4 @@
-"""New group (issue 397, switch new-group). A recorded bridge answers like the pinned bridgev2 bridges
+"""New group (issue 397, on for everyone since its switch-default). A recorded bridge answers like the pinned bridgev2 bridges
 (mautrix-go v0.32 provisioning: /capabilities, /contacts, /create_group/<type>); no real account is contacted."""
 import json
 import unittest
@@ -110,9 +110,6 @@ class NewGroup(unittest.TestCase):
         self.key = {'Authorization': 'Bearer ' + data['result']['key']}
         self.request('POST', '/api/view/agents/' + ident, {'level': 'draft_and_send'}, self.owner)
 
-    def on(self):
-        self.inbox.switches.set('new-group', True)
-
     def go(self, method, path, body=None, headers=None):
         status, _, data = self.request(method, '/api/unified/new-group' + path, body or {}, headers or self.owner)
         return status, data
@@ -120,18 +117,14 @@ class NewGroup(unittest.TestCase):
     def groups(self):
         return [p['display_name'] for p in self.inbox.store.people('group')]
 
-    def test_switch_off_changes_nothing(self):
-        for method, path, body in (('GET', '', None), ('GET', '/people?network=whatsapp', None),
-                                   ('POST', '', {'client_id': 'abcdefgh12', 'network': 'whatsapp',
-                                                 'people': ['@whatsapp_66810000001' + D, '@whatsapp_66810000002' + D]})):
-            status, data = self.go(method, path, body)
-            self.assertEqual(status, 404, data)
-            self.assertEqual(data['error']['code'], 'feature_off')
-        self.assertEqual(self.bridge.calls, [])
-        self.assertEqual(self.groups(), [])
+    def test_on_with_no_switch_stored(self):
+        # Issue 397 (switch-default): nothing in switches.json, yet New group answers; a stale stored off is ignored.
+        self.inbox.switches = SwitchStore()
+        status, data = self.go('GET', '')
+        self.assertEqual(status, 200, data)
+        self.assertEqual([n['network'] for n in data['result']['networks']], ['telegram', 'whatsapp'])
 
     def test_only_networks_whose_bridge_can_create_groups(self):
-        self.on()
         status, data = self.go('GET', '')
         self.assertEqual(status, 200, data)
         self.assertEqual([n['network'] for n in data['result']['networks']], ['telegram', 'whatsapp'])
@@ -140,7 +133,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(self.go('GET', '')[1]['result']['networks'], [])
 
     def test_people_are_that_networks_contacts_and_chats(self):
-        self.on()
         dm = self.inbox.store.identity('whatsapp', '!dm-fern' + D, 'Fern Ito', 'person')
         with self.inbox.store.db() as db:
             db.execute('INSERT INTO room_meta VALUES (?,?)', (dm['address'], json.dumps(
@@ -154,7 +146,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(self.go('GET', '/people?network=signal')[1]['error']['code'], 'group_unsupported')
 
     def test_create_makes_the_group_lists_it_and_opens_it(self):
-        self.on()
         self.go('GET', '/people?network=whatsapp')
         seq = self.inbox.store.seq
         picked = ['@whatsapp_66810000001' + D, '@whatsapp_66810000002' + D]
@@ -177,7 +168,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(self.inbox.store.people('person'), [])
 
     def test_same_tap_twice_makes_one_group(self):
-        self.on()
         self.go('GET', '/people?network=telegram')
         body = {'client_id': 'tap-0000002', 'network': 'telegram', 'people': ['@telegram_101' + D, '@telegram_102' + D]}
         first = self.go('POST', '', body)[1]['result']
@@ -189,7 +179,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(self.bridge.creates()[0][3]['name'], {'name': 'Dana and Eli'})
 
     def test_rules(self):
-        self.on()
         self.go('GET', '/people?network=whatsapp')
         cases = (({'people': ['@whatsapp_66810000001' + D]}, 'too_few_people'),
                  ({'people': ['@whatsapp_66810000001' + D, '@whatsapp_66819999999' + D]}, 'invalid_people'),
@@ -205,7 +194,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(self.bridge.creates(), [])
 
     def test_photo_goes_with_whatsapp_and_onto_the_room_elsewhere(self):
-        self.on()
         jpeg = b'\xff\xd8\xff\xe0' + b'0' * 64
         pic = self.inbox.dispatch('PUT', '/api/unified/new-group/photo', {}, {}, jpeg)['photo']
         self.inbox.matrix_upload.assert_called_once_with(jpeg, 'photo.jpg', 'image/jpeg')
@@ -227,7 +215,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(raised.exception.code, 'invalid_upload')
 
     def test_people_whatsapp_would_not_add_are_named(self):
-        self.on()
         self.go('GET', '/people?network=whatsapp')
         self.bridge.failed = {'66810000002': {'reason': 'error 403'}}
         r = self.go('POST', '', {'client_id': 'tap-fail-01', 'network': 'whatsapp',
@@ -235,7 +222,6 @@ class NewGroup(unittest.TestCase):
         self.assertEqual(r['not_added'], ['Bob Ray'])
 
     def test_agents_cannot_create_groups(self):
-        self.on()
         self.go('GET', '/people?network=whatsapp')
         calls = len(self.bridge.calls)
         for method, path, body in (('GET', '', None), ('POST', '', {'client_id': 'agent-tap-1', 'network': 'whatsapp',

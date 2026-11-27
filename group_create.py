@@ -1,4 +1,4 @@
-"""New group from New message (issue 397, switch `new-group`, off by default).
+"""New group from New message (issue 397, on for everyone since its switch-default).
 
 The owner picks a network, two or more people from that network and a name (optional photo); the box asks that
 network's bridge to create the group on the real network, joins its room and lists it in the Inbox at once.
@@ -23,7 +23,6 @@ from urllib.parse import quote
 
 from engine import EngineError
 
-SWITCH = 'new-group'
 CLIENT_ID = re.compile(r'[A-Za-z0-9_-]{8,64}\Z')
 PHOTO_MAX = 5 * 1024 * 1024
 PHOTO_TYPES = {'image/jpeg': 'photo.jpg', 'image/png': 'photo.png', 'image/webp': 'photo.webp'}
@@ -48,9 +47,7 @@ def _state(inbox):
     return st
 
 
-def _require_on(inbox):
-    if not inbox.switch_on(SWITCH):
-        _fail('feature_off', 'New group is not switched on', 404)
+def _require_connectors(inbox):
     if getattr(inbox, 'connectors', None) is None:
         _fail('unsupported_network', 'New groups need the connected networks of this Messenger', 409)
 
@@ -103,7 +100,7 @@ def option(network, label, caps):
 
 def options(inbox, fresh=False):
     """Networks where New group can create a group now: connected, and its bridge says it can."""
-    _require_on(inbox)
+    _require_connectors(inbox)
     st = _state(inbox)
     cached = st['options']
     if cached and not fresh and time.time() - cached[0] < OPTIONS_TTL:
@@ -160,7 +157,7 @@ def ghost_for(network, user_id, domain):
 def people(inbox, network):
     """Who can be added on one network: its bridge's contact list plus Messenger's one-to-one chats there.
     Read only (provisioning GET /contacts and the local store). Each entry's id is that person's bridge ghost."""
-    _require_on(inbox)
+    _require_connectors(inbox)
     _option(inbox, network)
     domain, found = _domain(inbox), {}
     mine = set()
@@ -211,7 +208,7 @@ def _offered(inbox, network):
 
 def photo(inbox, raw):
     """The group's picture, uploaded before Create. Returns an id Create takes."""
-    _require_on(inbox)
+    _require_connectors(inbox)
     if not isinstance(raw, (bytes, bytearray)) or not 0 < len(raw) <= PHOTO_MAX:
         _fail('invalid_upload', 'Choose a photo up to 5 MB', 413)
     from unified import sniff
@@ -240,7 +237,7 @@ def _created(inbox):
 
 def create(inbox, payload):
     """Create the group on the real network. A repeated client_id returns the first answer (no second group)."""
-    _require_on(inbox)
+    _require_connectors(inbox)
     payload = payload if isinstance(payload, dict) else {}
     client_id = payload.get('client_id')
     if not isinstance(client_id, str) or not CLIENT_ID.fullmatch(client_id):

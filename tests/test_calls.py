@@ -88,7 +88,7 @@ class CallsSwitchTests(unittest.TestCase):
         store.set('calls', False)
         self.assertFalse(self.marker.exists())
         # Another switch never touches it.
-        store.set('new-group', True)
+        store.set('full-reactions', True)
         self.assertFalse(self.marker.exists())
 
     def test_start_follows_the_stored_switch(self):
