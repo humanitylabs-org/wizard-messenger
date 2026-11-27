@@ -1342,3 +1342,10 @@ html[data-presentation="immersive"] #unified-inbox .u-header, html[data-presenta
 .u-ac-dot { width: .625rem; height: .625rem; border-radius: 50%; background: var(--err); }
 .u-ac-mic.on { background: var(--err); }
 .u-ac-log { padding-bottom: .5rem; }
+/* Issue 471 (switch full-reactions): the composer's emoji panel as a reaction picker inside the message menu. */
+.u-menu.u-react-full { width: min(360px, calc(100% - 24px)); max-width: none; }
+.u-menu.u-react-full .u-react-picker { width: 100%; height: min(52vh, 380px); box-sizing: border-box; box-shadow: 0 8px 24px color-mix(in srgb, var(--wz-base, var(--bg)) 50%, transparent); }
+.u-react-picker .u-pick-search { -webkit-user-select: text; user-select: text; }
+@media (max-width: 600px) {
+  .u-menu.u-react-full:not(.at) { width: auto; }
+}
