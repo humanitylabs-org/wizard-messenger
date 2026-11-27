@@ -35,6 +35,9 @@ import tinfoil_link
 from group_features import MENTION_NETWORKS, MXID, member_labels, find_mentions, mention_content, incoming_mentions
 from typing import NoReturn
 
+# Issue 481: a send names a file saved in the chat's draft as draft:<kind>:<attachment id>.
+DRAFT_REF = re.compile(r'draft:(image|video|file):([0-9a-f]{16})')
+
 
 def fail(code, message, status=400) -> NoReturn:
     raise EngineError(code, message, status)
@@ -1894,6 +1897,7 @@ def substitute_mentions(body, pills, resolve):
 class UnifiedInbox:
     HOLD_MAX = 25
     WAITERS_MAX = 8
+    draft_file = None  # issue 481: the web server sets Drafts.attachment_file, so a send can use draft copies
 
     def __init__(self, data, engine):
         self.root = Path(data) / 'unified'
@@ -3107,6 +3111,8 @@ class UnifiedInbox:
         return person, identity
 
     def send(self, person_id, payload):
+        # Issue 481: attachments the composer already saved to the chat's draft are sent from that copy here.
+        payload = self.from_draft(person_id, payload)
         # Serialize duplicate taps, including the local rows after the Matrix receipt.
         with self.lock:
             result = self._send(person_id, payload)
@@ -3413,6 +3419,43 @@ class UnifiedInbox:
             return 'm.video', content, {k: v for k, v in media.items() if v is not None}
         content = {'msgtype': 'm.image', 'body': caption or upload['filename'], 'filename': upload['filename'], 'url': upload['mxc'], 'info': info}
         return 'm.image', content, {k: v for k, v in media.items() if v is not None}
+
+    def from_draft(self, person_id, payload):
+        """Issue 481: a send may name files already saved in the chat's open draft (`draft_id` plus
+        `draft:<kind>:<attachment id>` in place of an upload id), so the phone uploads each file once. Each one becomes
+        an ordinary send upload, made here from the draft's copy on this box (Synapse for bridged chats, the outbox for
+        Wizard chats). Runs before the send lock: the drafts store calls send() while holding its own lock."""
+        refs = [payload.get('upload_id')] + (payload['upload_ids'] if isinstance(payload.get('upload_ids'), list) else [])
+        if not any(isinstance(r, str) and r.startswith('draft:') for r in refs):
+            return payload
+        client_id = payload.get('client_id')
+        if isinstance(client_id, str):
+            with self.store.db() as db:
+                if db.execute('SELECT 1 FROM message m JOIN identity i ON i.id=m.identity_id WHERE m.client_id=? AND i.person_id=?', (client_id, person_id)).fetchone():
+                    return payload  # already sent: the send answers with that message and never reads the draft
+        reader, draft_id = getattr(self, 'draft_file', None), payload.get('draft_id')
+        if not callable(reader) or not isinstance(draft_id, str):
+            fail('draft_attachment_gone', 'Attach the file again', 409)
+        made = []
+        def take(ref):
+            found = DRAFT_REF.fullmatch(ref) if isinstance(ref, str) else None
+            if not found:
+                return ref
+            data, name = reader(draft_id, found.group(2), person_id)
+            made.append(self.upload(person_id, found.group(1), data, name)['upload_id'])
+            return made[-1]
+        out = dict(payload)
+        try:
+            if isinstance(out.get('upload_id'), str):
+                out['upload_id'] = take(out['upload_id'])
+            if isinstance(out.get('upload_ids'), list):
+                out['upload_ids'] = [take(x) for x in out['upload_ids']]
+        except BaseException:
+            for upload_id in made:
+                self.drop_upload(upload_id)
+            raise
+        out.pop('draft_id', None)
+        return out
 
     def upload(self, person_id, kind, data, name=''):
         """Owner upload → Synapse media repo. Returns an opaque, person-bound id."""

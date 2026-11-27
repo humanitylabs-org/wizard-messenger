@@ -117,6 +117,17 @@ class Drafts:
         try: self.save()
         except BaseException:
             self.unlink_files(ident, added); raise
+    def attachment_file(self, ident, attachment_id, person_id):
+        """Issue 481: the bytes and name of a file saved in this chat's open draft, so the owner's Send uses the copy
+        the composer already uploaded instead of uploading it again."""
+        with self.lock:
+            row = (self.rows.get(ident) if isinstance(ident, str) else None) or {}
+            item = next((a for a in row.get('attachments', []) if a['id'] == attachment_id), None)
+            if not item or row.get('person_id') != person_id or row.get('state') != 'draft':
+                raise EngineError('draft_attachment_gone', 'Attach the file again', 409)
+            try: data = (self.files / row['id'] / item['id']).read_bytes()
+            except OSError: raise EngineError('draft_attachment_gone', 'Attach the file again', 409) from None
+            return data, item.get('name') or 'Attachment'
     def attachments(self, method, row, rest, payload, raw, query, owner, actor, files=None):
         ident = row['id']
         if method == 'GET' and len(rest) == 1:
@@ -135,9 +146,12 @@ class Drafts:
             key = key if UPLOAD_KEY.fullmatch(key or '') else ''
             if key and any(a.get('key') == key for a in row.get('attachments', [])):
                 return {'draft': copy.deepcopy(row)}
+            # Issue 481: the owner's composer uploads 2-3 photos at a time. Each one only adds a file to the open
+            # draft, so a keyed owner append (append=1) is not fenced to the revision; every other write still is.
+            append = owner and bool(key) and (query.get('append') or [''])[0] == '1'
             try: revision = int((query.get('revision') or [''])[0])
             except ValueError: revision = None
-            self.check(row, {'revision': revision})
+            if not append: self.check(row, {'revision': revision})
             if files is None:
                 files = [(raw, (query.get('name') or ['Attachment'])[0])]
             # Every file of one call lands in ONE revision, so a viewer never sees a half-attached draft.

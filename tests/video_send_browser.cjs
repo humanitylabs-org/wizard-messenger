@@ -170,7 +170,8 @@ async function sentBubble(page) {
     assert.match(r.reopened.poster, /kind=thumb/, n + ': opened later, the bubble shows the box thumbnail');
     assert.deepEqual([r.reopened.status, r.reopened.type], [200, 'image/jpeg'], n + ': that thumbnail is the JPEG frame');
     assert.equal(r.bubble.dur, '0:03', n + ': the sent bubble shows the length');
-    assert.deepEqual(r.uploads, ['video', 'image'], n + ': the video, then its first-frame thumbnail');
+    // Issue 481: the video itself goes from the copy the composer saved to the draft; the phone uploads only its frame.
+    assert.deepEqual(r.uploads, ['image'], n + ': only the first-frame thumbnail goes up again from the phone');
     const e = r.event;
     assert.equal(e.msgtype, 'm.video', n + ': sent as m.video');
     assert.equal(e.mimetype, 'video/mp4', n + ': mimetype');
@@ -178,7 +179,7 @@ async function sentBubble(page) {
     assert.match(e.thumb || '', /^mxc:\/\//, n + ': thumbnail_url');
     assert.equal(e.thumbInfo?.mimetype, 'image/jpeg', n + ': thumbnail is a JPEG');
   }
-  assert.deepEqual(results.file.uploads, ['file'], 'File: uploaded as a file');
+  assert.deepEqual(results.file.uploads, [], 'File: sent from the draft copy, never uploaded twice (issue 481)');
   assert.deepEqual(results.file.msgtypes, ['m.file'], 'File: sent as a file');
   assert.ok(results.file.tray[0].file && !results.file.tray[0].video, 'File: a file chip');
   assert.deepEqual(results['mixed-line'].msgtypes, ['m.image', 'm.image', 'm.video', 'm.text:words'], 'LINE: photos as a group, the video, then the words');
