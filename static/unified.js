@@ -499,22 +499,6 @@
     messages.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || a.timestamp - b.timestamp || ((a.timeline_order || 0) - (b.timeline_order || 0)) || (a.id < b.id ? -1 : 1));
     return messages;
   }
-  // wizard-ux issue 1276: what the WizardOS Android app needs to clear a network app's own tray notification (LINE's,
-  // WhatsApp's...) for a chat read here: the network and the names that app shows for it. The shell hands it on only
-  // while the owner's switch (Clear chat notifications) is on; otherwise the call does nothing.
-  function chatReadNotices(p) {
-    const out = [];
-    for (const i of p?.identities || []) {
-      if (!i?.network || i.network === 'private' || i.network === 'messenger') continue;
-      let n = out.find(x => x.network === i.network);
-      if (!n) { if (out.length >= 3) continue; out.push(n = {network: i.network, names: []}); }
-      for (const name of [i.label, p.display_name]) {
-        const v = typeof name === 'string' ? name.trim() : '';
-        if (v && v.length <= 200 && !n.names.includes(v) && n.names.length < 8) n.names.push(v);
-      }
-    }
-    return out.filter(x => x.names.length);
-  }
   // Issue 265: what the owner's Agent chat shows. 'chat' leaves reports out (they have their own
   // Reports chat); 'reports' shows only reports, oldest first like any chat. A sweep item is open (buttons), answered (the pick
   // shows; it can still change until the agent picks it up) or done (collapsed to the agent's result).
@@ -836,7 +820,7 @@
     if (shell === 'desktop' || shell === 'phone') return shell === 'desktop';
     return !(coarse && screenMin > 0 && screenMin < 600);
   }
-  if (typeof module !== 'undefined') module.exports = {desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, chatReadNotices, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  if (typeof module !== 'undefined') module.exports = {desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2886,8 +2870,6 @@
     if (typeof markLocal === 'function') markLocal(view.id);
     unreadById[view.id] = 0; syncBadge(); if (split.on && s.tab !== 'messenger') drawList();
     call('people/' + view.id + '/read', {timestamp: last.timestamp}).catch(() => {});
-    // A test slice of markRead may not carry chatReadNotices.
-    if (typeof chatReadNotices === 'function') for (const x of chatReadNotices(t.person)) { try { window.WizardApp?.notifications?.chatRead?.(x)?.catch?.(() => {}); } catch {} }
   }
   const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
   // Bubble text, built as nodes (never innerHTML): @mention chips, links, and the light formatting the networks
