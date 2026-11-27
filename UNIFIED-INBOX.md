@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.138
+
+- Photo speed on for everyone (issue 468): Photos ready on arrival, Photos open instantly, Photos ready in Wizard's viewer and Background photo download are no longer switches. The box fetches incoming photos as they arrive (thumbnail, original, 1600 px screen copy), a tapped photo opens from its thumbnail and sharpens, Wizard's viewer gets the phone's screen copy, and the phone downloads recent photos in the background (any network unless this phone chose Wi-Fi only). Stored values for the four switches are ignored. The media cache always uses `MESSENGER_MEDIA_CACHE_MB` (2048 by default). Photo timings stays a switch. Ships #469.
+
 ## 0.2.0-unified.16.137
 
 - Photos stuck with "An attachment could not be saved" fixed (issue 463, bug, on for everyone): each staged file carries a one-time upload key; when an upload's answer is lost (gateway 502, dropped connection) but the box kept the file, the retry or the next drafts poll adopts the saved attachment instead of a second copy. Passing trouble retries by itself 3 times, then the photo shows Retry. The attachments PUT takes an optional `key`.
