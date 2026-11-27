@@ -92,11 +92,14 @@ async function run(browser, {label, stale, network, mode}) {
   const b = await box.boundingBox();
   await page.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2);
   await page.waitForTimeout(1200);
-  const played = await page.evaluate(() => { const v = [...document.querySelectorAll('.u-media:not(.gif) video')].pop(); return {paused: v.paused, time: v.currentTime}; });
+  // Issue 379: the tap opens the full-screen player, which plays the same kept copy.
+  const played = await page.evaluate(() => { const v = document.querySelector('.u-video-view video'); return {paused: v.paused, time: v.currentTime, src: v.src.slice(0, 5)}; });
   result.played = played;
   assert.equal(played.paused, false, 'one tap plays it');
   assert.ok(played.time > 0.2, 'it is really running: ' + played.time);
   if (expect) assert.ok(!media.includes('$video:full'), 'no network for the video: ' + media);
+  if (expect) assert.equal(played.src, 'blob:', 'full screen plays from the kept copy');
+  await page.keyboard.press('Escape');
   await page.screenshot({path: path.join(out, `${label}-playing.png`)});
   const gif = await page.evaluate(() => { const v = document.querySelector('.u-media.gif video'); return {paused: v.paused, muted: v.muted, loop: v.loop}; });
   assert.deepEqual(gif, {paused: false, muted: true, loop: true}, 'GIF loops muted');

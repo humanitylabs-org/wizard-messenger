@@ -54,12 +54,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'video-fullscreen', 'name': 'Videos open full screen',
-                'description': 'One tap on a video opens it full screen on black, already playing with sound, like '
-                               'Telegram. Tap to show or hide the controls (play, pause, a scrubber, close). Back or '
-                               'a swipe down returns to the chat where you were. GIFs and stickers still loop in the '
-                               'chat.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#379']}, {
                 'id': 'new-group', 'name': 'New group',
                 'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick '
                                'the network, two or more people and a name (optional photo), tap Create. The group is '
@@ -461,7 +455,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'video-fullscreen', 'new-group', 'add-contact'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-group', 'add-contact'])
 
 
 if __name__ == '__main__':

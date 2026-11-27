@@ -1,17 +1,17 @@
-// Issue 379 (switch video-fullscreen, James): one tap on a received video opens it full screen on black, already
-// playing with sound, with Messenger's own controls (tap shows or hides them: play/pause, scrubber, Close). Back or a
-// swipe down closes it and the chat is where it was. GIFs still loop muted in the bubble. With the switch off
-// (OFF=1) a tap still plays in the bubble, as issue 319 built it.
+// Issue 379 (James; on for everyone, its video-fullscreen switch is gone): one tap on a received video opens it full
+// screen on black, already playing with sound, with Messenger's own controls (tap shows or hides them: play/pause,
+// scrubber, Close). Back or a swipe down closes it and the chat is where it was. GIFs still loop muted in the bubble.
+// STALE=1: a box that still lists the old switch as off (a stale stored value) changes nothing.
 // Messenger is framed in a minimal Wizard shell from the real wizard-ux core files (SHELL_DIR), and the browser
 // runs with the strict autoplay rule (sound only from a tap), as on a phone.
-// SHELL_DIR=<wizard-ux checkout> [FFMPEG=ffmpeg] [OFF=1] [SHOTS_ONLY=412] node tests/video_fullscreen_browser.cjs [outdir]
+// SHELL_DIR=<wizard-ux checkout> [FFMPEG=ffmpeg] [STALE=1] [SHOTS_ONLY=412] node tests/video_fullscreen_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict');
 const {execFileSync} = require('node:child_process');
 const root = path.resolve(process.env.STATIC_DIR || path.join(__dirname, '../static')), out = path.resolve(process.argv[2] || 'video-fullscreen-shots');
 const SHELL = process.env.SHELL_DIR; assert.ok(SHELL, 'SHELL_DIR (a wizard-ux checkout) is required');
-const OFF = process.env.OFF === '1';
-const switches = [{id: 'video-fullscreen', name: 'Videos open full screen', description: '', on: !OFF, default: false, issues: ['humanitylabs-org/wizard-messenger#379']}];
+const STALE = process.env.STALE === '1';
+const switches = STALE ? [{id: 'video-fullscreen', name: 'Videos open full screen', description: '', on: false, default: false, issues: ['humanitylabs-org/wizard-messenger#379']}] : [];
 const L = require(path.join(__dirname, '../static/app.js'));
 fs.mkdirSync(out, {recursive: true});
 const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'};
@@ -77,20 +77,10 @@ async function run(browser, label, viewport, mobile, skin) {
   await box.scrollIntoViewIfNeeded();
   await page.waitForTimeout(900);
   const tap = async (loc, where) => { const b = await loc.boundingBox(); const x = b.x + (where ? where(b).x : b.width / 2), y = b.y + (where ? where(b).y : b.height / 2); if (mobile) await page.touchscreen.tap(x, y); else await page.mouse.click(x, y); };
-  const tag = `${OFF ? 'off' : 'on'}-${label}-${skin}`;
+  const tag = `${STALE ? 'stale' : 'on'}-${label}-${skin}`;
   await page.screenshot({path: path.join(out, `${tag}-chat.png`)});
   const scrollBefore = await frame.evaluate(() => document.querySelector('.u-timeline, .u-thread-body')?.scrollTop ?? null);
   await tap(box);
-  if (OFF) {
-    await page.waitForTimeout(1200);
-    const inner = await frame.evaluate(() => { const v = document.querySelector('.u-media:not(.gif) video'); return {paused: v.paused, muted: v.muted, own: !!document.querySelector('.u-video-view')}; });
-    await page.screenshot({path: path.join(out, `${tag}-tapped.png`)});
-    assert.equal(inner.own, false, 'switch off: no full-screen video');
-    assert.equal(inner.paused, false, 'switch off: the bubble plays, as before (issue 319)');
-    assert.deepEqual(errors, []);
-    await ctx.close();
-    return {label, skin, off: true, bubble: inner};
-  }
   const layer = app.locator('.u-video-view');
   await layer.waitFor({timeout: 3000});
   await frame.waitForFunction(() => document.querySelector('.u-video-view')?.dataset.firstFrame, null, {timeout: 5000});

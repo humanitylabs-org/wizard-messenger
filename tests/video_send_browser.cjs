@@ -90,7 +90,9 @@ async function sentBubble(page) {
   r.dur = await row.locator('.u-vdur').textContent().catch(() => '');
   await row.locator('.u-media').tap();
   await page.waitForTimeout(1200);
-  r.played = await row.locator('video').evaluate(v => !v.paused && v.currentTime > 0);
+  // Issue 379: the tap opens it full screen, playing.
+  r.played = await page.locator('.u-video-view video').evaluate(v => !v.paused && v.currentTime > 0);
+  await page.keyboard.press('Escape');
   return r;
 }
 

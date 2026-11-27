@@ -311,7 +311,7 @@
   }
   // Issue 343: a video bubble near the screen starts buffering its first seconds on Wi-Fi (or a wired desktop), so the
   // tap plays at once; on mobile data, with Data Saver or an unknown phone network it only reads the video's header.
-  // Issue 379 (switch video-fullscreen): in the full-screen video, a drag that goes clearly down by 90 px or more
+  // Issue 379: in the full-screen video, a drag that goes clearly down by 90 px or more
   // closes it, like Telegram and WhatsApp; anything shorter or mostly sideways springs back.
   function videoSwipe(dx, dy) {
     return Number.isFinite(dy) && dy >= 90 && Math.abs(dx || 0) < dy ? 'close' : 'stay';
@@ -3145,7 +3145,7 @@
     box.setAttribute('aria-label', sticker ? 'Sticker' : m.media?.gif ? 'GIF' : m.msgtype === 'm.video' ? 'Play video' : 'Open photo');
     const w = m.media?.w, h = m.media?.h;
     if (w && h) box.style.aspectRatio = w + ' / ' + h; else box.classList.add('unsized');
-    let v = null, inline = null;
+    let v = null, full = false;
     if (m.msgtype === 'm.video') {
       v = node('video'); v.playsInline = true; v.muted = true; v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
       if (m.media?.thumb && !m.local) v.poster = mediaURL(m.id, 'thumb');
@@ -3165,7 +3165,7 @@
         if (!m.local) keptVideo(v, mediaURL(m.id), m.media?.thumb ? '' : '#t=0.1');
         const dur = m.media?.duration ? node('span', 'u-vdur', fmtDur(m.media.duration)) : null;
         if (dur) box.append(dur);
-        if (!m.pending) inline = inlineVideo(box, v, dur, m);
+        full = !m.pending;
         if (!m.pending && !m.local) videoNear?.observe(box);
       }
     } else {
@@ -3191,8 +3191,7 @@
     box.message = m;
     if (!m.pending && !sticker && !v) box.addEventListener('pointerdown', () => primeTapped(m, box), {passive: true});
     if (!m.pending) box.onclick = e => {
-      if (inline && switchState.on['video-fullscreen'] === true) { videoView(m, v); return; }
-      if (inline) { inline.tap(e); return; }
+      if (full) { videoView(m, v); return; }
       if (box.dataset.still && v) { delete box.dataset.still; box.querySelector('.u-play')?.remove(); v.play().catch(() => {}); return; }
       // After this click has finished: the bubble's own handler must still see the tap landed on the photo.
       if (box.classList.contains('broken') && box.retryPhoto) { setTimeout(box.retryPhoto); return; }
@@ -3222,7 +3221,7 @@
     if (v.getAttribute('poster')) return;
     v.poster = framePosters.get(m.id) || BLACK_POSTER;
     v.addEventListener('loadeddata', () => {
-      if (!v.paused || v.closest?.('.started')) return;
+      if (!v.paused) return;
       let shot = framePosters.get(m.id);
       if (!shot && (shot = frameShot(v))) {
         framePosters.set(m.id, shot);
@@ -3236,7 +3235,7 @@
   const videoBlobs = new Map();
   function keptVideo(v, url, frag) {
     if (!photoCache.has(url)) return;
-    const use = blob => { if (blob && v.paused && !v.currentTime && !v.closest?.('.started')) { v.src = blob + frag; v.dataset.kept = '1'; v.preload = 'auto'; } };
+    const use = blob => { if (blob && v.paused && !v.currentTime) { v.src = blob + frag; v.dataset.kept = '1'; v.preload = 'auto'; } };
     if (videoBlobs.has(url)) { use(videoBlobs.get(url)); return; }
     photoCache.match(url).then(blob => {
       if (!blob) return;
@@ -3244,73 +3243,15 @@
       videoBlobs.set(url, blob);
       while (videoBlobs.size > 8) {
         const [old, b] = videoBlobs.entries().next().value; videoBlobs.delete(old);
-        if (inlinePlaying?.src?.startsWith(b)) { videoBlobs.set(old, b); break; }
+        if (videoOpen?.src?.startsWith(b)) { videoBlobs.set(old, b); break; }
         URL.revokeObjectURL(b);
       }
       use(blob);
     }).catch(() => {});
   }
-  // A video plays where it is, with sound, from the one tap (issue 319). Handing it to Wizard's viewer meant an extra
-  // screen whose player could not start on its own (the tap had been spent in Messenger), so it took a second tap.
-  // Tap again pauses; the corner button goes full screen. One video plays at a time, and it pauses once it scrolls
-  // away or leaves the chat.
-  let inlinePlaying = null;
-  const inlineSeen = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
-    for (const e of entries) if (!e.isIntersecting) e.target.querySelector('video')?.pause();
-  }, {threshold: 0.1}) : null;
-  function inlineVideo(box, v, dur, m) {
-    const full = node('span', 'u-vfull'); full.append(icon('expand')); full.setAttribute('aria-hidden', 'true'); full.hidden = true;
-    box.append(full);
-    const total = () => Number.isFinite(v.duration) && v.duration > 0 ? v.duration * 1000 : m.media?.duration || 0;
-    const paint = () => {
-      const on = !v.paused && !v.ended, started = box.classList.contains('started');
-      box.classList.toggle('playing', on);
-      box.setAttribute('aria-label', on ? 'Pause video' : 'Play video');
-      full.hidden = !started;
-      if (dur && started) dur.textContent = fmtDur(Math.max(0, total() - v.currentTime * 1000));
-    };
-    for (const name of ['play', 'pause', 'ended']) v.addEventListener(name, paint);
-    v.addEventListener('timeupdate', () => { if (!v.isConnected) { v.pause(); return; } paint(); });
-    // Full screen shows the browser's own controls (seek, volume); back in the bubble they go away again.
-    const fsChange = () => { v.controls = (v.ownerDocument.fullscreenElement || v.ownerDocument.webkitFullscreenElement) === v; };
-    v.addEventListener('fullscreenchange', fsChange); v.addEventListener('webkitfullscreenchange', fsChange);
-    inlineSeen?.observe(box);
-    function play() {
-      if (inlinePlaying && inlinePlaying !== v) { try { inlinePlaying.pause(); } catch {} }
-      inlinePlaying = v; box.classList.add('started');
-      v.muted = false; v.removeAttribute('muted'); v.preload = 'auto';
-      if (v.ended) v.currentTime = 0;
-      // Started inside the tap, so sound is allowed. A browser that still refuses plays it muted rather than not at all.
-      const started = v.play();
-      started?.catch?.(() => { v.muted = true; v.play().catch(() => {}); });
-      paint();
-    }
-    function fullScreen() {
-      if (v.paused) play();
-      const ask = v.requestFullscreen || v.webkitRequestFullscreen;
-      const own = () => {
-        // No full screen here (an Android WebView without it): Messenger's own full-size view, from the same moment.
-        const at = v.currentTime; v.pause();
-        photoView({url: v.currentSrc || v.src, kind: 'video', name: m.outgoing ? 'You' : nameOf(m.sender) || 'Video'});
-        const big = view.photo?.media; if (!big) return;
-        try { big.currentTime = at; } catch {}
-        big.play().catch(() => { big.muted = true; big.play().catch(() => {}); });
-      };
-      if ((v.ownerDocument.fullscreenEnabled || v.ownerDocument.webkitFullscreenEnabled) && typeof ask === 'function') {
-        try { Promise.resolve(ask.call(v)).catch(own); } catch { own(); }
-        return;
-      }
-      if (typeof v.webkitEnterFullscreen === 'function') { try { v.webkitEnterFullscreen(); return; } catch {} }
-      own();
-    }
-    return {tap(e) {
-      if (e?.target?.closest?.('.u-vfull') && !full.hidden) { fullScreen(); return; }
-      if (!v.paused && !v.ended) { v.pause(); return; }
-      play();
-    }, play, fullScreen};
-  }
-  // Issue 379 (switch video-fullscreen, James): one tap on a received video opens it full screen on black, already
-  // playing with sound, like Telegram and WhatsApp. The poster fills the screen at once while the video starts, and
+  let videoOpen = null; // the full-screen video, so its kept blob: copy is not let go while it plays
+  // Issue 379 (James; on for everyone, its video-fullscreen switch is gone): one tap on a received video opens it full
+  // screen on black, already playing with sound, like Telegram and WhatsApp. The poster fills the screen at once while the video starts, and
   // play() runs inside the tap, so sound is allowed and nothing waits on Wizard. The controls are Messenger's own
   // (no browser control box): a tap shows or hides them; they are play/pause, a scrubber with times, and Close.
   // Back, Esc, Close or a swipe down closes it; the chat behind it never moves, so it is where it was.
@@ -3318,7 +3259,6 @@
   function videoView(m, from) {
     const tapped = performance.now();
     view.photo?.close();
-    if (inlinePlaying) { try { inlinePlaying.pause(); } catch {} }
     const before = document.activeElement;
     const layer = node('div', 'u-video-view chrome'); layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true');
     layer.setAttribute('aria-label', 'Video'); layer.tabIndex = -1;
@@ -3405,11 +3345,12 @@
       clearTimeout(hideTimer); try { v.pause(); } catch {}
       v.removeAttribute('src'); try { v.load(); } catch {}
       layer.remove(); if (view.photo?.layer === layer) view.photo = null;
+      if (videoOpen === v) videoOpen = null;
       if (before?.isConnected) before.focus({preventScroll: true});
       return true;
     };
     ($('messenger') || document.documentElement).append(layer);
-    view.photo = {layer, close, media: v};
+    view.photo = {layer, close, media: v}; videoOpen = v;
     layer.focus({preventScroll: true});
     play(); paint(); chrome(true);
     return layer;

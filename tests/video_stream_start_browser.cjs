@@ -96,20 +96,23 @@ async function run(browser, {label, network, mode}) {
   // The owner reads the chat for a moment before tapping, as people do.
   await page.waitForTimeout(Number(process.env.READ_MS || 1000));
   const ready = await page.evaluate(() => { const v = document.querySelector('.u-media video'); return {preload: v.preload, readyState: v.readyState, buffered: v.buffered.length ? v.buffered.end(0) : 0}; });
+  // Issue 379: the tap opens the full-screen player (a new video element); time the tap to its first moving frame.
   await page.evaluate(() => {
-    const v = document.querySelector('.u-media video');
     window.__clock = {};
     document.addEventListener('pointerdown', () => { window.__clock.tap = performance.now(); }, {capture: true, once: true});
-    const moving = () => { if (v.currentTime > 0 && !window.__clock.frame) window.__clock.frame = performance.now(); else if (!window.__clock.frame) v.requestVideoFrameCallback(moving); };
-    v.requestVideoFrameCallback(moving);
-    v.addEventListener('timeupdate', () => { if (v.currentTime > 0 && !window.__clock.frame) window.__clock.frame = performance.now(); });
+    new MutationObserver((_, obs) => {
+      const v = document.querySelector('.u-video-view video'); if (!v) return; obs.disconnect();
+      const moving = () => { if (v.currentTime > 0 && !window.__clock.frame) window.__clock.frame = performance.now(); else if (!window.__clock.frame) v.requestVideoFrameCallback(moving); };
+      v.requestVideoFrameCallback(moving);
+      v.addEventListener('timeupdate', () => { if (v.currentTime > 0 && !window.__clock.frame) window.__clock.frame = performance.now(); });
+    }).observe(document.documentElement, {childList: true, subtree: true});
   });
   const b = await box.boundingBox();
   await page.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2);
   await page.waitForFunction(() => window.__clock.frame, null, {timeout: 20000});
   const clock = await page.evaluate(() => window.__clock);
   await page.waitForTimeout(300);
-  const playing = await page.evaluate(() => { const v = document.querySelector('.u-media video'); return {paused: v.paused, muted: v.muted, time: v.currentTime}; });
+  const playing = await page.evaluate(() => { const v = document.querySelector('.u-video-view video'); return {paused: v.paused, muted: v.muted, time: v.currentTime}; });
   await page.screenshot({path: path.join(out, `${BEFORE ? 'before' : 'after'}-${label}.png`)});
   await ctx.close(); srv.close();
   const result = {label, before: BEFORE, network, ready, tapToFrameMs: Math.round(clock.frame - clock.tap), playing, requests: log.length, errors};
