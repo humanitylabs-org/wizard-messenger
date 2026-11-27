@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.133
+
+- Several drafts in one chat (issue 353, feature approved at show-and-tell, now on for everyone): the `stacked-drafts` switch is gone. An agent can line up to 5 drafts in one chat (`messenger_create_draft` adds another, `draft_stack_full` past 5); with two or more, they wait as stacked bubbles above an empty message box, oldest first, each with Send, Edit and Remove. One draft sits in the box as before, and nothing is sent on its own.
+
 ## 0.2.0-unified.16.132
 
 - Personal data label (wizard-os issue 929, feature, nothing changes on its own): wizard.md says `personal_data: reads your messages`, so the Privacy check and the install sheet's private AI card (each behind its own switch) count Messenger as an app that holds personal data. Agent access is unchanged.
