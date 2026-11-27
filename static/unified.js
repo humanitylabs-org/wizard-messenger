@@ -3791,11 +3791,20 @@
   // Draft-only access can see it, extend it or attach files, and the owner keeps editing and sends from the same
   // composer. Agents never send. Edits are fenced by revision: a change made elsewhere is never overwritten silently.
   const SD_SAVE_MS = 700, SD_POLL_MS = 6000;
+  const SD_UPLOAD_WAIT_MS = [1000, 3000, 6000]; // issue 463: waits before each automatic upload retry (3 retries)
+  // Issue 463: no answer, a dropped connection, a 5xx or a non-JSON (gateway) answer is passing trouble (transient):
+  // the box may even have stored the file. Only an answer from Messenger itself is a refusal.
   async function draftRaw(path, method, blob, query) {
-    const response = await fetch(path + '?' + new URLSearchParams(query), {method, credentials: 'same-origin', cache: 'no-store',
-      headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
-    let env = {}; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
-    if (!response.ok || !env.ok) { const e = new Error(env.error?.message || 'Could not attach that file'); e.code = env.error?.code; throw e; }
+    let response;
+    try {
+      response = await fetch(path + '?' + new URLSearchParams(query), {method, credentials: 'same-origin', cache: 'no-store',
+        headers: {'Content-Type': blob.type || 'application/octet-stream', 'X-Messenger-CSRF': csrf(), Accept: 'application/json'}, body: blob});
+    } catch { throw Object.assign(new Error('Could not attach that file'), {transient: true}); }
+    let env = null; try { env = await response.json(); } catch { /* gateway errors are not JSON */ }
+    if (!response.ok || !env?.ok) {
+      const e = new Error(env?.error?.message || 'Could not attach that file'); e.code = env?.error?.code;
+      e.transient = !env || response.status >= 500; throw e;
+    }
     return env.result;
   }
   const draftsFor = (rows, id) => rows.filter(d => d.person_id === id && d.state === 'draft').sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -3841,7 +3850,8 @@
           button('Keep mine', () => action(async () => { const mine = ui.draft.value, row = sd.conflict; await apply(row); ui.draft.value = mine; s.drafts[id] = mine; saveDrafts(); ui.grow(); ui.paintBar(); await save(); }), 'secondary'));
         return box;
       }
-      if (sd.loadError || sd.uploadError) return node('div', 'u-draft-note conflict', 'An attachment could not be saved or opened. Remove it or reload the draft before sending.');
+      if (sd.loadError) return node('div', 'u-draft-note conflict', 'An attachment could not be saved or opened. Remove it or reload the draft before sending.');
+      if (sd.uploadError) return node('div', 'u-draft-note conflict', 'An attachment did not upload. Tap Retry on it, or remove it, before sending.');
       if (sd.row && byAgent(sd.row) && !dirty()) {
         const box = node('div', 'u-draft-note');
         box.append(node('span', '', 'Drafted by ' + (by(sd.row).name || 'your Wizard') + ' · not sent. Edit it here and send when ready.'),
@@ -3940,6 +3950,11 @@
     };
     async function loadItems(row) {
       const want = row.attachments || [], gen = draftWrites, epoch = sd.epoch, loaded = [];
+      // Issue 463: the box already holds a photo whose upload answer never came back: that is this tray item, saved.
+      for (const a of want) {
+        const mine = a.key && !(view.attach || []).some(it => it.sid === a.id) && (view.attach || []).find(it => !it.sid && !it.removed && it.upkey === a.key);
+        if (mine) { mine.sid = a.id; mine.uploadFailed = false; }
+      }
       for (const a of want) if (!(view.attach || []).some(it => it.sid === a.id && !it.unavailable)) {
         try { loaded.push(await itemFor(a, row.id)); }
         catch { loaded.push({file: true, unavailable: true, key: 'a' + uid(), sid: a.id, name: a.name, bytes: a.bytes}); }
@@ -4030,17 +4045,31 @@
         for (const it of items) {
           if (!alive() || sd.epoch !== epoch) return;
           if (it.removed || it.sid) continue;
-          try {
-            const row = await ensure();
-            const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream'});
-            sd.row = r.draft; it.sid = r.draft.attachments[r.draft.attachments.length - 1].id;
-            it.uploadFailed = false;
-          } catch (e) {
-            if (sd.epoch !== epoch) return;
-            it.uploadFailed = true;
-            if (e.code === 'draft_changed' || e.code === 'draft_exists') {
-              try { sd.conflict = (await fetchDrafts(true)).find(d => d.id === sd.row?.id || d.person_id === id) || null; } catch { /* next poll */ }
-            } else if (alive()) error(e);
+          // Issue 463: one key per staged file, kept across retries, so a retry of an upload the box already stored
+          // gets that saved attachment back instead of a second copy. Passing trouble retries by itself a few times.
+          it.upkey = it.upkey || 'u' + uid();
+          for (let tries = 0; ; tries++) {
+            try {
+              const row = await ensure();
+              const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream', key: it.upkey});
+              const atts = r.draft.attachments || [];
+              sd.row = r.draft; it.sid = (atts.find(a => a.key === it.upkey) || atts[atts.length - 1]).id;
+              it.uploadFailed = false;
+              break;
+            } catch (e) {
+              if (sd.epoch !== epoch) return;
+              if (e.transient && tries < SD_UPLOAD_WAIT_MS.length && alive() && !it.removed) {
+                await new Promise(r => setTimeout(r, SD_UPLOAD_WAIT_MS[tries]));
+                if (sd.epoch !== epoch || !alive()) return;
+                if (it.removed || it.sid) break;
+                continue;
+              }
+              it.uploadFailed = true;
+              if (e.code === 'draft_changed' || e.code === 'draft_exists') {
+                try { sd.conflict = (await fetchDrafts(true)).find(d => d.id === sd.row?.id || d.person_id === id) || null; } catch { /* next poll */ }
+              } else if (alive() && !e.transient) error(e);
+              break;
+            }
           }
         }
       });
@@ -4340,6 +4369,10 @@
         if (!it.file && (it.url || it.local)) { chip.classList.add('u-attach-open'); chip.setAttribute('role', 'button'); chip.tabIndex = 0; chip.setAttribute('aria-label', (it.video ? 'Play ' + (it.name || 'video') : 'Open ' + (it.name || 'photo') + ' full size'));
           const open = e => { if (e.target?.closest?.('.ch-attrm')) return; e.preventDefault(); const t = trayPhotos(view.attach, it); if (t.at >= 0) openMedia(hostViewer(window.WizardApp, window.parent !== window), t.items, t.at, item => photoView(item)); };
           chip.addEventListener('click', open); chip.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === chip) open(e); }); }
+        // Issue 463: an upload that still failed after its automatic retries offers Retry on the item itself.
+        if (it.uploadFailed && !it.sid) { chip.classList.add('u-attach-failed');
+          const again = button('Retry', e => { e.stopPropagation(); action(async () => { await view.sd?.retry(); paintBar(); grow(); }); }, 'u-attach-retry');
+          again.setAttribute('aria-label', 'Retry uploading ' + (it.name || (it.file ? 'file' : 'photo'))); chip.append(again); }
         strip.append(chip); } bar.append(strip); }
       for (const take of voiceKept.values()) {
         if (take.meta?.person !== id) continue;
