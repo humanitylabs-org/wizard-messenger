@@ -54,7 +54,7 @@ services:
       unified-init: {condition: service_completed_successfully}
       matrix: {condition: service_healthy}
       connector-init: {condition: service_completed_successfully}
-    networks: [matrix-lane, model-lane, relay-egress, signin-lane, call-lane]
+    networks: [matrix-lane, model-lane, relay-egress, signin-lane, call-lane, tunnel-lane]
     # Issue 266: for the Agent chat wake, the owner's agent can name its event inbox on this Wizard as host.docker.internal.
     extra_hosts: ["host.docker.internal:host-gateway"]
     # Loopback-only host port for the Wizard gateway, as in 0.1.x.
@@ -125,12 +125,13 @@ services:
   livekit:
     # Issue 445 (switch calls): the LiveKit media server for calls. Official multi-architecture manifest, pinned.
     # It waits, running nothing, until Messenger puts calls/enabled (the switch is on), and stops LiveKit again
-    # once the marker is gone. No published port: media leaves the box outbound only.
+    # once the marker is gone; a new calls/livekit.gen (new TURN logins) restarts it. No published port: media
+    # leaves the box outbound only.
     image: livekit/livekit-server:v1.13.11@sha256:25cd902de7cacbd5f1f779f6a6ac1eae20ba8f56b0935934ce6b0ab80d1e3d20
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
-      - 'trap "kill $$p 2>/dev/null; exit 0" TERM INT; while :; do until [ -f /calls/enabled ]; do sleep 2 & wait $$!; done; /livekit-server --config /calls/livekit.yaml & p=$$!; while [ -f /calls/enabled ] && kill -0 $$p 2>/dev/null; do sleep 2 & wait $$!; done; kill $$p 2>/dev/null; wait $$p; done'
+      - 'trap "kill $$p 2>/dev/null; exit 0" TERM INT; while :; do until [ -f /calls/enabled ]; do sleep 2 & wait $$!; done; g=$$(cat /calls/livekit.gen 2>/dev/null); /livekit-server --config /calls/livekit.yaml & p=$$!; while [ -f /calls/enabled ] && [ "$$(cat /calls/livekit.gen 2>/dev/null)" = "$$g" ] && kill -0 $$p 2>/dev/null; do sleep 2 & wait $$!; done; kill $$p 2>/dev/null; wait $$p; done'
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -172,6 +173,29 @@ services:
     depends_on:
       unified-init: {condition: service_completed_successfully}
     networks: [call-lane, matrix-lane]
+    stop_grace_period: 10s
+    restart: unless-stopped
+  call-tunnel:
+    # Issue 445 (switch calls): the guests' door, a Cloudflare Tunnel in the owner's own Cloudflare account
+    # (call_cloudflare.py). cloudflared (built into Messenger's image from the pinned official one) only dials out to
+    # Cloudflare: no port opens on the box. It runs only while the switch is on AND Messenger has made the tunnel
+    # (calls/tunnel-token), and its one route is Messenger's call-only guest listener over tunnel-lane.
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-a2c7dc3360a53d3c8c505096f890593182ca144a@sha256:594b5292a105eb939851132aa8240d56d1a4ca20ffcec94f75a452bc00afd665}
+    user: "1000:1000"
+    entrypoint: [/bin/sh, -c]
+    command:
+      - 'trap "kill $$p 2>/dev/null; exit 0" TERM INT; while :; do until [ -f /calls/enabled ] && [ -s /calls/tunnel-token ]; do sleep 2 & wait $$!; done; /usr/local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:0 run --token-file /calls/tunnel-token & p=$$!; while [ -f /calls/enabled ] && [ -s /calls/tunnel-token ] && kill -0 $$p 2>/dev/null; do sleep 2 & wait $$!; done; kill $$p 2>/dev/null; wait $$p; done'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m,uid=1000,gid=1000"]
+    mem_limit: 128m
+    pids_limit: 64
+    volumes:
+      - ${APP_DATA_DIR}/data/calls:/calls:ro
+    depends_on:
+      unified-init: {condition: service_completed_successfully}
+    networks: [tunnel-lane, call-egress]
     stop_grace_period: 10s
     restart: unless-stopped
   telegram:
@@ -640,6 +664,8 @@ networks:
   # Issue 445: Messenger, LiveKit and its token service; LiveKit's media goes out through call-egress only.
   call-lane: {internal: true}
   call-egress: {}
+  # Issue 445: only Messenger's guest listener and the call tunnel (cloudflared) share it.
+  tunnel-lane: {internal: true}
   signin-lane: {internal: true}
   signin-egress: {}
   model-lane: {internal: true}

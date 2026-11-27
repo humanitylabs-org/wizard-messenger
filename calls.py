@@ -24,6 +24,7 @@ SERVER_NAME = 'messenger.internal'
 LIVEKIT_KEY = 'messenger'
 LIVEKIT_WS = 'ws://livekit:7880'
 AUTH_URL = 'http://call-auth:8080'
+STUN = 'stun.cloudflare.com:3478'
 REGISTRATION = 'lk-jwt-registration.yaml'
 # Pinned with the recipe (runtipi/docker-compose.yml) and the image (Dockerfile); tests/test_calls.py keeps them equal.
 VERSIONS = {'livekit': 'v1.13.11', 'lk-jwt-service': '0.10.0', 'element-call': 'v0.29.0'}
@@ -74,18 +75,45 @@ def registration(keys):
     }
 
 
-def livekit_config():
+def livekit_config(turn_servers=None):
     """LiveKit's config. Rooms are made only by the token service for this box's own users (auto_create off); the
-    media ports stay inside the container network (no published port), so media leaves the box outbound only."""
+    media ports stay inside the container network (no published port), so media leaves the box outbound only.
+
+    With the owner's Cloudflare TURN logins (call_cloudflare.py), LiveKit hands them to every caller and learns the
+    box's public address over STUN, so a guest outside the tailnet relays its media through the owner's own Cloudflare
+    account and LiveKit answers it outbound."""
+    rtc = {'tcp_port': 7881, 'udp_port': 7882, 'use_external_ip': False}
+    if turn_servers:
+        rtc.update({'use_external_ip': True, 'stun_servers': [STUN], 'turn_servers': turn_servers})
     return {
         'port': 7880,
         'bind_addresses': ['0.0.0.0'],
-        'rtc': {'tcp_port': 7881, 'udp_port': 7882, 'use_external_ip': False},
+        'rtc': rtc,
         'room': {'auto_create': False, 'empty_timeout': 300},
         'key_file': '/calls/livekit-keys.yaml',
         'webhook': {'api_key': LIVEKIT_KEY, 'urls': [AUTH_URL + '/sfu_webhook']},
         'logging': {'level': 'info', 'json': True},
     }
+
+
+def write_livekit(root):
+    """(Re)write LiveKit's config from the kept TURN logins (calls/ice.json, if any). A changed config bumps
+    calls/livekit.gen, and the recipe's livekit loop restarts LiveKit on it."""
+    folder = Path(root) / 'calls'
+    try:
+        turn = json.loads((folder / 'ice.json').read_text()).get('turn_servers')
+    except (OSError, ValueError, AttributeError):
+        turn = None
+    text = json.dumps(livekit_config(turn if isinstance(turn, list) else None), indent=2)
+    path = folder / 'livekit.yaml'
+    try:
+        same = path.read_text() == text
+    except OSError:
+        same = False
+    if not same:
+        _write(path, text)
+        _write(folder / 'livekit.gen', secrets.token_hex(4) + '\n', 0o644)
+    return not same
 
 
 def prepare(root):
@@ -97,7 +125,7 @@ def prepare(root):
     keys = _keys(folder)
     # LiveKit and lk-jwt-service both read `<key>: <secret>` (hex, so plain YAML).
     _write(folder / 'livekit-keys.yaml', f'{LIVEKIT_KEY}: {keys["livekit_api"]}\n')
-    _write(folder / 'livekit.yaml', json.dumps(livekit_config(), indent=2))
+    write_livekit(root)
     reg = json.dumps(registration(keys), indent=2)
     _write(folder / REGISTRATION, reg)
     _write(root / 'matrix' / REGISTRATION, reg)

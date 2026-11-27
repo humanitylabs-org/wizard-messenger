@@ -1,8 +1,9 @@
 // Issue 445 (switch calls): the call button in a chat header. Stage: tests/catchup_stage.py (real ViewServer + real
 // static view, synthetic chats). The switch listing and the call answer are routed here, so no call server is needed
 // (tests/test_call_door.py covers the box side). Checks: switch off = no button; on = a Call button left of
-// Catch me up, >= 44 px; a tap opens the call in its own window at the box's answer; with no public door the toast
-// says calls stay on the owner's devices. SHOTS=<dir> writes off.png / on.png (412 px phone).
+// Catch me up, >= 44 px; a tap opens the call in its own window at the box's answer; with no public door the Call link
+// sheet offers to connect the owner's Cloudflare account; with one, the join link goes into the chat as a message.
+// SHOTS=<dir> writes off.png / on.png / tapped.png / sent.png (412 px phone).
 // Usage: AGENT_STAGE_DIR=<dir> WIZARD_WEB_DIR=<wizard-ux>/web node tests/call_button_browser.cjs
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
@@ -13,7 +14,7 @@ const json = body => ({status: 200, contentType: 'application/json', body: JSON.
 const SWITCH = on => ({contract: 'wizard.app-switches/1', switches: [{id: 'calls', name: 'Calls', description: '', on, default: false,
   issues: ['humanitylabs-org/wizard-messenger#445'], tried: on, vote: null}], feedback: {}});
 
-async function run(browser, on) {
+async function run(browser, on, link = null) {
   const ctx = await browser.newContext({viewport: {width: 412, height: 860}, deviceScaleFactor: 2, colorScheme: 'dark', isMobile: true, hasTouch: true});
   await ctx.addCookies([{name: 'wizard_messenger_session', value: st.cookie, url: st.origin}]);
   await ctx.route('**/wizard-os-home/**', r => {
@@ -22,7 +23,11 @@ async function run(browser, on) {
   });
   await ctx.route('**/api/view/switches', r => r.request().method() === 'GET' ? r.fulfill(json(SWITCH(on))) : r.continue());
   const asked = [];
-  await ctx.route('**/api/view/calls', r => { asked.push(r.request().postDataJSON()); return r.fulfill(json({ok: true, result: {call: 'c1', open: '/call/k/OWNERKEY0123456789abcd/join/#/Lena?roomId=%21r&password=p', link: null, reach: 'tailnet'}})); });
+  await ctx.route('**/api/view/calls', r => { asked.push(r.request().postDataJSON()); return r.fulfill(json({ok: true, result: {call: 'c1', open: '/call/k/OWNERKEY0123456789abcd/join/#/Lena?roomId=%21r&password=p', link, reach: link ? 'everyone' : 'tailnet'}})); });
+  await ctx.route('**/api/view/calls/cloudflare', r => r.fulfill(json({ok: true, result: {connected: false, zone: null, zones: [], host: null, reach: 'tailnet', problem: null,
+    token_page: 'https://dash.cloudflare.com/profile/api-tokens?name=Wizard%20calls', permissions: ['Account · Cloudflare Tunnel · Edit']}})));
+  const sent = [];
+  await ctx.route('**/messages', r => { if (r.request().method() === 'POST') { sent.push(r.request().postDataJSON()); return r.fulfill(json({ok: true, result: {id: '$sent1', client_id: r.request().postDataJSON().client_id}})); } return r.continue(); });
   await ctx.route('**/call/k/**', r => r.fulfill({status: 200, contentType: 'text/html', body: '<title>Element Call</title>'}));
   const page = await ctx.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto(st.origin + '/'); await page.locator('.u-person').first().waitFor({timeout: 20000});
@@ -43,15 +48,25 @@ async function run(browser, on) {
     await win.waitForURL(/\/call\/k\/OWNERKEY/, {timeout: 5000});
     assert.deepEqual(asked, [{title: 'Lena'}]);
     assert.ok(new URL(win.url()).hash.startsWith('#/Lena?roomId='), win.url());
-    const toast = page.locator('.u-toast'); await toast.waitFor();
-    assert.match(await toast.textContent(), /own devices/);
-    if (SHOTS) await page.screenshot({path: path.join(SHOTS, 'tapped.png')});
+    if (!link) {
+      const sheet = page.getByRole('dialog', {name: 'Call link'}); await sheet.waitFor();
+      assert.match(await sheet.textContent(), /Your call is open on this device/);
+      assert.equal(await sheet.getByRole('link', {name: 'Make a token on Cloudflare'}).getAttribute('href'), 'https://dash.cloudflare.com/profile/api-tokens?name=Wizard%20calls');
+      assert.equal(await sheet.getByLabel('Cloudflare API token').getAttribute('type'), 'password');
+      if (SHOTS) await page.screenshot({path: path.join(SHOTS, 'tapped.png')});
+    } else {
+      const toast = page.locator('.u-toast'); await toast.waitFor();
+      assert.match(await toast.textContent(), /Call link sent/);
+      const bubble = page.locator('.u-thread-body .u-row', {hasText: 'Join my video call: ' + link}); await bubble.waitFor({timeout: 5000});
+      assert.equal(await page.getByRole('dialog', {name: 'Call link'}).count(), 0);
+      if (SHOTS) await page.screenshot({path: path.join(SHOTS, 'sent.png')});
+    }
   }
   assert.deepEqual(errors, []);
   await ctx.close();
 }
 (async () => {
   const browser = await chromium.launch();
-  try { await run(browser, false); await run(browser, true); console.log('call button: ok'); }
+  try { await run(browser, false); await run(browser, true); await run(browser, true, 'https://call-0a1b2c.example.org/c/GUESTKEY0123456789abcdef'); console.log('call button: ok'); }
   finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

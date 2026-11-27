@@ -820,7 +820,11 @@
     if (shell === 'desktop' || shell === 'phone') return shell === 'desktop';
     return !(coarse && screenMin > 0 && screenMin < 600);
   }
-  if (typeof module !== 'undefined') module.exports = {desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
+  // Issue 445: the message that carries a call's join link into the chat (any network: just words and the link).
+  function callInvite(link) {
+    return /^https:\/\/[a-z0-9.-]+\/c\/[A-Za-z0-9_-]+$/.test(String(link || '')) ? 'Join my video call: ' + link : '';
+  }
+  if (typeof module !== 'undefined') module.exports = {callInvite, desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2715,17 +2719,50 @@
     view.sub.textContent = subtitle(t.person); view.sub.classList.toggle('typing', (store.typing[s.person] || []).length > 0);
   }
   // Issue 445 (switch calls): the box starts the call (its own LiveKit and Element Call, call_door.py) and the
-  // call opens in a window of its own, which may use the camera. With a public door the join link to send comes
-  // back too; without one, calls stay on the owner's own devices and the call button says so.
+  // call opens in a window of its own, which may use the camera. When the owner's Cloudflare door is up the join
+  // link comes back too and goes into this chat as a normal message; without it calls stay on the owner's own
+  // devices, and the Call link sheet says how to connect Cloudflare (call_cloudflare.py).
   const callsOn = () => switchState.on.calls === true;
-  async function startCall(p) {
+  const callChannel = (id, p) => (view.id === id && view.root?.querySelector('.u-channel')?.value) || p.preferred_identity || p.identities?.[0]?.id || '';
+  async function startCall(p, id) {
     const win = window.open('', '_blank');
     try {
       const r = await api('api/view/calls', {method: 'POST', body: {title: p.display_name || ''}});
       if (win && !win.closed) win.location.replace(r.open);
       else { const a = node('a', 'primary wide', 'Open the call'); a.href = r.open; a.target = '_blank'; a.rel = 'noopener'; overlay('Call').append(a); }
-      if (!r.link) toast('Calls work on your own devices for now. Connect Cloudflare to send a link anyone can open.', 4000);
+      const invite = callInvite(r.link);
+      if (invite) { queueSend(id, {text: invite, identity_id: callChannel(id, p)}); toast('Call link sent'); }
+      else callLinkSheet(true);
     } catch (e) { win?.close(); error(e); }
+  }
+  // The Call link sheet: the owner's own Cloudflare account carries the guests' link (James, 27 Nov 2026: the box
+  // stays closed). Paste a token made on Cloudflare's page, pick a domain; Disconnect removes it all again.
+  async function callLinkSheet(afterCall) {
+    const sheet = overlay('Call link'); const body = node('div', 'u-call-link'); sheet.append(body);
+    const paint = st => {
+      body.replaceChildren();
+      if (st.connected && st.zone) {
+        body.append(node('p', 'helper', st.host && st.reach === 'everyone' ? 'Calls send a link anyone can open: ' + st.host + '. It runs through your own Cloudflare account and is removed when calls are turned off.' : 'Setting up your call link on ' + st.zone + '…'));
+        if (st.problem) body.append(node('p', 'error', st.problem));
+        body.append(button('Disconnect Cloudflare', () => act({method: 'DELETE'}), 'secondary wide'));
+        if (st.reach !== 'everyone') setTimeout(() => { if (body.isConnected) load(); }, 3000);
+        return;
+      }
+      if (st.connected && st.zones?.length) {
+        body.append(node('p', 'helper', 'Which of your domains should call links use?'));
+        for (const z of st.zones) body.append(button(z.name, () => act({method: 'POST', body: {zone: z.id}}), 'secondary wide'));
+        return;
+      }
+      body.append(node('p', 'helper', (afterCall ? 'Your call is open on this device. ' : '') + 'To send a link anyone can open, connect your own Cloudflare account (free, with a domain on it). Nothing opens on your Wizard: the link runs through your Cloudflare account.'));
+      const make = node('a', 'secondary wide', 'Make a token on Cloudflare'); make.href = st.token_page; make.target = '_blank'; make.rel = 'noopener';
+      body.append(make, node('p', 'helper', 'It needs: ' + (st.permissions || []).join(', ') + '.'));
+      const form = node('form', 'u-label-new'); const input = node('input'); input.type = 'password'; input.autocomplete = 'off'; input.placeholder = 'Paste the token'; input.setAttribute('aria-label', 'Cloudflare API token');
+      const go = node('button', 'primary', 'Connect'); go.type = 'submit'; form.append(input, go); body.append(form);
+      form.onsubmit = e => { e.preventDefault(); if (input.value.trim()) act({method: 'POST', body: {token: input.value.trim()}}); };
+    };
+    const act = async opts => { try { paint(await api('api/view/calls/cloudflare', opts)); } catch (e) { error(e); } };
+    const load = () => act({});
+    body.append(node('p', 'helper', 'Loading…')); load();
   }
   function buildThread(id, p) {
     const root = threadBase(p.display_name || ' ', subtitle(p), p.id ? () => editPerson(store.threads[id]?.person || p) : null, networksOf(p)[0], pictureURL(p.id, p.avatar));
@@ -2738,13 +2775,14 @@
       muteAction(cur.muted, () => setMuted(cur, !cur.muted)),
       priorityAction(cur, anchor, 'right'),
       ...(cur.native ? [] : [{label: 'Labels', icon: 'tag', run: () => labelsSheet(cur)}]),
+      ...(callsOn() && !cur.native ? [{label: 'Call link', icon: 'video', run: () => callLinkSheet(false)}] : []),
     ], {side: 'right'}); };
     if (p.id) { // Catch me up: next to the chat options, never replaces them
       const head = root.querySelector('.u-thread-head'), more = head?.querySelector('[aria-label="Chat options"]'), cu = iconButton('sparkle', 'Catch me up', () => catchUp(id), 'u-catchup-btn');
       if (more) head.insertBefore(cu, more); else head?.append(cu);
       if (!p.native) head?.insertBefore(draftToggle(id, p), cu);
       // Issue 445 (switch calls): a call from this chat, left of Catch me up.
-      if (!p.native) { const cb = iconButton('video', 'Call', () => startCall(store.threads[id]?.person || p), 'u-call-btn'); cb.hidden = !callsOn(); head?.insertBefore(cb, cu); }
+      if (!p.native) { const cb = iconButton('video', 'Call', () => startCall(store.threads[id]?.person || p, id), 'u-call-btn'); cb.hidden = !callsOn(); head?.insertBefore(cb, cu); }
     }
     view.sub = root.querySelector('.u-who-text span') || node('span'); if (!view.sub.parentNode) root.querySelector('.u-who-text').append(view.sub);
     const t = store.threads[id];

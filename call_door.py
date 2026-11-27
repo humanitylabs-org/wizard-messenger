@@ -326,6 +326,11 @@ class Door:
             elif n == 0 and now - call.get('active', call['created']) > IDLE:
                 self.end(call['id'])
 
+    def busy(self):
+        """A call is going on (not ended yet)."""
+        with self.lock:
+            return any(not c.get('ended') for c in self._load()['calls'].values())
+
     def guest_link(self, call):
         """The join link to send to the other person, when guests can reach this box (public_origin)."""
         origin = public_origin(self.root)
@@ -353,7 +358,7 @@ class Door:
 
 
 def public_origin(root):
-    """The guests' public address (slice 4: the owner's own Cloudflare tunnel), or None: calls then stay on the
+    """The guests' public address (the owner's own Cloudflare tunnel, call_cloudflare.py), or None: calls then stay on the
     owner's own devices."""
     try:
         origin = json.loads((Path(root) / 'calls' / 'public.json').read_text()).get('origin')

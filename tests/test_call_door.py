@@ -342,6 +342,40 @@ class OwnerDoor(DoorCase):
         self.assertEqual(self.owner_request('GET', base + '/join/')[0], 404)
         self.assertEqual(self.owner_request('POST', '/api/view/calls', {'title': 'Ann'}, extra=owner)[0], 404)
 
+    def test_owner_connects_cloudflare_for_the_guest_link(self):
+        import call_cloudflare
+        from test_call_cloudflare import API_TOKEN, FakeCloudflare
+        cf = FakeCloudflare()
+        keeper = self.view.call_cloudflare
+        keeper.request = cf
+        old, call_cloudflare.STOP_WAIT = call_cloudflare.STOP_WAIT, 0
+        self.addCleanup(setattr, call_cloudflare, 'STOP_WAIT', old)
+        cookie, csrf = test_web.ViewBoundary.session(self)
+        owner = {'Cookie': cookie, 'Origin': test_web.ORIGIN, 'X-Messenger-CSRF': csrf}
+        path = '/api/view/calls/cloudflare'
+        self.assertEqual(self.owner_request('GET', path)[0], 401)
+        self.assertEqual(self.owner_request('POST', path, {'token': API_TOKEN}, extra={'Authorization': 'Bearer ' + test_web.TOKEN})[0], 403)
+        self.assertEqual(self.owner_request('POST', path, {'token': API_TOKEN}, extra={'Cookie': cookie, 'Origin': test_web.ORIGIN})[0], 403)  # no CSRF
+        status, body = self.owner_request('GET', path, extra=owner)
+        self.assertEqual((status, body['result']['connected'], body['result']['reach']), (200, False, 'tailnet'))
+        status, body = self.owner_request('POST', path, {'token': 'cf-wrong-' + 'b' * 32}, extra=owner)
+        self.assertEqual((status, body['error']['code']), (400, 'cloudflare_refused'))
+        status, body = self.owner_request('POST', path, {'token': API_TOKEN}, extra=owner)
+        self.assertEqual((status, body['result']['zone']), (200, 'example.org'))
+        keeper.sync()
+        status, body = self.owner_request('POST', '/api/view/calls', {'title': 'Ann'}, extra=owner)
+        key = self.view.call_door._load()['calls'][body['result']['call']]['key']
+        self.assertEqual(body['result']['link'], 'https://%s/c/%s' % (keeper.status()['host'], key))
+        self.assertEqual(body['result']['reach'], 'everyone')
+        # Turning calls off removes the door from the account (the switch hook kicks the keeper; here it runs inline).
+        self.switch(False)
+        keeper.sync()
+        self.assertTrue(cf.empty())
+        self.assertEqual(self.owner_request('GET', path, extra=owner)[0], 404)
+        self.switch(True)
+        status, body = self.owner_request('DELETE', path, extra=owner)
+        self.assertEqual((status, body['result']['connected']), (200, False))
+
 
 class Pins(unittest.TestCase):
     def test_element_call_is_pinned_with_its_checksum(self):
