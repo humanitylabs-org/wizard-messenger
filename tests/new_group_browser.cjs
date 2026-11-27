@@ -1,11 +1,12 @@
-// New group (issue 397, switch new-group): New chat offers New group only for networks whose bridge can create
-// groups; the owner picks a network, people and a name (optional photo), taps Create, and the group opens ready to
-// send. OFF=1 checks that with the switch off New chat is unchanged. Synthetic box only; phone + desktop.
-// PLAYWRIGHT_MODULE=... [OFF=1] [STATIC_DIR=...] node tests/new_group_browser.cjs [outdir]
+// New group (issue 397, on for everyone since its switch-default): New chat offers New group only for networks whose
+// bridge can create groups; the owner picks a network, people and a name (optional photo), taps Create, and the group
+// opens ready to send. The box lists no switches at all, so it needs none. Synthetic box only; phone + desktop.
+// NONE=1: no network can make groups, so no New group button anywhere.
+// PLAYWRIGHT_MODULE=... [NONE=1] [STATIC_DIR=...] node tests/new_group_browser.cjs [outdir]
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const root = path.resolve(process.env.STATIC_DIR || path.join(__dirname, '../static')), out = path.resolve(process.argv[2] || 'new-group-shots');
-const OFF = process.env.OFF === '1';
+const NONE = process.env.NONE === '1';
 fs.mkdirSync(out, {recursive: true});
 const TYPES = {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'};
 const now = Date.now(), min = 60e3, D = ':messenger.internal';
@@ -35,7 +36,7 @@ const CONTACTS = {
       const body = () => JSON.parse(req.postData() || '{}');
       const ok = result => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, result})});
       const bad = (status, code, message) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code, message}})});
-      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: [{id: 'new-group', name: 'New group', on: !OFF, default: false, vote: null, tried: false}]})});
+      if (p === 'api/view/switches') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({contract: 'wizard.app-switches/1', switches: []})});
       if (p === 'api/view/session') return ok({authenticated: true, csrf_token: 'fixture'});
       if (p === 'api/status') return ok({state: 'ready', account_configured: true});
       if (p === 'api/identity') return ok({identity: {display_name: 'Owner'}});
@@ -48,8 +49,7 @@ const CONTACTS = {
       if (p === 'api/unified/directory') return ok({people: PEOPLE, groups: GROUPS});
       if (p === 'api/unified/new-group') {
         box.groupCalls++;
-        if (OFF) return bad(404, 'feature_off', 'New group is not switched on');
-        if (req.method() === 'GET') return ok({networks: NETWORKS});
+        if (req.method() === 'GET') return ok({networks: NONE ? [] : NETWORKS});
         const b = body(); box.creates.push(b);
         const done = box.creates.find(c => c.client_id === b.client_id && c !== b);
         const g = person('g-' + b.client_id, b.name || 'Ann and Bob', b.network, '', 0, 'group');
@@ -85,11 +85,11 @@ const CONTACTS = {
     }
     await page.waitForTimeout(500);
     const entry = page.getByRole('button', {name: 'New group', exact: true});
-    if (OFF) {
-      assert.equal(await entry.count(), 0, 'switch off: no New group anywhere');
-      assert.equal(box.groupCalls, 0, 'switch off: the box is never asked');
-      await shot('off');
-      summary.push(label + ' off ok');
+    if (NONE) {
+      assert.equal(await entry.isVisible(), false, 'no network can make groups: no New group button');
+      assert.ok(box.groupCalls >= 1, 'the box is asked which networks can make groups');
+      await shot('none');
+      summary.push(label + ' none ok');
       await ctx.close();
       continue;
     }

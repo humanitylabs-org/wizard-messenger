@@ -1332,14 +1332,12 @@
     };
     return form;
   }
-  // Issue 397 (switch new-group): New group. Offered only for networks whose bridge says it can create groups (the box
+  // Issue 397 (on for everyone since its switch-default): New group. Offered only for networks whose bridge says it can create groups (the box
   // asks each connected bridge), so there is never a dead button. The owner picks a network, two or more people from
   // it and a name (optional photo); the box creates the group on the real network and it opens ready to send.
   // Owner only: no agent tool or capability reaches these routes.
-  const newGroupOn = () => switchState.on['new-group'] === true;
   function newGroupButton(label, cls, before) {
     const b = button(label, () => { before?.(); newGroupSheet(); }, cls); b.hidden = true;
-    if (!newGroupOn()) return b;
     call('new-group').then(r => { b.hidden = !(r?.networks || []).length; }).catch(() => { b.hidden = true; });
     return b;
   }
@@ -1450,7 +1448,7 @@
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'To: name or group'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-newmsg-results'), wizard = button('New Wizard chat', () => { showNative(); native?.newChat(); }, 'link u-newmsg-wizard');
     box.append(node('h2', '', 'New message'), search, list, wizard);
-    if (newGroupOn()) box.append(newGroupButton('New group', 'link u-newmsg-group'));
+    box.append(newGroupButton('New group', 'link u-newmsg-group'));
     box.append(startChatForm(id => openPerson(id)));
     thread.append(iconButton('close', 'Close', closeDetail, 'u-close u-newmsg-close'), box);
     if (focus) requestAnimationFrame(() => search.focus());
@@ -1623,7 +1621,7 @@
     // Sharing: settles true once the owner picks someone (text placed) or closes the picker (declined).
     const settled = sharing ? new Promise(resolve => { s.answer = result => resolve(placeShare ? result === true : true); }) : null;
     if (!sharing) sheet.append(button('New Wizard chat', () => { closeOverlay(); showNative(); native?.newChat(); }, 'secondary wide'));
-    if (!sharing && newGroupOn()) sheet.append(newGroupButton('New group', 'secondary wide u-new-group-open'));
+    if (!sharing) sheet.append(newGroupButton('New group', 'secondary wide u-new-group-open'));
     if (!sharing) sheet.append(startChatForm(id => { closeOverlay(); openPerson(id); }));
     const search = node('input', 'u-search'); search.type = 'search'; search.placeholder = 'Search people and groups'; search.setAttribute('aria-label', 'Search people and groups');
     const list = node('div', 'u-directory'); sheet.append(search, list);

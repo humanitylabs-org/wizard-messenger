@@ -2,7 +2,7 @@
 
 The WizardOS Tracker's Try it toggle, Messenger's Settings and the agent all read and set the same state here, so a
 switch no longer differs per device. Every switch is off until the owner turns it on. A switch that was approved
-(Drafts at top, issue 150; the photo speed switches, issue 468) leaves this list and its behaviour is simply on; a stored value for it is ignored.
+(Drafts at top, issue 150; the photo speed switches, issue 468; New group, issue 397) leaves this list and its behaviour is simply on; a stored value for it is ignored.
 """
 import json
 import os
@@ -18,12 +18,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'new-group', 'name': 'New group',
-     'description': 'New chat offers New group on networks that can make one (WhatsApp, Telegram): pick the network, '
-                    'two or more people and a name (optional photo), tap Create. The group is made on the real '
-                    'network and opens ready to send.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#397']},
     {'id': 'add-contact', 'name': 'Add contact on Telegram',
      'description': 'A chat from someone who is not your Telegram contact yet shows an Add contact bar at the top (also '
                     'in the chat menu and Contact info). One tap adds them as a real Telegram contact and saves them '

@@ -14,7 +14,7 @@ const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
 const SW = [['add-contact', 'Add contact on Telegram', 'A chat from someone not yet your contact shows an Add contact bar.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
-  ['new-group', 'New group', 'New chat offers New group on networks that can make one.']];
+  ['full-reactions', 'Any emoji as a reaction', 'The ＋ next to the reactions opens the full emoji panel.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
   for (const [label, viewport, kit] of [['390', {width: 390, height: 844}, true], ['1280', {width: 1280, height: 860}, true], ['390-none', {width: 390, height: 844}, false]]) {
@@ -110,8 +110,8 @@ const SW = [['add-contact', 'Add contact on Telegram', 'A chat from someone not 
       await until(async () => box.votes.at(-1)?.vote === null);
       assert.deepEqual(box.feedback['add-contact'], {tried: true});
       // A flip in the shared section reaches the box at once.
-      await kitBox.locator('[data-try-id="new-group"]').getByRole('switch').click();
-      await until(async () => box.flips.at(-1)?.id === 'new-group' && box.flips.at(-1)?.on === true);
+      await kitBox.locator('[data-try-id="full-reactions"]').getByRole('switch').click();
+      await until(async () => box.flips.at(-1)?.id === 'full-reactions' && box.flips.at(-1)?.on === true);
       // Flipped from the Tracker: the section follows on the next switch poll.
       box.on['photo-timings'] = true;
       await until(async () => await kitBox.locator('[data-try-id="photo-timings"]').getByRole('switch').getAttribute('aria-checked') === 'true', 12000);

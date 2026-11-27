@@ -937,7 +937,7 @@ html.u-splitting, html.u-splitting * { cursor: col-resize !important; user-selec
 .u-newmsg .u-directory-row:hover, .u-newmsg .u-directory-row:focus-visible { background: var(--raised); }
 .u-newmsg .u-empty { text-align: center; color: var(--ink-3); margin: 6px 0; }
 .u-newmsg-wizard { align-self: center; color: var(--ink-3); }
-/* New group (issue 397, switch new-group) */
+/* New group (issue 397) */
 .u-newmsg-group { align-self: center; color: var(--ink-3); }
 .u-new-group-open { margin-top: .5rem; }
 .u-new-group .u-group-nets { display: grid; flex: 0 0 auto; width: 100%; margin: .25rem 0 .75rem; }
