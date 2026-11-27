@@ -261,13 +261,21 @@ def _write_config(path, config):
     tmp.replace(path)
 
 
+def _run(args):
+    _log(args[0])
+    with (DATA / 'postgres-move.log').open('a') as log:
+        done = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT, timeout=6 * 3600)
+    if done.returncode:
+        raise RuntimeError('%s stopped with code %d (see postgres-move.log)' % (args[0], done.returncode))
+
+
 def move(state):
     started = time.time()
     state = {'state': 'moving', 'tries': int(state.get('tries') or 0) + 1, 'started': _now()}
     _save(state)
     source, backup = DATA / 'homeserver.db', DATA / 'homeserver.db.pre-postgres'
     part = DATA / 'homeserver.db.pre-postgres.part'
-    port_config = DATA / 'homeserver-postgres.yaml'
+    port_config, backup_config = DATA / 'homeserver-postgres.yaml', DATA / 'homeserver-backup.yaml'
     try:
         conn = _pg()
         if not source.exists():
@@ -293,15 +301,14 @@ def move(state):
             part.replace(backup)
             _empty(conn)
             conn.close()
+            # A Synapse update in the same start leaves schema changes and background updates the port tool refuses
+            # to carry ("Pending background updates exist"): finish them on the backup first.
+            path, config = _config({'name': 'sqlite3', 'args': {'database': str(backup)}})
+            _write_config(backup_config, config)
+            _run(['update_synapse_database', '--database-config', str(backup_config), '--run-background-updates'])
             path, config = _config(POSTGRES)
             _write_config(port_config, config)
-            _log('synapse_port_db')
-            with (DATA / 'postgres-move.log').open('a') as log:
-                done = subprocess.run(['synapse_port_db', '--sqlite-database', str(backup),
-                                       '--postgres-config', str(port_config)],
-                                      stdout=log, stderr=subprocess.STDOUT, timeout=6 * 3600)
-            if done.returncode:
-                raise RuntimeError('synapse_port_db stopped with code %d (see postgres-move.log)' % done.returncode)
+            _run(['synapse_port_db', '--sqlite-database', str(backup), '--postgres-config', str(port_config)])
             # The port tool brings the backup up to this Synapse's schema first; check it again afterwards.
             _no_journal(backup)
             integrity(backup)
@@ -331,6 +338,7 @@ def move(state):
         _log('failed, staying on SQLite: %s' % state['error'])
     finally:
         port_config.unlink(missing_ok=True)
+        backup_config.unlink(missing_ok=True)
     _save(state)
     return state
 
