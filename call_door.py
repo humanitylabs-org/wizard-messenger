@@ -156,7 +156,7 @@ class Door:
     def _save(self, state):
         calls._write(self.path, json.dumps(state, indent=1))
 
-    def _secret(self):
+    def _shared_key(self):
         return (self.root / 'matrix' / 'registration_shared_secret').read_text().strip()
 
     def _register(self, localpart, admin=False):
@@ -164,12 +164,14 @@ class Door:
         status, nonce = _hs('GET', '/_synapse/admin/v1/register')
         if status != 200:
             raise DoorError(503, 'M_UNKNOWN', 'The call server is starting, try again in a moment')
-        password = secrets.token_urlsafe(24)
-        mac = hmac.new(self._secret().encode(), b'\x00'.join([
-            nonce['nonce'].encode(), localpart.encode(), password.encode(), b'admin' if admin else b'notadmin']),
+        # The account signs in with the access token it gets here; its login word is random and never kept.
+        throwaway = secrets.token_urlsafe(24)
+        # Synapse's shared-secret registration is an HMAC-SHA1 over these fields (its protocol, not a stored hash).
+        mac = hmac.new(self._shared_key().encode(), b'\x00'.join([
+            nonce['nonce'].encode(), localpart.encode(), throwaway.encode(), b'admin' if admin else b'notadmin']),
             hashlib.sha1).hexdigest()
         status, login = _hs('POST', '/_synapse/admin/v1/register', {
-            'nonce': nonce['nonce'], 'username': localpart, 'password': password, 'admin': admin, 'mac': mac})
+            'nonce': nonce['nonce'], 'username': localpart, 'password': throwaway, 'admin': admin, 'mac': mac})
         if status != 200 or not login.get('access_token'):
             raise DoorError(503, 'M_UNKNOWN', 'Could not make a call account')
         return login

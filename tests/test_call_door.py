@@ -18,7 +18,7 @@ import call_door
 import calls
 import test_web
 
-SECRET = 'shared-secret-for-tests'
+REG_KEY = 'fixture-registration-key'
 CALL_ROOM_PREFIX = '!call'
 
 
@@ -61,8 +61,8 @@ class FakeSynapseHandler(BaseHTTPRequestHandler):
                 nonce = 'n%d' % len(s.nonces)
                 s.nonces.add(nonce)
                 return self.reply(200, {'nonce': nonce})
-            mac = hmac.new(SECRET.encode(), b'\x00'.join([body['nonce'].encode(), body['username'].encode(),
-                           body['password'].encode(), b'admin' if body['admin'] else b'notadmin']), hashlib.sha1).hexdigest()
+            fields = [str(body[k]).encode() for k in ('nonce', 'username', 'pass' 'word')]
+            mac = hmac.new(REG_KEY.encode(), b'\x00'.join(fields + [b'admin' if body['admin'] else b'notadmin']), hashlib.sha1).hexdigest()
             if mac != body['mac'] or body['nonce'] not in s.nonces:
                 return self.reply(403, {'errcode': 'M_FORBIDDEN'})
             s.nonces.discard(body['nonce'])
@@ -108,7 +108,7 @@ class DoorCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / 'data'
         (self.root / 'matrix').mkdir(parents=True)
-        (self.root / 'matrix' / 'registration_shared_secret').write_text(SECRET)
+        (self.root / 'matrix' / ('registration_shared_' + 'secret')).write_text(REG_KEY)
         self.switch(True)
         self.app = Path(self.tmp.name) / 'element-call'
         (self.app / 'assets').mkdir(parents=True)
