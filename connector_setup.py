@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import synapse_postgres
 from unified_setup import write
 
 EXTRA_NETWORKS = ('whatsapp', 'signal', 'slack', 'line', 'instagram', 'facebook', 'twitter', 'linkedin', 'gmessages', 'dots')
@@ -15,10 +16,14 @@ BACKFILL = {'enabled': True, 'max_initial_messages': 100, 'max_catchup_messages'
             'unread_hours_threshold': 720}
 
 
-def apply_history_settings(name, config):
-    """Regenerated on every connector-init run; secrets come from connector-secrets.json."""
+def apply_history_settings(name, config, more=None):
+    """Regenerated on every connector-init run; secrets come from connector-secrets.json. `more` (issue 451) is
+    synapse_postgres.history(): larger first-history caps once Synapse runs on Postgres."""
     config['backfill'].update(BACKFILL)
     config['backfill']['threads']['max_initial_messages'] = 50
+    if more:
+        config['backfill']['max_initial_messages'] = more['first_messages']
+        config['backfill']['threads']['max_initial_messages'] = more['thread_messages']
     config['backfill']['queue']['enabled'] = False
     if name == 'whatsapp':
         # WhatsApp sends history only while pairing, and the bridge drops those
@@ -87,7 +92,7 @@ def setup_connectors(root, enabled=()):
         config['encryption'].update(allow=False, default=False, require=False)
         config['double_puppet'].update(servers={}, secrets={'messenger.internal': 'as_token:' + old_keys['doublepuppet']})
         config['logging'] = {'min_level': 'error', 'writers': [{'type': 'stdout', 'format': 'json'}]}
-        apply_history_settings(name, config)
+        apply_history_settings(name, config, synapse_postgres.history(root))
         write(folder / 'config.yaml', config)
         write(root / 'matrix' / (name + '-registration.yaml'), {
             'id': name, 'url': url, 'as_token': private['as_token'], 'hs_token': private['hs_token'],

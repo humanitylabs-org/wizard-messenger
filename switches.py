@@ -49,6 +49,13 @@ SWITCHES = (
                     'in Wizard Contacts. Networks that cannot add contacts show nothing.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#399']},
+    {'id': 'synapse-postgres', 'name': 'Postgres message store and longer history',
+     'description': 'The next time Messenger starts (its next update or a restart), the box checks and backs up the '
+                    'store behind your bridged chats and moves it from SQLite to Postgres. After that it brings in up '
+                    'to 200 Telegram chats and up to 500 earlier messages for each new or reconnected chat. Chats '
+                    'already there keep the history they have. Once moved, it stays on Postgres.',
+     'default': False,
+     'issues': ['humanitylabs-org/wizard-messenger#451']},
 )
 _KNOWN = {s['id'] for s in SWITCHES}
 
