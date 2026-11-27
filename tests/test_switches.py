@@ -64,7 +64,14 @@ class SwitchEndpoint(unittest.TestCase):
                                'the top (also in the chat menu and Contact info). One tap adds them as a real Telegram '
                                'contact and saves them in Wizard Contacts. Networks that cannot add contacts show '
                                'nothing.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#399']}])
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#399']}, {
+                'id': 'synapse-postgres', 'name': 'Postgres message store and longer history',
+                'description': 'The next time Messenger starts (its next update or a restart), the box checks and '
+                               'backs up the store behind your bridged chats and moves it from SQLite to Postgres. '
+                               'After that it brings in up to 200 Telegram chats and up to 500 earlier messages for '
+                               'each new or reconnected chat. Chats already there keep the history they have. Once '
+                               'moved, it stays on Postgres.',
+                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#451']}])
             self.assertEqual(body['feedback'], {})
 
     def test_thumbs_up_or_down_stays_on_the_box(self):
@@ -455,7 +462,7 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"photo-warm": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('photo-warm'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-group', 'add-contact'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'photo-timings', 'new-group', 'add-contact', 'synapse-postgres'])
 
 
 if __name__ == '__main__':

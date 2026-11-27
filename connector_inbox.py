@@ -7,6 +7,7 @@ own-name learning and silent first-discovery history import.
 from unified import *
 from connectors import Connectors, MATRIX_NETWORKS, PROVIDERS, room_network, own_ghost
 from unified import dm_label, dm_more, label_kind, label_rank, topic_number, MXC
+import synapse_postgres
 
 # Cached room_meta written before this version may have dropped a bridged room
 # (protocol.id aliases): re-read room state once for those.
@@ -68,6 +69,9 @@ class ConnectorInbox(UnifiedInbox):
         super().__init__(data, engine)
         self.importing = set()
         self.import_slots = threading.Semaphore(2)
+        # Issue 451: once Synapse runs on Postgres (switch synapse-postgres), a new chat brings up to 1000 messages.
+        more = synapse_postgres.history(data) if data else None
+        self.history_pages = more['import_pages'] if more else HISTORY_PAGES
         self.history_sync = False  # tests: import inline
         self.sender = sender
         self.connectors = Connectors(self.root, self.owner, writer=sender,
@@ -601,7 +605,7 @@ class ConnectorInbox(UnifiedInbox):
 
     def _import_pages(self, identity, meta, room):
                 token = None
-                for _ in range(HISTORY_PAGES):
+                for _ in range(getattr(self, 'history_pages', HISTORY_PAGES)):
                     query = {'dir': 'b', 'limit': HISTORY_PAGE}
                     if token:
                         query['from'] = token

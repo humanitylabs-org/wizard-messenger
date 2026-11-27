@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import synapse_postgres
 
 
 def write(path, value):
@@ -64,7 +65,8 @@ def setup(root):
     write(root / 'matrix' / 'homeserver.yaml', {
         'server_name': 'messenger.internal', 'pid_file': '/tmp/synapse.pid',
         'listeners': [{'port': 8008, 'type': 'http', 'tls': False, 'bind_addresses': ['0.0.0.0'], 'resources': [{'names': ['client'], 'compress': False}]}],
-        'database': {'name': 'sqlite3', 'args': {'database': '/data/homeserver.db'}},
+        # Issue 451: SQLite until the synapse-postgres switch has moved Synapse to Postgres.
+        'database': synapse_postgres.database(root),
         'media_store_path': '/data/media', 'signing_key_path': '/data/signing.key',
         'report_stats': False, 'enable_registration': False,
         # Issue 444: the secret sits in its own owner-only file, never in homeserver.yaml.
@@ -108,6 +110,12 @@ def setup(root):
     config['backfill'].update(enabled=True, max_initial_messages=200, max_catchup_messages=500, unread_hours_threshold=720)
     config['backfill']['queue']['enabled'] = False
     config['network']['sync'].update(create_limit=50, login_sync_limit=50)
+    more = synapse_postgres.history(root)
+    if more:
+        # Issue 451: on Postgres, more chats on login and more first messages per new chat and thread.
+        config['backfill'].update(max_initial_messages=more['first_messages'])
+        config['backfill']['threads']['max_initial_messages'] = more['thread_messages']
+        config['network']['sync'].update(create_limit=more['chats'], login_sync_limit=more['chats'])
     write(root / 'telegram' / 'config.yaml', config)
     write(root / 'unified' / 'configuration.json', {'telegram_configured': configured})
     marker = root / 'telegram' / 'configured'
@@ -115,6 +123,7 @@ def setup(root):
         marker.touch(mode=0o600)
     else:
         marker.unlink(missing_ok=True)
+    synapse_postgres.prepare(root)
     # Each runtime is uid 1000, including Synapse (explicit compose override).
     if os.getuid() == 0:
         for p in [root, *root.rglob('*')]:

@@ -67,7 +67,11 @@ services:
     # Official Synapse v1.166.0 multi-architecture manifest (tag for Dependabot, digest is what runs).
     image: ghcr.io/element-hq/synapse:v1.166.0@sha256:2cdc84f1de4687af89e4b7b1fe7b5f93e0ee7913243b63f79b05319cb6a8f525
     user: "1000:1000"
-    entrypoint: [python, -m, synapse.app.homeserver, --config-path, /data/homeserver.yaml]
+    # Issue 451: while the synapse-postgres switch is on (or Synapse already moved), unified-init puts
+    # synapse_start.py next to the data; it moves SQLite to Postgres once, then starts Synapse. Otherwise as before.
+    entrypoint: [/bin/sh, -c]
+    command:
+      - 'if [ -f /data/synapse_start.py ]; then exec python /data/synapse_start.py; fi; exec python -m synapse.app.homeserver --config-path /data/homeserver.yaml'
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -79,12 +83,44 @@ services:
     depends_on:
       unified-init: {condition: service_completed_successfully}
       connector-init: {condition: service_completed_successfully}
-    networks: [matrix-lane]
+      postgres: {condition: service_started}
+    networks: [matrix-lane, postgres-lane]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=4)"]
       interval: 15s
       timeout: 5s
       retries: 10
+      # Issue 451: the one-time move to Postgres runs before Synapse answers.
+      start_period: 20m
+    restart: unless-stopped
+  postgres:
+    # Issue 451 (switch synapse-postgres): Synapse's database once the owner moves it there. Until then it only
+    # waits for unified-init's marker and runs nothing. Official multi-architecture manifest.
+    image: postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
+    user: "1000:1000"
+    entrypoint: [/bin/sh, -c]
+    command:
+      - 'trap "exit 0" TERM INT; until [ -f /pg/enabled ]; do sleep 5 & wait $$!; done; exec docker-entrypoint.sh postgres'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      - /var/run/postgresql:rw,noexec,nosuid,size=8m,uid=1000,gid=1000
+    mem_limit: 256m
+    pids_limit: 64
+    environment:
+      PGDATA: /pg/db
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD_FILE: /pg/password
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - ${APP_DATA_DIR}/data/postgres:/pg
+    depends_on:
+      unified-init: {condition: service_completed_successfully}
+    networks: [postgres-lane]
+    stop_grace_period: 30s
     restart: unless-stopped
   telegram:
     # Upstream bridgev2 + reproducible album patch; see plumbing/telegram-bridge.
@@ -548,6 +584,7 @@ services:
     restart: unless-stopped
 networks:
   matrix-lane: {internal: true}
+  postgres-lane: {internal: true}
   signin-lane: {internal: true}
   signin-egress: {}
   model-lane: {internal: true}
