@@ -185,6 +185,44 @@ class ViewBoundary(unittest.TestCase):
         for name in names:
             s,h,_=self.request('GET','/'+name)
             self.assertEqual(s,200,name); self.assertFalse(h['Content-Type'].startswith('application/json'),name)
+    def test_static_files_are_compressed_versioned_and_cached(self):
+        # Issue 482: every open downloaded ~1 MB of uncompressed script again (no-store, no encoding).
+        import gzip
+        root=self.server.static_root
+        (root/'index.html').write_text('<link rel="stylesheet" href="unified.css">\n<script src="/wizard-os-home/core/app-client.js" defer></script>\n<script src="unified.js" defer></script>')
+        script=('function hello() { return "messenger"; }\n'*400).encode(); (root/'unified.js').write_bytes(script)
+        (root/'unified.css').write_text('.u-row { color: red; }\n'*200)
+        s,h,page=self.request('GET','/',headers={'Accept-Encoding':'gzip, deflate, br'})
+        self.assertEqual(s,200); self.assertEqual(h['Content-Encoding'],'gzip'); self.assertEqual(h['Cache-Control'],'no-cache')
+        self.assertIn('Accept-Encoding',h['Vary'])
+        page=gzip.decompress(page).decode()
+        key=re.search(r'src="unified\.js\?v=([0-9a-f]{16})"',page).group(1)
+        self.assertRegex(page,r'href="unified\.css\?v=[0-9a-f]{16}"')
+        self.assertIn('src="/wizard-os-home/core/app-client.js"',page)  # Wizard's own files are not Messenger's to key
+        # The keyed file: gzip, cached for a year, the same bytes once decoded.
+        s,h,body=self.request('GET','/unified.js?v='+key,headers={'Accept-Encoding':'gzip'})
+        self.assertEqual(s,200); self.assertEqual(h['Content-Encoding'],'gzip')
+        self.assertEqual(h['Cache-Control'],'public, max-age=31536000, immutable')
+        self.assertEqual(gzip.decompress(body),script); self.assertLess(len(body),len(script)//4)
+        self.assertEqual(int(h['Content-Length']),len(body))
+        # No gzip asked (or refused): the plain bytes.
+        for accept in (None,'identity','gzip;q=0'):
+            s,h,body=self.request('GET','/unified.js?v='+key,headers={'Accept-Encoding':accept} if accept else {})
+            self.assertEqual(s,200); self.assertNotIn('Content-Encoding',h); self.assertEqual(body,script)
+        # An unchanged page is answered 304 with nothing to download.
+        etag=self.request('GET','/',headers={'Accept-Encoding':'gzip'})[1]['ETag']
+        s,h,body=self.request('GET','/',headers={'Accept-Encoding':'gzip','If-None-Match':etag})
+        self.assertEqual(s,304); self.assertEqual(body,b'')
+        # A stale or missing key is checked again every open, never kept for a year.
+        for path in ('/unified.js','/unified.js?v=0000000000000000'):
+            self.assertEqual(self.request('GET',path)[1]['Cache-Control'],'no-cache')
+        # A release (new bytes) gives the page a new key, so the next open runs the new code.
+        time.sleep(0.01); (root/'unified.js').write_bytes(script+b'// next release\n')
+        s,_,page=self.request('GET','/')
+        self.assertEqual(s,200)
+        new=re.search(r'src="unified\.js\?v=([0-9a-f]{16})"',page.decode()).group(1)
+        self.assertNotEqual(new,key)
+        self.assertEqual(self.request('GET','/unified.js?v='+new)[2],script+b'// next release\n')
     def test_session_cannot_be_created_without_ticket(self):
         for body in [{},{'ticket':None},{'ticket':''},{'ticket':'unknown'}]:
             self.assertEqual(self.request('POST','/api/view/session',body,{'Origin':ORIGIN})[0],401)
