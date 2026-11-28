@@ -855,6 +855,14 @@
   // (its controlledAudioDevices mode, flagged in the address's #? part). In the Wizard shell an app frame may not
   // open windows itself (the shell catches window.open and the frame has no camera), so the call opens through a
   // link the shell sends to the owner's browser; a plain tab opens a window straight away.
+  // Issue 487: an error's text as a bare reason for a sentence the caller finishes ("<reason>. Your message is back in
+  // the box."). The upload's own "Tap to retry." advice and trailing full stops go, so nothing reads "retry.. back".
+  // Long or empty messages give the fallback.
+  function sendReason(message, fallback = 'Not sent') {
+    if (typeof message !== 'string' || message.length >= 80) return fallback;
+    const bare = message.trim().replace(/\s*Tap to retry\.?$/i, '').replace(/[\s.]+$/, '');
+    return bare || fallback;
+  }
   function callRoute(native, framed) { return native ? 'phone' : framed ? 'shell' : 'window'; }
   function callWindowURL(open, base) {
     let u; try { u = new URL(String(open || ''), base); } catch (_) { return ''; }
@@ -874,7 +882,7 @@
     };
     return fn => new Promise((resolve, reject) => { waiting.push({fn, resolve, reject}); next(); });
   }
-  if (typeof module !== 'undefined') module.exports = {limiter, callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
+  if (typeof module !== 'undefined') module.exports = {limiter, callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, sendReason, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -5511,7 +5519,7 @@
           return run();
         }
         m.waited = 0; job.taken?.();
-        m.pending = false; m.failed = offline(e) ? 'Messenger was restarting' : e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
+        m.pending = false; m.failed = offline(e) ? 'Messenger was restarting' : sendReason(e?.message, '') || true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
         store.pending--; hold(); // failed: no longer blocks updates
         // Refused by Messenger (never sent): the message goes back into the box, so the bubble leaves the thread.
         // Anything else keeps its Retry bubble, which resends with the same client id (never a second copy).
@@ -5529,7 +5537,7 @@
     if (offline(e) || e?.status >= 500) return false;
     const items = (job.photos || (job.photo ? [job.photo] : job.video ? [job.video] : job.file ? [job.file] : [])).filter(it => !it.unreadable);
     const text = job.text || '', who = store.threads[id]?.person?.display_name || 'this chat';
-    const reason = e?.message && e.message.length < 80 ? e.message : 'Not sent';
+    const reason = sendReason(e?.message);
     const here = s.person === id && view.draft?.isConnected && view.sd?.id === id && !view.edit;
     if (here && !view.draft.value.trim() && !(view.attach || []).length) {
       for (const it of items) { delete it.sid; delete it.draft; it.sending = false; it.uploadFailed = false; }
