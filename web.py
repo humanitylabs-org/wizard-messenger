@@ -1,6 +1,7 @@
 """Container-owned browser view/session bridge. No host service or root-key access."""
 from __future__ import annotations
 import hashlib
+import gzip
 import hmac
 import html
 from http.cookies import SimpleCookie
@@ -151,6 +152,55 @@ def gateway_origins(origins):
     return sorted(o for o in origins or () if re.fullmatch(r'https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?', o))
 
 
+# Issue 482: the page's own scripts and styles. index.html names each with a ?v=<content hash> key, so a phone keeps
+# them for a year (immutable) and a release (new bytes, new key) is picked up on the next open; index.html itself is
+# revalidated every open (no-cache + ETag). Text is sent gzip-encoded when the browser accepts it, compressed once
+# per file version. A module-level cache: the owner Unix hop copies the ViewServer's attributes, not its methods.
+STATIC_FILES={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/boot-early.js':'boot-early.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+IMMUTABLE='public, max-age=31536000, immutable'
+_STATIC_CACHE={}
+_STATIC_LOCK=threading.Lock()
+
+def static_asset(source):
+    """(bytes, gzip bytes or None, version key) for a static file, read and compressed once per file version."""
+    st=source.stat()
+    key=str(source)
+    stamp=(st.st_mtime_ns,st.st_size)
+    with _STATIC_LOCK:
+        hit=_STATIC_CACHE.get(key)
+        if hit and hit[0]==stamp: return hit[1]
+    body=source.read_bytes()
+    packed=gzip.compress(body,6,mtime=0) if compressible(source.name) else None
+    if packed is not None and len(packed)>=len(body): packed=None
+    asset=(body,packed,hashlib.sha256(body).hexdigest()[:16])
+    with _STATIC_LOCK: _STATIC_CACHE[key]=(stamp,asset)
+    return asset
+
+def compressible(name):
+    return name.rsplit('.',1)[-1].lower() in ('html','js','css','svg','json')
+
+def accepts_gzip(header):
+    """True when an Accept-Encoding header allows gzip (q=0 refuses it)."""
+    for part in (header or '').split(','):
+        token,_,params=part.strip().partition(';')
+        if token.strip().lower() in ('gzip','x-gzip','*'):
+            q=re.search(r'q\s*=\s*([0-9.]+)',params)
+            try: return not q or float(q.group(1))>0
+            except ValueError: return False
+    return False
+
+def versioned_page(body,root):
+    """index.html with every local script/style/icon reference carrying its content key (?v=...)."""
+    local=set(STATIC_FILES.values())
+    def tag(m):
+        name=m.group(2).decode()
+        if name not in local or name=='index.html': return m.group(0)
+        try: version=static_asset(root/name)[2]
+        except OSError: return m.group(0)
+        return m.group(1)+m.group(2)+b'?v='+version.encode()+m.group(3)
+    return re.sub(rb'((?:src|href)=")([A-Za-z0-9._-]+)(")',tag,body)
+
+
 def first_setup_needs_link(service):
     """True where only a setup link may start the first setup: a box whose operator provisions owner enrollment
     links (MESSENGER_PROVISION_OWNER_ENROLLMENT=1, or one is waiting), or a remote-authority box. Everywhere else a
@@ -281,6 +331,22 @@ def agent_levels_listing(agents, accounts):
             'levels': [{'id': l, 'label': LABELS[l], 'recommended': l == RECOMMENDED} for l in LEVELS]}
 
 
+# Issue 484: the first open's reads, in the order the view asks for them (static/app.js boot and snapshot, then
+# unified.js loadLists). A step that only ever runs nested inside /api/view/boot.
+BOOT_STEPS=('/api/view/trusted-owner','/api/view/session','/api/status','/api/identity','/api/unified/people','/api/unified/groups')
+def boot_continues(step,status,data):
+    """Whether the view would ask for the next step after this answer (app.js boot / snapshot)."""
+    result=data.get('result') if isinstance(data,dict) and data.get('ok') is True else None
+    if step=='/api/view/trusted-owner':
+        return status<500 or status==501  # a refused or missing owner proof still asks for a session; a restart does not
+    if status!=200 or not isinstance(result,dict): return False
+    if step=='/api/view/session':
+        return result.get('authenticated') is True and isinstance(result.get('csrf_token'),str) and bool(result['csrf_token'])
+    if step=='/api/status': return result.get('state')=='ready'
+    if step=='/api/identity': return bool(result.get('identity'))
+    return True
+
+
 class ViewHandler(Handler):
     @property
     def service(self) -> ViewServer:
@@ -319,6 +385,8 @@ class ViewHandler(Handler):
         if origin is not None and origin!='null' and not self._origin_allowed(origin): return False
         return self.service.auth.media_session(ticket) is not None
     def _session_token(self):
+        # Issue 484: inside one boot answer, a session the session step just opened is the one the later steps use.
+        if getattr(self,'_boot_token',None): return self._boot_token
         try:
             cookies=SimpleCookie(); cookies.load(self.headers.get('Cookie',''))
             return cookies['wizard_messenger_session'].value
@@ -359,13 +427,15 @@ class ViewHandler(Handler):
             if not hmac.compare_digest(supplied.encode(),session['csrf'].encode()):
                 raise EngineError('csrf_forbidden','Reopen Messenger before trying again',403)
     def _cookie(self,token):
+        self._cookie_token=token
         secure='; Secure' if self.service.cookie_secure else ''
         return 'wizard_messenger_session='+token+'; Path='+self.service.public_path+'; Max-Age='+str(SESSION_SECONDS)+'; HttpOnly; SameSite=Strict'+secure
-    def _headers(self,status,body,mime,csp=None):
+    def _headers(self,status,body,mime,csp=None,cache='no-store',extra=()):
         self.send_response(status)
         self.send_header('Content-Type',mime)
-        self.send_header('Content-Length',str(len(body)))
-        self.send_header('Cache-Control','no-store')
+        if status!=304: self.send_header('Content-Length',str(len(body)))
+        self.send_header('Cache-Control',cache)
+        for name,value in extra: self.send_header(name,value)
         if urlsplit(self.path).path == '/push-service-worker.js':
             self.send_header('Service-Worker-Allowed', self.service.public_path)
         self.send_header('X-Content-Type-Options','nosniff')
@@ -644,9 +714,49 @@ class ViewHandler(Handler):
         try: profiles=unified.own_profiles() if unified is not None and hasattr(unified,'own_profiles') else []
         except Exception: profiles=[]  # a bridge that is down only hides its account
         return chat_accounts(profiles)
+    def _boot(self,method):
+        """Issue 484: GET /api/view/boot answers the first open's sequential reads in one round trip: trusted-owner,
+        session, status, identity and, once the account is ready, the people and groups lists. Each step runs through
+        this handler's own _dispatch for that step's path, with this request's headers, so every step meets exactly the
+        checks its own call would (owner proof, session, setup-only limits, origin) and the answer holds nothing the
+        separate calls would not. The view replays each step's status and body as that call's answer, so every gate
+        (locked, setup, enrollment, restarting) keeps its own screen. It stops where the view would stop asking.
+        Owner browser only: a bearer or the gateway's grant never gets a boot answer."""
+        if method!='GET': raise EngineError('not_found','No such view route',404)
+        if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
+            raise EngineError('owner_only','Owner browser access is required',403)
+        if parse_qs(urlsplit(self.path).query): raise EngineError('invalid_request','The boot answer takes no query',400)
+        self._origin()  # another site's page never gets a boot answer, not even its refusals
+        original,answers,cookie=self.path,{},None
+        self._boot_step=True
+        try:
+            for step in BOOT_STEPS:
+                self.path=step; self.pending_cookie=None
+                try: status,data=self._dispatch('GET')
+                except EngineError as e: status,data=e.status,{'ok':False,'error':{'code':e.code,'message':e.message}}
+                except Exception: status,data=500,{'ok':False,'error':{'code':'internal_error','message':'Messenger could not complete the request'}}
+                if status is None: break  # never a streamed answer on these routes; stop rather than guess
+                if self.pending_cookie:
+                    cookie=self.pending_cookie; self._boot_token=self._cookie_token
+                answers[step[1:]]={'status':status,'body':data}
+                if not boot_continues(step,status,data): break
+        finally:
+            self.path=original; self._boot_step=False; self._boot_token=None
+        self.pending_cookie=cookie
+        # The lists make this answer tens of KB, a tenth of that gzip-encoded. Compressing it next to the session's
+        # CSRF token is safe here (no BREACH-style guessing): _origin above refuses any cross-site request and the
+        # session cookie is SameSite=Strict, so another site can never make the browser repeat it to measure sizes.
+        body=json.dumps({'ok':True,'result':{'answers':answers}},ensure_ascii=False).encode()
+        extra=[('Vary','Accept-Encoding')]
+        if len(body)>=1024 and accepts_gzip(self.headers.get('Accept-Encoding')):
+            body=gzip.compress(body,6,mtime=0); extra.append(('Content-Encoding','gzip'))
+        try: self._headers(200,body,'application/json; charset=utf-8',None,'no-store',extra)
+        except (BrokenPipeError,ConnectionResetError): pass
+        return None,None
     def _dispatch(self,method):
-        self.pending_cookie=None
-        self._trusted_owner_verified=False
+        if not getattr(self,'_boot_step',False):
+            self.pending_cookie=None
+            self._trusted_owner_verified=False
         path=urlsplit(self.path).path
         if path in ('/api/switches','/api/view/switches'):
             return self._switches(method)
@@ -668,6 +778,8 @@ class ViewHandler(Handler):
             raise EngineError('owner_only','Owner browser access is required',403)
         if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/') and not self._media_ticket():
             self._trusted_owner()
+        if path=='/api/view/boot':
+            return self._boot(method)
         if path=='/api/view/trusted-owner' and method=='GET':
             self._trusted_owner()
             return 200,{'ok':True,'result':{'enabled':True,'remembered':self.service.trusted_owner.path.exists()}}
@@ -974,7 +1086,7 @@ class ViewHandler(Handler):
             if self.service.push is None:
                 return self._reply(404, {'ok': False})
             return self._headers(200, self.service.push.script(), 'application/javascript; charset=utf-8')
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+        allowed=STATIC_FILES
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:
@@ -985,7 +1097,7 @@ class ViewHandler(Handler):
                     raise EngineError('unauthorized', 'Invalid capability', 401)
             source=self.service.static_root/allowed[path]
             if not source.is_file(): raise EngineError('not_found','Messenger view is not available',404)
-            body=source.read_bytes()
+            body,packed,version=static_asset(source)
             mime=mimetypes.guess_type(source.name)[0] or 'application/octet-stream'
             if mime.startswith('text/') or mime in ['application/javascript','application/json']: mime+='; charset=utf-8'
             ancestors="'self'"
@@ -997,8 +1109,23 @@ class ViewHandler(Handler):
                 gateway=html.escape(json.dumps({'path':self.service.public_path,'origins':origins},separators=(',',':')),quote=True)
                 body=body.replace(b'<meta name="referrer"',('<meta name="messenger-gateway" content="'+gateway+'">\n  <meta name="referrer"').encode(),1)
                 ancestors=' '.join(["'self'",*origins])
+                body=versioned_page(body,self.service.static_root)
+                packed=gzip.compress(body,6,mtime=0)
+                version=hashlib.sha256(body).hexdigest()[:16]
             csp="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors "+ancestors
-            self._headers(200,body,mime,csp)
+            if path=='/api/spec': return self._headers(200,body,mime,csp)
+            # Issue 482: a file asked for under its current key never changes; anything else (index.html, an old key,
+            # no key) is checked again every open, answered 304 while it is unchanged.
+            asked=parse_qs(urlsplit(self.path).query).get('v',[''])[0]
+            cache=IMMUTABLE if allowed[path]!='index.html' and asked==version else 'no-cache'
+            encoded=packed is not None and accepts_gzip(self.headers.get('Accept-Encoding'))
+            etag='"'+version+('-gz' if encoded else '')+'"'
+            extra=[('ETag',etag)]+([('Vary','Accept-Encoding')] if packed is not None else [])
+            match=[t.strip() for t in (self.headers.get('If-None-Match') or '').split(',')]
+            if etag in match or 'W/'+etag in match or '*' in match:
+                return self._headers(304,b'',mime,csp,cache,extra)
+            if encoded: body=packed; extra.append(('Content-Encoding','gzip'))
+            self._headers(200,body,mime,csp,cache,extra)
         except EngineError as e: self._reply(e.status,{'ok':False,'error':{'code':e.code,'message':e.message}})
         except (BrokenPipeError,ConnectionResetError): pass
         except OSError: self._reply(500,{'ok':False,'error':{'code':'view_unavailable','message':'Could not load Messenger'}})

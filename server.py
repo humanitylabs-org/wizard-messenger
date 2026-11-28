@@ -6,6 +6,7 @@ import json
 import re
 import os
 import signal
+import socket
 import threading
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
@@ -76,6 +77,10 @@ class Handler(BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
         self.connection.settimeout(15)
+        # Issue 484: headers and body go out as two writes. Without TCP_NODELAY, Nagle holds the body until the
+        # other side acks the headers, which a delayed ACK makes about 40 ms on every kept-alive answer.
+        try: self.connection.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
+        except (OSError,AttributeError): pass  # not a TCP socket (a test double or a unix socket)
     def _reply(self,status,data):
         body=json.dumps(data,ensure_ascii=False).encode()
         self.send_response(status)

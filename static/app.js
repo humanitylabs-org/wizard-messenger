@@ -242,6 +242,7 @@
       }
     }
   }
+  const bootAnswers = new Map(); // issue 484: answers from api/view/boot, see preloadBoot
   class APIError extends Error {
     // Issue 326: with no server sentence the message is the plain words for the code, never the bare code
     // (unified.js and toasts print e.message as is).
@@ -272,7 +273,7 @@
         headers['X-Messenger-CSRF'] = state.csrf;
       }
     }
-    const response = await fetch(path, {method, headers, credentials: 'same-origin', cache: 'no-store', signal, ...(body !== undefined ? {body: JSON.stringify(body)} : {})});
+    const response = bootAnswer(path, method) || await fetch(path, {method, headers, credentials: 'same-origin', cache: 'no-store', signal, ...(body !== undefined ? {body: JSON.stringify(body)} : {})});
     signal?.throwIfAborted();
     if (response.status === 401) {
       let code = 'unauthorized';
@@ -329,6 +330,7 @@
     return "Messenger couldn't finish this. Try again." + (code ? ' (' + code + ')' : '');
   }
   function eraseView() {
+    bootAnswers.clear();
     state.identity = null; state.contacts = []; state.dms = []; state.invites = [];
     state.group = null; state.sheet = null; state.cache.clear(); state.records.clear(); state.nodes.clear(); state.scroll.clear();
     state.chatOpening = null; state.lastActivity = ''; state.listLoaded = false; state.listSignature = ''; seenSync.sent = ''; $('messages').replaceChildren(); $('conversation-list').replaceChildren(); $('saved-contacts').replaceChildren();
@@ -1244,6 +1246,37 @@
     if (state.authenticated) { launchTicket = null; run(snapshot); }
     else boot();
   });
+  // Issue 484: the first open used to wait on trusted-owner, session, status and identity one after another before it
+  // asked for the chat list. api/view/boot (web.py _boot) answers all of them, and the lists once the account is
+  // ready, in one round trip. Each step's answer is handed out once, as that call's own response, so every gate
+  // (locked, setup, enrollment, restarting) goes down its usual path. No answer (a restart, a refusal) or an answer
+  // that is not used within 15 s: those calls go to the network as before. (bootAnswers is declared up top.)
+  async function preloadBoot(signal) {
+    bootAnswers.clear();
+    // boot-early.js may already have asked while the scripts were downloading: that answer is used once, by the
+    // first open only (null afterwards, so a late boot-early.js asks nothing).
+    const early = window.__messengerBoot; window.__messengerBoot = null;
+    try {
+      let got = early ? await early : null;
+      signal?.throwIfAborted();
+      if (!got) {
+        const response = await fetch('api/view/boot', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'});
+        if (!response.ok) return;
+        got = {answers: (await response.json())?.result?.answers, at: Date.now()};
+      }
+      const {answers, at} = got;
+      if (!answers || typeof answers !== 'object') return;
+      for (const [path, a] of Object.entries(answers)) if (a && Number.isInteger(a.status) && a.status >= 200 && a.status <= 599 && a.body) bootAnswers.set(path, {status: a.status, body: a.body, at});
+    } catch (error) { if (error.name === 'AbortError') throw error; bootAnswers.clear(); }
+  }
+  function bootAnswer(path, method = 'GET') {
+    const a = method === 'GET' ? bootAnswers.get(path) : null; if (!a) return null;
+    bootAnswers.delete(path);
+    if (Date.now() - a.at > 15000) return null;
+    // Only what apiOnce and the trusted-owner check read from a response; the body is handed over as is (no
+    // second JSON round trip over the chat lists).
+    return {status: a.status, ok: a.status >= 200 && a.status < 300, json: async () => a.body};
+  }
   async function boot(redeemTicket = false) {
     // Bound views may preload in a different browser context. A preview must not
     // consume the owner's one-use enrollment before they act in this window.
@@ -1257,10 +1290,11 @@
       try {
         const ticket = launchTicket; launchTicket = null;
         if (!ticket) {
+          await preloadBoot(signal);
           try {
             let response;
             for (let attempt = 0; ; attempt++) {
-              try { response = await fetch('api/view/trusted-owner', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'}); }
+              try { response = bootAnswer('api/view/trusted-owner') || await fetch('api/view/trusted-owner', {method: 'GET', headers: {Accept: 'application/json'}, signal, credentials: 'same-origin', cache: 'no-store'}); }
               catch (error) { if (error.name === 'AbortError' || !(error instanceof TypeError) || attempt >= 2) throw error; await sleepFor(400 * (attempt + 1), signal); continue; }
               if (response.status < 500 || response.status === 501 || attempt >= 2) break;
               await sleepFor(400 * (attempt + 1), signal);
@@ -1330,7 +1364,7 @@
     return state.updating;
   }
   const transient = error => error.code === 'server_restarting' || error instanceof TypeError || (error.status >= 500 && error.status !== 501);
-  function cancelView() { window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false; }
+  function cancelView() { bootAnswers.clear(); window.MessengerUnified?.signout(); eraseView(); state.csrf = null; state.mediaTicket = ''; state.authenticated = false; }
   addEventListener('online', () => { if (state.mode === 'reconnect' || state.mode === 'opening' || bootTries) { clearTimeout(bootTimer); clearTimeout(trustedTimer); boot(); } });
   window.MessengerUnified?.mount({api, csrf: () => state.csrf, mediaTicket: () => state.mediaTicket, native: {open: openChat, close: () => { if (state.sheet) closeSheet(); if (state.group) leaveChat(); window.MessengerUnified?.returnNative?.(); }, newChat: () => openSheet('contact'), settings: () => openSheet('address'), address: () => { try { return state.identity ? publicAddress(state.identity) || '' : ''; } catch { return ''; } }}});
   window.MessengerUnified?.paintSaved();
