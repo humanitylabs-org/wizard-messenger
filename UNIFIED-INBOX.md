@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.149
+
+- Postgres message store and longer history are on for everyone; switch `synapse-postgres` is gone (issue 451, approved at show-and-tell). On the next start every box moves Synapse from SQLite to Postgres once, checked and with a backup (`homeserver.db.pre-postgres`); a failed move keeps SQLite, at most 3 tries. Telegram bridges up to 200 chats, new chats bring up to 500 first messages (100 per thread) and Messenger imports up to 1000. Image built from main 6c185da (PR #498): `sha-6c185da6716e7e085ad3d2524b08753aa9ec665d@sha256:f7ce9b0c26b69f8f0d6e802c468a4df7a06bfb2e1fb60232210709f49eb6d880`.
+
 ## 0.2.0-unified.16.148
 
 - A refused send that comes back into the box says one clean sentence, e.g. "Upload failed. Your message is back in the box." (was "Upload failed. Tap to retry.. Your message is back in the box."), and the Not sent bubble no longer repeats "Tap to retry" (issue 487). Image built from main b5868cc (PR #496): `sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0`.
