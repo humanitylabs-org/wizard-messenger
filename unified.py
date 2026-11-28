@@ -773,6 +773,8 @@ class PeopleStore:
             CREATE TABLE IF NOT EXISTS label_catalog(name TEXT PRIMARY KEY COLLATE NOCASE, created INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS message_identity_ts ON message(identity_id, timestamp);
             CREATE INDEX IF NOT EXISTS message_seq ON message(seq);
+            -- Issue 483: unread and mention counts per chat read only this index, even for a chat with 10,000s unread.
+            CREATE INDEX IF NOT EXISTS message_unread ON message(identity_id, outgoing, deleted, timestamp, mentioned);
             CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
             CREATE INDEX IF NOT EXISTS reaction_message ON reaction(message_id);
             ''')
@@ -1004,11 +1006,14 @@ class PeopleStore:
                         db.execute('DELETE FROM %s WHERE person_id=?' % table, (row[1],))
             return True
 
-    def status_identities(self, db):
-        """Identity ids of WhatsApp Status Broadcast chats (see is_status_chat); a cheap pre-filter, then the rule."""
+    def status_identities(self, db, people=None):
+        """Identity ids of WhatsApp Status Broadcast chats (see is_status_chat); a cheap pre-filter, then the rule.
+        `people`: optional JSON list of person ids to look at only their chats (issue 483)."""
         out = set()
         for r in db.execute("SELECT i.id,i.network,i.label,m.json FROM identity i LEFT JOIN room_meta m ON m.room=i.address "
-                            "WHERE i.network='whatsapp' AND (i.label=? OR m.json LIKE ?)", (STATUS_TITLE, '%' + STATUS_CHANNEL + '%')):
+                            "WHERE i.network='whatsapp' AND (i.label=? OR m.json LIKE ?)"
+                            + ('' if people is None else ' AND i.person_id IN (SELECT value FROM json_each(?))'),
+                            (STATUS_TITLE, '%' + STATUS_CHANNEL + '%') + (() if people is None else (people,))):
             try:
                 meta = json.loads(r[3]) if r[3] else None
             except ValueError:
@@ -1031,28 +1036,50 @@ class PeopleStore:
         # Directory (chats=False): everyone A-Z, used by New chat. A fixed handful of queries, never N+1.
         # Started chats (issue 176) are read before the store lock: draft_people takes the drafts lock.
         # A group made with New group (issue 397) is listed from the start, before its first message.
+        # Issue 483: every query is per chat on the message_identity_ts index (never a pass over all messages), and
+        # `ids` (the chats a live update touched) goes into the SQL, so an update reads only the chats that changed.
+        if ids is not None and not ids:
+            return []
         started = self.started() if chats else {}
         waiting = (self.draft_people() if started and kind == 'person' and self.draft_people else set()) or set()
+        scope = None if ids is None else json.dumps(sorted(ids))
+        only = '' if scope is None else ' AND i.person_id IN (SELECT value FROM json_each(?))'
+        arg = () if scope is None else (scope,)
         with self.db() as db:
-            persons = {r['id']: dict(r) for r in db.execute('SELECT * FROM person')}
+            persons = {r['id']: dict(r) for r in db.execute(
+                'SELECT * FROM person' + ('' if scope is None else ' WHERE id IN (SELECT value FROM json_each(?))'), arg)}
             idents = {}
-            for r in db.execute('SELECT * FROM identity WHERE kind=? ORDER BY last_used DESC,id', (kind,)):
+            for r in db.execute('SELECT * FROM identity i WHERE kind=?' + only + ' ORDER BY last_used DESC,id', (kind,) + arg):
                 idents.setdefault(r['person_id'], []).append(dict(r))
             labels = {}
-            for r in db.execute('SELECT DISTINCT i.person_id,l.label FROM room_label l JOIN identity i ON i.id=l.identity_id ORDER BY l.label'):
+            for r in db.execute('SELECT DISTINCT i.person_id,l.label FROM room_label l JOIN identity i ON i.id=l.identity_id'
+                                + ('' if scope is None else ' WHERE i.person_id IN (SELECT value FROM json_each(?))') + ' ORDER BY l.label', arg):
                 labels.setdefault(r[0], []).append(r[1])
-            last = {r['person_id']: r for r in db.execute(
-                'SELECT * FROM (SELECT m.original,m.outgoing,m.sender,m.timestamp,m.msgtype,m.deleted,m.media,i.person_id,m.identity_id,'
-                'ROW_NUMBER() OVER (PARTITION BY i.person_id ORDER BY m.timestamp DESC,m.id DESC) rn '
-                'FROM message m JOIN identity i ON i.id=m.identity_id WHERE i.kind=? AND m.deleted=0) WHERE rn=1', (kind,))}
-            unread = dict(db.execute(
-                'SELECT i.person_id,COUNT(*) FROM message m JOIN identity i ON i.id=m.identity_id '
-                'WHERE i.kind=? AND m.outgoing=0 AND m.deleted=0 AND m.timestamp>i.last_read_ts GROUP BY i.person_id', (kind,)).fetchall())
-            mentions = dict(db.execute('SELECT i.person_id,COUNT(*) FROM message m JOIN identity i ON i.id=m.identity_id '
-                                       'WHERE i.kind=? AND m.outgoing=0 AND m.deleted=0 AND m.mentioned=1 AND m.timestamp>i.last_read_ts GROUP BY i.person_id', (kind,)))
-            pictures = self.room_pictures(db)
-            status = self.status_identities(db)
-            remote = self.room_accounts(db) if kind == 'person' else {}
+            # Per chat: its newest non-deleted message (index seek, newest first) and its unread and mention counts
+            # (index range after the read mark). The newest across a merged person's chats wins, ties by message id.
+            last, unread, mentions, newest = {}, {}, {}, []
+            for r in db.execute(
+                    'SELECT i.person_id,'
+                    '(SELECT m.rowid FROM message m WHERE m.identity_id=i.id AND m.deleted=0 ORDER BY m.timestamp DESC,m.id DESC LIMIT 1),'
+                    '(SELECT COUNT(*) FROM message m WHERE m.identity_id=i.id AND m.timestamp>i.last_read_ts AND m.outgoing=0 AND m.deleted=0),'
+                    '(SELECT COUNT(*) FROM message m WHERE m.identity_id=i.id AND m.timestamp>i.last_read_ts AND m.outgoing=0 AND m.deleted=0 AND m.mentioned=1) '
+                    'FROM identity i WHERE i.kind=?' + only, (kind,) + arg):
+                pid, row, n, at = r
+                if row is not None:
+                    newest.append(row)
+                if n:
+                    unread[pid] = unread.get(pid, 0) + n
+                if at:
+                    mentions[pid] = mentions.get(pid, 0) + at
+            for r in db.execute('SELECT m.id,m.original,m.outgoing,m.sender,m.timestamp,m.msgtype,m.deleted,m.media,i.person_id,m.identity_id '
+                                'FROM message m JOIN identity i ON i.id=m.identity_id WHERE m.rowid IN (SELECT value FROM json_each(?))',
+                                (json.dumps(newest),)):
+                have = last.get(r['person_id'])
+                if have is None or (r['timestamp'], r['id']) > (have['timestamp'], have['id']):
+                    last[r['person_id']] = r
+            pictures = self.room_pictures(db, scope)
+            status = self.status_identities(db, scope)
+            remote = self.room_accounts(db, scope) if kind == 'person' else {}
         result = []
         for pid, ident in idents.items():
             if pid not in persons or (ids is not None and pid not in ids):
@@ -1062,7 +1089,7 @@ class PeopleStore:
             p = dict(persons[pid], identities=ident, labels=labels.get(pid, []))
             pic = next((pictures[i['address']] for i in ident if pictures.get(i['address'])), None)
             p['avatar'] = picture_tag(pic)
-            if remote:
+            if kind == 'person':  # issue 483: always there (also on a live update that read only some rooms)
                 p['accounts'] = [a for i in ident for a in remote.get(i['address'], [])]
             if pid in last:
                 r = last[pid]
@@ -1095,10 +1122,13 @@ class PeopleStore:
         return result
 
     @staticmethod
-    def room_accounts(db):
-        """The other person's account id per one-on-one room (their ghost's localpart), for Contacts."""
+    def room_accounts(db, people=None):
+        """The other person's account id per one-on-one room (their ghost's localpart), for Contacts.
+        `people`: optional JSON list of person ids to read only their rooms (issue 483)."""
         out = {}
-        for room, raw in db.execute("SELECT m.room,m.json FROM room_meta m JOIN identity i ON i.address=m.room WHERE i.kind='person'"):
+        for room, raw in db.execute("SELECT m.room,m.json FROM room_meta m JOIN identity i ON i.address=m.room WHERE i.kind='person'"
+                                    + ('' if people is None else ' AND i.person_id IN (SELECT value FROM json_each(?))'),
+                                    () if people is None else (people,)):
             try:
                 meta = json.loads(raw)
             except ValueError:
@@ -1114,9 +1144,11 @@ class PeopleStore:
         return out
 
     @staticmethod
-    def room_pictures(db):
+    def room_pictures(db, people=None):
         out = {}
-        for room, raw in db.execute("SELECT room,json FROM room_meta WHERE json LIKE '%\"avatar\": \"mxc%'"):
+        scoped = '' if people is None else ' AND room IN (SELECT address FROM identity WHERE person_id IN (SELECT value FROM json_each(?)))'
+        for room, raw in db.execute("SELECT room,json FROM room_meta WHERE json LIKE '%\"avatar\": \"mxc%'" + scoped,
+                                    () if people is None else (people,)):
             try:
                 pic = json.loads(raw).get('avatar')
             except ValueError:
