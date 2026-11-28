@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.148
+
+- A refused send that comes back into the box says one clean sentence, e.g. "Upload failed. Your message is back in the box." (was "Upload failed. Tap to retry.. Your message is back in the box."), and the Not sent bubble no longer repeats "Tap to retry" (issue 487). Image built from main b5868cc (PR #496): `sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0`.
+
 ## 0.2.0-unified.16.147
 
 - Picked photos show in the box at once (a dimmed chip with a spinner while each is prepared), are prepared two at a time, and each starts saving to the draft as soon as it is ready; sent size and orientation are unchanged (issue 485). Throttled phone (4x CPU), four 8-12 MP photos: chips on screen in about 70 ms (was 2-2.5 s). Image built from main 04415cc (PR #495): `sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155`.
