@@ -1,6 +1,7 @@
 """Container-owned browser view/session bridge. No host service or root-key access."""
 from __future__ import annotations
 import hashlib
+import gzip
 import hmac
 import html
 from http.cookies import SimpleCookie
@@ -149,6 +150,55 @@ def gateway_origins(origins):
     A plain function over the server's `origins`: the owner Unix hop (owner_unix.OwnerUnixServer) copies the
     ViewServer's attributes, not its methods, and serves this same page."""
     return sorted(o for o in origins or () if re.fullmatch(r'https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?', o))
+
+
+# Issue 482: the page's own scripts and styles. index.html names each with a ?v=<content hash> key, so a phone keeps
+# them for a year (immutable) and a release (new bytes, new key) is picked up on the next open; index.html itself is
+# revalidated every open (no-cache + ETag). Text is sent gzip-encoded when the browser accepts it, compressed once
+# per file version. A module-level cache: the owner Unix hop copies the ViewServer's attributes, not its methods.
+STATIC_FILES={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+IMMUTABLE='public, max-age=31536000, immutable'
+_STATIC_CACHE={}
+_STATIC_LOCK=threading.Lock()
+
+def static_asset(source):
+    """(bytes, gzip bytes or None, version key) for a static file, read and compressed once per file version."""
+    st=source.stat()
+    key=str(source)
+    stamp=(st.st_mtime_ns,st.st_size)
+    with _STATIC_LOCK:
+        hit=_STATIC_CACHE.get(key)
+        if hit and hit[0]==stamp: return hit[1]
+    body=source.read_bytes()
+    packed=gzip.compress(body,6,mtime=0) if compressible(source.name) else None
+    if packed is not None and len(packed)>=len(body): packed=None
+    asset=(body,packed,hashlib.sha256(body).hexdigest()[:16])
+    with _STATIC_LOCK: _STATIC_CACHE[key]=(stamp,asset)
+    return asset
+
+def compressible(name):
+    return name.rsplit('.',1)[-1].lower() in ('html','js','css','svg','json')
+
+def accepts_gzip(header):
+    """True when an Accept-Encoding header allows gzip (q=0 refuses it)."""
+    for part in (header or '').split(','):
+        token,_,params=part.strip().partition(';')
+        if token.strip().lower() in ('gzip','x-gzip','*'):
+            q=re.search(r'q\s*=\s*([0-9.]+)',params)
+            try: return not q or float(q.group(1))>0
+            except ValueError: return False
+    return False
+
+def versioned_page(body,root):
+    """index.html with every local script/style/icon reference carrying its content key (?v=...)."""
+    local=set(STATIC_FILES.values())
+    def tag(m):
+        name=m.group(2).decode()
+        if name not in local or name=='index.html': return m.group(0)
+        try: version=static_asset(root/name)[2]
+        except OSError: return m.group(0)
+        return m.group(1)+m.group(2)+b'?v='+version.encode()+m.group(3)
+    return re.sub(rb'((?:src|href)=")([A-Za-z0-9._-]+)(")',tag,body)
 
 
 def first_setup_needs_link(service):
@@ -361,11 +411,12 @@ class ViewHandler(Handler):
     def _cookie(self,token):
         secure='; Secure' if self.service.cookie_secure else ''
         return 'wizard_messenger_session='+token+'; Path='+self.service.public_path+'; Max-Age='+str(SESSION_SECONDS)+'; HttpOnly; SameSite=Strict'+secure
-    def _headers(self,status,body,mime,csp=None):
+    def _headers(self,status,body,mime,csp=None,cache='no-store',extra=()):
         self.send_response(status)
         self.send_header('Content-Type',mime)
-        self.send_header('Content-Length',str(len(body)))
-        self.send_header('Cache-Control','no-store')
+        if status!=304: self.send_header('Content-Length',str(len(body)))
+        self.send_header('Cache-Control',cache)
+        for name,value in extra: self.send_header(name,value)
         if urlsplit(self.path).path == '/push-service-worker.js':
             self.send_header('Service-Worker-Allowed', self.service.public_path)
         self.send_header('X-Content-Type-Options','nosniff')
@@ -974,7 +1025,7 @@ class ViewHandler(Handler):
             if self.service.push is None:
                 return self._reply(404, {'ok': False})
             return self._headers(200, self.service.push.script(), 'application/javascript; charset=utf-8')
-        allowed={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+        allowed=STATIC_FILES
         if path not in allowed: return self._handle('GET')
         self.pending_cookie=None
         try:
@@ -985,7 +1036,7 @@ class ViewHandler(Handler):
                     raise EngineError('unauthorized', 'Invalid capability', 401)
             source=self.service.static_root/allowed[path]
             if not source.is_file(): raise EngineError('not_found','Messenger view is not available',404)
-            body=source.read_bytes()
+            body,packed,version=static_asset(source)
             mime=mimetypes.guess_type(source.name)[0] or 'application/octet-stream'
             if mime.startswith('text/') or mime in ['application/javascript','application/json']: mime+='; charset=utf-8'
             ancestors="'self'"
@@ -997,8 +1048,23 @@ class ViewHandler(Handler):
                 gateway=html.escape(json.dumps({'path':self.service.public_path,'origins':origins},separators=(',',':')),quote=True)
                 body=body.replace(b'<meta name="referrer"',('<meta name="messenger-gateway" content="'+gateway+'">\n  <meta name="referrer"').encode(),1)
                 ancestors=' '.join(["'self'",*origins])
+                body=versioned_page(body,self.service.static_root)
+                packed=gzip.compress(body,6,mtime=0)
+                version=hashlib.sha256(body).hexdigest()[:16]
             csp="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors "+ancestors
-            self._headers(200,body,mime,csp)
+            if path=='/api/spec': return self._headers(200,body,mime,csp)
+            # Issue 482: a file asked for under its current key never changes; anything else (index.html, an old key,
+            # no key) is checked again every open, answered 304 while it is unchanged.
+            asked=parse_qs(urlsplit(self.path).query).get('v',[''])[0]
+            cache=IMMUTABLE if allowed[path]!='index.html' and asked==version else 'no-cache'
+            encoded=packed is not None and accepts_gzip(self.headers.get('Accept-Encoding'))
+            etag='"'+version+('-gz' if encoded else '')+'"'
+            extra=[('ETag',etag)]+([('Vary','Accept-Encoding')] if packed is not None else [])
+            match=[t.strip() for t in (self.headers.get('If-None-Match') or '').split(',')]
+            if etag in match or 'W/'+etag in match or '*' in match:
+                return self._headers(304,b'',mime,csp,cache,extra)
+            if encoded: body=packed; extra.append(('Content-Encoding','gzip'))
+            self._headers(200,body,mime,csp,cache,extra)
         except EngineError as e: self._reply(e.status,{'ok':False,'error':{'code':e.code,'message':e.message}})
         except (BrokenPipeError,ConnectionResetError): pass
         except OSError: self._reply(500,{'ok':False,'error':{'code':'view_unavailable','message':'Could not load Messenger'}})
