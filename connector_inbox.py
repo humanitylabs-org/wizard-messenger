@@ -69,7 +69,7 @@ class ConnectorInbox(UnifiedInbox):
         super().__init__(data, engine)
         self.importing = set()
         self.import_slots = threading.Semaphore(2)
-        # Issue 451: once Synapse runs on Postgres (switch synapse-postgres), a new chat brings up to 1000 messages.
+        # Issue 451: once Synapse runs on Postgres, a new chat brings up to 1000 messages.
         more = synapse_postgres.history(data) if data else None
         self.history_pages = more['import_pages'] if more else HISTORY_PAGES
         self.history_sync = False  # tests: import inline

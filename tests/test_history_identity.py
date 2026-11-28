@@ -730,7 +730,7 @@ class BackfillConfigTests(Base):
         configs = {n: json.loads((self.root / n / 'config.yaml').read_text()) for n in EXTRA_NETWORKS}
         for name, conf in configs.items():
             self.assertTrue(conf['backfill']['enabled'], name)
-            self.assertEqual((conf['backfill']['max_initial_messages'], conf['backfill']['max_catchup_messages']), (100, 500))
+            self.assertEqual((conf['backfill']['max_initial_messages'], conf['backfill']['max_catchup_messages']), (500, 500))  # issue 451
             self.assertFalse(conf['backfill']['queue']['enabled'])  # needs Beeper batch sending
             self.assertEqual(conf['backfill']['unread_hours_threshold'], 720)
         hs = configs['whatsapp']['network']['history_sync']
@@ -754,7 +754,7 @@ class BackfillConfigTests(Base):
 
     def test_telegram_initial_history_raised(self):
         conf = json.loads((self.root / 'telegram' / 'config.yaml').read_text())
-        self.assertEqual((conf['backfill']['enabled'], conf['backfill']['max_initial_messages']), (True, 200))
+        self.assertEqual((conf['backfill']['enabled'], conf['backfill']['max_initial_messages']), (True, 500))  # issue 451
         self.assertFalse(conf['backfill']['queue']['enabled'])
 
 

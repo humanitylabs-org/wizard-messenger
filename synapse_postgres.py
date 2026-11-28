@@ -1,11 +1,10 @@
-"""Synapse on Postgres (issue 451, switch `synapse-postgres`).
+"""Synapse on Postgres (issue 451; on for everyone since its switch `synapse-postgres` was approved).
 
 Two halves in one file:
 
-* `prepare(root)` runs in unified-init (Messenger's image, no network). It reads the owner's switch and, while it is
-  on (or Synapse already moved), wakes the Postgres container, writes its password into owner-only files and copies
-  this file next to Synapse's data as `synapse_start.py`. `database(root)` says which database homeserver.yaml names.
-  With the switch off and nothing moved it removes those markers again, so Synapse starts exactly as before.
+* `prepare(root)` runs in unified-init (Messenger's image, no network). It wakes the Postgres container, writes its
+  password into owner-only files and copies this file next to Synapse's data as `synapse_start.py`.
+  `database(root)` says which database homeserver.yaml names.
 
 * `main()` runs as `synapse_start.py` inside Synapse's own container (the pinned Synapse image: its Python, psycopg2
   and `synapse_port_db`), right before Synapse itself. Only there is it certain that no Synapse is writing the SQLite
@@ -15,8 +14,7 @@ Two halves in one file:
   every ported table compared between both. Only when all of it holds does Synapse start on Postgres; on any failure it
   starts on SQLite as before and `postgres-move.json` says why (at most TRIES tries).
 
-Once moved, Synapse stays on Postgres even with the switch off: the old SQLite file would miss every message that
-arrived since. The pre-move backup stays on the box as `homeserver.db.pre-postgres`. No secret is ever written to
+Once moved, Synapse stays on Postgres. The pre-move backup stays on the box as `homeserver.db.pre-postgres`. No secret is ever written to
 homeserver.yaml, the status file or the log.
 """
 import json
@@ -29,7 +27,6 @@ import sys
 import time
 from pathlib import Path
 
-SWITCH = 'synapse-postgres'
 TRIES = 3
 PG_HOST, PG_PORT, PG_USER, PG_DB = 'postgres', 5432, 'synapse', 'synapse'
 # What homeserver.yaml names once moved. The password stays in a libpq passfile next to Synapse's data.
@@ -47,14 +44,6 @@ SKIP_PREFIXES = ('sqlite_', 'event_search_', 'user_directory_search_')
 
 
 # ---------- unified-init side (Messenger image) ----------
-def switch_on(root):
-    try:
-        values = json.loads((Path(root) / 'switches.json').read_text()).get('switches')
-    except (OSError, ValueError, AttributeError):
-        return False
-    return isinstance(values, dict) and values.get(SWITCH) is True
-
-
 def status(matrix_dir):
     try:
         value = json.loads((Path(matrix_dir) / 'postgres-move.json').read_text())
@@ -74,12 +63,11 @@ def database(root):
 
 def history(root):
     """The raised caps, or None. The bridges' configs are written before Synapse's container moves the database, so
-    they already count on the move while the switch is on and it has not failed; once a move failed they are back to
-    the SQLite caps until it succeeds. Messenger starts after Synapse, so it sees the outcome."""
-    state = status(Path(root) / 'matrix').get('state')
-    if state == 'moved' or (state != 'failed' and switch_on(root)):
-        return dict(HISTORY)
-    return None
+    they already count on the move unless it failed; once a move failed they are back to the SQLite caps until it
+    succeeds. Messenger starts after Synapse, so it sees the outcome."""
+    if status(Path(root) / 'matrix').get('state') == 'failed':
+        return None
+    return dict(HISTORY)
 
 
 def _secret_file(path, text):
@@ -93,20 +81,12 @@ def _secret_file(path, text):
 
 
 def prepare(root):
-    """Wake or put back to sleep the Postgres side. Returns True while Synapse should go through synapse_start.py."""
+    """Wake the Postgres side and hand Synapse its mover. Returns True (Synapse goes through synapse_start.py)."""
     root = Path(root)
     matrix, pg = root / 'matrix', root / 'postgres'
     pg.mkdir(mode=0o700, exist_ok=True)
     os.chmod(pg, 0o700)
-    want = switch_on(root) or moved(root)
     start = matrix / 'synapse_start.py'
-    if not want:
-        (pg / 'enabled').unlink(missing_ok=True)
-        start.unlink(missing_ok=True)
-        if status(matrix).get('state') == 'failed':
-            # Off then on again gives the move its tries back.
-            (matrix / 'postgres-move.json').unlink(missing_ok=True)
-        return False
     password = pg / 'password'
     if not password.exists():
         _secret_file(password, secrets.token_urlsafe(32))

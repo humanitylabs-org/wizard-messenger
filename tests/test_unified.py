@@ -603,15 +603,16 @@ class UnifiedTests(unittest.TestCase):
         self.assertIsNone(message_text(ev('m.room.message', {'msgtype': 'm.text', 'body': 'x', 'm.relates_to': {'rel_type': 'm.replace'}})))
         self.assertIsNone(message_text(ev('m.reaction', {})))
 
-    def test_setup_turns_on_recent_history_for_fifty_chats(self):
+    def test_setup_turns_on_recent_history_for_two_hundred_chats(self):
         import yaml
         import unified_setup
         with patch.dict('os.environ', {'TELEGRAM_API_ID': '12345', 'TELEGRAM_API_HASH': 'a' * 32}):
             unified_setup.setup(self.tmp.name)
         config = yaml.safe_load((Path(self.tmp.name) / 'telegram' / 'config.yaml').read_text())
-        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 200))
+        self.assertEqual((config['backfill']['enabled'], config['backfill']['max_initial_messages']), (True, 500))
         self.assertFalse(config['backfill']['queue']['enabled'])
-        self.assertEqual(config['network']['sync']['login_sync_limit'], 50)
+        # Issue 451: Synapse moves to Postgres on every box, so the raised caps are the setup default.
+        self.assertEqual(config['network']['sync']['login_sync_limit'], 200)
         self.assertFalse(config['backfill']['queue']['enabled'])
         self.assertTrue(config['double_puppet']['secrets']['messenger.internal'].startswith('as_token:'))
         home = json.loads((Path(self.tmp.name) / 'matrix' / 'homeserver.yaml').read_text())

@@ -1,4 +1,4 @@
-"""Issue 451 (switch synapse-postgres): Synapse moves from SQLite to Postgres once, then history caps rise.
+"""Issue 451 (on for everyone; its switch synapse-postgres is gone): Synapse moves from SQLite to Postgres once, then history caps rise.
 
 Offline: the setup half and the checks of the move. The move itself runs against the real Synapse and Postgres images
 (see the PR's Verified section); here the failure path is proved to leave SQLite and homeserver.yaml untouched."""
@@ -33,6 +33,7 @@ class SetupTests(unittest.TestCase):
         setup_connectors(self.root)
 
     def switch(self, on):
+        # Issue 451: the switch is gone; a value stored from before must change nothing.
         (self.root / 'switches.json').write_text(json.dumps({'switches': {'synapse-postgres': on}}))
 
     def moved(self, state='moved'):
@@ -49,23 +50,7 @@ class SetupTests(unittest.TestCase):
                 tg['backfill']['max_initial_messages'], tg['backfill']['threads']['max_initial_messages'],
                 wa['backfill']['max_initial_messages'], wa['backfill']['threads']['max_initial_messages'])
 
-    def assert_as_before(self):
-        self.assertEqual(self.home()['database'], {'name': 'sqlite3', 'args': {'database': '/data/homeserver.db'}})
-        self.assertFalse((self.root / 'matrix' / 'synapse_start.py').exists())
-        self.assertFalse((self.root / 'postgres' / 'enabled').exists())
-        self.assertEqual(self.caps(), (50, 50, 200, 50, 100, 50))
-        self.assertEqual(ConnectorInbox(self.root, Mock(), sender=Mock()).history_pages, 5)
-
-    def test_switch_off_changes_nothing(self):
-        self.run_init()
-        self.assert_as_before()
-        self.switch(False)
-        self.run_init()
-        self.assert_as_before()
-
-    def test_switch_on_wakes_postgres_and_hands_synapse_the_mover(self):
-        self.switch(True)
-        self.run_init()
+    def assert_handed_the_mover(self):
         start = self.root / 'matrix' / 'synapse_start.py'
         self.assertEqual(start.read_bytes(), (ROOT / 'synapse_postgres.py').read_bytes())
         self.assertTrue((self.root / 'postgres' / 'enabled').exists())
@@ -75,37 +60,35 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(passfile.read_text(), 'postgres:5432:synapse:synapse:%s\n' % word)
         for secret in (passfile, self.root / 'postgres' / 'password'):
             self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o600)
-        # Not moved yet: Synapse still names SQLite until the move has checked every row. The bridges start after
-        # Synapse, so their caps already count on the move.
-        self.assertEqual(self.home()['database']['name'], 'sqlite3')
-        self.assertEqual(self.caps(), (200, 200, 500, 100, 500, 100))
-        self.run_init()
-        self.assertEqual((self.root / 'postgres' / 'password').read_text(), word)
+        return word
+
+    def test_every_box_wakes_postgres_and_hands_synapse_the_mover(self):
+        for stored in (None, False, True):
+            with self.subTest(stored=stored):
+                if stored is not None:
+                    self.switch(stored)
+                self.run_init()
+                word = self.assert_handed_the_mover()
+                # Not moved yet: Synapse still names SQLite until the move has checked every row. The bridges start
+                # after Synapse, so their caps already count on the move.
+                self.assertEqual(self.home()['database']['name'], 'sqlite3')
+                self.assertEqual(self.caps(), (200, 200, 500, 100, 500, 100))
+                self.run_init()
+                self.assertEqual((self.root / 'postgres' / 'password').read_text(), word)
 
     def test_moved_names_postgres_without_its_password_and_raises_history(self):
-        self.switch(True)
-        self.run_init()
-        self.moved()
-        self.run_init()
-        home = self.home()
-        self.assertEqual(home['database'], synapse_postgres.POSTGRES)
-        word = (self.root / 'postgres' / 'password').read_text()
-        self.assertNotIn(word, (self.root / 'matrix' / 'homeserver.yaml').read_text())
-        self.assertEqual(self.caps(), (200, 200, 500, 100, 500, 100))
-        self.assertEqual(ConnectorInbox(self.root, Mock(), sender=Mock()).history_pages, 10)
-
-    def test_off_after_the_move_stays_on_postgres(self):
-        self.switch(True)
         self.run_init()
         self.moved()
         self.switch(False)
         self.run_init()
-        self.assertEqual(self.home()['database']['name'], 'psycopg2')
-        self.assertTrue((self.root / 'matrix' / 'synapse_start.py').exists())
-        self.assertTrue((self.root / 'postgres' / 'enabled').exists())
+        home = self.home()
+        self.assertEqual(home['database'], synapse_postgres.POSTGRES)
+        word = self.assert_handed_the_mover()
+        self.assertNotIn(word, (self.root / 'matrix' / 'homeserver.yaml').read_text())
+        self.assertEqual(self.caps(), (200, 200, 500, 100, 500, 100))
+        self.assertEqual(ConnectorInbox(self.root, Mock(), sender=Mock()).history_pages, 10)
 
     def test_a_failed_move_keeps_the_sqlite_caps(self):
-        self.switch(True)
         self.run_init()
         self.moved('failed')
         self.run_init()
@@ -113,15 +96,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.caps(), (50, 50, 200, 50, 100, 50))
         self.assertEqual(ConnectorInbox(self.root, Mock(), sender=Mock()).history_pages, 5)
         self.assertTrue((self.root / 'matrix' / 'synapse_start.py').exists())
-
-    def test_off_after_failed_tries_goes_back_to_sleep_and_resets_them(self):
-        self.switch(True)
-        self.run_init()
-        self.moved('failed')
-        self.switch(False)
-        self.run_init()
-        self.assertFalse((self.root / 'matrix' / 'postgres-move.json').exists())
-        self.assert_as_before()
+        self.assertTrue((self.root / 'matrix' / 'postgres-move.json').exists())
 
 
 class MoveChecks(unittest.TestCase):
@@ -208,7 +183,7 @@ class MoveChecks(unittest.TestCase):
 
 
 class RecipeTests(unittest.TestCase):
-    def test_postgres_sleeps_until_asked_and_only_synapse_reaches_it(self):
+    def test_postgres_waits_for_its_marker_and_only_synapse_reaches_it(self):
         import yaml
         compose = yaml.safe_load((ROOT / 'runtipi' / 'docker-compose.yml').read_text())
         services, networks = compose['services'], compose['networks']

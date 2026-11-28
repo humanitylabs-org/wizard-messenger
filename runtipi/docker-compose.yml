@@ -67,8 +67,8 @@ services:
     # Official Synapse v1.166.0 multi-architecture manifest (tag for Dependabot, digest is what runs).
     image: ghcr.io/element-hq/synapse:v1.166.0@sha256:2cdc84f1de4687af89e4b7b1fe7b5f93e0ee7913243b63f79b05319cb6a8f525
     user: "1000:1000"
-    # Issue 451: while the synapse-postgres switch is on (or Synapse already moved), unified-init puts
-    # synapse_start.py next to the data; it moves SQLite to Postgres once, then starts Synapse. Otherwise as before.
+    # Issue 451: unified-init puts synapse_start.py next to the data; it moves SQLite to Postgres once (checked,
+    # with a backup), then starts Synapse. Without it (an older unified-init), Synapse starts as before.
     entrypoint: [/bin/sh, -c]
     command:
       - 'if [ -f /data/synapse_start.py ]; then exec python /data/synapse_start.py; fi; exec python -m synapse.app.homeserver --config-path /data/homeserver.yaml'
@@ -94,8 +94,8 @@ services:
       start_period: 20m
     restart: unless-stopped
   postgres:
-    # Issue 451 (switch synapse-postgres): Synapse's database once the owner moves it there. Until then it only
-    # waits for unified-init's marker and runs nothing. Official multi-architecture manifest.
+    # Issue 451: Synapse's database. It waits for unified-init's marker before it starts. Official
+    # multi-architecture manifest.
     image: postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]

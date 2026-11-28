@@ -67,7 +67,7 @@ def setup(root):
     write(root / 'matrix' / 'homeserver.yaml', calls.synapse({
         'server_name': 'messenger.internal', 'pid_file': '/tmp/synapse.pid',
         'listeners': [{'port': 8008, 'type': 'http', 'tls': False, 'bind_addresses': ['0.0.0.0'], 'resources': [{'names': ['client'], 'compress': False}]}],
-        # Issue 451: SQLite until the synapse-postgres switch has moved Synapse to Postgres.
+        # Issue 451: SQLite until Synapse's container has moved it to Postgres (once, checked, on the next start).
         'database': synapse_postgres.database(root),
         'media_store_path': '/data/media', 'signing_key_path': '/data/signing.key',
         'report_stats': False, 'enable_registration': False,
