@@ -100,6 +100,10 @@ Evidence boundaries: real Synapse/bridge health and registration, real bridgev2 
 
 Title-bar sparkle beside the chat menu, and "Summarize these" under the "N new messages" line, open an opaque bottom sheet with bullets (who said what, decisions, open questions, things aimed at the owner); each bullet opens its source message. Input is every unread message in the chat with no cap (if none are unread: since the owner last wrote, else the whole loaded history). When the text exceeds one pass (`SUMMARY_PART_CHARS`, 120000) it is split by time into parts, each summarized, then merged; the sheet footer says "Summarized N messages in K parts". The model call goes only through the translation worker (`POST /complete`, `TINFOIL_API_KEY`, `https://inference.tinfoil.sh`). Model choice and the 8-transcript side-by-side test: `docs/catch-me-up.md`. Tables `catchup_grant` and `catchup_summary` are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. Permission: AGENT-PERMISSIONS.md.
 
+## 0.2.0-unified.16.145
+
+- The chat list and live updates read only each chat's newest line (issue 483): building the list no longer ranks every stored message, and a live update reads only the chats that changed. On a 100,000-message store `GET /api/unified/people` went from 230 ms to 5 ms and the update after one new message from 327 ms to 3 ms; unread and mention counts use a new covering index `message_unread` (built once at start), so even a chat with tens of thousands unread stays fast. Guard: `tests/test_people_list_index.py`. Image built from main 86ebfc7 (PR #492): `sha-86ebfc7cb0c34618c27db06217a98d35c7b19008@sha256:1eaf49e34a41fc6202b493c16609f620c020d2a3d9874eeccc72a63c274d28b6`.
+
 ## 0.2.0-unified.16.144
 
 - Each photo, video and file uploads once (issue 481): Send now uses the copies the composer already saved to the chat's draft, which the box sends from its own disk, instead of uploading every file again from the phone. 4 photos on a throttled 4G phone: 1.69 MB on the wire instead of 3.37 MB, sent 23.9 s after attaching instead of 46.7 s. Draft uploads run 3 at a time; a file that never reached the draft still uploads from the phone.
