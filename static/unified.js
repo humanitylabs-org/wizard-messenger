@@ -863,7 +863,18 @@
     u.hash = hash + (hash.includes('?') ? '&' : '?') + 'controlledAudioDevices=true';
     return u.href;
   }
-  if (typeof module !== 'undefined') module.exports = {callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
+  // Issue 485: runs at most n of the given tasks at a time, in the order they were asked for. limit(fn) answers fn's result.
+  function limiter(n) {
+    let running = 0; const waiting = [];
+    const next = () => {
+      while (running < n && waiting.length) {
+        const {fn, resolve, reject} = waiting.shift(); running++;
+        Promise.resolve().then(fn).then(resolve, reject).finally(() => { running--; next(); });
+      }
+    };
+    return fn => new Promise((resolve, reject) => { waiting.push({fn, resolve, reject}); next(); });
+  }
+  if (typeof module !== 'undefined') module.exports = {limiter, callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -4195,6 +4206,9 @@
       // the send uses this draft copy instead of uploading the file a second time.
       const keep = it => it.sending || (alive() && sd.epoch === epoch);
       const one = async it => {
+        // Issue 485: a photo picked a moment ago goes up as soon as it is prepared (false: removed or unreadable).
+        if (it.ready && !await it.ready) return;
+        if (!keep(it) || it.removed || it.sid) return;
         // Issue 463: one key per staged file, kept across retries, so a retry of an upload the box already stored
         // gets that saved attachment back instead of a second copy. Passing trouble retries by itself a few times.
         it.upkey = it.upkey || 'u' + uid();
@@ -4531,7 +4545,9 @@
         bar.append(q, iconButton('close', 'Cancel', () => { if (view.edit) { draft.value = s.drafts[id] || ''; grow(); } view.reply = view.edit = null; paintBar(); }));
       }
       // Each staged photo or file is Wizard's one attachment chip, the same chip Chats' composer shows (WizardApp.attachChip).
-      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) { const chip = WizardApp.attachChip.node({key: it.key, name: it.name || (it.video ? 'Video' : 'Photo'), bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url || ''}, {onRemove: () => { if (it.url) URL.revokeObjectURL(it.url); if (it.local) URL.revokeObjectURL(it.local); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }});
+      if (a.length) { const strip = node('div', 'u-attach-strip'); for (const it of a) { const chip = WizardApp.attachChip.node({key: it.key, name: it.name || (it.video ? 'Video' : 'Photo'), bytes: it.bytes, kind: it.file ? 'file' : 'image', preview: it.file ? '' : it.url || (it.preparing ? BLANK_PHOTO : '')}, {onRemove: () => { it.removed = true; if (it.url) URL.revokeObjectURL(it.url); if (it.pickUrl && it.pickUrl !== it.url) URL.revokeObjectURL(it.pickUrl); if (it.local) URL.revokeObjectURL(it.local); view.attach = (view.attach || []).filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); view.sd?.detach(it); }});
+        // Issue 485: a photo still being prepared shows the picked file, dimmed, with Wizard's chip spinner.
+        if (it.preparing) { chip.classList.add('u-attach-preparing'); chip.setAttribute('aria-busy', 'true'); const spin = node('i', 'ch-attspin'); spin.setAttribute('aria-hidden', 'true'); chip.append(spin); }
         // Issue 402: a staged video shows its first frame (the chip's picture) with a play badge and its length.
         if (it.video) { chip.classList.add('u-attach-video'); chip.prepend(node('span', 'u-attach-play', '▶')); if (it.duration) chip.append(node('span', 'u-attach-dur', fmtDur(it.duration))); }
         // Issue 354: tapping a staged photo opens it full size (Wizard's viewer, else Messenger's own), never the Remove button.
@@ -4574,7 +4590,37 @@
     // Several selected photos are one post and one Telegram media group (up to 10).
     // The picker, a paste and a drag-and-drop all fill the same tray, like Chats' composer (James, 25 Oct 2026).
     const PHOTO = /^image\/(jpeg|png|gif|webp)$/;
-    const addFiles = async (picked, asFile = false) => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time'); try { const ready = []; for (const f of picked.slice(0, Math.max(0, room))) { const kind = attachKind(f, asFile); if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB. ' + (kind === 'video' ? 'Videos' : kind === 'photo' ? 'Photos' : 'Files') + ' up to 25 MB can be sent.', 4000); continue; } ready.push(kind === 'photo' ? {...await preparePhoto(f), key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size} : kind === 'video' ? {...await prepareVideo(f), key: 'a' + uid(), name: f.name || 'Video', bytes: f.size} : {file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); } if (s.person !== id || !ready.length) return; view.attach = [...(view.attach || []), ...ready]; view.paintBar(); view.grow(); view.draft.focus(); if (view.sd) view.sd.uploading = view.sd.attach(ready); } catch (e) { error(e); } };
+    // Issue 485: a picked photo is in the box at once, showing the file itself while it is prepared (resized and
+    // re-encoded, two at a time); its draft upload starts as soon as that one photo is ready. A video still shows once
+    // its first frame is drawn. A photo this browser can't read leaves the box with a message.
+    const pickedPhoto = f => {
+      const it = {preparing: true, source: f, key: 'a' + uid(), name: f.name || 'Photo', bytes: f.size, url: ''};
+      const shown = () => s.person === id && form.isConnected && (view.attach || []).includes(it);
+      // The empty tiles paint first; reading the files (for the picture and for preparing) waits for that frame.
+      it.ready = afterPaint().then(() => {
+        if (it.removed || it.url) return;
+        it.url = it.pickUrl = URL.createObjectURL(f); if (shown()) paintBar();
+      }).then(() => preparePhotoSoon(() => it.removed ? null : preparePhoto(f))).then(done => {
+        it.preparing = false; if (!done) return false;
+        Object.assign(it, done);
+        if (it.pickUrl && !it.sending) { URL.revokeObjectURL(it.pickUrl); it.pickUrl = null; } // a sending bubble may still show it
+        if (shown()) paintBar();
+        return true;
+      }, e => {
+        it.preparing = false; it.unreadable = true;
+        if (shown()) { view.attach = view.attach.filter(x => x !== it); if (!view.attach.length) view.attach = null; paintBar(); grow(); }
+        if (!it.sending) error(e);
+        return false;
+      });
+      return it;
+    };
+    const addFiles = async (picked, asFile = false) => { if (!picked.length) return; const room = 10 - (view.attach?.length || 0); if (picked.length > room) toast('Up to 10 attachments at a time');
+      const now = [], videos = [];
+      for (const f of picked.slice(0, Math.max(0, room))) { const kind = attachKind(f, asFile); if (f.size > 25 * 1048576) { toast((f.name || 'That file') + ' is over 25 MB. ' + (kind === 'video' ? 'Videos' : kind === 'photo' ? 'Photos' : 'Files') + ' up to 25 MB can be sent.', 4000); continue; }
+        if (kind === 'photo') now.push(pickedPhoto(f)); else if (kind === 'video') videos.push(f); else now.push({file: true, blob: f, key: 'a' + uid(), name: f.name || 'File', bytes: f.size}); }
+      const stage = items => { if (s.person !== id || !items.length) return; view.attach = [...(view.attach || []), ...items]; view.paintBar(); view.grow(); view.draft.focus(); if (view.sd) view.sd.uploading = view.sd.attach(items); };
+      stage(now);
+      try { const ready = []; for (const f of videos) ready.push({...await prepareVideo(f), key: 'a' + uid(), name: f.name || 'Video', bytes: f.size}); stage(ready); } catch (e) { error(e); } };
     file.onchange = () => { const picked = [...file.files], asFile = file.dataset.pick === 'file'; file.value = ''; if (!canAttach) return toast('Files can be sent in Wizard, Telegram, WhatsApp and Signal chats'); addFiles(picked, asFile); };
     const takeFiles = files => {
       if (!files.length || view.edit) return;
@@ -4629,6 +4675,8 @@
       // as its own message (the way LINE sends them), each with its own sent / failed + Retry bubble.
       const visual = a.some(x => !x.file || x.video);
       const apart = !!(visual && text && !reviewed && (p.identities || []).find(i => i.id === channel.value)?.network === 'line');
+      // Issue 485: a photo sent the moment it was picked shows the picked file in its sending bubble.
+      for (const it of a) if (it.preparing && !it.url) it.url = it.pickUrl = URL.createObjectURL(it.source);
       const jobs = sendJobs(a, text, {reply, identity_id: channel.value, apart});
       // Issue 481: these files keep uploading to the draft, and their sends take them from there.
       for (const it of a) it.sending = true;
@@ -5313,6 +5361,10 @@
     try { const old = JSON.parse(sessionStorage.getItem('messenger-unified-drafts') || '{}') || {}; for (const [k, v] of Object.entries(old)) if (v && !draftAt[k]) draftAt[k] = {text: v, at: Date.now()}; sessionStorage.removeItem('messenger-unified-drafts'); } catch { /* none */ }
     return Object.fromEntries(Object.entries(draftAt).map(([k, v]) => [k, v.text]));
   }
+  // Issue 485: photos are prepared two at a time (page-wide), in the order they were picked. Until its picture is read,
+  // a picked photo's chip is an empty tile (BLANK_PHOTO, one clear pixel); afterPaint() waits for the next frame.
+  const preparePhotoSoon = limiter(2), BLANK_PHOTO = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const afterPaint = () => new Promise(resolve => { const t = setTimeout(resolve, 100); requestAnimationFrame(() => setTimeout(() => { clearTimeout(t); resolve(); }, 0)); });
   async function preparePhoto(f) {
     if (f.size > 25 * 1048576) throw new Error('Photos up to 25 MB can be sent');
     // Albums use still JPEG photos, including the first frame of an animated image.
@@ -5404,6 +5456,15 @@
         // Issue 481: a file the composer saved to the chat's draft is sent from that copy on the box (draft_id plus a
         // draft: ref); only a file that never reached the draft goes up from this phone here.
         let draft_id = null;
+        // Issue 485: photos sent right after picking may still be preparing; wait for them, then size the bubble.
+        const picked = job.photos || (job.photo ? [job.photo] : []);
+        if (picked.some(x => x.ready)) {
+          await Promise.all(picked.map(x => x.ready));
+          if (picked.some(x => x.unreadable || !x.blob)) throw new Error('A photo could not be read');
+          if (m.photos) job.photos.forEach((x, i) => { if (m.photos[i]) m.photos[i].media = {w: x.w, h: x.h, mime: 'image/jpeg'}; });
+          m.media = m.photos ? m.photos[0].media : {w: job.photo.w, h: job.photo.h, mime: 'image/jpeg'};
+          if (s.person === id) paintThread();
+        }
         if (job.saved && !job.noDraft) await Promise.resolve(job.saved).catch(() => {});
         const put = async (it, kind, blob, name) => {
           const ref = job.saved && !job.noDraft && (!draft_id || draft_id === it.draft) ? draftRef(it, kind, blob) : null;
@@ -5466,7 +5527,7 @@
     // Refused (4xx) or an upload that never finished: certainly not sent. Restarts and 5xx may still land, so they keep
     // the Retry bubble, which resends with the same client id.
     if (offline(e) || e?.status >= 500) return false;
-    const items = job.photos || (job.photo ? [job.photo] : job.video ? [job.video] : job.file ? [job.file] : []);
+    const items = (job.photos || (job.photo ? [job.photo] : job.video ? [job.video] : job.file ? [job.file] : [])).filter(it => !it.unreadable);
     const text = job.text || '', who = store.threads[id]?.person?.display_name || 'this chat';
     const reason = e?.message && e.message.length < 80 ? e.message : 'Not sent';
     const here = s.person === id && view.draft?.isConnected && view.sd?.id === id && !view.edit;

@@ -354,6 +354,7 @@ button { touch-action: manipulation; }
 .u-bar .u-quote { flex: 1; min-width: 0; margin: 0; background: var(--surface); }
 .u-attach-strip { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
 .u-attach-strip .u-attach-open { cursor: zoom-in; }
+.u-attach-strip .u-attach-preparing img { filter: brightness(.6); } /* issue 485: the picked file, still being prepared */
 /* Issue 402: a staged video shows its first frame with a play badge and its length, like a sent one. */
 .u-attach-strip .u-attach-video { position: relative; cursor: pointer; }
 .u-attach-video .u-attach-play { position: absolute; inset: 0; margin: auto; width: 2.25rem; height: 2.25rem; border-radius: 50%; background: color-mix(in srgb, black 55%, transparent); color: white; display: grid; place-items: center; font-size: .875rem; pointer-events: none; z-index: 1; }
