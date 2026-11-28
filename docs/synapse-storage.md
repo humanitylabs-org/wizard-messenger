@@ -3,13 +3,12 @@
 Messenger's bridged chats (Telegram, WhatsApp, Signal, Slack, LINE, Instagram and the rest) pass through a private
 Synapse homeserver inside the app. This page says where that data lives and why.
 
-## Database: SQLite, then Postgres once the owner says so
+## Database: SQLite, then Postgres
 
-Synapse documents SQLite as fit for testing only. Switch `synapse-postgres` (Messenger's Try new features, or the
-Tracker card) moves it to Postgres:
+Synapse documents SQLite as fit for testing only, so every box moves it to Postgres once (it was switch
+`synapse-postgres` until it was approved for everyone; a stored value for that switch is ignored):
 
-- Turning the switch on changes nothing at once. The next time Messenger starts (its next update or a restart),
-  unified-init wakes the `postgres` container (it only waits for `data/postgres/enabled` until then) and puts
+- On every start, unified-init wakes the `postgres` container (it only waits for `data/postgres/enabled` until then) and puts
   `synapse_start.py` (a copy of `synapse_postgres.py`) next to Synapse's data.
 - `synapse_start.py` runs inside Synapse's own container right before Synapse, so no Synapse can be writing the
   SQLite file during the move. It runs `PRAGMA integrity_check` on `homeserver.db`, makes a backup with SQLite's
@@ -20,9 +19,8 @@ Tracker card) moves it to Postgres:
   that syncs from its old token (Messenger) then never gets the first new event of each stream. Only when every
   count matches does homeserver.yaml name Postgres; then the old `homeserver.db` is removed and the backup stays.
 - Any failure keeps SQLite: Synapse starts as before and `data/matrix/postgres-move.json` says why. It tries again on
-  the next start, at most 3 times. Turning the switch off and on again gives it 3 more tries.
-- Once moved, Synapse stays on Postgres even with the switch off, because the SQLite backup would miss every message
-  that arrived since. `postgres-move.json` (`state: moved`, tables, rows, seconds) and `postgres-move.log` record
+  the next start, at most 3 times (deleting `postgres-move.json` gives it 3 more tries).
+- Once moved, Synapse stays on Postgres; the SQLite backup would miss every message that arrived since. `postgres-move.json` (`state: moved`, tables, rows, seconds) and `postgres-move.log` record
   the move.
 - The Postgres password is in `data/postgres/password` and Synapse's libpq passfile `data/matrix/postgres.pass`
   (both 0600). homeserver.yaml never holds it. Postgres sits on its own internal network (`postgres-lane`) that only
@@ -33,7 +31,7 @@ Tracker card) moves it to Postgres:
 
 ## History caps
 
-With the switch on, setup raises the caps the bridges and Messenger use for history. The bridges' configs are
+Setup raises the caps the bridges and Messenger use for history. The bridges' configs are
 written before Synapse's container moves the database (the bridges only start once Synapse answers), so they count
 on the move; after a failed move they are back to the SQLite caps until a move succeeds:
 

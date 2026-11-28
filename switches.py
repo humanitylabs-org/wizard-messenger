@@ -2,7 +2,7 @@
 
 The WizardOS Tracker's Try it toggle, Messenger's Settings and the agent all read and set the same state here, so a
 switch no longer differs per device. Every switch is off until the owner turns it on. A switch that was approved
-(Drafts at top, issue 150; the photo speed switches, issue 468; New group, issue 397; Add contact on Telegram, issue 399) leaves this list and its behaviour is simply on; a stored value for it is ignored.
+(Drafts at top, issue 150; the photo speed switches, issue 468; New group, issue 397; Add contact on Telegram, issue 399; Postgres message store, issue 451) leaves this list and its behaviour is simply on; a stored value for it is ignored.
 """
 import json
 import os
@@ -18,13 +18,6 @@ SWITCHES = (
                     'frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
      'default': False,
      'issues': ['humanitylabs-org/wizard-messenger#168']},
-    {'id': 'synapse-postgres', 'name': 'Postgres message store and longer history',
-     'description': 'The next time Messenger starts (its next update or a restart), the box checks and backs up the '
-                    'store behind your bridged chats and moves it from SQLite to Postgres. After that it brings in up '
-                    'to 200 Telegram chats and up to 500 earlier messages for each new or reconnected chat. Chats '
-                    'already there keep the history they have. Once moved, it stays on Postgres.',
-     'default': False,
-     'issues': ['humanitylabs-org/wizard-messenger#451']},
     {'id': 'calls', 'name': 'Calls',
      'description': 'Encrypted voice and video calls from your own Wizard. Turning it on starts the call server on '
                     'your box (LiveKit); turning it off stops it again.',

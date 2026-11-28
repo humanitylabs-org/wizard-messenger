@@ -13,7 +13,7 @@ const now = Date.now(), min = 60e3;
 const until = async (fn, ms = 8000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return; throw new Error('timed out: ' + fn); };
 const ident = (id, net, label) => [{id: id + '-i', network: net, kind: 'person', label}];
 const person = (id, name, net, text, ago, extra = {}) => ({id, display_name: name, identities: ident(id, net, name), labels: [], unread: 0, muted: false, low_priority: false, last: {text, timestamp: now - ago * min, outgoing: false}, language: '', peer_read_ts: 0, last_read_ts: 0, ...extra});
-const SW = [['synapse-postgres', 'Postgres message store', 'Messenger keeps chats in Postgres with longer history.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
+const SW = [['sample-switch', 'Sample switch', 'A switch this test turns on.'], ['photo-timings', 'Photo timings', 'Messenger measures how fast photos appear.'],
   ['full-reactions', 'Any emoji as a reaction', 'The ＋ next to the reactions opens the full emoji panel.']];
 (async () => {
   const browser = await chromium.launch(), summary = [];
@@ -121,15 +121,15 @@ const SW = [['synapse-postgres', 'Postgres message store', 'Messenger keeps chat
       assert.match(await tryBox.locator('.wz-try-note').innerText(), /^Features still being tested\. Approved ones become part of the app; the rest go away\. Thumbs up the ones you like\.$/);
       assert.deepEqual(await tryBox.locator('.wz-try-row .wz-main b').allInnerTexts(), SW.map(x => x[1]));
       assert.equal(await tryBox.locator('.u-more-timings').count(), 0, 'no timing numbers');
-      const warm = tryBox.locator('[data-try-id="synapse-postgres"]');
-      assert.match(await warm.innerText(), /longer history/);
+      const warm = tryBox.locator('[data-try-id="sample-switch"]');
+      assert.match(await warm.innerText(), /turns on/);
       await warm.getByRole('switch').click();
       await until(async () => await warm.getByRole('switch').getAttribute('aria-checked') === 'true');
-      assert.deepEqual(box.flips.at(-1), {id: 'synapse-postgres', on: true});
-      await warm.getByRole('button', {name: 'Thumbs up for Postgres message store'}).click();
-      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Postgres message store'}).getAttribute('aria-pressed') === 'true');
-      assert.deepEqual(box.votes.at(-1), {id: 'synapse-postgres', vote: 'up'});
-      assert.deepEqual(box.feedback['synapse-postgres'], {tried: true, vote: 'up'});
+      assert.deepEqual(box.flips.at(-1), {id: 'sample-switch', on: true});
+      await warm.getByRole('button', {name: 'Thumbs up for Sample switch'}).click();
+      await until(async () => await warm.getByRole('button', {name: 'Thumbs up for Sample switch'}).getAttribute('aria-pressed') === 'true');
+      assert.deepEqual(box.votes.at(-1), {id: 'sample-switch', vote: 'up'});
+      assert.deepEqual(box.feedback['sample-switch'], {tried: true, vote: 'up'});
       // Draft ready from the chat list is on for everyone (issue 201): the hint names the Drafts toggle and the hold.
       assert.match(await pick.innerText(), /Drafts at the top of a chat, or by holding a chat/);
       const rtm = tryBox.locator('[data-try-id="full-reactions"]');

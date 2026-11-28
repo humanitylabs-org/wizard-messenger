@@ -43,13 +43,6 @@ class SwitchEndpoint(unittest.TestCase):
                 'description': 'Messenger measures how fast photos appear (box ready on arrival, thumbnail, tap to picture, '
                                'black frames) per network and shows the numbers in Settings. Only times and sizes, never content.',
                 'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#168']}, {
-                'id': 'synapse-postgres', 'name': 'Postgres message store and longer history',
-                'description': 'The next time Messenger starts (its next update or a restart), the box checks and '
-                               'backs up the store behind your bridged chats and moves it from SQLite to Postgres. '
-                               'After that it brings in up to 200 Telegram chats and up to 500 earlier messages for '
-                               'each new or reconnected chat. Chats already there keep the history they have. Once '
-                               'moved, it stays on Postgres.',
-                'on': False, 'default': False, 'issues': ['humanitylabs-org/wizard-messenger#451']}, {
                 'id': 'calls', 'name': 'Calls',
                 'description': 'Encrypted voice and video calls from your own Wizard. Turning it on starts the call '
                                'server on your box (LiveKit); turning it off stops it again.',
@@ -504,13 +497,13 @@ class SwitchStorage(unittest.TestCase):
             for raw in ('{', '[]', '{"switches": {"full-reactions": "1", "gone": true}}'):
                 path.write_text(raw)
                 self.assertFalse(SwitchStore(path).is_on('full-reactions'))
-                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'synapse-postgres', 'calls', 'full-reactions'])
+                self.assertEqual([s['id'] for s in SwitchStore(path).listing()['switches']], ['photo-timings', 'calls', 'full-reactions'])
 
     def test_the_photo_speed_switches_are_gone_and_their_stored_values_cleared(self):
         # Issue 468: Photos ready on arrival, Photos open instantly, Photos ready in Wizard's viewer and Background
         # photo download are on for everyone; stored values and feedback from before are ignored and dropped on the
-        # next write. Photo timings stays a switch.
-        gone = ('photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch')
+        # next write. Photo timings stays a switch. Issue 451: the same for synapse-postgres.
+        gone = ('photo-warm', 'photo-instant', 'viewer-placeholder', 'photo-prefetch', 'synapse-postgres')
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'switches.json'
             path.write_text(json.dumps({'switches': {**{g: False for g in gone}, 'photo-timings': True},
