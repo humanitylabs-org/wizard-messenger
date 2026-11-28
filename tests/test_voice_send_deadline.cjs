@@ -6,7 +6,7 @@ const path = require('path');
 const vm = require('vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../static/unified.js'), 'utf8');
-const {voiceDeadline, withDeadline} = require('../static/unified.js');
+const {voiceDeadline, withDeadline, sendReason} = require('../static/unified.js');
 const queue = source.slice(source.indexOf('  async function archiveVoiceOriginal('), source.indexOf('  // A send Messenger refused'));
 assert.ok(queue.includes('function queueSend('), 'queue slice found');
 
@@ -34,7 +34,7 @@ function sandbox(stall) {
     WizardApp: {capture: {ack: async () => {}}},
     call: async (p, body) => { sent.push(body); return {}; },
     store, s: {person: 'p1'},
-    withDeadline,
+    withDeadline, sendReason,
     // The real sizing is checked below; here every step gets 40 ms so the test runs fast.
     voiceDeadline: (...a) => { sizes.push(voiceDeadline(...a)); return 40; },
   });
@@ -66,7 +66,8 @@ const within = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeo
     await within(ctx.queues.p1, 2000, name + ' stall');
     const [voice, text] = store.threads.p1.messages;
     assert.equal(voice.pending, false, name + ': voice bubble left the clock');
-    assert.match(String(voice.failed), /retry/i, name + ': voice bubble shows Retry');
+    // The bubble reads 'Not sent · <reason> · Retry'; issue 487: the reason carries no second 'Tap to retry.'.
+    assert.match(String(voice.failed), /^Voice note [^.]+$/, name + ': voice bubble names the stall, then shows Retry');
     assert.equal(typeof voice.retry, 'function');
     assert.ok(fetched.some(f => f.hung && f.aborted), name + ': stalled request was aborted');
     assert.ok(!text.failed, name + ': later message did not fail');
