@@ -5,7 +5,7 @@ const fixture=createFixture(),app=fs.readFileSync(path.join(__dirname,'../static
 const replayed=[];
 // Execute the production API decoder, rather than accepting an invented JSON shape.
 const decoder=app.slice(app.indexOf('  async function apiOnce('),app.indexOf('  function friendly('));
-const context=vm.createContext({state:{csrf:'synthetic'},APIError:class extends Error{},trustedWizard:false,fetch:async(p,options)=>{
+const context=vm.createContext({state:{csrf:'synthetic'},APIError:class extends Error{},trustedWizard:false,bootAnswer:()=>null,fetch:async(p,options)=>{
   const body=fixture.reply(origin+'/app/'+p,options.method,options.body&&JSON.parse(options.body));assert(body,p);
   replayed.push(p);return {status:200,ok:true,json:async()=>body};
 }});

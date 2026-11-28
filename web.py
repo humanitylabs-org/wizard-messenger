@@ -156,7 +156,7 @@ def gateway_origins(origins):
 # them for a year (immutable) and a release (new bytes, new key) is picked up on the next open; index.html itself is
 # revalidated every open (no-cache + ETag). Text is sent gzip-encoded when the browser accepts it, compressed once
 # per file version. A module-level cache: the owner Unix hop copies the ViewServer's attributes, not its methods.
-STATIC_FILES={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
+STATIC_FILES={'/':'index.html','/index.html':'index.html','/app.css':'app.css','/app.js':'app.js','/boot-early.js':'boot-early.js','/unified.js':'unified.js','/unified.css':'unified.css','/qr.js':'qr.js','/connectors.js':'connectors.js','/wizard-try-features.js':'wizard-try-features.js','/favicon.svg':'favicon.svg','/icon.png':'icon.png','/icon-192.png':'icon-192.png','/api/spec':'../API-contract.json'}
 IMMUTABLE='public, max-age=31536000, immutable'
 _STATIC_CACHE={}
 _STATIC_LOCK=threading.Lock()
@@ -331,6 +331,22 @@ def agent_levels_listing(agents, accounts):
             'levels': [{'id': l, 'label': LABELS[l], 'recommended': l == RECOMMENDED} for l in LEVELS]}
 
 
+# Issue 484: the first open's reads, in the order the view asks for them (static/app.js boot and snapshot, then
+# unified.js loadLists). A step that only ever runs nested inside /api/view/boot.
+BOOT_STEPS=('/api/view/trusted-owner','/api/view/session','/api/status','/api/identity','/api/unified/people','/api/unified/groups')
+def boot_continues(step,status,data):
+    """Whether the view would ask for the next step after this answer (app.js boot / snapshot)."""
+    result=data.get('result') if isinstance(data,dict) and data.get('ok') is True else None
+    if step=='/api/view/trusted-owner':
+        return status<500 or status==501  # a refused or missing owner proof still asks for a session; a restart does not
+    if status!=200 or not isinstance(result,dict): return False
+    if step=='/api/view/session':
+        return result.get('authenticated') is True and isinstance(result.get('csrf_token'),str) and bool(result['csrf_token'])
+    if step=='/api/status': return result.get('state')=='ready'
+    if step=='/api/identity': return bool(result.get('identity'))
+    return True
+
+
 class ViewHandler(Handler):
     @property
     def service(self) -> ViewServer:
@@ -369,6 +385,8 @@ class ViewHandler(Handler):
         if origin is not None and origin!='null' and not self._origin_allowed(origin): return False
         return self.service.auth.media_session(ticket) is not None
     def _session_token(self):
+        # Issue 484: inside one boot answer, a session the session step just opened is the one the later steps use.
+        if getattr(self,'_boot_token',None): return self._boot_token
         try:
             cookies=SimpleCookie(); cookies.load(self.headers.get('Cookie',''))
             return cookies['wizard_messenger_session'].value
@@ -409,6 +427,7 @@ class ViewHandler(Handler):
             if not hmac.compare_digest(supplied.encode(),session['csrf'].encode()):
                 raise EngineError('csrf_forbidden','Reopen Messenger before trying again',403)
     def _cookie(self,token):
+        self._cookie_token=token
         secure='; Secure' if self.service.cookie_secure else ''
         return 'wizard_messenger_session='+token+'; Path='+self.service.public_path+'; Max-Age='+str(SESSION_SECONDS)+'; HttpOnly; SameSite=Strict'+secure
     def _headers(self,status,body,mime,csp=None,cache='no-store',extra=()):
@@ -695,9 +714,49 @@ class ViewHandler(Handler):
         try: profiles=unified.own_profiles() if unified is not None and hasattr(unified,'own_profiles') else []
         except Exception: profiles=[]  # a bridge that is down only hides its account
         return chat_accounts(profiles)
+    def _boot(self,method):
+        """Issue 484: GET /api/view/boot answers the first open's sequential reads in one round trip: trusted-owner,
+        session, status, identity and, once the account is ready, the people and groups lists. Each step runs through
+        this handler's own _dispatch for that step's path, with this request's headers, so every step meets exactly the
+        checks its own call would (owner proof, session, setup-only limits, origin) and the answer holds nothing the
+        separate calls would not. The view replays each step's status and body as that call's answer, so every gate
+        (locked, setup, enrollment, restarting) keeps its own screen. It stops where the view would stop asking.
+        Owner browser only: a bearer or the gateway's grant never gets a boot answer."""
+        if method!='GET': raise EngineError('not_found','No such view route',404)
+        if self.headers.get('Authorization') or self.headers.get('X-Wizard-Grant'):
+            raise EngineError('owner_only','Owner browser access is required',403)
+        if parse_qs(urlsplit(self.path).query): raise EngineError('invalid_request','The boot answer takes no query',400)
+        self._origin()  # another site's page never gets a boot answer, not even its refusals
+        original,answers,cookie=self.path,{},None
+        self._boot_step=True
+        try:
+            for step in BOOT_STEPS:
+                self.path=step; self.pending_cookie=None
+                try: status,data=self._dispatch('GET')
+                except EngineError as e: status,data=e.status,{'ok':False,'error':{'code':e.code,'message':e.message}}
+                except Exception: status,data=500,{'ok':False,'error':{'code':'internal_error','message':'Messenger could not complete the request'}}
+                if status is None: break  # never a streamed answer on these routes; stop rather than guess
+                if self.pending_cookie:
+                    cookie=self.pending_cookie; self._boot_token=self._cookie_token
+                answers[step[1:]]={'status':status,'body':data}
+                if not boot_continues(step,status,data): break
+        finally:
+            self.path=original; self._boot_step=False; self._boot_token=None
+        self.pending_cookie=cookie
+        # The lists make this answer tens of KB, a tenth of that gzip-encoded. Compressing it next to the session's
+        # CSRF token is safe here (no BREACH-style guessing): _origin above refuses any cross-site request and the
+        # session cookie is SameSite=Strict, so another site can never make the browser repeat it to measure sizes.
+        body=json.dumps({'ok':True,'result':{'answers':answers}},ensure_ascii=False).encode()
+        extra=[('Vary','Accept-Encoding')]
+        if len(body)>=1024 and accepts_gzip(self.headers.get('Accept-Encoding')):
+            body=gzip.compress(body,6,mtime=0); extra.append(('Content-Encoding','gzip'))
+        try: self._headers(200,body,'application/json; charset=utf-8',None,'no-store',extra)
+        except (BrokenPipeError,ConnectionResetError): pass
+        return None,None
     def _dispatch(self,method):
-        self.pending_cookie=None
-        self._trusted_owner_verified=False
+        if not getattr(self,'_boot_step',False):
+            self.pending_cookie=None
+            self._trusted_owner_verified=False
         path=urlsplit(self.path).path
         if path in ('/api/switches','/api/view/switches'):
             return self._switches(method)
@@ -719,6 +778,8 @@ class ViewHandler(Handler):
             raise EngineError('owner_only','Owner browser access is required',403)
         if self.service.trusted_owner.enabled and not self.headers.get('Authorization') and path.startswith('/api/') and not self._media_ticket():
             self._trusted_owner()
+        if path=='/api/view/boot':
+            return self._boot(method)
         if path=='/api/view/trusted-owner' and method=='GET':
             self._trusted_owner()
             return 200,{'ok':True,'result':{'enabled':True,'remembered':self.service.trusted_owner.path.exists()}}
