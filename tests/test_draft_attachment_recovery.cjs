@@ -11,6 +11,7 @@ const tick = () => new Promise(r => setImmediate(r));
 const defer = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
 const copy = v => structuredClone(v);
 async function fixture(saved = []) {
+  let slow = false;
   let row = saved === null ? null : {id: 'synthetic-draft', person_id: 'alice', identity_id: 'signal-alice', revision: 1, text: 'Keep this caption', state: 'draft', attachments: saved};
   let next = 0, writes = 0, failPut = new Set(), lost = 0, flaky = 0, failGet = new Set(), holdPut = null, holdGet = null, failDelete = false;
   const counts = {puts: 0, deletes: 0, draftDeletes: 0, sends: 0}, errors = [], requests = [];
@@ -26,7 +27,7 @@ async function fixture(saved = []) {
       row.attachments = row.attachments.filter(a => a.id !== url.split('/').pop()); row.revision++; counts.deletes++;
     } else if (method === 'POST' && url === 'api/drafts') {
       if (row) throw bad('draft_exists');
-      row = {...body, id: 'synthetic-draft', revision: 1, state: 'draft', attachments: []};
+      row = {...body, id: 'synthetic-draft', revision: 1, state: 'draft', attachments: []}; counts.creates = (counts.creates || 0) + 1;
     } else if (method === 'POST') {
       if (body.revision !== row.revision) throw bad('draft_changed');
       row = {...row, text: body.text, identity_id: body.identity_id, revision: row.revision + 1};
@@ -38,12 +39,15 @@ async function fixture(saved = []) {
   }
   async function draftRaw(url, method, blob, q) {
     counts.puts++;
+    // Issue 481: slow() keeps each PUT open for a moment, so uploads running side by side are counted.
+    if (slow) { counts.live = (counts.live || 0) + 1; counts.peak = Math.max(counts.peak || 0, counts.live); await tick(); await tick(); counts.live--; }
     if (holdPut) { const gate = holdPut; holdPut = null; gate.entered.resolve(); await gate.promise; }
     if (failPut.has(q.name)) throw bad('storage_failed');
     // Issue 463: passing trouble (no answer / gateway 502) is transient; the box answers a known upload key as is.
     if (flaky > 0) { flaky--; throw Object.assign(new Error('Could not attach that file'), {transient: true}); }
     if (q.key && row.attachments.some(a => a.key === q.key)) return {draft: copy(row)};
-    if (q.revision !== row.revision) throw bad('draft_changed');
+    // Issue 481: the composer's keyed appends (append=1) run side by side and are not fenced to the revision.
+    if (q.revision !== row.revision && !(q.append === 1 && q.key)) throw bad('draft_changed');
     row.attachments.push({id: 'file-' + (++next), name: q.name, mime: blob.type, bytes: blob.size, ...(q.key ? {key: q.key} : {})}); row.revision++;
     if (lost > 0) { lost--; throw Object.assign(new Error('Could not attach that file'), {transient: true}); }
     return {draft: copy(row)};
@@ -60,7 +64,7 @@ async function fixture(saved = []) {
     draftStack: require(path.join(__dirname, '../static/unified.js')).draftStack, prepareVideo: async f => ({video: true, blob: f, local: 'blob:synthetic', url: ''}),
     draftWrites: writes, draftWrote() { context.draftWrites++; }, refreshDraftIndex() {},
     fetchDrafts: async () => row ? [copy(row)] : [], closedDrafts: new Set(), agentName: () => 'Owner',
-    SD_SAVE_MS: 500000, SD_POLL_MS: 500000, SD_UPLOAD_WAIT_MS: [1, 1, 1], setTimeout: (fn, ms) => ms <= 1 ? setTimeout(fn, 0) : 0,
+    SD_SAVE_MS: 500000, SD_POLL_MS: 500000, SD_UPLOAD_WAIT_MS: [1, 1, 1], SD_UPLOAD_PARALLEL: 3, SD_SEND_HOLD_MS: 1000, setTimeout: (fn, ms) => ms <= 1 ? setTimeout(fn, 0) : 0,
     clearTimeout, setInterval: () => 0, clearInterval() {}, document: {hidden: false},
     node: (tag, cls, text) => ({tag, cls, text, append() {}}), button: () => ({}),
   });
@@ -69,7 +73,7 @@ async function fixture(saved = []) {
   await new Promise(r => setTimeout(r, 10));
   const item = name => ({key: name, name, bytes: 3, file: true, blob: new Blob(['abc'], {type: 'application/pdf'})});
   return {sd: context.sd, ui, view, item, counts, errors, requests, row: () => copy(row), failPut, failGet,
-    loseAnswers(n) { lost = n; }, flaky(n) { flaky = n; },
+    loseAnswers(n) { lost = n; }, flaky(n) { flaky = n; }, slow() { slow = true; },
     holdPut() { return holdPut = {...defer(), entered: defer()}; }, holdGet() { return holdGet = defer(); },
     failDelete(v) { failDelete = v; }, remoteAttachments(a) { row.attachments = a; row.revision++; },
     replaceView(empty = false) { s.person = 'bob'; ui.form.isConnected = false; view.id = 'bob'; view.sd = {}; view.attach = empty ? null : [item('bob-only')]; },
@@ -249,4 +253,30 @@ test('stored, then every retry fails: the next poll adopts the stored copy by it
   await f.sd.check(false);
   assert.equal(photo.sid, 'stored'); assert.equal(photo.uploadFailed, false); assert.equal(f.view.attach.length, 1, 'no second chip');
   assert.equal(f.sd.uploadError, false);
+});
+
+// Issue 481: attachments go up 3 at a time into one draft, and a file handed to Send keeps uploading (even after
+// leaving the chat) while the draft waits for the send to take it.
+test('three files go up side by side into one draft', async () => {
+  const f = await fixture(null); f.slow();
+  const items = ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'].map(f.item);
+  await f.select(...items);
+  assert.equal(f.counts.peak, 3, 'three uploads in flight at once');
+  assert.equal(f.row().attachments.length, 4); assert.equal(f.counts.creates, 1, 'one draft for all of them');
+  assert.deepEqual(items.map(it => it.draft), items.map(() => 'synthetic-draft'));
+  assert.equal(new Set(items.map(it => it.sid)).size, 4);
+  assert.equal(f.sd.row.revision, f.row().revision, 'the newest revision is kept, whatever order the answers came in');
+  assert.equal(f.sd.uploadError, false); assert.deepEqual(f.errors, []);
+});
+test('a file handed to Send keeps uploading and the draft waits for the send to take it', async () => {
+  const f = await fixture(), gate = f.holdPut(), it = f.item('photo.jpg'), upload = f.select(it); await gate.entered.promise;
+  it.sending = true; const took = defer();
+  const closing = f.sd.closeForSend('', took.promise);
+  f.replaceView(); // the owner goes back to the Inbox right after Send
+  gate.resolve(); await upload;
+  assert.ok(it.sid, 'the draft copy finished'); assert.equal(it.draft, 'synthetic-draft');
+  await tick(); await tick();
+  assert.ok(f.row(), 'the draft is kept until its send has taken the file');
+  took.resolve(); await closing;
+  assert.equal(f.row(), null, 'then it is deleted');
 });

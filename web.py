@@ -829,6 +829,8 @@ class ViewHandler(Handler):
             if method == 'GET' and path.startswith('/api/unified/updates'):
                 # Long-poll: the socket must outlive the hold.
                 self.connection.settimeout(60)
+            # Issue 481: a send reads the files the composer already saved to the chat's draft.
+            if getattr(self.service, 'drafts', None) is not None: self.service.unified.draft_file = self.service.drafts.attachment_file
             result = self.service.unified.dispatch(method,path,self._body() if method == 'POST' else {},parse_qs(urlsplit(self.path).query),raw)
             if isinstance(result, Blob):
                 self._blob(result); return None, None

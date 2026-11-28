@@ -160,6 +160,13 @@
   // its own video message, files go one by one. The words ride on the first photo post, else the first video, else
   // the first file; in a LINE chat (apart) they go after the photos and videos as their own message, because LINE
   // refuses words on a photo or a video.
+  // Issue 481: what a send names for an attachment the composer already saved to the chat's draft, so the box sends
+  // that copy: 'draft:<kind>:<attachment id>'. Null when the file never reached the draft, or when this send carries
+  // other bytes than the draft holds (an animated GIF goes into an album as its still JPEG); then it uploads from here.
+  function draftRef(it, kind, blob) {
+    if (!it || !it.draft || !/^[0-9a-f]{16}$/.test(it.sid || '') || !['image', 'video', 'file'].includes(kind)) return null;
+    return blob && blob !== it.blob ? null : 'draft:' + kind + ':' + it.sid;
+  }
   function sendJobs(attach, text, {reply = null, identity_id = null, apart = false} = {}) {
     const a = attach || [], photos = a.filter(x => !x.file && !x.video), videos = a.filter(x => x.video), files = a.filter(x => x.file && !x.video);
     const jobs = [], words = apart ? '' : text;
@@ -856,7 +863,7 @@
     u.hash = hash + (hash.includes('?') ? '&' : '?') + 'controlledAudioDevices=true';
     return u.href;
   }
-  if (typeof module !== 'undefined') module.exports = {callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
+  if (typeof module !== 'undefined') module.exports = {callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -3929,6 +3936,8 @@
   // composer. Agents never send. Edits are fenced by revision: a change made elsewhere is never overwritten silently.
   const SD_SAVE_MS = 700, SD_POLL_MS = 6000;
   const SD_UPLOAD_WAIT_MS = [1000, 3000, 6000]; // issue 463: waits before each automatic upload retry (3 retries)
+  const SD_UPLOAD_PARALLEL = 3; // issue 481: draft attachment uploads running side by side
+  const SD_SEND_HOLD_MS = 300000; // issue 481: longest a sent draft is kept for its send to take the files
   // Issue 463: no answer, a dropped connection, a 5xx or a non-JSON (gateway) answer is passing trouble (transient):
   // the box may even have stored the file. Only an answer from Messenger itself is a refusal.
   async function draftRaw(path, method, blob, query) {
@@ -4068,9 +4077,9 @@
       const blob = await r.blob(); const f = new File([blob], a.name, {type: a.mime});
       // Issue 402: the box keeps videos as plain bytes, so a video comes back by its name (MP4, MOV, WebM).
       const kind = attachKind(f);
-      return kind === 'photo' ? {...await preparePhoto(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id}
-        : kind === 'video' ? {...await prepareVideo(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id}
-        : {file: true, blob: f, key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id};
+      return kind === 'photo' ? {...await preparePhoto(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id, draft: rid}
+        : kind === 'video' ? {...await prepareVideo(f), key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id, draft: rid}
+        : {file: true, blob: f, key: 'a' + uid(), name: a.name, bytes: a.bytes, sid: a.id, draft: rid};
     }
     async function apply(row) {
       sd.row = row; sd.saved = row.text; sd.conflict = null; sd.loadError = false;
@@ -4090,7 +4099,7 @@
       // Issue 463: the box already holds a photo whose upload answer never came back: that is this tray item, saved.
       for (const a of want) {
         const mine = a.key && !(view.attach || []).some(it => it.sid === a.id) && (view.attach || []).find(it => !it.sid && !it.removed && it.upkey === a.key);
-        if (mine) { mine.sid = a.id; mine.uploadFailed = false; }
+        if (mine) { mine.sid = a.id; mine.draft = row.id; mine.uploadFailed = false; }
       }
       for (const a of want) if (!(view.attach || []).some(it => it.sid === a.id && !it.unavailable)) {
         try { loaded.push(await itemFor(a, row.id)); }
@@ -4155,10 +4164,14 @@
     }
     const schedule = () => { clearTimeout(sd.timer); sd.timer = setTimeout(save, SD_SAVE_MS); };
     async function ensure() {
+      // Issue 481: uploads run side by side, and they all share the one draft the first of them makes.
       if (!sd.row) {
-        const text = ui.draft.value;
-        const r = await api('api/drafts', {method: 'POST', body: {person_id: id, identity_id: ui.channel.value, text}});
-        sd.row = r.draft; sd.saved = text;
+        sd.making = sd.making || (async () => {
+          const text = ui.draft.value;
+          const r = await api('api/drafts', {method: 'POST', body: {person_id: id, identity_id: ui.channel.value, text}});
+          sd.row = r.draft; sd.saved = text;
+        })().finally(() => { sd.making = null; });
+        await sd.making;
       }
       return sd.row;
     }
@@ -4178,37 +4191,52 @@
     function attach(items) {
       const epoch = sd.epoch;
       attachments = [...new Set([...attachments, ...items])];
-      return attachmentWork(async () => {
-        for (const it of items) {
-          if (!alive() || sd.epoch !== epoch) return;
-          if (it.removed || it.sid) continue;
-          // Issue 463: one key per staged file, kept across retries, so a retry of an upload the box already stored
-          // gets that saved attachment back instead of a second copy. Passing trouble retries by itself a few times.
-          it.upkey = it.upkey || 'u' + uid();
-          for (let tries = 0; ; tries++) {
-            try {
-              const row = await ensure();
-              const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream', key: it.upkey});
-              const atts = r.draft.attachments || [];
-              sd.row = r.draft; it.sid = (atts.find(a => a.key === it.upkey) || atts[atts.length - 1]).id;
-              it.uploadFailed = false;
-              break;
-            } catch (e) {
-              if (sd.epoch !== epoch) return;
-              if (e.transient && tries < SD_UPLOAD_WAIT_MS.length && alive() && !it.removed) {
-                await new Promise(r => setTimeout(r, SD_UPLOAD_WAIT_MS[tries]));
-                if (sd.epoch !== epoch || !alive()) return;
-                if (it.removed || it.sid) break;
-                continue;
-              }
-              it.uploadFailed = true;
-              if (e.code === 'draft_changed' || e.code === 'draft_exists') {
-                try { sd.conflict = (await fetchDrafts(true)).find(d => d.id === sd.row?.id || d.person_id === id) || null; } catch { /* next poll */ }
-              } else if (alive() && !e.transient) error(e);
-              break;
+      // Issue 481: an item already handed to Send keeps uploading after the box empties (and after leaving the chat):
+      // the send uses this draft copy instead of uploading the file a second time.
+      const keep = it => it.sending || (alive() && sd.epoch === epoch);
+      const one = async it => {
+        // Issue 463: one key per staged file, kept across retries, so a retry of an upload the box already stored
+        // gets that saved attachment back instead of a second copy. Passing trouble retries by itself a few times.
+        it.upkey = it.upkey || 'u' + uid();
+        for (let tries = 0; ; tries++) {
+          try {
+            const row = await ensure();
+            // append=1: the box adds this keyed file to the open draft without the revision fence, so uploads
+            // running side by side never refuse each other.
+            const r = await draftRaw('api/drafts/' + row.id + '/attachments', 'PUT', it.blob, {revision: row.revision, name: it.name || 'Attachment', mime: it.blob.type || 'application/octet-stream', key: it.upkey, append: 1});
+            const atts = r.draft.attachments || [];
+            if (!sd.row || sd.row.id !== r.draft.id || r.draft.revision >= sd.row.revision) sd.row = r.draft;
+            it.sid = (atts.find(a => a.key === it.upkey) || atts[atts.length - 1]).id; it.draft = r.draft.id;
+            if (it.sending) closedDrafts.add(r.draft.id); // already sent: never listed as a waiting draft again
+            it.uploadFailed = false;
+            return;
+          } catch (e) {
+            if (!keep(it)) return;
+            if (e.transient && tries < SD_UPLOAD_WAIT_MS.length && !it.removed) {
+              await new Promise(r => setTimeout(r, SD_UPLOAD_WAIT_MS[tries]));
+              if (!keep(it) || it.removed || it.sid) return;
+              continue;
             }
+            it.uploadFailed = true;
+            if (it.sending) return; // its send uploads it from this phone instead
+            if (e.code === 'draft_changed' || e.code === 'draft_exists') {
+              try { sd.conflict = (await fetchDrafts(true)).find(d => d.id === sd.row?.id || d.person_id === id) || null; } catch { /* next poll */ }
+            } else if (alive() && !e.transient) error(e);
+            return;
           }
         }
+      };
+      return attachmentWork(async () => {
+        const todo = [...items];
+        const worker = async () => {
+          for (let it = todo.shift(); it; it = todo.shift()) {
+            if (!keep(it)) continue;
+            if (it.removed || it.sid) continue;
+            await one(it);
+          }
+        };
+        // The first file makes the draft if there is none yet; then up to SD_UPLOAD_PARALLEL go up side by side.
+        await Promise.all(Array.from({length: Math.min(SD_UPLOAD_PARALLEL, todo.length)}, worker));
       });
     }
     function detach(it) {
@@ -4252,11 +4280,15 @@
     // not when the provider answers. The text and tray already went to the send, so nothing waits on a save: drop the
     // pending autosave, let a write already in flight land (its revision is the one to delete), then delete the server
     // copy. A send that fails puts the message back (restoreSend). Restarting Messenger: deleted after delivery instead.
-    function closeForSend(sentText = '') {
+    // Issue 481: the send uses the files saved in this draft, so the draft is deleted once the send has taken them
+    // (taken), or after SD_SEND_HOLD_MS at most; a send that finds it gone uploads from this phone instead.
+    function closeForSend(sentText = '', taken = null) {
       clearTimeout(sd.timer); sd.timer = null; sd.epoch++;
+      if (sd.row && taken) closedDrafts.add(sd.row.id); // kept for its send a little longer, but no longer a waiting draft
       const up = sd.uploading, wait = sd.closing;
       const run = (async () => {
         await wait; await sd.busy?.catch(() => {}); await Promise.resolve(up).catch(() => {});
+        if (taken) await Promise.race([Promise.resolve(taken).catch(() => {}), new Promise(r => setTimeout(r, SD_SEND_HOLD_MS))]);
         return clear(true, {outcome: 'sent', sent_text: sentText});
       })();
       sd.closing = run.finally(() => { if (sd.closing === closing) sd.closing = null; });
@@ -4573,10 +4605,10 @@
     async function submitOnce() {
       if (view.sd?.conflict) return toast('Choose which draft to keep first');
       const draftState = view.sd;
-      // Issue 480: Send never waits for photos still being saved to the draft. The send job carries its own copy of each
-      // photo (upload() from the blob in memory), so the box empties and the sending bubble shows at once; closeForSend
-      // then stops the draft copies still waiting. Only a tray already known to need attention (a photo whose upload
-      // failed and shows Retry, issue 463; a draft photo that didn't download; a refused removal) retries first.
+      // Issue 480: Send never waits for photos still being saved to the draft: the box empties and the sending bubble
+      // shows at once. Issue 481: the send job then waits, in the background, for those draft copies and sends them
+      // from the box, so each file goes up from this phone once. Only a tray already known to need attention (a photo
+      // whose upload failed and shows Retry, issue 463; a draft photo that didn't download; a refused removal) retries first.
       if (draftState?.loadError || draftState?.uploadError) await draftState.retry?.();
       if (s.person !== id || view.sd !== draftState || !form.isConnected) return;
       if (view.sd?.loadError || view.sd?.uploadError) return toast('An attachment needs attention before sending');
@@ -4592,14 +4624,19 @@
       draft.value = ''; s.drafts[id] = ''; saveDrafts(); view.attach = null; const reply = view.reply; view.reply = null; paintBar(); grow(); hold();
       // A voice notice is about a recording; once the owner sends a message with none open it is old news (wizard-ux issue 1503).
       if (view.voiceNotice && !view.recording) voiceNotice('');
-      const sendingDraft = view.sd; sendingDraft?.closeForSend(text);
+      const sendingDraft = view.sd;
       // Issue 186: LINE carries no words on a photo (or a video, issue 402), so they go as the pictures, then the text
       // as its own message (the way LINE sends them), each with its own sent / failed + Retry bubble.
       const visual = a.some(x => !x.file || x.video);
       const apart = !!(visual && text && !reviewed && (p.identities || []).find(i => i.id === channel.value)?.network === 'line');
       const jobs = sendJobs(a, text, {reply, identity_id: channel.value, apart});
+      // Issue 481: these files keep uploading to the draft, and their sends take them from there.
+      for (const it of a) it.sending = true;
+      const saved = a.length && sendingDraft ? sendingDraft.uploading : null;
+      const taken = jobs.map(job => new Promise(r => { job.taken = r; }));
+      sendingDraft?.closeForSend(text, saved ? Promise.all(taken) : null);
       let delivered = 0;
-      for (const job of jobs) queueSend(id, {...job, onDelivered: () => { if (++delivered === jobs.length) sendingDraft?.afterSend(); }, onFailure: e => restoreSend(id, job, e)});
+      for (const job of jobs) queueSend(id, {...job, saved, onDelivered: () => { if (++delivered === jobs.length) sendingDraft?.afterSend(); }, onFailure: e => restoreSend(id, job, e)});
     }
     // Voice notes record through Wizard's shared capture service (WizardApp.capture): on the Android app that is the
     // native recorder pinned to the phone's own mic with no audio focus, so Bluetooth speakers keep playing music;
@@ -5364,16 +5401,25 @@
       m.pending = true; m.failed = false; if (s.person === id) paintThread();
       try {
         let upload_id, upload_ids, media, thumb_upload_id;
+        // Issue 481: a file the composer saved to the chat's draft is sent from that copy on the box (draft_id plus a
+        // draft: ref); only a file that never reached the draft goes up from this phone here.
+        let draft_id = null;
+        if (job.saved && !job.noDraft) await Promise.resolve(job.saved).catch(() => {});
+        const put = async (it, kind, blob, name) => {
+          const ref = job.saved && !job.noDraft && (!draft_id || draft_id === it.draft) ? draftRef(it, kind, blob) : null;
+          if (ref) { draft_id = it.draft; return ref; }
+          return (await upload(id, kind, blob, name)).upload_id;
+        };
         if (job.photos) {
           upload_ids = []; media = [];
-          for (const photo of job.photos) { upload_ids.push((await upload(id, 'image', photo.albumBlob || photo.blob)).upload_id); media.push({w: photo.w, h: photo.h}); }
+          for (const photo of job.photos) { upload_ids.push(await put(photo, 'image', photo.albumBlob || photo.blob)); media.push({w: photo.w, h: photo.h}); }
         }
-        if (job.photo) { upload_id = (await upload(id, 'image', job.photo.blob)).upload_id; media = {w: job.photo.w, h: job.photo.h}; }
-        if (job.file) upload_id = (await upload(id, 'file', job.file.blob, job.file.name)).upload_id;
+        if (job.photo) { upload_id = await put(job.photo, 'image', job.photo.blob); media = {w: job.photo.w, h: job.photo.h}; }
+        if (job.file) upload_id = await put(job.file, 'file', job.file.blob, job.file.name);
         if (job.video) {
           // Issue 402: the video itself, then the first frame this phone drew, which the box sends as its thumbnail.
           const v = job.video;
-          upload_id = (await upload(id, 'video', v.blob, v.name)).upload_id;
+          upload_id = await put(v, 'video', v.blob, v.name);
           if (v.thumb) thumb_upload_id = (await upload(id, 'image', v.thumb)).upload_id;
           media = Object.fromEntries(Object.entries({w: v.w, h: v.h, duration: v.duration, thumb_w: v.thumbW, thumb_h: v.thumbH}).filter(([, x]) => Number.isInteger(x) && x > 0));
         }
@@ -5385,13 +5431,16 @@
           media = {duration: v.duration, waveform: v.waveform};
         }
         const r = await call('people/' + id + '/send', job.pick ? {pick: job.pick.id, client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null}
-          : {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media, thumb_upload_id});
+          : {text: job.text || '', client_id, reply_to: job.reply?.id || null, identity_id: job.identity_id || null, upload_id, upload_ids, media, thumb_upload_id, ...(draft_id ? {draft_id} : {})});
+        job.taken?.();
         if (r.message) mergeMessages(id, r.messages || [r.message]);
         job.onDelivered?.();
         if (job.voice?.take) WizardApp.capture.ack(job.voice.take).catch(() => {}); // sent: release the shared recorder's kept copy
         if (r.state === 'queued') toast('Queued in Messenger, not yet published');
         store.pending--; hold();
       } catch (e) {
+        // Issue 481: the draft copy is gone (the draft was removed elsewhere, or a later Retry): upload from this phone.
+        if (e?.code === 'draft_attachment_gone' && !job.noDraft) { job.noDraft = true; return run(); }
         // Messenger restarting (release, update) or the network dropped: the send is idempotent on client_id,
         // so wait for the app to answer again and resend once per tick, for up to two minutes, before showing Retry.
         // The update hold stays on while waiting: the send is still in flight.
@@ -5400,7 +5449,7 @@
           await new Promise(resolve => setTimeout(resolve, 5000));
           return run();
         }
-        m.waited = 0;
+        m.waited = 0; job.taken?.();
         m.pending = false; m.failed = offline(e) ? 'Messenger was restarting' : e.message && e.message.length < 80 ? e.message : true; m.retry = () => { store.pending++; hold(); queues[id] = (queues[id] || Promise.resolve()).then(run); };
         store.pending--; hold(); // failed: no longer blocks updates
         // Refused by Messenger (never sent): the message goes back into the box, so the bubble leaves the thread.
@@ -5422,7 +5471,7 @@
     const reason = e?.message && e.message.length < 80 ? e.message : 'Not sent';
     const here = s.person === id && view.draft?.isConnected && view.sd?.id === id && !view.edit;
     if (here && !view.draft.value.trim() && !(view.attach || []).length) {
-      for (const it of items) delete it.sid;
+      for (const it of items) { delete it.sid; delete it.draft; it.sending = false; it.uploadFailed = false; }
       view.draft.value = text; s.drafts[id] = text; saveDrafts();
       if (items.length) { view.attach = [...items]; view.sd.uploading = view.sd.attach(items); } else view.sd.schedule();
       if (job.reply && !view.reply) view.reply = job.reply;

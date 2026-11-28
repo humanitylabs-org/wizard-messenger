@@ -1,6 +1,7 @@
 // Issue 480: tapping Send with photos shows the sending album and empties the box at once, even while the photos are
-// still being saved to the draft on a slow phone link. The send carries its own copy of each photo, so a draft copy
-// still uploading (or failing) never holds it up; a send the box refuses puts the photos back in the box with a toast.
+// still being saved to the draft on a slow phone link. The send then waits in the background for those draft copies and
+// sends them from the box (issue 481); a draft copy that fails goes up from the phone instead, and a send the box
+// refuses puts the photos back in the box with a toast.
 // A photo already showing Retry (its draft upload failed, issue 463) still blocks Send, as before.
 // Usage: AGENT_STAGE_DIR=<dir> WIZARD_WEB_DIR=<wizard-ux>/web python3 tests/agent_drafts_stage.py <port> &
 //        AGENT_STAGE_DIR=<dir> PHOTOS=<a.jpg,b.jpg,...> node tests/photo_send_instant_browser.cjs
@@ -59,11 +60,12 @@ async function photos(browser) {
       draftPuts++;
       return draftMode === 'fail' ? r.fulfill({status: 500, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'internal', message: 'Draft store failed'}})}) : r.continue();
     });
-    await ctx.route(/\/api\/unified\/people\/[^/]+\/upload\?/, r => {
-      sendUploads++;
-      return sendMode === 'refuse' ? r.fulfill({status: 413, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'too_large', message: 'Photo refused by the box'}})}) : r.continue();
+    await ctx.route(/\/api\/unified\/people\/[^/]+\/upload\?/, r => { sendUploads++; return r.continue(); });
+    // Issue 481: the send takes the draft copies on the box, so a refusal now comes from the send itself.
+    await ctx.route(/\/api\/unified\/people\/[^/]+\/send(\?|$)/, r => {
+      if (sendMode === 'refuse') return r.fulfill({status: 413, contentType: 'application/json', body: JSON.stringify({ok: false, error: {code: 'too_large', message: 'Photo refused by the box'}})});
+      sends++; return r.continue();
     });
-    await ctx.route(/\/api\/unified\/people\/[^/]+\/send(\?|$)/, r => { sends++; return r.continue(); });
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(st.origin + '/'); await page.locator('.u-person', {hasText: 'Alice Example'}).first().click();
@@ -126,7 +128,9 @@ async function photos(browser) {
     assert.deepEqual(tiles, files.map(() => 'blob:'), 'the sending album shows the four photos from this phone');
     await until(async () => sends === 1 && (await drafts()).length === 0, 'the album is delivered once and the draft ends', 180000);
     await page.waitForTimeout(1500);
-    assert.equal(sends, 1, 'sent once'); assert.equal(sendUploads, files.length, 'each photo uploaded once for the send');
+    assert.equal(sends, 1, 'sent once');
+    // Issue 481: each photo goes up once, to the draft; the send uses those copies on the box.
+    assert.equal(draftPuts, files.length, 'each photo uploaded once, to the draft'); assert.equal(sendUploads, 0, 'no second upload for the send');
     assert.equal(await page.locator('.u-album').count(), albums + 1, 'still one album after delivery');
     assert.deepEqual(errors, [], 'no page errors');
     await ctx.close();

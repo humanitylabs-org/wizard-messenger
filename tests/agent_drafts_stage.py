@@ -17,6 +17,10 @@ class Engine(fx.FakeEngine):
     def invites(self): return {'invites': []}
     def messages(self, *a, **k): return {'messages': []}
     def send(self, group, payload): self.sent.append((group, payload)); return {'message_ids': ['e' * 64], 'published': True}
+    def send_media(self, group, payload):
+        # Wizard chat photos and files (issue 481): record which outbox files went and that they were really there.
+        self.sent.append((group, {'paths': payload['paths'], 'sizes': [os.path.getsize(p) for p in payload['paths']], 'text': payload.get('text')}))
+        return {'message_ids': ['f' * 63 + str(len(self.sent) % 10)], 'published': True, 'attachments': [{'sha256': '0' * 64} for _ in payload['paths']]}
 
 tmp = tempfile.mkdtemp(dir=OUT)
 engine = Engine(); engine.data = tmp
