@@ -1,6 +1,6 @@
 // Voice-note proof on the disposable preview: a recorded note uploads as Ogg Opus (what Telegram takes as a
 // voice message), and playback runs through Web Audio without any <audio>/<video> element (those take the
-// phone's audio focus and pause the owner's music).
+// phone's audio focus and pause the owner's music). Desktops stream through an audio element (issue 502).
 const {chromium} = require('playwright');
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
@@ -8,7 +8,8 @@ const assert = require('node:assert/strict');
   const base = process.env.PREVIEW_URL || 'https://localhost:19253/';
   const ev = process.env.EVIDENCE_DIR || './evidence'; fs.mkdirSync(ev, {recursive: true});
   const browser = await chromium.launch({headless: true, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream']});
-  const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, colorScheme: 'dark', ignoreHTTPSErrors: true, permissions: ['microphone']});
+  // A phone (issue 502: desktops stream notes through an audio element; phones keep Web Audio).
+  const ctx = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36', colorScheme: 'dark', ignoreHTTPSErrors: true, permissions: ['microphone']});
   await ctx.addInitScript(() => {
     window.__voiceUploads = [];
     const f = window.fetch; window.fetch = async function (u, o) { if (String(u).includes('upload?kind=voice') && o?.body instanceof Blob) { const b = new Uint8Array(await o.body.arrayBuffer()); window.__voiceUploads.push({type: o.body.type, head: String.fromCharCode(...b.subarray(0, 4)), size: b.length, b64: btoa(String.fromCharCode(...b))}); } return f.call(this, u, o); };

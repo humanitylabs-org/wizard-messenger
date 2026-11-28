@@ -846,6 +846,28 @@
     if (shell === 'desktop' || shell === 'phone') return shell === 'desktop';
     return !(coarse && screenMin > 0 && screenMin < 600);
   }
+  // Issue 502: how a voice note plays. On a desktop (the Mac app, desktop browsers) it streams through an audio
+  // element: sound within a moment of the tap, speed from playbackRate, and no native music player to protect. Phones
+  // and tablets keep Web Audio, which plays alongside the owner's music instead of taking the audio focus.
+  function voiceOnElement(ua, coarse) {
+    return !coarse && !/Android|iPhone|iPad|iPod|Mobile/i.test(String(ua || ''));
+  }
+  // Issue 502: the leading Ogg pages of a long note (at least `want` bytes, cut where a fresh packet starts), so Web
+  // Audio can decode and start the first part while the whole note decodes. Null when it isn't Ogg or is short.
+  function oggPrefix(bytes, want) {
+    const u = new Uint8Array(bytes), page = i => u[i] === 79 && u[i + 1] === 103 && u[i + 2] === 103 && u[i + 3] === 83; // 'OggS'
+    if (u.length < want * 2 || !page(0)) return null;
+    let at = 0;
+    while (at + 27 <= u.length && page(at)) {
+      const segs = u[at + 26]; if (at + 27 + segs > u.length) return null;
+      let body = 0; for (let i = 0; i < segs; i++) body += u[at + 27 + i];
+      const next = at + 27 + segs + body;
+      if (next + 27 > u.length || !page(next)) return null;
+      if (next >= want && !(u[next + 5] & 1)) return bytes.slice(0, next);
+      at = next;
+    }
+    return null;
+  }
   // Issue 445: the message that carries a call's join link into the chat (any network: just words and the link).
   function callInvite(link) {
     return /^https:\/\/[a-z0-9.-]+\/c\/[A-Za-z0-9_-]+$/.test(String(link || '')) ? 'Join my video call: ' + link : '';
@@ -882,7 +904,7 @@
     };
     return fn => new Promise((resolve, reject) => { waiting.push({fn, resolve, reject}); next(); });
   }
-  if (typeof module !== 'undefined') module.exports = {limiter, callInvite, callRoute, callWindowURL, desktopShell, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, sendReason, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
+  if (typeof module !== 'undefined') module.exports = {limiter, callInvite, callRoute, callWindowURL, desktopShell, voiceOnElement, oggPrefix, attachKind, keepable, sendJobs, draftRef, listSnapshot, forwardProblem, draftStack, agentRowsToggle, mergeRows, readyCopies, attachChoices, aimPicker, draftReadyItems, trayPhotos, deviceTranslate, withMediaTicket, draftFeedbackLine, backState, fetchOlder, viewerItems, savedMediaName, notificationSettings, mentionQuery, parseMentions, insertMention, mentionKey, reactorGroups, composerMembers, floatingBox, chatOrder, openMedia, hostViewer, photoStages, fileDownloads, readProgress, downloadLabel, PREFETCH, VIDEO_PREFETCH, hasThumb, prefetchVideo, prefetchPlan, prefetchAllowed, videoPrefetchWanted, videoPreload, videoSwipe, photoPrefetcher, photoTimings, agentChatRows, agentChatSnippet, agentReportSnippet, doorCard, notificationReports, reportsUnread, agentIdentity, agentHue, agentInk, voiceDeadline, withDeadline, sendReason, emojiToneKey, emojiTones, emojiUsage, emojiRanked, emojiDelete, emojiPanelHeight, EMOJI_CATEGORY_ICONS, reactionBare, reactionFilter, reactionQuick};
   if (typeof document === 'undefined') return;
   const $ = id => document.getElementById(id);
   const downloads = fileDownloads(); // file attachments being downloaded (issue 157), see saveFile
@@ -2416,51 +2438,76 @@
   const voiceQueued = new Set();
   let voiceRecoveryWork = null;
   const els = new Map(); // message key -> bubble element (keyed render)
-  // Voice playback goes through Web Audio, not an <audio> element: media elements take the phone's audio focus
-  // and pause the owner's music; Web Audio plays alongside it, like a notification sound.
+  // Voice playback on phones goes through Web Audio, not an <audio> element: media elements take the phone's audio
+  // focus and pause the owner's music; Web Audio plays alongside it, like a notification sound. Desktops stream the
+  // note through an audio element (issue 502: no music player to protect there, and it sounds at once).
   const localAudio = new Map(); // blob: URL -> Blob for notes recorded on this device
   // Pitch-preserving speed-up for voice notes (WSOLA): overlap-add 40 ms Hann frames read RATE times faster,
   // each nudged up to ±6 ms to line up with the previous one, so 1.5x/2x sound like faster talking, not chipmunks.
-  function stretchChannels(chs, sr, rate) {
-    const x = chs[0], len = x.length, N = Math.max(64, Math.round(sr * 0.04) & ~1), Hs = N >> 1, Ha = Hs * rate, tol = Math.round(sr * 0.006);
-    if (rate === 1 || len < N * 2) return chs;
-    const frames = Math.max(1, Math.floor((len - N) / Ha) + 1), outLen = (frames - 1) * Hs + N;
+  // stretcher() does it a few frames at a time (issue 502: stretching a whole 6-minute note first held the first
+  // sound back by a second or more and froze the page): next(most, limit, end) overlap-adds up to `most` frames whose
+  // samples lie before `limit` and returns the finished output; the tail of the last frame waits for the next call,
+  // and once `end` says limit is the note's true end it comes out too. input() can swap in a longer copy of the same
+  // samples (the whole note after its first part) without a seam.
+  function stretcher(sr, rate) {
+    const N = Math.max(64, Math.round(sr * 0.04) & ~1), Hs = N >> 1, Ha = Hs * rate, tol = Math.round(sr * 0.006);
     const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
-    const out = chs.map(() => new Float32Array(outLen));
-    let prev = 0;
-    for (let k = 0; k < frames; k++) {
-      const nominal = Math.round(k * Ha); let best = Math.min(nominal, len - N);
-      if (k > 0) {
-        const target = prev + Hs; let score = -Infinity;
-        for (let d = -tol; d <= tol; d += 2) {
-          const p = nominal + d; if (p < 0 || p + N > len) continue;
-          let s = 0; for (let i = 0; i < Hs; i += 4) s += x[p + i] * x[target + i];
-          if (s > score) { score = s; best = p; }
+    let chs = [], base = 0, k = 0, prev = 0, carry = null, done = false;
+    const nominalAt = j => base + Math.round(j * Ha);
+    return {
+      N,
+      input(c) { chs = c; },
+      from(s0) { base = s0; k = 0; prev = 0; carry = null; done = false; },
+      read: () => nominalAt(k),
+      done: () => done,
+      next(most, limit, end) {
+        if (done || !chs.length) return null;
+        const x = chs[0], len = Math.min(limit, x.length);
+        let n = 0; while (n < most && (end ? nominalAt(k + n) <= len - N : nominalAt(k + n) + N + tol <= len)) n++;
+        const last = end && n < most; // no frame fits any more: the tail goes out with this call
+        if (!n && !last) return null;
+        const acc = chs.map(() => new Float32Array(n * Hs + Hs));
+        if (carry) acc.forEach((a, c) => a.set(carry[c]));
+        for (let j = 0; j < n; j++, k++) {
+          const nominal = nominalAt(k); let best = Math.min(nominal, len - N);
+          if (k > 0) {
+            const target = prev + Hs; let score = -Infinity;
+            for (let d = -tol; d <= tol; d += 2) {
+              const p = nominal + d; if (p < 0 || p + N > len) continue;
+              let s = 0; for (let i = 0; i < Hs; i += 4) s += x[p + i] * x[target + i];
+              if (s > score) { score = s; best = p; }
+            }
+          }
+          const o = j * Hs;
+          for (let c = 0; c < chs.length; c++) { const src = chs[c], dst = acc[c]; for (let i = 0; i < N; i++) dst[o + i] += src[best + i] * win[i]; }
+          prev = best;
         }
-      }
-      const o = k * Hs;
-      for (let c = 0; c < chs.length; c++) { const src = chs[c], dst = out[c]; for (let i = 0; i < N; i++) dst[o + i] += src[best + i] * win[i]; }
-      prev = best;
-    }
-    return out;
+        if (last) { done = true; carry = null; return (k > 0) ? acc : null; }
+        carry = acc.map(a => a.slice(n * Hs)); return acc.map(a => a.subarray(0, n * Hs));
+      },
+    };
+  }
+  function stretchChannels(chs, sr, rate) {
+    const st = stretcher(sr, rate), len = chs[0].length;
+    if (rate === 1 || len < st.N * 2) return chs;
+    st.input(chs); st.from(0); const parts = []; let part; while ((part = st.next(Infinity, len, true))) parts.push(part);
+    return chs.map((_, c) => { const out = new Float32Array(parts.reduce((n, p) => n + p[c].length, 0)); let o = 0; for (const p of parts) { out.set(p[c], o); o += p[c].length; } return out; });
   }
   const player = (() => {
-    let ctx = null, src = null, box = null, key = null, buf = null, startedAt = 0, offset = 0, timer = 0, el = null;
+    const newContext = () => new (window.AudioContext || window.webkitAudioContext)();
+    // ctx plays; decoding goes through its own offline context, so a stuck live context can be thrown away mid-decode.
+    let ctx = null, decoder = null, box = null, key = null, url = '', buf = null, whole = false, hint = 0, mime = '';
+    let offset = 0, attempt = 0, waiting = false, timer = 0, watch = 0, el = null, elURL = '', wa = null;
     // Speed, like Telegram's 1x / 1.5x / 2x: one choice for every note, remembered on this device.
     const RATES = [1, 1.5, 2]; let rate = RATES.includes(+localStorage.getItem('messenger.voice.rate')) ? +localStorage.getItem('messenger.voice.rate') : 1;
-    const fast = new WeakMap(); // AudioBuffer -> Map(rate -> stretched AudioBuffer)
-    const playable = () => {
-      if (rate === 1) return buf;
-      let m = fast.get(buf); if (!m) fast.set(buf, m = new Map());
-      if (!m.has(rate)) {
-        const chs = Array.from({length: buf.numberOfChannels}, (_, c) => buf.getChannelData(c)), out = stretchChannels(chs, buf.sampleRate, rate);
-        const b = ctx.createBuffer(out.length, out[0].length, buf.sampleRate); out.forEach((d, c) => b.copyToChannel(d, c)); m.set(rate, b);
-      }
-      return m.get(rate);
-    };
-    const pos = () => src ? offset + (ctx.currentTime - startedAt) * rate : offset;
+    // Web Audio plays the note in short pieces scheduled back to back: the first one small so sound starts at once,
+    // then a few seconds at a time, kept AHEAD seconds in front of the clock.
+    const FIRST = 1, CHUNK = 5, AHEAD = 3, PREFIX = 160 * 1024, SEAM = 0.5;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const length = () => (el && isFinite(el.duration) && el.duration ? el.duration : whole && buf ? buf.duration : hint || buf?.duration || 0);
+    const pos = () => el ? el.currentTime : wa ? Math.min(wa.queued, wa.from + Math.max(0, ctx.currentTime - wa.startedAt) * rate) : offset;
     const rateLabel = () => (rate === 1.5 ? '1.5' : String(rate)) + '×';
-    const decoded = new Map(); // url -> Promise<AudioBuffer>, newest few only
+    const decoded = new Map(); // url -> Promise<AudioBuffer> of the whole note, newest few only
     const noteTypes = new Map();
     const fetched = new Map(); // url -> Promise<ArrayBuffer>: voice notes downloaded ahead, before anyone taps Play
     // Wizard lowers Wizard Music while a note plays (shell-owned ducking) and brings it back after a short beat,
@@ -2472,82 +2519,183 @@
     const music = on => {
       clearTimeout(undock);
       if (on) { session('playback'); if (!ducked) { ducked = true; window.WizardApp?.audio?.duck(true); } return; }
-      undock = setTimeout(() => { if (!src && !el) session('auto'); if (ducked && !src && !el) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
+      undock = setTimeout(() => { if (!wa && !el) session('auto'); if (ducked && !wa && !el) { ducked = false; window.WizardApp?.audio?.duck(false); } }, 600);
     };
     const paint = () => {
-      if (!box || !buf) return; const at = pos(), f = Math.min(1, at / buf.duration);
+      const d = length(); if (!box || !d) return; const at = pos(), f = Math.min(1, at / d);
       for (const i of box.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f);
-      const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((src || offset ? buf.duration - at : buf.duration) * 1000);
+      const t = box.querySelector('.u-dur'); if (t) t.textContent = fmtDur((wa || el || offset ? d - at : d) * 1000);
     };
-    const halt = () => { if (src) { src.onended = null; try { src.stop(); } catch { /* already stopped */ } src.disconnect(); src = null; } if (el) { el.onended = el.ontimeupdate = null; el.pause(); el = null; } clearInterval(timer); music(false); };
-    const fetchNote = url => {
-      if (!fetched.has(url)) {
-        fetched.set(url, fetch(url, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); noteTypes.set(url, r.headers.get('Content-Type')); return r.arrayBuffer(); }));
-        fetched.get(url).catch(() => fetched.delete(url));
+    // The bubble says what is really happening: loading until sound starts, playing only while it plays.
+    const show = state => { if (!box) return; box.classList.toggle('loading', state === 'loading'); box.classList.toggle('playing', state === 'playing'); box.toggleAttribute('aria-busy', state === 'loading'); };
+    const halt = () => {
+      if (wa) { for (const n of wa.nodes) { n.onended = null; try { n.stop(); } catch { /* already stopped */ } n.disconnect(); } wa = null; }
+      if (el) { const a = el; el = null; a.onended = a.ontimeupdate = a.onpause = a.onplaying = a.onerror = null; a.pause(); a.removeAttribute('src'); try { a.load(); } catch { /* detached */ } }
+      if (elURL) { URL.revokeObjectURL(elURL); elURL = ''; }
+      clearInterval(timer); clearTimeout(watch); music(false);
+    };
+    const finished = () => { halt(); offset = 0; waiting = false; show(''); paint(); };
+    const fetchNote = u => {
+      if (!fetched.has(u)) {
+        fetched.set(u, fetch(u, {credentials: 'same-origin'}).then(r => { if (!r.ok) throw new Error('media ' + r.status); noteTypes.set(u, r.headers.get('Content-Type')); return r.arrayBuffer(); }));
+        fetched.get(u).catch(() => fetched.delete(u));
         while (fetched.size > 16) fetched.delete(fetched.keys().next().value);
       }
-      return fetched.get(url);
+      return fetched.get(u);
     };
-    const load = url => {
-      if (!decoded.has(url)) {
-        // Notes recorded here decode from the Blob itself: the CSP keeps fetch() off blob: URLs.
-        const bytes = localAudio.has(url) ? localAudio.get(url).arrayBuffer() : fetchNote(url).then(b => b.slice(0));
-        decoded.set(url, bytes.then(b => ctx.decodeAudioData(b)));
-        decoded.get(url).catch(() => decoded.delete(url));
-        while (decoded.size > 8) decoded.delete(decoded.keys().next().value);
+    const decode = bytes => {
+      const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (!decoder) decoder = OAC ? new OAC(1, 1, ctx?.sampleRate || 48000) : ctx;
+      return decoder.decodeAudioData(bytes);
+    };
+    // {soon: the first part of a long Ogg note (or the whole note), whole: the whole note}. The first part starts the
+    // note in a fraction of the time a 6-minute decode takes; the whole one carries on from the same sample.
+    const load = u => {
+      if (decoded.has(u)) { const w = decoded.get(u); return {soon: w.then(b => ({b, whole: true})), whole: w}; }
+      // Notes recorded here decode from the Blob itself: the CSP keeps fetch() off blob: URLs.
+      const bytes = localAudio.has(u) ? localAudio.get(u).arrayBuffer() : fetchNote(u);
+      const part = bytes.then(b => { const head = oggPrefix(b, PREFIX); return head ? decode(head).then(p => p.duration > SEAM * 4 ? p : null) : null; }).catch(() => null);
+      const w = part.then(() => bytes).then(b => decode(b.slice(0)));
+      decoded.set(u, w); w.catch(() => decoded.delete(u));
+      while (decoded.size > 8) decoded.delete(decoded.keys().next().value);
+      return {soon: Promise.race([part.then(p => p ? {b: p, whole: false} : w.then(b => ({b, whole: true}))), w.then(b => ({b, whole: true}))]), whole: w};
+    };
+    const channels = b => Array.from({length: b.numberOfChannels}, (_, c) => b.getChannelData(c));
+    // Schedule pieces until AHEAD seconds are queued. With only the first part decoded it stops SEAM seconds short of
+    // that part's end (its last packet may be cut) and goes on once the whole note is there.
+    const pump = () => {
+      const w = wa; if (!w || !buf) return;
+      const sr = buf.sampleRate, usable = whole ? buf.duration : Math.max(0, buf.duration - SEAM);
+      while (w.queued < usable - 1e-6 && w.until - ctx.currentTime < AHEAD) {
+        const late = ctx.currentTime + 0.02 - w.until; if (late > 0) { w.until += late; w.startedAt += late; } // waited for the whole note
+        const firstRound = w.first, rest = usable - w.queued;
+        // At 1x the rest of a whole note goes out as one piece: no seams to hear.
+        const span = firstRound ? Math.min(FIRST, rest) : !w.st && whole ? rest : Math.min(CHUNK, rest), n = ctx.createBufferSource();
+        let out;
+        if (!w.st) { n.buffer = buf; n.connect(ctx.destination); n.start(w.until, w.queued, span); out = span; w.queued += span; }
+        else {
+          const part = w.st.next(Math.max(1, Math.ceil(span * sr / (w.st.N / 2) / rate)), Math.floor(usable * sr), whole);
+          if (!part || !part[0].length) { if (w.st.done()) w.queued = usable; break; }
+          const b = ctx.createBuffer(part.length, part[0].length, sr); part.forEach((d, c) => b.copyToChannel(d, c));
+          n.buffer = b; n.connect(ctx.destination); n.start(w.until); out = part[0].length / sr;
+          w.queued = w.st.done() ? usable : Math.min(usable, w.st.read() / sr);
+        }
+        w.nodes.push(n); w.until += out; w.first = false;
+        n.onended = () => { w.nodes = w.nodes.filter(x => x !== n); if (wa === w && whole && !w.nodes.length && w.queued >= usable - 1e-6) finished(); };
+        if (firstRound) break; // the first piece goes out alone, at once; the timer queues the rest
       }
-      return decoded.get(url);
     };
-    const start = () => {
-      halt(); src = ctx.createBufferSource(); src.buffer = playable(); src.connect(ctx.destination);
-      if (offset >= buf.duration - 0.05) offset = 0;
-      startedAt = ctx.currentTime; src.start(0, Math.min(offset / rate, src.buffer.duration)); box.classList.add('playing'); music(true);
-      src.onended = () => { src = null; clearInterval(timer); offset = 0; box?.classList.remove('playing'); paint(); music(false); };
-      timer = setInterval(paint, 100); paint();
+    const begin = () => {
+      halt(); if (offset >= length() - 0.05) offset = 0;
+      const t = ctx.currentTime + 0.02;
+      wa = {nodes: [], from: offset, queued: offset, startedAt: t, until: t, first: true, st: null};
+      if (rate !== 1 && buf.length >= 2 * Math.round(buf.sampleRate * 0.04)) { wa.st = stretcher(buf.sampleRate, rate); wa.st.input(channels(buf)); wa.st.from(Math.round(offset * buf.sampleRate)); }
+      pump(); waiting = false; show('playing'); music(true);
+      timer = setInterval(() => { pump(); paint(); }, 100); paint();
+      // A context that says running but whose clock doesn't move makes no sound either: hand the note to the element.
+      const mine = attempt, t0 = ctx.currentTime;
+      watch = setTimeout(() => { if (mine === attempt && wa && ctx.currentTime - t0 < 0.2) rescue(mine); }, 900);
     };
-    async function element(url, b) {
-      const a = new Audio(localAudio.has(url) ? URL.createObjectURL(localAudio.get(url)) : url);
-      a.preservesPitch = true; a.playbackRate = rate; el = a;
-      const dur = () => (isFinite(a.duration) ? a.duration : 0);
-      const draw = () => { if (box !== b) return; const f = dur() ? a.currentTime / dur() : 0; for (const i of b.querySelectorAll('.u-wave i')) i.classList.toggle('on', f > 0 && +i.dataset.at < f); const t = b.querySelector('.u-dur'); if (t && dur()) t.textContent = fmtDur((dur() - a.currentTime) * 1000); };
-      a.ontimeupdate = draw; a.onended = () => { el = null; offset = 0; b.classList.remove('playing'); music(false); };
-      if (offset) a.currentTime = offset;
-      await a.play(); b.classList.add('playing'); music(true); draw();
+    // Inside the tap: a reused context the system stopped (iOS 'interrupted', WebKit 'suspended' after the app was in
+    // the background or the Bluetooth route changed) is replaced; a new one is asked to run.
+    const wake = () => {
+      if (ctx && ctx.state !== 'running') { const old = ctx; ctx = null; old.close?.().catch(() => {}); }
+      ctx ||= newContext();
+      if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    };
+    // Wait (briefly) until the context really runs; one fresh context more, then give up so the element can play it.
+    const awake = async mine => {
+      for (let i = 0; i < 2; i++) {
+        if (ctx.state === 'running') return true;
+        await Promise.race([ctx.resume().catch(() => {}), sleep(400)]);
+        if (mine !== attempt) return false;
+        if (ctx.state === 'running') return true;
+        if (i === 0) { const old = ctx; ctx = newContext(); old.close?.().catch(() => {}); ctx.resume().catch(() => {}); }
+      }
+      return ctx.state === 'running';
+    };
+    const playable = type => { try { const t = String(type || '').split(';')[0].trim(); return !t || new Audio().canPlayType(t) !== ''; } catch { return false; } };
+    function element(u, mine) {
+      return new Promise((ok, no) => {
+        const a = new Audio(); el = a; a.preload = 'auto';
+        if (localAudio.has(u)) elURL = URL.createObjectURL(localAudio.get(u));
+        a.src = elURL || u; a.preservesPitch = true; a.defaultPlaybackRate = rate; a.playbackRate = rate;
+        let started = false;
+        const fail = e => { if (el !== a) return no(e); halt(); no(e || new Error('Could not play this voice message')); };
+        const cap = setTimeout(() => { if (!started) fail(); }, 8000);
+        a.ontimeupdate = paint;
+        a.onplaying = () => { if (el !== a || mine !== attempt) return; started = true; clearTimeout(cap); waiting = false; show('playing'); music(true); paint(); ok(); };
+        a.onerror = () => { clearTimeout(cap); fail(); };
+        a.onended = () => { if (el === a) finished(); };
+        // Paused by the system (headphones out, another app, media keys): show it paused, ready to go on from there.
+        a.onpause = () => { if (el !== a || a.ended || !started) return; offset = a.currentTime; halt(); show(''); paint(); };
+        if (offset) a.currentTime = offset;
+        a.play().catch(e => { clearTimeout(cap); fail(e); });
+      });
+    }
+    const gaveUp = mine => { if (mine !== attempt) return; halt(); waiting = false; show(''); box = key = null; error(new Error('Could not play this voice message')); };
+    // Web Audio didn't make sound after all: carry on from the same spot through the element.
+    async function rescue(mine) {
+      offset = pos(); halt(); const old = ctx; ctx = null; old?.close?.().catch(() => {});
+      show('loading'); waiting = true;
+      try { await element(url, mine); } catch { gaveUp(mine); }
+    }
+    async function viaWebAudio(u, k, mine, elementTried) {
+      try {
+        const got = load(u);
+        got.whole.then(b => { if (key !== k) return; buf = b; whole = true; if (wa?.st) wa.st.input(channels(b)); pump(); }, () => {});
+        const [first, running] = await Promise.all([got.soon, awake(mine)]);
+        if (mine !== attempt) return;
+        if (!running) throw new Error('audio context will not run');
+        if (!whole) { buf = first.b; whole = first.whole; }
+        begin();
+      } catch {
+        if (mine !== attempt) return;
+        // This browser cannot decode or run the note for Web Audio: play it with a plain audio element instead.
+        if (elementTried) return gaveUp(mine);
+        try { await element(u, mine); } catch { gaveUp(mine); }
+      }
     }
     return {
       rateLabel,
-      async blob(url, type) { if (localAudio.has(url)) return localAudio.get(url); const bytes = await fetchNote(url); return new Blob([bytes], {type: type || noteTypes.get(url) || 'application/octet-stream'}); },
+      async blob(u, type) { if (localAudio.has(u)) return localAudio.get(u); const bytes = await fetchNote(u); return new Blob([bytes], {type: type || noteTypes.get(u) || 'application/octet-stream'}); },
       // Tap the speed pill: 1x -> 1.5x -> 2x -> 1x, applied mid-note from the same spot.
       cycleRate() {
         const at = pos(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
         try { localStorage.setItem('messenger.voice.rate', String(rate)); } catch { /* private mode */ }
-        for (const el of document.querySelectorAll('.u-speed')) el.textContent = rateLabel();
-        if (el) el.playbackRate = rate;
-        if (src) { offset = at; start(); }
+        for (const s of document.querySelectorAll('.u-speed')) s.textContent = rateLabel();
+        if (el) { el.defaultPlaybackRate = rate; el.playbackRate = rate; }
+        if (wa) { offset = at; begin(); }
       },
-      preload(url) { if (!localAudio.has(url)) fetchNote(url).catch(() => {}); },
-      playing: b => b === box && !!(src || el),
-      busy: () => !!src || !!el || !!view.recording,
+      preload(u) { if (!localAudio.has(u)) fetchNote(u).catch(() => {}); },
+      playing: b => b === box && !!(wa || el),
+      busy: () => !!wa || !!el || !!view.recording,
       // A re-rendered bubble (older page loaded, server copy replaced the saved one) picks the playback back up.
-      adopt(b, k) { if (k !== key || b === box) return; box = b; if (src) b.classList.add('playing'); paint(); },
-      async toggle(b, url, k) {
-        ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+      adopt(b, k) { if (k !== key || b === box) return; box = b; show(waiting ? 'loading' : wa || el ? 'playing' : ''); paint(); },
+      async toggle(b, u, k, durationMs, type) {
         session('playback'); // inside the tap, before anything awaits (iOS)
-        if (ctx.state !== 'running') ctx.resume().catch(() => {}); // 'suspended', or iOS 'interrupted' after a call or the lock screen
-        if (b === box && el) { offset = el.currentTime; halt(); b.classList.remove('playing'); paint(); return; }
-        if (b === box && src) { offset = pos(); halt(); b.classList.remove('playing'); paint(); return; }
-        if (b !== box) { halt(); if (box) { box.classList.remove('playing'); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); } box = b; key = k; buf = null; offset = 0; }
-        b.classList.add('playing');
-        try { const got = await load(url); if (key !== k) return; buf = got; start(); }
-        catch {
-          if (key !== k) return;
-          // This browser cannot decode the note for Web Audio: play it with a plain audio element instead.
-          try { await element(url, b); }
-          catch { if (key === k) { box?.classList.remove('playing'); box = null; key = null; } error(new Error('Could not play this voice message')); }
+        // The same note again while it plays or loads: pause there.
+        if (b === box && (wa || el || waiting)) { offset = pos(); attempt++; halt(); waiting = false; show(''); paint(); return; }
+        const mine = ++attempt;
+        halt();
+        if (b !== box) {
+          if (box) { show(''); const old = box; box = null; for (const i of old.querySelectorAll('.u-wave i')) i.classList.remove('on'); }
+          box = b; key = k; url = u; buf = null; whole = false; offset = 0; hint = (+durationMs || 0) / 1000; mime = type || '';
         }
+        waiting = true; show('loading');
+        if (voiceOnElement(navigator.userAgent, typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) && playable(noteTypes.get(u) || mime)) {
+          try { await element(u, mine); return; } catch { if (mine !== attempt) return; }
+          wake(); return viaWebAudio(u, k, mine, true);
+        }
+        wake(); // inside the tap
+        return viaWebAudio(u, k, mine, false);
       },
-      seek(b, f) { if (b === box && el && isFinite(el.duration)) { el.currentTime = el.duration * f; return; } if (b !== box || !buf) return; offset = buf.duration * f; if (src) start(); else paint(); },
-      stop() { halt(); box?.classList.remove('playing'); box = key = buf = null; offset = 0; },
+      seek(b, f) {
+        if (b !== box) return; const d = length(); if (!d) return;
+        if (el) { el.currentTime = d * f; return; }
+        offset = d * f; if (wa) begin(); else paint();
+      },
+      stop() { attempt++; halt(); waiting = false; show(''); box = key = buf = null; whole = false; offset = 0; },
     };
   })();
 
@@ -3619,7 +3767,7 @@
     const box = node('div', 'u-voice'); box.style.setProperty('--p', '0');
     const play = iconButton('play', 'Play voice message', () => {
       if (m.pending && !m.local) return;
-      player.toggle(box, m.local || mediaURL(m.id), m.client_id || m.id);
+      player.toggle(box, m.local || mediaURL(m.id), m.client_id || m.id, m.media?.duration, m.media?.mime || m.media?.mimetype);
     }, 'u-vplay');
     const bars = node('div', 'u-wave'); const wave = m.media?.waveform?.length ? m.media.waveform : Array.from({length: 40}, (_, i) => 30 + 25 * Math.sin(i * 1.7 + (m.id.length % 5)));
     const n = Math.min(40, wave.length); for (let i = 0; i < n; i++) { const bar = node('i'); bar.style.height = Math.max(12, wave[Math.floor(i * wave.length / n)]) + '%'; bar.dataset.at = String(i / n); bars.append(bar); }
