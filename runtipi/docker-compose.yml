@@ -1,6 +1,6 @@
 services:
   unified-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0}
     user: "0:0"
     entrypoint: [python3, /app/unified_setup.py]
     read_only: true
@@ -17,7 +17,7 @@ services:
     labels:
       runtipi.managed: 'false'
   messenger:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0}
     read_only: true
     cap_drop: [ALL]
     user: "1000:1000"
@@ -39,7 +39,7 @@ services:
       MESSENGER_AGENT_INBOX_TOKEN: ${MESSENGER_AGENT_INBOX_TOKEN:-}
       MESSENGER_AGENT_SERVICE: ${MESSENGER_AGENT_SERVICE:-http://wizard-agent-service:8787}
       # Issue 234: what /healthz and MCP report. The release bumps it with config.json and wizard.md.
-      MESSENGER_VERSION: "0.2.0-unified.16.147"
+      MESSENGER_VERSION: "0.2.0-unified.16.148"
       UNIFIED_ENABLED: "1"
       CONNECTORS_ENABLED: "1"
       MESSENGER_CONNECTOR_SENDER_MODE: local-owner
@@ -148,7 +148,7 @@ services:
   call-auth:
     # Issue 445 (switch calls): LiveKit's token service for Matrix (element-hq lk-jwt-service 0.10.0, built into
     # Messenger's image from the pinned official one), as Synapse's application service. Idle like livekit above.
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0}
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -180,7 +180,7 @@ services:
     # (call_cloudflare.py). cloudflared (built into Messenger's image from the pinned official one) only dials out to
     # Cloudflare: no port opens on the box. It runs only while the switch is on AND Messenger has made the tunnel
     # (calls/tunnel-token), and its one route is Messenger's call-only guest listener over tunnel-lane.
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0}
     user: "1000:1000"
     entrypoint: [/bin/sh, -c]
     command:
@@ -224,7 +224,7 @@ services:
       retries: 10
     restart: unless-stopped
   translation:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0}
     entrypoint: [python3, /app/translation.py]
     user: "1000:1000"
     read_only: true
@@ -250,7 +250,7 @@ services:
       retries: 3
     restart: unless-stopped
   connector-init:
-    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-04415cc738483edefddfdc80ed725b10d22493f8@sha256:4e75a96ffa6f52fef54ef23bfe4d290e880626b1e6365cd481739fad51263155}
+    image: ${MESSENGER_IMAGE:-ghcr.io/humanitylabs-org/wizard-messenger:sha-b5868cc1fd4c7c39786fdb2c1d5adb608b016c57@sha256:515800865216c8a6af17a114d3994e6d9389490b7417a6f96d554504de8711d0}
     user: 0:0
     entrypoint:
     - python3
